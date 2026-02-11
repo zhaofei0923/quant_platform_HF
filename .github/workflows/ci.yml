@@ -56,3 +56,16 @@ jobs:
           grep -q -- "--strategy-bridge-state-key-count 2" runtime/ops_smoke.out
           grep -q -- "--strategy-bridge-intent-count 1" runtime/ops_smoke.out
           grep -q -- "--strategy-bridge-order-key-count 1" runtime/ops_smoke.out
+      - name: Upload Ops Smoke Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ops-smoke-artifacts
+          path: |
+            runtime/fake_redis.log
+            runtime/ops_smoke.out
+            docs/results/reconnect_fault_result.md
+            docs/results/ops_health_report.json
+            docs/results/ops_health_report.md
+          if-no-files-found: error
+          retention-days: 14

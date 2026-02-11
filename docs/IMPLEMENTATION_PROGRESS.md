@@ -123,6 +123,26 @@ Completion rule:
 - Status:
   - `done`
 
+## Sprint C6 (2026-02-11 ~ 2026-02-24)
+- Objective:
+  - retain ops smoke evidence artifacts in GitHub Actions for post-failure triage
+  - keep chain-status assertions and artifact payload aligned
+- Scope:
+  - `.github/workflows/ci.yml`
+  - `develop/00-实现对齐矩阵与缺口总览.md`
+  - `develop/00-未完成能力补齐路线图.md`
+- Test Evidence:
+  - [x] `.venv/bin/ruff check python scripts`
+  - [x] `.venv/bin/black --check python scripts`
+  - [x] `.venv/bin/mypy python/quant_hft`
+  - [x] `.venv/bin/pytest python/tests -q`
+  - [x] `./scripts/build/bootstrap.sh`
+- Develop Docs Synced:
+  - [x] `develop/00-实现对齐矩阵与缺口总览.md`
+  - [x] `develop/00-未完成能力补齐路线图.md`
+- Status:
+  - `done`
+
 ## Sprint A1 + A2 (2026-02-25 ~ 2026-03-24)
 - Objective:
   - reproducible backtest run spec/result

@@ -222,10 +222,20 @@ def _normalize_health_flag(raw: str) -> bool | None:
     return None
 
 
+def _normalize_chain_status(raw: str) -> bool | None:
+    normalized = raw.strip().lower()
+    if normalized in {"complete", "ok", "healthy", "true", "1"}:
+        return True
+    if normalized in {"incomplete", "broken", "false", "0", "unhealthy"}:
+        return False
+    return None
+
+
 def build_ops_health_report(
     *,
     strategy_bridge_latency_ms: float | None,
     strategy_bridge_target_ms: float,
+    strategy_bridge_chain_status: str = "unknown",
     core_process_alive: bool,
     redis_health: str = "unknown",
     timescale_health: str = "unknown",
@@ -260,6 +270,18 @@ def build_ops_health_report(
             unit="ms",
             healthy=latency_healthy,
             detail="derived from reconnect recovery samples",
+        )
+    )
+
+    chain_ok = _normalize_chain_status(strategy_bridge_chain_status)
+    slis.append(
+        SliRecord(
+            name="strategy_bridge_chain_integrity",
+            value=1.0 if chain_ok else 0.0 if chain_ok is False else None,
+            target=1.0,
+            unit="bool",
+            healthy=chain_ok is True,
+            detail=f"input={strategy_bridge_chain_status}",
         )
     )
 

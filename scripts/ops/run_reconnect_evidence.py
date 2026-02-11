@@ -94,6 +94,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--target-p99-sec", type=float, default=10.0)
     parser.add_argument("--strategy-bridge-target-ms", type=float, default=1500.0)
     parser.add_argument(
+        "--strategy-bridge-chain-status",
+        choices=("unknown", "complete", "incomplete"),
+        default="unknown",
+    )
+    parser.add_argument(
         "--storage-redis-health",
         choices=("unknown", "healthy", "unhealthy"),
         default="unknown",
@@ -357,6 +362,8 @@ def main() -> int:
             f"{args.target_p99_sec:g}",
             "--strategy-bridge-target-ms",
             f"{args.strategy_bridge_target_ms:g}",
+            "--strategy-bridge-chain-status",
+            args.strategy_bridge_chain_status,
             "--storage-redis-health",
             args.storage_redis_health,
             "--storage-timescale-health",

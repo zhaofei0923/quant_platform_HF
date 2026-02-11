@@ -57,6 +57,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--health-markdown-file", default="")
     parser.add_argument("--strategy-bridge-target-ms", type=float, default=1500.0)
     parser.add_argument(
+        "--strategy-bridge-chain-status",
+        choices=("unknown", "complete", "incomplete"),
+        default="unknown",
+    )
+    parser.add_argument(
         "--storage-redis-health",
         choices=("unknown", "healthy", "unhealthy"),
         default="unknown",
@@ -167,6 +172,7 @@ def main() -> int:
     ops_health_report = build_ops_health_report(
         strategy_bridge_latency_ms=strategy_bridge_latency_ms,
         strategy_bridge_target_ms=args.strategy_bridge_target_ms,
+        strategy_bridge_chain_status=args.strategy_bridge_chain_status,
         core_process_alive=core_process_alive,
         redis_health=args.storage_redis_health,
         timescale_health=args.storage_timescale_health,

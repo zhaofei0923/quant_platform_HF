@@ -55,6 +55,7 @@ def test_ops_health_report_build_and_render() -> None:
     report = build_ops_health_report(
         strategy_bridge_latency_ms=320.0,
         strategy_bridge_target_ms=1000.0,
+        strategy_bridge_chain_status="complete",
         core_process_alive=True,
         redis_health="healthy",
         timescale_health="healthy",
@@ -66,9 +67,12 @@ def test_ops_health_report_build_and_render() -> None:
     assert payload["overall_healthy"] is True
     assert payload["generated_ts_ns"] == 12345
     assert isinstance(payload["slis"], list)
-    assert len(payload["slis"]) == 4
+    assert len(payload["slis"]) == 5
+    sli_names = [item["name"] for item in payload["slis"]]
+    assert "strategy_bridge_chain_integrity" in sli_names
 
     markdown = render_ops_health_markdown(report)
     assert "# Ops Health Report" in markdown
     assert "strategy_bridge_latency_p99_ms" in markdown
+    assert "strategy_bridge_chain_integrity" in markdown
     assert "Overall healthy: yes" in markdown

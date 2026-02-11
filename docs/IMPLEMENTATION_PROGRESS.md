@@ -50,6 +50,29 @@ Completion rule:
 - Status:
   - `done`
 
+## Sprint C2 (2026-02-11 ~ 2026-02-24)
+- Objective:
+  - extend ops health report with strategy bridge key-chain integrity SLI
+  - propagate chain status through reconnect evidence scripts
+- Scope:
+  - `python/quant_hft/ops/monitoring.py`
+  - `scripts/ops/reconnect_slo_report.py`
+  - `scripts/ops/run_reconnect_evidence.py`
+  - `python/tests/test_monitoring_observability.py`
+  - `python/tests/test_run_reconnect_evidence_script.py`
+- Test Evidence:
+  - [x] `.venv/bin/ruff check python scripts/ops/reconnect_slo_report.py scripts/ops/run_reconnect_evidence.py`
+  - [x] `.venv/bin/black --check python scripts/ops/reconnect_slo_report.py scripts/ops/run_reconnect_evidence.py`
+  - [x] `.venv/bin/mypy python/quant_hft`
+  - [x] `.venv/bin/pytest -q python/tests/test_monitoring_observability.py python/tests/test_run_reconnect_evidence_script.py`
+  - [x] `./scripts/build/bootstrap.sh`
+- Develop Docs Synced:
+  - [x] `develop/00-实现对齐矩阵与缺口总览.md`
+  - [x] `develop/00-未完成能力补齐路线图.md`
+  - [x] `develop/04-基础设施与运维/04-01-监控、日志与告警体系设计.md`
+- Status:
+  - `done`
+
 ## Sprint A1 + A2 (2026-02-25 ~ 2026-03-24)
 - Objective:
   - reproducible backtest run spec/result

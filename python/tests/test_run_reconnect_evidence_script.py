@@ -151,3 +151,59 @@ def test_run_reconnect_evidence_fails_when_probe_exits_early(tmp_path: Path, mon
     assert exit_code == 2
     assert fake_proc.terminated is True
     assert invoked == []
+
+
+def test_run_reconnect_evidence_passes_chain_status_to_report(tmp_path: Path, monkeypatch) -> None:
+    script_path = Path("scripts/ops/run_reconnect_evidence.py")
+    module = _load_script_module(script_path, "run_reconnect_evidence_script_chain_status")
+
+    probe_bin = tmp_path / "probe_bin"
+    probe_bin.write_text("noop", encoding="utf-8")
+    config_path = tmp_path / "ctp.yaml"
+    config_path.write_text("ctp:\n  environment: sim\n", encoding="utf-8")
+    fault_script = tmp_path / "fault.py"
+    fault_script.write_text("print('noop')\n", encoding="utf-8")
+    report_script = tmp_path / "report.py"
+    report_script.write_text("print('noop')\n", encoding="utf-8")
+
+    invoked: list[list[str]] = []
+
+    def _fake_run(command: list[str], *, dry_run: bool) -> None:
+        _ = dry_run
+        invoked.append(command)
+
+    monkeypatch.setattr(module, "_run", _fake_run)
+
+    argv = [
+        str(script_path),
+        "--probe-bin",
+        str(probe_bin),
+        "--config",
+        str(config_path),
+        "--probe-log",
+        str(tmp_path / "probe.log"),
+        "--event-log",
+        str(tmp_path / "events.jsonl"),
+        "--report-file",
+        str(tmp_path / "report.md"),
+        "--fault-script",
+        str(fault_script),
+        "--report-script",
+        str(report_script),
+        "--skip-preflight",
+        "--scenarios",
+        "disconnect",
+        "--dry-run",
+        "--strategy-bridge-chain-status",
+        "complete",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    exit_code = module.main()
+    assert exit_code == 0
+    report_invocations = [cmd for cmd in invoked if str(report_script) in cmd]
+    assert len(report_invocations) == 1
+    report_cmd = report_invocations[0]
+    assert "--strategy-bridge-chain-status" in report_cmd
+    idx = report_cmd.index("--strategy-bridge-chain-status")
+    assert report_cmd[idx + 1] == "complete"

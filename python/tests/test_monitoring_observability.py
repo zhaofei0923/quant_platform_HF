@@ -69,10 +69,10 @@ def test_ops_health_report_build_and_render() -> None:
     assert isinstance(payload["slis"], list)
     assert len(payload["slis"]) == 5
     sli_names = [item["name"] for item in payload["slis"]]
-    assert "strategy_bridge_chain_integrity" in sli_names
+    assert "quant_hft_strategy_bridge_chain_integrity" in sli_names
 
     markdown = render_ops_health_markdown(report)
     assert "# Ops Health Report" in markdown
-    assert "strategy_bridge_latency_p99_ms" in markdown
-    assert "strategy_bridge_chain_integrity" in markdown
+    assert "quant_hft_strategy_bridge_latency_p99_ms" in markdown
+    assert "quant_hft_strategy_bridge_chain_integrity" in markdown
     assert "Overall healthy: yes" in markdown

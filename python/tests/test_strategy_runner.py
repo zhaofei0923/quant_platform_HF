@@ -112,3 +112,57 @@ def test_strategy_runner_emits_intent_batch_and_reads_order_event() -> None:
     assert emitted_second == 0
     assert len(strategy.events) == 1
     assert strategy.events[0].status == "ACCEPTED"
+    assert strategy.events[0].execution_algo_id == ""
+    assert strategy.events[0].slice_index == 0
+    assert strategy.events[0].slice_total == 0
+    assert strategy.events[0].throttle_applied is False
+
+
+def test_strategy_runner_reads_optional_execution_metadata_from_order_event() -> None:
+    runtime = StrategyRuntime()
+    strategy = RunnerStrategy("demo")
+    runtime.add_strategy(strategy)
+
+    redis = InMemoryRedisHashClient()
+    _seed_state(redis, "SHFE.ag2406", 201)
+
+    runner = StrategyRunner(
+        runtime=runtime,
+        redis_client=redis,
+        strategy_id="demo",
+        instruments=["SHFE.ag2406"],
+        poll_interval_ms=200,
+    )
+
+    emitted = runner.run_once()
+    assert emitted == 1
+    intent_fields = redis.hgetall(strategy_intent_key("demo"))
+    trace_id = intent_fields["intent_0"].split("|")[6]
+
+    redis.hset(
+        order_event_key(trace_id),
+        {
+            "account_id": "sim-account",
+            "client_order_id": trace_id,
+            "instrument_id": "SHFE.ag2406",
+            "status": "ACCEPTED",
+            "total_volume": "2",
+            "filled_volume": "1",
+            "avg_fill_price": "4500.5",
+            "reason": "",
+            "ts_ns": "202",
+            "trace_id": trace_id,
+            "execution_algo_id": "twap",
+            "slice_index": "2",
+            "slice_total": "5",
+            "throttle_applied": "1",
+        },
+    )
+
+    emitted_second = runner.run_once()
+    assert emitted_second == 0
+    assert len(strategy.events) == 1
+    assert strategy.events[0].execution_algo_id == "twap"
+    assert strategy.events[0].slice_index == 2
+    assert strategy.events[0].slice_total == 5
+    assert strategy.events[0].throttle_applied is True

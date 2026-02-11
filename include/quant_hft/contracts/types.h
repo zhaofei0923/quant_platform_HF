@@ -104,6 +104,11 @@ struct RiskDecision {
     std::string rule_id;
     std::string rule_group{"default"};
     std::string rule_version{"v1"};
+    std::string policy_id;
+    std::string policy_scope;
+    double observed_value{0.0};
+    double threshold_value{0.0};
+    std::string decision_tags;
     std::string reason;
     EpochNanos decision_ts_ns{0};
 };
@@ -120,6 +125,10 @@ struct OrderEvent {
     std::string reason;
     EpochNanos ts_ns{0};
     std::string trace_id;
+    std::string execution_algo_id;
+    std::int32_t slice_index{0};
+    std::int32_t slice_total{0};
+    bool throttle_applied{false};
 };
 
 struct PositionSnapshot {

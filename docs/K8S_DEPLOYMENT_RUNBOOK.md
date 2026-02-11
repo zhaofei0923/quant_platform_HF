@@ -119,3 +119,20 @@ python3 scripts/ops/verify_deploy_rollback_evidence.py \
   --evidence-file docs/results/deploy_rollback_result.env \
   --max-rollback-seconds 180
 ```
+
+## Repository Rollout Orchestrator (Staging Profile)
+
+Run a staging-profile dry-run orchestration and verify evidence:
+
+```bash
+python3 scripts/ops/rollout_orchestrator.py \
+  --env-config configs/deploy/environments/staging.yaml \
+  --inject-fault \
+  --output-file docs/results/rollout_result.env
+
+python3 scripts/ops/verify_rollout_evidence.py \
+  --evidence-file docs/results/rollout_result.env \
+  --require-fault-step
+```
+
+Production-like execution requires explicit `--execute`.

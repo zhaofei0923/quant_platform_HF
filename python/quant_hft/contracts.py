@@ -40,6 +40,26 @@ class OrderEvent:
     reason: str
     ts_ns: int
     trace_id: str
+    exchange_order_id: str = ""
+    execution_algo_id: str = ""
+    slice_index: int = 0
+    slice_total: int = 0
+    throttle_applied: bool = False
+
+
+@dataclass(frozen=True)
+class RiskDecision:
+    action: str
+    rule_id: str
+    rule_group: str = "default"
+    rule_version: str = "v1"
+    policy_id: str = ""
+    policy_scope: str = ""
+    observed_value: float = 0.0
+    threshold_value: float = 0.0
+    decision_tags: str = ""
+    reason: str = ""
+    decision_ts_ns: int = 0
 
 
 @dataclass(frozen=True)

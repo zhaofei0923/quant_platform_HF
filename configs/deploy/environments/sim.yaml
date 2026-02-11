@@ -1,0 +1,7 @@
+environment: sim
+deploy_target: local-sim
+precheck_cmd: "echo precheck_sim"
+deploy_cmd: "echo deploy_sim"
+fault_inject_cmd: "echo inject_fault_sim"
+rollback_cmd: "echo rollback_sim"
+verify_cmd: "echo verify_sim"

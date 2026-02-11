@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, TextIO, cast
 
 from quant_hft.contracts import OrderEvent, Side, SignalIntent, StateSnapshot7D
+from quant_hft.research.metric_dictionary import metric_keys
 from quant_hft.runtime.engine import StrategyRuntime
 from quant_hft.strategy.base import ensure_backtest_ctx
 
@@ -185,6 +186,7 @@ class BacktestRunResult:
         payload: dict[str, Any] = {
             "run_id": self.run_id,
             "mode": self.mode,
+            "metric_keys": list(metric_keys()),
             "spec": self.spec.to_dict(),
             "input_signature": self.input_signature,
             "data_signature": self.data_signature,
@@ -515,6 +517,7 @@ def run_backtest_spec(
 ) -> BacktestRunResult:
     run_ctx: dict[str, object] = {} if ctx is None else ctx
     mode = "deterministic" if spec.deterministic_fills else "bar_replay"
+    run_ctx.setdefault("metric_keys", list(metric_keys()))
     ensure_backtest_ctx(run_ctx, run_id=spec.run_id, mode=mode, clock_ns=0)
 
     if spec.deterministic_fills:

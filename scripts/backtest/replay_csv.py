@@ -46,6 +46,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--report-md", default="", help="optional output path for markdown report")
     parser.add_argument("--run-id", default="", help="override run_id in spec/cli")
     parser.add_argument(
+        "--strategy-template",
+        choices=("trend", "arbitrage", "market_making"),
+        default="trend",
+        help="strategy template tag for experiment tracking metadata",
+    )
+    parser.add_argument(
         "--emit-state-snapshots",
         action="store_true",
         help="emit synthetic StateSnapshot7D from replay bars before on_bar",
@@ -164,7 +170,8 @@ def main() -> int:
                 emit_state_snapshots=args.emit_state_snapshots,
             )
 
-    result = run_backtest_spec(spec, runtime, ctx={})
+    ctx: dict[str, object] = {"strategy_template": args.strategy_template}
+    result = run_backtest_spec(spec, runtime, ctx=ctx)
     report = result.replay
 
     print(
@@ -177,6 +184,7 @@ def main() -> int:
         f"bars={report.bars_emitted} "
         f"intents={report.intents_emitted} "
         f"instruments={report.instrument_count} "
+        f"template={args.strategy_template} "
         f"time_range={report.first_ts_ns}:{report.last_ts_ns} "
         f"first_instrument={report.first_instrument} "
         f"last_instrument={report.last_instrument}"

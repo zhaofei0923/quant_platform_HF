@@ -1,0 +1,68 @@
+{
+  "source_dir": "docs/results",
+  "warm_dir": "runtime/lifecycle/warm",
+  "cold_dir": "runtime/lifecycle/cold",
+  "scanned_files": 9,
+  "hot_files": 9,
+  "warm_files": 0,
+  "cold_files": 0,
+  "moved_files": 0,
+  "dry_run": true,
+  "replication_status": "placeholder",
+  "decisions": [
+    {
+      "relative_path": "deploy_rollback_drill.log",
+      "age_days": 0.027863,
+      "tier": "hot",
+      "action": "keep"
+    },
+    {
+      "relative_path": "deploy_rollback_result.env",
+      "age_days": 0.027863,
+      "tier": "hot",
+      "action": "keep"
+    },
+    {
+      "relative_path": "epic_d_operational_drill_report_2026-02-11.md",
+      "age_days": 0.027863,
+      "tier": "hot",
+      "action": "keep"
+    },
+    {
+      "relative_path": "final_capability_acceptance_2026-02-11.md",
+      "age_days": 0.000157,
+      "tier": "hot",
+      "action": "keep"
+    },
+    {
+      "relative_path": "hotpath_bench_result.json",
+      "age_days": 0.002534,
+      "tier": "hot",
+      "action": "keep"
+    },
+    {
+      "relative_path": "reconnect_fault_result.md",
+      "age_days": 0.027863,
+      "tier": "hot",
+      "action": "keep"
+    },
+    {
+      "relative_path": "rollout_result.env",
+      "age_days": 1e-06,
+      "tier": "hot",
+      "action": "keep"
+    },
+    {
+      "relative_path": "wal_recovery_drill.log",
+      "age_days": 0.027863,
+      "tier": "hot",
+      "action": "keep"
+    },
+    {
+      "relative_path": "wal_recovery_result.env",
+      "age_days": 0.027863,
+      "tier": "hot",
+      "action": "keep"
+    }
+  ]
+}

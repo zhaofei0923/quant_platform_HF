@@ -31,7 +31,9 @@ public:
     explicit BasicRiskEngine(BasicRiskLimits limits);
     BasicRiskEngine(BasicRiskLimits limits, std::vector<BasicRiskRule> rules);
 
-    RiskDecision PreCheck(const OrderIntent& intent) const override;
+    RiskDecision PreCheck(const OrderIntent& intent) const;
+    RiskDecision PreCheck(const OrderIntent& intent,
+                          const RiskContext& context) const override;
 
 private:
     const BasicRiskRule* MatchRule(const OrderIntent& intent) const;

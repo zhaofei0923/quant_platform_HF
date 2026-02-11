@@ -1,3 +1,10 @@
+from .alert_policy import (
+    AlertItem,
+    AlertReport,
+    alert_report_to_dict,
+    evaluate_alert_policy,
+    render_alert_report_markdown,
+)
 from .ctp_preflight import (
     CtpPreflightConfig,
     CtpPreflightItem,
@@ -47,6 +54,7 @@ from .reconnect_slo import (
     load_fault_events,
     load_probe_health_events,
 )
+from .sli_catalog import SLI_CATALOG, SLI_PREFIX, SliCatalogEntry, canonical_sli_name
 from .systemd import SystemdRenderConfig, render_systemd_bundle, write_systemd_bundle
 
 __all__ = [
@@ -59,6 +67,11 @@ __all__ = [
     "build_disconnect_plan",
     "build_disconnect_reset_plan",
     "FaultEvent",
+    "AlertItem",
+    "AlertReport",
+    "alert_report_to_dict",
+    "evaluate_alert_policy",
+    "render_alert_report_markdown",
     "evaluate_reconnect_slo",
     "FaultEventRecord",
     "build_netem_plan",
@@ -89,6 +102,10 @@ __all__ = [
     "render_ops_health_markdown",
     "build_ops_health_report",
     "ops_health_report_to_dict",
+    "SLI_CATALOG",
+    "SLI_PREFIX",
+    "SliCatalogEntry",
+    "canonical_sli_name",
     "SliRecord",
     "SystemdRenderConfig",
     "TraceSpanRecord",

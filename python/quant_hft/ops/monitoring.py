@@ -5,6 +5,8 @@ import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
+from quant_hft.ops.sli_catalog import with_prefix
+
 
 @dataclass(frozen=True)
 class MetricRecord:
@@ -249,7 +251,7 @@ def build_ops_health_report(
     slis: list[SliRecord] = []
     slis.append(
         SliRecord(
-            name="core_process_alive",
+            name=with_prefix("core_process_alive"),
             value=1.0 if core_process_alive else 0.0,
             target=1.0,
             unit="bool",
@@ -264,7 +266,7 @@ def build_ops_health_report(
     )
     slis.append(
         SliRecord(
-            name="strategy_bridge_latency_p99_ms",
+            name=with_prefix("strategy_bridge_latency_p99_ms"),
             value=strategy_bridge_latency_ms,
             target=strategy_bridge_target_ms,
             unit="ms",
@@ -276,7 +278,7 @@ def build_ops_health_report(
     chain_ok = _normalize_chain_status(strategy_bridge_chain_status)
     slis.append(
         SliRecord(
-            name="strategy_bridge_chain_integrity",
+            name=with_prefix("strategy_bridge_chain_integrity"),
             value=1.0 if chain_ok else 0.0 if chain_ok is False else None,
             target=1.0,
             unit="bool",
@@ -288,7 +290,7 @@ def build_ops_health_report(
     redis_ok = _normalize_health_flag(redis_health)
     slis.append(
         SliRecord(
-            name="storage_redis_health",
+            name=with_prefix("storage_redis_health"),
             value=1.0 if redis_ok else 0.0 if redis_ok is False else None,
             target=1.0,
             unit="bool",
@@ -300,7 +302,7 @@ def build_ops_health_report(
     timescale_ok = _normalize_health_flag(timescale_health)
     slis.append(
         SliRecord(
-            name="storage_timescale_health",
+            name=with_prefix("storage_timescale_health"),
             value=1.0 if timescale_ok else 0.0 if timescale_ok is False else None,
             target=1.0,
             unit="bool",

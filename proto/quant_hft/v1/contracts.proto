@@ -58,7 +58,15 @@ message OrderIntent {
 message RiskDecision {
   string action = 1;
   string rule_id = 2;
-  string reason = 3;
+  string rule_group = 3;
+  string rule_version = 4;
+  string policy_id = 5;
+  string policy_scope = 6;
+  double observed_value = 7;
+  double threshold_value = 8;
+  string decision_tags = 9;
+  string reason = 10;
+  int64 decision_ts_ns = 11;
 }
 
 message OrderEvent {
@@ -73,6 +81,10 @@ message OrderEvent {
   string reason = 9;
   int64 ts_ns = 10;
   string trace_id = 11;
+  string execution_algo_id = 12;
+  int32 slice_index = 13;
+  int32 slice_total = 14;
+  bool throttle_applied = 15;
 }
 
 message PositionSnapshot {

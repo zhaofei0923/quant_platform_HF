@@ -184,6 +184,30 @@ bool ParseExecutionMode(const std::string& raw, ExecutionMode* out) {
     return false;
 }
 
+bool ParseExecutionAlgo(const std::string& raw, ExecutionAlgo* out) {
+    if (out == nullptr) {
+        return false;
+    }
+    const auto normalized = Lowercase(Trim(raw));
+    if (normalized.empty() || normalized == "direct") {
+        *out = ExecutionAlgo::kDirect;
+        return true;
+    }
+    if (normalized == "sliced") {
+        *out = ExecutionAlgo::kSliced;
+        return true;
+    }
+    if (normalized == "twap") {
+        *out = ExecutionAlgo::kTwap;
+        return true;
+    }
+    if (normalized == "vwap_lite" || normalized == "vwap-lite" || normalized == "vwap") {
+        *out = ExecutionAlgo::kVwapLite;
+        return true;
+    }
+    return false;
+}
+
 }  // namespace
 
 bool CtpConfigLoader::LoadFromYaml(const std::string& path,
@@ -373,6 +397,17 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         }
         return false;
     }
+    loaded.execution.algo = loaded.execution.mode == ExecutionMode::kSliced
+                                ? ExecutionAlgo::kSliced
+                                : ExecutionAlgo::kDirect;
+    const auto execution_algo_raw = get_value("execution_algo");
+    if (!execution_algo_raw.empty() &&
+        !ParseExecutionAlgo(execution_algo_raw, &loaded.execution.algo)) {
+        if (error != nullptr) {
+            *error = "execution_algo must be one of direct|sliced|twap|vwap_lite";
+        }
+        return false;
+    }
     loaded.execution.slice_size = 1;
     SetOptionalInt(kv, "slice_size", &loaded.execution.slice_size, &load_error);
     if (!load_error.empty()) {
@@ -398,6 +433,52 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
     if (loaded.execution.slice_interval_ms < 0) {
         if (error != nullptr) {
             *error = "slice_interval_ms must be >= 0";
+        }
+        return false;
+    }
+    loaded.execution.twap_duration_ms = 0;
+    SetOptionalInt(kv, "twap_duration_ms", &loaded.execution.twap_duration_ms, &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.execution.twap_duration_ms < 0) {
+        if (error != nullptr) {
+            *error = "twap_duration_ms must be >= 0";
+        }
+        return false;
+    }
+    loaded.execution.vwap_lookback_bars = 20;
+    SetOptionalInt(kv, "vwap_lookback_bars", &loaded.execution.vwap_lookback_bars, &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.execution.vwap_lookback_bars <= 0) {
+        if (error != nullptr) {
+            *error = "vwap_lookback_bars must be > 0";
+        }
+        return false;
+    }
+    loaded.execution.throttle_reject_ratio = 0.0;
+    SetOptionalDouble(kv,
+                      "throttle_reject_ratio",
+                      &loaded.execution.throttle_reject_ratio,
+                      &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.execution.throttle_reject_ratio < 0.0 ||
+        loaded.execution.throttle_reject_ratio > 1.0) {
+        if (error != nullptr) {
+            *error = "throttle_reject_ratio must be in [0, 1]";
         }
         return false;
     }
@@ -467,6 +548,40 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         }
         return false;
     }
+    loaded.risk.default_max_active_orders = 0;
+    SetOptionalInt(kv,
+                   "risk_default_max_active_orders",
+                   &loaded.risk.default_max_active_orders,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.risk.default_max_active_orders < 0) {
+        if (error != nullptr) {
+            *error = "risk_default_max_active_orders must be >= 0";
+        }
+        return false;
+    }
+    loaded.risk.default_max_position_notional = 0.0;
+    SetOptionalDouble(kv,
+                      "risk_default_max_position_notional",
+                      &loaded.risk.default_max_position_notional,
+                      &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.risk.default_max_position_notional < 0.0) {
+        if (error != nullptr) {
+            *error = "risk_default_max_position_notional must be >= 0";
+        }
+        return false;
+    }
     loaded.risk.default_rule_group = get_value("risk_default_rule_group");
     if (loaded.risk.default_rule_group.empty()) {
         loaded.risk.default_rule_group = "default";
@@ -475,6 +590,15 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
     if (loaded.risk.default_rule_version.empty()) {
         loaded.risk.default_rule_version = "v1";
     }
+    loaded.risk.default_policy_id = get_value("risk_default_policy_id");
+    if (loaded.risk.default_policy_id.empty()) {
+        loaded.risk.default_policy_id = "policy.global";
+    }
+    loaded.risk.default_policy_scope = get_value("risk_default_policy_scope");
+    if (loaded.risk.default_policy_scope.empty()) {
+        loaded.risk.default_policy_scope = "global";
+    }
+    loaded.risk.default_decision_tags = get_value("risk_default_decision_tags");
 
     const auto rule_groups = SplitCsvList(get_value("risk_rule_groups"));
     for (const auto& group : rule_groups) {
@@ -487,6 +611,18 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         rule.rule_version = get_value("risk_rule_" + group + "_version");
         if (rule.rule_version.empty()) {
             rule.rule_version = loaded.risk.default_rule_version;
+        }
+        rule.policy_id = get_value("risk_rule_" + group + "_policy_id");
+        if (rule.policy_id.empty()) {
+            rule.policy_id = loaded.risk.default_policy_id;
+        }
+        rule.policy_scope = get_value("risk_rule_" + group + "_policy_scope");
+        if (rule.policy_scope.empty()) {
+            rule.policy_scope = loaded.risk.default_policy_scope;
+        }
+        rule.decision_tags = get_value("risk_rule_" + group + "_decision_tags");
+        if (rule.decision_tags.empty()) {
+            rule.decision_tags = loaded.risk.default_decision_tags;
         }
 
         rule.account_id = get_value("risk_rule_" + group + "_account_id");
@@ -542,6 +678,31 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
             }
         } else {
             rule.max_order_notional = loaded.risk.default_max_order_notional;
+        }
+        const auto max_active_orders = get_value("risk_rule_" + group + "_max_active_orders");
+        if (!max_active_orders.empty()) {
+            if (!ParseIntValue(max_active_orders, &rule.max_active_orders) ||
+                rule.max_active_orders < 0) {
+                if (error != nullptr) {
+                    *error = "invalid risk rule max_active_orders for group: " + group;
+                }
+                return false;
+            }
+        } else {
+            rule.max_active_orders = loaded.risk.default_max_active_orders;
+        }
+        const auto max_position_notional =
+            get_value("risk_rule_" + group + "_max_position_notional");
+        if (!max_position_notional.empty()) {
+            if (!ParseDoubleValue(max_position_notional, &rule.max_position_notional) ||
+                rule.max_position_notional < 0.0) {
+                if (error != nullptr) {
+                    *error = "invalid risk rule max_position_notional for group: " + group;
+                }
+                return false;
+            }
+        } else {
+            rule.max_position_notional = loaded.risk.default_max_position_notional;
         }
 
         loaded.risk.rules.push_back(std::move(rule));

@@ -12,6 +12,11 @@ BasicRiskEngine::BasicRiskEngine(BasicRiskLimits limits, std::vector<BasicRiskRu
     : limits_(std::move(limits)), rules_(std::move(rules)) {}
 
 RiskDecision BasicRiskEngine::PreCheck(const OrderIntent& intent) const {
+    return PreCheck(intent, RiskContext{});
+}
+
+RiskDecision BasicRiskEngine::PreCheck(const OrderIntent& intent,
+                                       const RiskContext& /*context*/) const {
     const auto decision_ts = NowEpochNanos();
     const auto* matched_rule = MatchRule(intent);
     const std::int32_t max_volume = matched_rule == nullptr ? limits_.max_order_volume

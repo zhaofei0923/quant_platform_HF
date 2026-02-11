@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from enum import Enum
 from typing import Any
 
 from quant_hft.contracts import OffsetFlag, OrderEvent, Side, SignalIntent, StateSnapshot7D
 
 BACKTEST_CTX_REQUIRED_KEYS = ("run_id", "mode", "clock_ns", "metrics", "artifacts")
+
+
+class StrategyTemplate(str, Enum):
+    TREND = "trend"
+    ARBITRAGE = "arbitrage"
+    MARKET_MAKING = "market_making"
 
 
 def ensure_backtest_ctx(
@@ -48,8 +55,11 @@ class StrategyBase(ABC):
 
     strategy_id: str
 
-    def __init__(self, strategy_id: str) -> None:
+    def __init__(
+        self, strategy_id: str, template: StrategyTemplate = StrategyTemplate.TREND
+    ) -> None:
         self.strategy_id = strategy_id
+        self.template = template
 
     @abstractmethod
     def on_bar(self, ctx: dict[str, Any], bar_batch: list[dict[str, Any]]) -> list[SignalIntent]:

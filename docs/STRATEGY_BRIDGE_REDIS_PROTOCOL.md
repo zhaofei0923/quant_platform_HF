@@ -83,3 +83,14 @@ Notes:
 - `core_engine` tracks the last processed `seq` per `strategy_id`.
 - If the same `seq` is seen again, it is ignored.
 
+## Data Governance Hooks
+
+- Dictionary source: `python/quant_hft/data_pipeline/data_dictionary.py`.
+- Lifecycle policy (local verifiable hot/warm/cold): `scripts/data_pipeline/run_lifecycle.py`.
+- Redis/Timescale reconciliation: `scripts/data_pipeline/run_reconcile.py`.
+
+Recommended repository-level evidence flow:
+
+1. Export order events from analytics storage to CSV.
+2. Capture Redis order snapshots into JSON.
+3. Run `run_reconcile.py` and archive the JSON report under `docs/results/`.

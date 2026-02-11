@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from quant_hft.data_pipeline.adapters import DuckDbAnalyticsStore, MinioArchiveStore
+from quant_hft.data_pipeline.data_dictionary import DataDictionary
 from quant_hft.ops.monitoring import InMemoryObservability
 
 
@@ -33,6 +34,7 @@ class DataPipelineConfig:
     max_run_latency_ms: float = 2_000.0
     min_total_export_rows: int = 1
     min_archived_objects: int = 1
+    validate_data_dictionary: bool = True
 
 
 @dataclass(frozen=True)
@@ -44,6 +46,7 @@ class PipelineRunReport:
     run_latency_ms: float
     archived_objects_count: int
     alert_codes: tuple[str, ...]
+    data_dictionary_violations: tuple[str, ...]
     manifest_path: Path
 
 
@@ -91,6 +94,7 @@ class DataPipelineProcess:
         archived_names: list[str] = []
         run_latency_ms = 0.0
         alert_codes: tuple[str, ...] = ()
+        data_dictionary_violations: tuple[str, ...] = ()
         root_span = None
         if self._obs is not None:
             root_span = self._obs.start_span(
@@ -145,10 +149,12 @@ class DataPipelineProcess:
 
             manifest_path = export_root / "manifest.json"
             run_latency_ms = (time.perf_counter_ns() - started_perf_ns) / 1_000_000.0
+            data_dictionary_violations = self._validate_data_dictionary()
             alert_codes = self._evaluate_alerts(
                 total_export_rows=sum(exported_rows.values()),
                 archived_objects_count=len(archived_names) + 1,
                 run_latency_ms=run_latency_ms,
+                has_data_dictionary_violation=bool(data_dictionary_violations),
             )
             manifest = {
                 "run_id": run_id,
@@ -158,6 +164,7 @@ class DataPipelineProcess:
                 "exported_files": {table: str(path) for table, path in exported_files.items()},
                 "run_latency_ms": run_latency_ms,
                 "alert_codes": list(alert_codes),
+                "data_dictionary_violations": list(data_dictionary_violations),
                 "archive_prefix": object_base,
                 "archive_bucket": self._config.archive.bucket,
                 "archive_mode": self._archive.mode,
@@ -187,6 +194,7 @@ class DataPipelineProcess:
                         "status": "ok",
                         "run_latency_ms": f"{run_latency_ms:.6f}",
                         "archived_objects_count": str(len(archived_names)),
+                        "data_dictionary_violations": str(len(data_dictionary_violations)),
                     }
                 )
         except Exception as exc:
@@ -218,6 +226,7 @@ class DataPipelineProcess:
             run_latency_ms=run_latency_ms,
             archived_objects_count=len(archived_names),
             alert_codes=alert_codes,
+            data_dictionary_violations=data_dictionary_violations,
             manifest_path=manifest_path,
         )
 
@@ -251,6 +260,7 @@ class DataPipelineProcess:
         total_export_rows: int,
         archived_objects_count: int,
         run_latency_ms: float,
+        has_data_dictionary_violation: bool,
     ) -> tuple[str, ...]:
         alerts: list[str] = []
         if total_export_rows < self._config.min_total_export_rows:
@@ -259,7 +269,22 @@ class DataPipelineProcess:
             alerts.append("PIPELINE_ARCHIVE_INCOMPLETE")
         if run_latency_ms > self._config.max_run_latency_ms:
             alerts.append("PIPELINE_RUN_SLOW")
+        if has_data_dictionary_violation:
+            alerts.append("PIPELINE_DATA_DICTIONARY_VIOLATION")
         return tuple(alerts)
+
+    def _validate_data_dictionary(self) -> tuple[str, ...]:
+        if not self._config.validate_data_dictionary:
+            return ()
+        if "order_events" not in self._config.export_tables:
+            return ()
+
+        dictionary = DataDictionary()
+        issues: list[str] = []
+        for index, row in enumerate(self._store.read_table_as_dicts("order_events", limit=2000)):
+            for issue in dictionary.validate("timescale_order_event", row):
+                issues.append(f"order_events[{index}] {issue}")
+        return tuple(issues)
 
     def _record_observability(
         self,

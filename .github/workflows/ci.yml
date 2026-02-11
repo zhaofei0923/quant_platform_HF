@@ -15,6 +15,13 @@ jobs:
         run: cmake --build build -j
       - name: Test
         run: ctest --test-dir build --output-on-failure
+      - name: Perf Smoke
+        run: |
+          mkdir -p docs/results
+          python3 scripts/perf/run_hotpath_bench.py \
+            --benchmark-bin build/hotpath_benchmark \
+            --baseline configs/perf/baseline.json \
+            --result-json docs/results/hotpath_bench_result.json
 
   python:
     runs-on: ubuntu-latest
@@ -32,6 +39,7 @@ jobs:
           ruff check python scripts
           black --check python scripts
           mypy python/quant_hft
+          python scripts/build/verify_contract_sync.py
           pytest python/tests -q
       - name: Ops Smoke
         run: |
@@ -56,6 +64,9 @@ jobs:
           grep -q -- "--strategy-bridge-state-key-count 2" runtime/ops_smoke.out
           grep -q -- "--strategy-bridge-intent-count 1" runtime/ops_smoke.out
           grep -q -- "--strategy-bridge-order-key-count 1" runtime/ops_smoke.out
+          test -f docs/results/ops_alert_report.json
+          test -f docs/results/ops_alert_report.md
+          grep -q "quant_hft_strategy_bridge_chain_integrity" docs/results/ops_health_report.md
       - name: Upload Ops Smoke Artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -67,5 +78,7 @@ jobs:
             docs/results/reconnect_fault_result.md
             docs/results/ops_health_report.json
             docs/results/ops_health_report.md
+            docs/results/ops_alert_report.json
+            docs/results/ops_alert_report.md
           if-no-files-found: error
           retention-days: 14

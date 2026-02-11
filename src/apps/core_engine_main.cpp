@@ -1,12 +1,14 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <csignal>
 #include <iostream>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -23,8 +25,10 @@
 #include "quant_hft/core/timescale_buffered_event_store.h"
 #include "quant_hft/core/wal_replay_loader.h"
 #include "quant_hft/services/basic_risk_engine.h"
+#include "quant_hft/services/execution_planner.h"
 #include "quant_hft/services/in_memory_portfolio_ledger.h"
 #include "quant_hft/services/order_state_machine.h"
+#include "quant_hft/services/risk_policy_engine.h"
 #include "quant_hft/services/rule_market_state_engine.h"
 
 namespace {
@@ -119,13 +123,18 @@ std::vector<std::string> ResolveStrategyIds(const quant_hft::CtpFileConfig& conf
     return {"demo"};
 }
 
-std::vector<quant_hft::BasicRiskRule> BuildRiskRules(const quant_hft::RiskConfig& risk_config) {
-    std::vector<quant_hft::BasicRiskRule> rules;
+std::vector<quant_hft::RiskPolicyRule> BuildRiskPolicyRules(
+    const quant_hft::RiskConfig& risk_config) {
+    std::vector<quant_hft::RiskPolicyRule> rules;
     rules.reserve(risk_config.rules.size());
     for (const auto& rule_cfg : risk_config.rules) {
-        quant_hft::BasicRiskRule rule;
-        rule.rule_id = rule_cfg.rule_id.empty() ? ("risk." + rule_cfg.rule_group)
-                                                : rule_cfg.rule_id;
+        quant_hft::RiskPolicyRule rule;
+        rule.policy_id = rule_cfg.policy_id.empty()
+                             ? (rule_cfg.rule_id.empty() ? "policy." + rule_cfg.rule_group
+                                                         : rule_cfg.rule_id)
+                             : rule_cfg.policy_id;
+        rule.policy_scope = rule_cfg.policy_scope.empty() ? "global" : rule_cfg.policy_scope;
+        rule.decision_tags = rule_cfg.decision_tags;
         rule.rule_group = rule_cfg.rule_group.empty() ? "default" : rule_cfg.rule_group;
         rule.rule_version = rule_cfg.rule_version.empty() ? "v1" : rule_cfg.rule_version;
         rule.account_id = rule_cfg.account_id;
@@ -134,57 +143,50 @@ std::vector<quant_hft::BasicRiskRule> BuildRiskRules(const quant_hft::RiskConfig
         rule.window_end_hhmm = rule_cfg.window_end_hhmm;
         rule.max_order_volume = rule_cfg.max_order_volume;
         rule.max_order_notional = rule_cfg.max_order_notional;
+        rule.max_active_orders = rule_cfg.max_active_orders;
+        rule.max_position_notional = rule_cfg.max_position_notional;
         rules.push_back(std::move(rule));
     }
     return rules;
 }
 
-std::vector<quant_hft::OrderIntent> BuildExecutionIntents(
-    const quant_hft::SignalIntent& signal,
-    const std::string& account_id,
-    const quant_hft::ExecutionConfig& execution) {
-    std::vector<quant_hft::OrderIntent> intents;
-    if (signal.volume <= 0 || signal.trace_id.empty()) {
-        return intents;
-    }
+struct ExecutionMetadata {
+    std::string execution_algo_id;
+    std::int32_t slice_index{0};
+    std::int32_t slice_total{0};
+    bool throttle_applied{false};
+};
 
-    const bool use_sliced_mode = execution.mode == quant_hft::ExecutionMode::kSliced &&
-                                 execution.slice_size > 0 &&
-                                 signal.volume > execution.slice_size;
-    const int slice_size = use_sliced_mode ? execution.slice_size : signal.volume;
-    int remaining = signal.volume;
-    int slice_index = 0;
-    const auto base_ts = signal.ts_ns == 0 ? quant_hft::NowEpochNanos() : signal.ts_ns;
-    while (remaining > 0) {
-        const int this_volume = std::min(remaining, slice_size);
-        ++slice_index;
+double EstimatePositionNotional(const quant_hft::InMemoryPortfolioLedger& ledger,
+                                const quant_hft::OrderIntent& intent) {
+    const auto long_pos =
+        ledger.GetPositionSnapshot(intent.account_id,
+                                   intent.instrument_id,
+                                   quant_hft::PositionDirection::kLong);
+    const auto short_pos =
+        ledger.GetPositionSnapshot(intent.account_id,
+                                   intent.instrument_id,
+                                   quant_hft::PositionDirection::kShort);
+    return std::fabs(static_cast<double>(long_pos.volume) * long_pos.avg_price) +
+           std::fabs(static_cast<double>(short_pos.volume) * short_pos.avg_price);
+}
 
-        quant_hft::OrderIntent intent;
-        intent.account_id = account_id;
-        intent.instrument_id = signal.instrument_id;
-        intent.side = signal.side;
-        intent.offset = signal.offset;
-        intent.type = quant_hft::OrderType::kLimit;
-        intent.volume = this_volume;
-        intent.price = signal.limit_price;
-        intent.ts_ns = base_ts + slice_index;
-        if (use_sliced_mode) {
-            intent.client_order_id =
-                signal.trace_id + "#slice-" + std::to_string(slice_index);
-            intent.trace_id = intent.client_order_id;
-        } else {
-            intent.client_order_id = signal.trace_id;
-            intent.trace_id = signal.trace_id;
-        }
-
-        intents.push_back(std::move(intent));
-        remaining -= this_volume;
-    }
-    return intents;
+quant_hft::RiskContext BuildRiskContext(
+    const quant_hft::OrderIntent& intent,
+    const quant_hft::InMemoryPortfolioLedger& ledger,
+    const quant_hft::OrderStateMachine& order_state_machine) {
+    quant_hft::RiskContext context;
+    context.account_id = intent.account_id;
+    context.instrument_id = intent.instrument_id;
+    context.active_order_count = static_cast<std::int32_t>(order_state_machine.ActiveOrderCount());
+    context.account_position_notional = EstimatePositionNotional(ledger, intent);
+    context.session_hhmm = -1;
+    return context;
 }
 
 quant_hft::OrderEvent BuildRejectedEvent(const quant_hft::OrderIntent& intent,
-                                         const std::string& reason) {
+                                         const std::string& reason,
+                                         const ExecutionMetadata& metadata) {
     quant_hft::OrderEvent event;
     event.account_id = intent.account_id;
     event.client_order_id = intent.client_order_id;
@@ -197,6 +199,10 @@ quant_hft::OrderEvent BuildRejectedEvent(const quant_hft::OrderIntent& intent,
     event.reason = reason;
     event.ts_ns = quant_hft::NowEpochNanos();
     event.trace_id = intent.trace_id;
+    event.execution_algo_id = metadata.execution_algo_id;
+    event.slice_index = metadata.slice_index;
+    event.slice_total = metadata.slice_total;
+    event.throttle_applied = metadata.throttle_applied;
     return event;
 }
 
@@ -232,15 +238,26 @@ int main(int argc, char** argv) {
     const std::string account_id = file_config.account_id.empty() ? config.user_id
                                                                    : file_config.account_id;
     const ExecutionConfig execution_config = file_config.execution;
-    BasicRiskLimits risk_limits;
-    risk_limits.max_order_volume = file_config.risk.default_max_order_volume;
-    risk_limits.max_order_notional = file_config.risk.default_max_order_notional;
-    risk_limits.rule_group = file_config.risk.default_rule_group;
-    risk_limits.rule_version = file_config.risk.default_rule_version;
-    BasicRiskEngine risk(risk_limits, BuildRiskRules(file_config.risk));
+    RiskPolicyDefaults risk_defaults;
+    risk_defaults.max_order_volume = file_config.risk.default_max_order_volume;
+    risk_defaults.max_order_notional = file_config.risk.default_max_order_notional;
+    risk_defaults.max_active_orders = file_config.risk.default_max_active_orders;
+    risk_defaults.max_position_notional = file_config.risk.default_max_position_notional;
+    risk_defaults.policy_id = file_config.risk.default_policy_id;
+    risk_defaults.policy_scope = file_config.risk.default_policy_scope;
+    risk_defaults.decision_tags = file_config.risk.default_decision_tags;
+    risk_defaults.rule_group = file_config.risk.default_rule_group;
+    risk_defaults.rule_version = file_config.risk.default_rule_version;
+    RiskPolicyEngine risk(risk_defaults, BuildRiskPolicyRules(file_config.risk));
+    ExecutionPlanner execution_planner;
     CtpGatewayAdapter ctp_gateway(10);
     InMemoryPortfolioLedger ledger;
     OrderStateMachine order_state_machine;
+    std::mutex planner_mutex;
+    std::mutex execution_metadata_mutex;
+    std::mutex market_history_mutex;
+    std::unordered_map<std::string, ExecutionMetadata> execution_metadata_by_order;
+    std::unordered_map<std::string, std::vector<MarketSnapshot>> recent_market_history;
     std::mutex cancel_pending_mutex;
     std::unordered_set<std::string> cancel_pending_orders;
     WalReplayLoader replay_loader;
@@ -296,7 +313,19 @@ int main(int argc, char** argv) {
                   << " ledger_applied=" << replay_stats.ledger_applied << '\n';
     }
 
-    auto process_order_event = [&](const OrderEvent& event) {
+    auto process_order_event = [&](const OrderEvent& raw_event) {
+        OrderEvent event = raw_event;
+        {
+            std::lock_guard<std::mutex> lock(execution_metadata_mutex);
+            const auto it = execution_metadata_by_order.find(event.client_order_id);
+            if (it != execution_metadata_by_order.end()) {
+                event.execution_algo_id = it->second.execution_algo_id;
+                event.slice_index = it->second.slice_index;
+                event.slice_total = it->second.slice_total;
+                event.throttle_applied = event.throttle_applied || it->second.throttle_applied;
+            }
+        }
+
         bool state_applied = order_state_machine.OnOrderEvent(event);
         if (!state_applied) {
             state_applied = order_state_machine.RecoverFromOrderEvent(event);
@@ -308,6 +337,12 @@ int main(int argc, char** argv) {
         if (IsTerminalStatus(event.status)) {
             std::lock_guard<std::mutex> lock(cancel_pending_mutex);
             cancel_pending_orders.erase(event.client_order_id);
+            std::lock_guard<std::mutex> metadata_lock(execution_metadata_mutex);
+            execution_metadata_by_order.erase(event.client_order_id);
+        }
+        {
+            std::lock_guard<std::mutex> lock(planner_mutex);
+            execution_planner.RecordOrderResult(event.status == OrderStatus::kRejected);
         }
         ledger.OnOrderEvent(event);
         wal_sink.AppendOrderEvent(event);
@@ -321,6 +356,14 @@ int main(int argc, char** argv) {
     };
 
     auto process_market_snapshot = [&](const MarketSnapshot& snapshot) {
+        {
+            std::lock_guard<std::mutex> lock(market_history_mutex);
+            auto& history = recent_market_history[snapshot.instrument_id];
+            history.push_back(snapshot);
+            if (history.size() > 64) {
+                history.erase(history.begin());
+            }
+        }
         realtime_cache.UpsertMarketSnapshot(snapshot);
         timeseries_store.AppendMarketSnapshot(snapshot);
         market_state.OnMarketSnapshot(snapshot);
@@ -384,28 +427,81 @@ int main(int argc, char** argv) {
                 }
 
                 for (const auto& signal : batch.intents) {
-                    const auto intents =
-                        BuildExecutionIntents(signal, account_id, execution_config);
-                    for (std::size_t idx = 0; idx < intents.size(); ++idx) {
-                        const auto& intent = intents[idx];
-                        const auto decision = risk.PreCheck(intent);
+                    std::vector<MarketSnapshot> recent_market;
+                    {
+                        std::lock_guard<std::mutex> lock(market_history_mutex);
+                        const auto it = recent_market_history.find(signal.instrument_id);
+                        if (it != recent_market_history.end()) {
+                            recent_market = it->second;
+                        }
+                    }
+                    const auto plans =
+                        execution_planner.BuildPlan(signal, account_id, execution_config, recent_market);
+                    for (const auto& planned : plans) {
+                        const auto& intent = planned.intent;
+                        ExecutionMetadata metadata;
+                        metadata.execution_algo_id = planned.execution_algo_id;
+                        metadata.slice_index = planned.slice_index;
+                        metadata.slice_total = planned.slice_total;
+                        {
+                            std::lock_guard<std::mutex> lock(execution_metadata_mutex);
+                            execution_metadata_by_order[intent.client_order_id] = metadata;
+                        }
+
+                        bool throttle_applied = false;
+                        double throttle_ratio = 0.0;
+                        if (execution_config.throttle_reject_ratio > 0.0) {
+                            std::lock_guard<std::mutex> lock(planner_mutex);
+                            throttle_applied =
+                                execution_planner.ShouldThrottle(execution_config.throttle_reject_ratio);
+                            throttle_ratio = execution_planner.CurrentRejectRatio();
+                        }
+                        if (throttle_applied) {
+                            RiskDecision throttle_decision;
+                            throttle_decision.action = RiskAction::kReject;
+                            throttle_decision.rule_id = "policy.execution.throttle.reject_ratio";
+                            throttle_decision.rule_group = "execution";
+                            throttle_decision.rule_version = "v1";
+                            throttle_decision.policy_id = "policy.execution.throttle";
+                            throttle_decision.policy_scope = "execution";
+                            throttle_decision.observed_value = throttle_ratio;
+                            throttle_decision.threshold_value = execution_config.throttle_reject_ratio;
+                            throttle_decision.decision_tags = "execution,throttle";
+                            throttle_decision.reason = "reject ratio exceeds threshold";
+                            throttle_decision.decision_ts_ns = NowEpochNanos();
+                            timeseries_store.AppendRiskDecision(intent, throttle_decision);
+
+                            metadata.throttle_applied = true;
+                            process_order_event(BuildRejectedEvent(
+                                intent,
+                                "throttled:reject_ratio_exceeded",
+                                metadata));
+                            continue;
+                        }
+
+                        const auto context = BuildRiskContext(intent, ledger, order_state_machine);
+                        const auto decision = risk.PreCheck(intent, context);
                         timeseries_store.AppendRiskDecision(intent, decision);
 
                         if (decision.action != RiskAction::kAllow) {
-                            process_order_event(
-                                BuildRejectedEvent(intent, "risk_reject:" + decision.reason));
+                            process_order_event(BuildRejectedEvent(
+                                intent, "risk_reject:" + decision.reason, metadata));
                         } else if (!order_state_machine.OnOrderIntent(intent)) {
                             process_order_event(BuildRejectedEvent(
-                                intent, "order_state_reject:duplicate_or_invalid"));
+                                intent, "order_state_reject:duplicate_or_invalid", metadata));
                         } else if (!ctp_gateway.PlaceOrder(intent)) {
-                            process_order_event(
-                                BuildRejectedEvent(intent, "gateway_reject:place_order_failed"));
+                            process_order_event(BuildRejectedEvent(
+                                intent, "gateway_reject:place_order_failed", metadata));
+                        } else {
+                            std::lock_guard<std::mutex> lock(planner_mutex);
+                            execution_planner.RecordOrderResult(false);
                         }
 
-                        const bool is_last_slice = idx + 1 == intents.size();
-                        if (!is_last_slice &&
-                            execution_config.mode == ExecutionMode::kSliced &&
-                            execution_config.slice_interval_ms > 0) {
+                        const bool is_last_slice = planned.slice_index == planned.slice_total;
+                        const bool interval_enabled =
+                            execution_config.algo != ExecutionAlgo::kDirect &&
+                            execution_config.slice_interval_ms > 0;
+                        if (!is_last_slice && interval_enabled) {
                             std::this_thread::sleep_for(
                                 std::chrono::milliseconds(execution_config.slice_interval_ms));
                         }

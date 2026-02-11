@@ -1,0 +1,8 @@
+{
+  "benchmark": "hotpath_benchmark",
+  "iterations": 100000,
+  "buffer_size": 256,
+  "pool_capacity": 1024,
+  "baseline_ns_per_op": 10000.0,
+  "max_regression_ratio": 0.10
+}

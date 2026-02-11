@@ -196,19 +196,33 @@ TEST(CtpConfigLoaderTest, LoadsExecutionAndRiskRuleConfigs) {
         "  trader_front: \"tcp://127.0.0.1:40001\"\n"
         "  password: \"plain-secret\"\n"
         "  execution_mode: \"sliced\"\n"
+        "  execution_algo: \"twap\"\n"
         "  slice_size: 3\n"
         "  slice_interval_ms: 120\n"
+        "  twap_duration_ms: 2500\n"
+        "  vwap_lookback_bars: 30\n"
+        "  throttle_reject_ratio: 0.25\n"
         "  cancel_after_ms: 1500\n"
         "  cancel_check_interval_ms: 250\n"
         "  risk_default_max_order_volume: 12\n"
         "  risk_default_max_order_notional: 200000\n"
+        "  risk_default_max_active_orders: 4\n"
+        "  risk_default_max_position_notional: 900000\n"
         "  risk_default_rule_group: \"global-default\"\n"
         "  risk_default_rule_version: \"2026.02\"\n"
+        "  risk_default_policy_id: \"policy.global\"\n"
+        "  risk_default_policy_scope: \"global\"\n"
+        "  risk_default_decision_tags: \"default-risk\"\n"
         "  risk_rule_groups: \"ag_open,acc_guard\"\n"
         "  risk_rule_ag_open_id: \"risk.ag.open\"\n"
+        "  risk_rule_ag_open_policy_id: \"policy.ag.open\"\n"
+        "  risk_rule_ag_open_policy_scope: \"instrument\"\n"
+        "  risk_rule_ag_open_decision_tags: \"ag,risk\"\n"
         "  risk_rule_ag_open_instrument_id: \"SHFE.ag2406\"\n"
         "  risk_rule_ag_open_max_order_volume: 2\n"
         "  risk_rule_ag_open_max_order_notional: 12000\n"
+        "  risk_rule_ag_open_max_active_orders: 1\n"
+        "  risk_rule_ag_open_max_position_notional: 80000\n"
         "  risk_rule_ag_open_version: \"2026.03\"\n"
         "  risk_rule_acc_guard_account_id: \"sim-account\"\n"
         "  risk_rule_acc_guard_max_order_volume: 5\n"
@@ -220,23 +234,38 @@ TEST(CtpConfigLoaderTest, LoadsExecutionAndRiskRuleConfigs) {
         << error;
 
     EXPECT_EQ(config.execution.mode, ExecutionMode::kSliced);
+    EXPECT_EQ(config.execution.algo, ExecutionAlgo::kTwap);
     EXPECT_EQ(config.execution.slice_size, 3);
     EXPECT_EQ(config.execution.slice_interval_ms, 120);
+    EXPECT_EQ(config.execution.twap_duration_ms, 2500);
+    EXPECT_EQ(config.execution.vwap_lookback_bars, 30);
+    EXPECT_DOUBLE_EQ(config.execution.throttle_reject_ratio, 0.25);
     EXPECT_EQ(config.execution.cancel_after_ms, 1500);
     EXPECT_EQ(config.execution.cancel_check_interval_ms, 250);
 
     EXPECT_EQ(config.risk.default_max_order_volume, 12);
     EXPECT_DOUBLE_EQ(config.risk.default_max_order_notional, 200000.0);
+    EXPECT_EQ(config.risk.default_max_active_orders, 4);
+    EXPECT_DOUBLE_EQ(config.risk.default_max_position_notional, 900000.0);
     EXPECT_EQ(config.risk.default_rule_group, "global-default");
     EXPECT_EQ(config.risk.default_rule_version, "2026.02");
+    EXPECT_EQ(config.risk.default_policy_id, "policy.global");
+    EXPECT_EQ(config.risk.default_policy_scope, "global");
+    EXPECT_EQ(config.risk.default_decision_tags, "default-risk");
 
     ASSERT_EQ(config.risk.rules.size(), 2U);
     EXPECT_EQ(config.risk.rules[0].rule_id, "risk.ag.open");
     EXPECT_EQ(config.risk.rules[0].rule_group, "ag_open");
+    EXPECT_EQ(config.risk.rules[0].policy_id, "policy.ag.open");
+    EXPECT_EQ(config.risk.rules[0].policy_scope, "instrument");
+    EXPECT_EQ(config.risk.rules[0].decision_tags, "ag,risk");
     EXPECT_EQ(config.risk.rules[0].instrument_id, "SHFE.ag2406");
     EXPECT_EQ(config.risk.rules[0].max_order_volume, 2);
+    EXPECT_EQ(config.risk.rules[0].max_active_orders, 1);
+    EXPECT_DOUBLE_EQ(config.risk.rules[0].max_position_notional, 80000.0);
     EXPECT_EQ(config.risk.rules[1].account_id, "sim-account");
     EXPECT_EQ(config.risk.rules[1].rule_group, "acc_guard");
+    EXPECT_EQ(config.risk.rules[1].policy_id, "policy.global");
 
     std::filesystem::remove(config_path);
 }
@@ -299,6 +328,38 @@ TEST(CtpConfigLoaderTest, RejectsInvalidCancelExecutionConfigs) {
         CtpConfigLoader::LoadFromYaml(invalid_scan_interval.string(), &config, &error));
     EXPECT_NE(error.find("cancel_check_interval_ms"), std::string::npos);
     std::filesystem::remove(invalid_scan_interval);
+
+    const auto bad_execution_algo = WriteTempConfig(
+        "ctp:\n"
+        "  environment: sim\n"
+        "  is_production_mode: false\n"
+        "  broker_id: \"9999\"\n"
+        "  user_id: \"191202\"\n"
+        "  investor_id: \"191202\"\n"
+        "  market_front: \"tcp://127.0.0.1:40011\"\n"
+        "  trader_front: \"tcp://127.0.0.1:40001\"\n"
+        "  password: \"plain-secret\"\n"
+        "  execution_algo: \"invalid_algo\"\n");
+    error.clear();
+    EXPECT_FALSE(CtpConfigLoader::LoadFromYaml(bad_execution_algo.string(), &config, &error));
+    EXPECT_NE(error.find("execution_algo"), std::string::npos);
+    std::filesystem::remove(bad_execution_algo);
+
+    const auto bad_reject_ratio = WriteTempConfig(
+        "ctp:\n"
+        "  environment: sim\n"
+        "  is_production_mode: false\n"
+        "  broker_id: \"9999\"\n"
+        "  user_id: \"191202\"\n"
+        "  investor_id: \"191202\"\n"
+        "  market_front: \"tcp://127.0.0.1:40011\"\n"
+        "  trader_front: \"tcp://127.0.0.1:40001\"\n"
+        "  password: \"plain-secret\"\n"
+        "  throttle_reject_ratio: 1.5\n");
+    error.clear();
+    EXPECT_FALSE(CtpConfigLoader::LoadFromYaml(bad_reject_ratio.string(), &config, &error));
+    EXPECT_NE(error.find("throttle_reject_ratio"), std::string::npos);
+    std::filesystem::remove(bad_reject_ratio);
 }
 
 }  // namespace

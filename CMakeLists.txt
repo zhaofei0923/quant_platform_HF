@@ -33,7 +33,10 @@ add_library(quant_hft_core STATIC
     src/core/storage/timescale_event_store.cpp
     src/core/storage/timescale_event_store_client_adapter.cpp
     src/core/storage/timescale_sql_client.cpp
+    src/core/perf/object_pool.cpp
     src/services/risk/basic_risk_engine.cpp
+    src/services/risk/risk_policy_engine.cpp
+    src/services/order/execution_planner.cpp
     src/services/order/in_memory_order_gateway.cpp
     src/services/order/order_state_machine.cpp
     src/services/portfolio/in_memory_portfolio_ledger.cpp
@@ -94,6 +97,9 @@ target_link_libraries(simnow_probe PRIVATE quant_hft_core)
 add_executable(wal_replay_tool src/apps/wal_replay_main.cpp)
 target_link_libraries(wal_replay_tool PRIVATE quant_hft_core)
 
+add_executable(hotpath_benchmark src/apps/hotpath_benchmark_main.cpp)
+target_link_libraries(hotpath_benchmark PRIVATE quant_hft_core)
+
 if(QUANT_HFT_BUILD_TESTS)
     include(CTest)
     enable_testing()
@@ -153,14 +159,23 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(libpq_timescale_sql_client_test tests/unit/core/libpq_timescale_sql_client_test.cpp)
     target_link_libraries(libpq_timescale_sql_client_test PRIVATE quant_hft_core GTest::gtest_main)
 
+    add_executable(object_pool_test tests/unit/core/object_pool_test.cpp)
+    target_link_libraries(object_pool_test PRIVATE quant_hft_core GTest::gtest_main)
+
     add_executable(basic_risk_engine_test tests/unit/services/basic_risk_engine_test.cpp)
     target_link_libraries(basic_risk_engine_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(risk_policy_engine_test tests/unit/services/risk_policy_engine_test.cpp)
+    target_link_libraries(risk_policy_engine_test PRIVATE quant_hft_core GTest::gtest_main)
 
     add_executable(in_memory_portfolio_ledger_test tests/unit/services/in_memory_portfolio_ledger_test.cpp)
     target_link_libraries(in_memory_portfolio_ledger_test PRIVATE quant_hft_core GTest::gtest_main)
 
     add_executable(order_state_machine_test tests/unit/services/order_state_machine_test.cpp)
     target_link_libraries(order_state_machine_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(execution_planner_test tests/unit/services/execution_planner_test.cpp)
+    target_link_libraries(execution_planner_test PRIVATE quant_hft_core GTest::gtest_main)
 
     add_executable(rule_market_state_engine_test tests/unit/services/rule_market_state_engine_test.cpp)
     target_link_libraries(rule_market_state_engine_test PRIVATE quant_hft_core GTest::gtest_main)
@@ -181,8 +196,11 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(tcp_redis_hash_client_test)
     gtest_discover_tests(strategy_intent_inbox_test)
     gtest_discover_tests(libpq_timescale_sql_client_test)
+    gtest_discover_tests(object_pool_test)
     gtest_discover_tests(basic_risk_engine_test)
+    gtest_discover_tests(risk_policy_engine_test)
     gtest_discover_tests(in_memory_portfolio_ledger_test)
     gtest_discover_tests(order_state_machine_test)
+    gtest_discover_tests(execution_planner_test)
     gtest_discover_tests(rule_market_state_engine_test)
 endif()

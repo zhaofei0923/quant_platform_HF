@@ -1,0 +1,11 @@
+{
+  "redis_records": 1,
+  "timescale_records": 1,
+  "checked_order_count": 1,
+  "missing_in_redis": [],
+  "missing_in_timescale": [],
+  "field_mismatches": [],
+  "dictionary_errors": [],
+  "mismatch_count": 0,
+  "consistent": true
+}

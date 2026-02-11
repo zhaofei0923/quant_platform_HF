@@ -1,0 +1,7 @@
+environment: staging
+deploy_target: k8s-staging
+precheck_cmd: "echo precheck_staging"
+deploy_cmd: "echo deploy_staging"
+fault_inject_cmd: "echo inject_fault_staging"
+rollback_cmd: "echo rollback_staging"
+verify_cmd: "echo verify_staging"

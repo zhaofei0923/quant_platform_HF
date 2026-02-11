@@ -1,0 +1,18 @@
+[
+  {
+    "account_id": "sim-account",
+    "client_order_id": "ord-sample-1",
+    "instrument_id": "rb2405",
+    "status": "FILLED",
+    "total_volume": 2,
+    "filled_volume": 2,
+    "avg_fill_price": 4101.5,
+    "reason": "ok",
+    "ts_ns": 100,
+    "trace_id": "trace-sample-1",
+    "execution_algo_id": "twap",
+    "slice_index": 1,
+    "slice_total": 2,
+    "throttle_applied": false
+  }
+]

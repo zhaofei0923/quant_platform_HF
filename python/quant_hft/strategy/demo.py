@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from quant_hft.contracts import OffsetFlag, OrderEvent, Side, SignalIntent, StateSnapshot7D
-from quant_hft.strategy.base import StrategyBase
+from quant_hft.strategy.base import StrategyBase, StrategyTemplate
 
 
 class DemoStrategy(StrategyBase):
-    def __init__(self, strategy_id: str) -> None:
-        super().__init__(strategy_id)
+    def __init__(
+        self, strategy_id: str, template: StrategyTemplate = StrategyTemplate.TREND
+    ) -> None:
+        super().__init__(strategy_id, template)
         self._counter = 0
 
     def on_bar(

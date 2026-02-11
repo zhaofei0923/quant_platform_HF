@@ -97,6 +97,10 @@ TEST(TimescaleEventStoreClientAdapterTest, RoundTripsRowsByKey) {
     order.status = OrderStatus::kAccepted;
     order.total_volume = 1;
     order.ts_ns = 20;
+    order.execution_algo_id = "sliced";
+    order.slice_index = 1;
+    order.slice_total = 2;
+    order.throttle_applied = true;
     store.AppendOrderEvent(order);
 
     RiskDecision decision;
@@ -104,6 +108,11 @@ TEST(TimescaleEventStoreClientAdapterTest, RoundTripsRowsByKey) {
     decision.rule_id = "BASIC_LIMIT";
     decision.rule_group = "default";
     decision.rule_version = "v1";
+    decision.policy_id = "policy.max_notional";
+    decision.policy_scope = "instrument";
+    decision.observed_value = 120001.0;
+    decision.threshold_value = 120000.0;
+    decision.decision_tags = "risk,notional";
     decision.decision_ts_ns = 25;
     decision.reason = "ok";
     OrderIntent intent;
@@ -116,10 +125,21 @@ TEST(TimescaleEventStoreClientAdapterTest, RoundTripsRowsByKey) {
 
     EXPECT_EQ(store.GetMarketSnapshots("SHFE.ag2406").size(), 1U);
     EXPECT_EQ(store.GetOrderEvents("ord-1").size(), 1U);
+    const auto orders = store.GetOrderEvents("ord-1");
+    ASSERT_EQ(orders.size(), 1U);
+    EXPECT_EQ(orders[0].execution_algo_id, "sliced");
+    EXPECT_EQ(orders[0].slice_index, 1);
+    EXPECT_EQ(orders[0].slice_total, 2);
+    EXPECT_TRUE(orders[0].throttle_applied);
     const auto rows = store.GetRiskDecisionRows();
     ASSERT_EQ(rows.size(), 1U);
     EXPECT_EQ(rows[0].decision.rule_group, "default");
     EXPECT_EQ(rows[0].decision.rule_version, "v1");
+    EXPECT_EQ(rows[0].decision.policy_id, "policy.max_notional");
+    EXPECT_EQ(rows[0].decision.policy_scope, "instrument");
+    EXPECT_DOUBLE_EQ(rows[0].decision.observed_value, 120001.0);
+    EXPECT_DOUBLE_EQ(rows[0].decision.threshold_value, 120000.0);
+    EXPECT_EQ(rows[0].decision.decision_tags, "risk,notional");
     EXPECT_EQ(rows[0].decision.decision_ts_ns, 25);
 }
 

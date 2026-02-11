@@ -23,19 +23,33 @@ ctp:
   strategy_poll_interval_ms: 200
   account_id: "sim-account"
   execution_mode: "direct"   # direct | sliced
+  execution_algo: "direct"   # direct | sliced | twap | vwap_lite
   slice_size: 2
   slice_interval_ms: 120
+  twap_duration_ms: 0
+  vwap_lookback_bars: 20
+  throttle_reject_ratio: 0.0
   cancel_after_ms: 0          # 0 disables timeout-based cancel
   cancel_check_interval_ms: 200
   risk_default_max_order_volume: 200
   risk_default_max_order_notional: 1000000
+  risk_default_max_active_orders: 0
+  risk_default_max_position_notional: 0
   risk_default_rule_group: "default"
   risk_default_rule_version: "v1"
+  risk_default_policy_id: "policy.global"
+  risk_default_policy_scope: "global"
+  risk_default_decision_tags: "default-risk"
   risk_rule_groups: "ag_open"
   risk_rule_ag_open_id: "risk.ag.open"
+  risk_rule_ag_open_policy_id: "policy.ag.open"
+  risk_rule_ag_open_policy_scope: "instrument"
+  risk_rule_ag_open_decision_tags: "ag,risk"
   risk_rule_ag_open_instrument_id: "SHFE.ag2406"
   risk_rule_ag_open_max_order_volume: 20
   risk_rule_ag_open_max_order_notional: 120000
+  risk_rule_ag_open_max_active_orders: 2
+  risk_rule_ag_open_max_position_notional: 400000
   risk_rule_ag_open_version: "2026.02"
   connect_timeout_ms: 10000
   reconnect_max_attempts: 8

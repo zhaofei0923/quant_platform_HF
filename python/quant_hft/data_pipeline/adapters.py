@@ -241,6 +241,25 @@ class DuckDbAnalyticsStore:
             for item in rows
         ]
 
+    def list_table_columns(self, table: str) -> tuple[str, ...]:
+        if not _is_valid_identifier(table):
+            raise ValueError(f"invalid table name: {table}")
+        cursor = self._conn.execute(f"SELECT * FROM {table} LIMIT 0")
+        description = cursor.description or ()
+        return tuple(str(item[0]) for item in description)
+
+    def read_table_as_dicts(self, table: str, *, limit: int = 1000) -> list[dict[str, object]]:
+        if not _is_valid_identifier(table):
+            raise ValueError(f"invalid table name: {table}")
+        cursor = self._conn.execute(f"SELECT * FROM {table} LIMIT ?", (max(1, limit),))
+        rows = list(cursor.fetchall())
+        columns = self.list_table_columns(table)
+        output: list[dict[str, object]] = []
+        for row in rows:
+            payload = {column: row[idx] for idx, column in enumerate(columns) if idx < len(row)}
+            output.append(payload)
+        return output
+
     def export_table_to_csv(self, table: str, destination: Path | str) -> int:
         if not _is_valid_identifier(table):
             raise ValueError(f"invalid table name: {table}")

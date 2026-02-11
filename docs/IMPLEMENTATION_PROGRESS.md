@@ -904,3 +904,32 @@ Completion rule:
 ## Pending for next increments
 - execute runbook on real SimNow session and archive measured reconnect SLO evidence
   (`docs/results/reconnect_fault_result.md`, target P99 < 10s)
+
+## Sprint FULL-TARGET (2026-02-11)
+
+- Objective:
+  - complete repository-deliverable target-state milestones M0-M8
+  - lock cross-language contracts and finish risk/execution/ops/research/data/perf closures
+- Scope:
+  - contracts: `include/quant_hft/contracts/types.h`, `proto/quant_hft/v1/contracts.proto`, `python/quant_hft/contracts.py`
+  - risk + execution: `include/quant_hft/interfaces/risk_engine.h`, `src/services/risk/risk_policy_engine.cpp`, `src/services/order/execution_planner.cpp`, `src/apps/core_engine_main.cpp`
+  - ops control plane + rollout: `python/quant_hft/ops/*`, `scripts/ops/rollout_orchestrator.py`, `scripts/ops/verify_rollout_evidence.py`, `configs/deploy/environments/*.yaml`
+  - research closure: `python/quant_hft/research/*`, `scripts/backtest/run_factor_evaluation.py`
+  - data governance: `python/quant_hft/data_pipeline/data_dictionary.py`, `python/quant_hft/data_pipeline/lifecycle_policy.py`, `scripts/data_pipeline/run_reconcile.py`, `scripts/data_pipeline/run_lifecycle.py`
+  - perf components: `include/quant_hft/core/object_pool.h`, `src/core/perf/object_pool.cpp`, `src/apps/hotpath_benchmark_main.cpp`, `scripts/perf/run_hotpath_bench.py`
+  - docs convergence: `develop/*`, `docs/SYSTEMD_DEPLOYMENT_RUNBOOK.md`, `docs/K8S_DEPLOYMENT_RUNBOOK.md`
+- Test Evidence:
+  - [x] `ctest --test-dir build --output-on-failure`
+  - [x] `.venv/bin/ruff check python scripts`
+  - [x] `.venv/bin/black --check python scripts`
+  - [x] `.venv/bin/mypy python/quant_hft`
+  - [x] `.venv/bin/pytest -q`
+  - [x] `python3 scripts/perf/run_hotpath_bench.py --benchmark-bin build/hotpath_benchmark --baseline configs/perf/baseline.json --result-json docs/results/hotpath_bench_result.json`
+  - [x] `.venv/bin/python scripts/build/verify_contract_sync.py`
+  - [x] `./scripts/build/bootstrap.sh`
+- Develop Docs Synced:
+  - [x] `develop/00-实现对齐矩阵与缺口总览.md`
+  - [x] `develop/00-未完成能力补齐路线图.md`
+  - [x] `develop/07-部署与运维/07-02-运维操作手册.md`
+- Status:
+  - `done`

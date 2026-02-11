@@ -69,6 +69,7 @@ def test_data_pipeline_run_once_exports_and_archives(tmp_path: Path) -> None:
     assert report.exported_rows["market_snapshots"] == 1
     assert report.exported_rows["order_events"] == 1
     assert report.archived_objects_count >= 3
+    assert report.data_dictionary_violations == ()
 
     assert report.manifest_path.exists()
     manifest = json.loads(report.manifest_path.read_text(encoding="utf-8"))
@@ -103,6 +104,7 @@ def test_data_pipeline_run_loop_honors_max_iterations(tmp_path: Path) -> None:
 
     assert len(reports) == 2
     assert all(report.exported_rows["market_snapshots"] == 1 for report in reports)
+    assert all(report.data_dictionary_violations == () for report in reports)
 
 
 def test_data_pipeline_emits_observability_metrics_and_alerts(tmp_path: Path) -> None:

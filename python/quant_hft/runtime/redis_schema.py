@@ -113,7 +113,14 @@ def parse_order_event(fields: Mapping[str, str]) -> OrderEvent | None:
     if any(fields.get(key) is None for key in required):
         return None
     trace_id = fields.get("trace_id", fields.get("client_order_id", ""))
+    execution_algo_id = fields.get("execution_algo_id", "")
+    raw_slice_index = fields.get("slice_index", "0")
+    raw_slice_total = fields.get("slice_total", "0")
+    raw_throttle_applied = fields.get("throttle_applied", "0")
     try:
+        slice_index = int(raw_slice_index)
+        slice_total = int(raw_slice_total)
+        throttle_applied = raw_throttle_applied.strip().lower() in {"1", "true", "yes"}
         return OrderEvent(
             account_id=fields["account_id"],
             client_order_id=fields["client_order_id"],
@@ -125,6 +132,11 @@ def parse_order_event(fields: Mapping[str, str]) -> OrderEvent | None:
             reason=fields["reason"],
             ts_ns=int(fields["ts_ns"]),
             trace_id=trace_id,
+            exchange_order_id=fields.get("exchange_order_id", ""),
+            execution_algo_id=execution_algo_id,
+            slice_index=slice_index,
+            slice_total=slice_total,
+            throttle_applied=throttle_applied,
         )
     except ValueError:
         return None

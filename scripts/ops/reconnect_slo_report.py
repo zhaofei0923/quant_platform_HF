@@ -8,6 +8,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 try:
+    from quant_hft.ops.alert_policy import (
+        alert_report_to_dict,
+        evaluate_alert_policy,
+        render_alert_report_markdown,
+    )
     from quant_hft.ops.monitoring import (
         build_ops_health_report,
         ops_health_report_to_dict,
@@ -21,6 +26,11 @@ try:
 except ModuleNotFoundError:
     repo_python = Path(__file__).resolve().parents[2] / "python"
     sys.path.insert(0, str(repo_python))
+    from quant_hft.ops.alert_policy import (  # type: ignore[no-redef]
+        alert_report_to_dict,
+        evaluate_alert_policy,
+        render_alert_report_markdown,
+    )
     from quant_hft.ops.monitoring import (  # type: ignore[no-redef]
         build_ops_health_report,
         ops_health_report_to_dict,
@@ -55,6 +65,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--interface", default="")
     parser.add_argument("--health-json-file", default="")
     parser.add_argument("--health-markdown-file", default="")
+    parser.add_argument("--alert-json-file", default="")
+    parser.add_argument("--alert-markdown-file", default="")
     parser.add_argument("--strategy-bridge-target-ms", type=float, default=1500.0)
     parser.add_argument(
         "--strategy-bridge-chain-status",
@@ -212,6 +224,22 @@ def main() -> int:
         health_md.parent.mkdir(parents=True, exist_ok=True)
         health_md.write_text(render_ops_health_markdown(ops_health_report), encoding="utf-8")
         print(str(health_md))
+
+    if args.alert_json_file or args.alert_markdown_file:
+        alert_report = evaluate_alert_policy(ops_health_report)
+        if args.alert_json_file:
+            alert_json = Path(args.alert_json_file)
+            alert_json.parent.mkdir(parents=True, exist_ok=True)
+            alert_json.write_text(
+                json.dumps(alert_report_to_dict(alert_report), ensure_ascii=True, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            print(str(alert_json))
+        if args.alert_markdown_file:
+            alert_md = Path(args.alert_markdown_file)
+            alert_md.parent.mkdir(parents=True, exist_ok=True)
+            alert_md.write_text(render_alert_report_markdown(alert_report), encoding="utf-8")
+            print(str(alert_md))
 
     return 0
 

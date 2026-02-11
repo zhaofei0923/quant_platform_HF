@@ -128,3 +128,20 @@ python3 scripts/ops/verify_deploy_rollback_evidence.py \
   --evidence-file docs/results/deploy_rollback_result.env \
   --max-rollback-seconds 180
 ```
+
+## Repository Rollout Orchestrator (Dry-Run First)
+
+Use the repository orchestrator to produce machine-verifiable rollout evidence:
+
+```bash
+python3 scripts/ops/rollout_orchestrator.py \
+  --env-config configs/deploy/environments/sim.yaml \
+  --inject-fault \
+  --output-file docs/results/rollout_result.env
+
+python3 scripts/ops/verify_rollout_evidence.py \
+  --evidence-file docs/results/rollout_result.env \
+  --require-fault-step
+```
+
+For real command execution, append `--execute` explicitly.

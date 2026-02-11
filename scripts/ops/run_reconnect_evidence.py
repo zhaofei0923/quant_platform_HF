@@ -86,6 +86,14 @@ def _build_parser() -> argparse.ArgumentParser:
         default="docs/results/ops_health_report.md",
     )
     parser.add_argument(
+        "--alert-json-file",
+        default="docs/results/ops_alert_report.json",
+    )
+    parser.add_argument(
+        "--alert-markdown-file",
+        default="docs/results/ops_alert_report.md",
+    )
+    parser.add_argument(
         "--fault-script",
         default="scripts/ops/ctp_fault_inject.py",
     )
@@ -463,6 +471,10 @@ def main() -> int:
             str(args.health_json_file),
             "--health-markdown-file",
             str(args.health_markdown_file),
+            "--alert-json-file",
+            str(args.alert_json_file),
+            "--alert-markdown-file",
+            str(args.alert_markdown_file),
             "--target-p99-sec",
             f"{args.target_p99_sec:g}",
             "--strategy-bridge-target-ms",

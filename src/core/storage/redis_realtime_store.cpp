@@ -18,6 +18,10 @@ std::string RedisKeyBuilder::MarketTickLatest(const std::string& instrument_id) 
     return "market:tick:" + instrument_id + ":latest";
 }
 
+std::string RedisKeyBuilder::StateSnapshot7DLatest(const std::string& instrument_id) {
+    return "market:state7d:" + instrument_id + ":latest";
+}
+
 std::string RedisKeyBuilder::Position(const std::string& account_id,
                                       const std::string& instrument_id,
                                       PositionDirection direction) {
@@ -48,6 +52,14 @@ void RedisRealtimeStore::UpsertPositionSnapshot(const PositionSnapshot& position
     std::lock_guard<std::mutex> lock(mutex_);
     position_snapshots_[RedisKeyBuilder::Position(
         position.account_id, position.instrument_id, position.direction)] = position;
+}
+
+void RedisRealtimeStore::UpsertStateSnapshot7D(const StateSnapshot7D& snapshot) {
+    if (snapshot.instrument_id.empty()) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    state_snapshots7d_[RedisKeyBuilder::StateSnapshot7DLatest(snapshot.instrument_id)] = snapshot;
 }
 
 bool RedisRealtimeStore::GetMarketSnapshot(const std::string& instrument_id,
@@ -94,6 +106,22 @@ bool RedisRealtimeStore::GetPositionSnapshot(const std::string& account_id,
     const auto key = RedisKeyBuilder::Position(account_id, instrument_id, direction);
     const auto it = position_snapshots_.find(key);
     if (it == position_snapshots_.end()) {
+        return false;
+    }
+    *out = it->second;
+    return true;
+}
+
+bool RedisRealtimeStore::GetStateSnapshot7D(const std::string& instrument_id,
+                                            StateSnapshot7D* out) const {
+    if (out == nullptr || instrument_id.empty()) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto key = RedisKeyBuilder::StateSnapshot7DLatest(instrument_id);
+    const auto it = state_snapshots7d_.find(key);
+    if (it == state_snapshots7d_.end()) {
         return false;
     }
     *out = it->second;

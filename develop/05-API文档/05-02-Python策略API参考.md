@@ -11,6 +11,7 @@
 本仓库的 Python 包 `quant_hft` 提供：
 - 策略接口（`StrategyBase`）
 - 策略运行时分发器（`StrategyRuntime`）
+- Redis 策略桥 runner（`quant_hft.runtime.strategy_runner.StrategyRunner`）
 - 回测回放与确定性成交模拟（`quant_hft.backtest`）
 - 运维与验证工具库（`quant_hft.ops`，对应 `scripts/ops/*`）
 - 数据管道组件（`quant_hft.data_pipeline`，对应 `scripts/data_pipeline/*`）
@@ -128,7 +129,40 @@ intents = runtime.on_bar({}, [{"instrument_id": "SHFE.ag2406"}])
 runtime.on_order_event({}, OrderEvent(...))
 ```
 
-## 4. 最小可运行示例
+## 4. Redis 策略桥 Runner（quant_hft.runtime.strategy_runner）
+
+源码：
+- `python/quant_hft/runtime/strategy_runner.py`
+- `python/quant_hft/runtime/redis_hash.py`
+- `python/quant_hft/runtime/redis_schema.py`
+
+`StrategyRunner` 负责：
+- 读取 `market:state7d:<instrument>:latest`
+- 调用 `runtime.on_state(...)` 产出 `SignalIntent`
+- 写入 `strategy:intent:<strategy_id>:latest`（带 `seq/count/intent_i`）
+- 轮询 `trade:order:<trace_id>:info` 并触发 `runtime.on_order_event(...)`
+
+核心调用：
+
+```python
+runner = StrategyRunner(
+    runtime=runtime,
+    redis_client=redis_client,
+    strategy_id="demo",
+    instruments=["SHFE.ag2406"],
+    poll_interval_ms=200,
+)
+runner.run_once()      # 单次循环
+runner.run_forever()   # 持续轮询
+```
+
+Runner 配置加载：
+- `load_runner_config("configs/sim/ctp.yaml")`
+- 读取 `instruments`、`strategy_ids`、`strategy_poll_interval_ms`
+
+Redis 协议约定见：`docs/STRATEGY_BRIDGE_REDIS_PROTOCOL.md`。
+
+## 5. 最小可运行示例
 
 （与 `python/tests/test_runtime_engine.py` 一致）
 
@@ -165,16 +199,16 @@ runtime.add_strategy(DemoStrategy("demo"))
 print(runtime.on_bar({}, [{"instrument_id": "SHFE.ag2406"}]))
 ```
 
-## 5. 回测回放（quant_hft.backtest）
+## 6. 回测回放（quant_hft.backtest）
 
 - 文档：`docs/BACKTEST_REPLAY_HARNESS.md`
 - CLI：`scripts/backtest/replay_csv.py`
 
-## 6. 数据管道（quant_hft.data_pipeline）
+## 7. 数据管道（quant_hft.data_pipeline）
 
 - CLI：`scripts/data_pipeline/run_pipeline.py`
 
-## 7. 运维工具（quant_hft.ops）
+## 8. 运维工具（quant_hft.ops）
 
 - systemd 渲染：`scripts/ops/render_systemd_units.py`
 - k8s 渲染：`scripts/ops/render_k8s_manifests.py`

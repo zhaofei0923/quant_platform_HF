@@ -7,6 +7,7 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace quant_hft {
 namespace {
@@ -109,6 +110,24 @@ void SetOptionalInt(const std::unordered_map<std::string, std::string>& kv,
         return;
     }
     *target = parsed;
+}
+
+std::vector<std::string> SplitCsvList(const std::string& raw) {
+    std::vector<std::string> values;
+    std::size_t start = 0;
+    while (start <= raw.size()) {
+        const auto end = raw.find(',', start);
+        const auto item = end == std::string::npos ? raw.substr(start) : raw.substr(start, end - start);
+        const auto trimmed = Trim(item);
+        if (!trimmed.empty()) {
+            values.push_back(trimmed);
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        start = end + 1;
+    }
+    return values;
 }
 
 }  // namespace
@@ -267,6 +286,30 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
             *error = "query_rate_limit_qps must be > 0";
         }
         return false;
+    }
+
+    loaded.instruments = SplitCsvList(get_value("instruments"));
+    loaded.strategy_ids = SplitCsvList(get_value("strategy_ids"));
+    loaded.strategy_poll_interval_ms = 200;
+    SetOptionalInt(kv,
+                   "strategy_poll_interval_ms",
+                   &loaded.strategy_poll_interval_ms,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.strategy_poll_interval_ms <= 0) {
+        if (error != nullptr) {
+            *error = "strategy_poll_interval_ms must be > 0";
+        }
+        return false;
+    }
+    loaded.account_id = get_value("account_id");
+    if (loaded.account_id.empty()) {
+        loaded.account_id = loaded.runtime.user_id;
     }
 
     loaded.runtime.password = get_value("password");

@@ -1,0 +1,130 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+
+from quant_hft.contracts import OrderEvent, SignalIntent, StateSnapshot7D
+
+
+def state_snapshot_key(instrument_id: str) -> str:
+    return f"market:state7d:{instrument_id}:latest"
+
+
+def strategy_intent_key(strategy_id: str) -> str:
+    return f"strategy:intent:{strategy_id}:latest"
+
+
+def order_event_key(trace_id: str) -> str:
+    return f"trade:order:{trace_id}:info"
+
+
+def encode_signal_intent(intent: SignalIntent) -> str:
+    parts = [
+        intent.instrument_id,
+        intent.side.value,
+        intent.offset.value,
+        str(intent.volume),
+        f"{intent.limit_price}",
+        str(intent.ts_ns),
+        intent.trace_id,
+    ]
+    for part in parts:
+        if "|" in part:
+            raise ValueError("redis intent encoding does not allow '|' in segment values")
+    return "|".join(parts)
+
+
+def build_intent_batch_fields(seq: int, intents: list[SignalIntent], ts_ns: int) -> dict[str, str]:
+    fields: dict[str, str] = {
+        "seq": str(seq),
+        "count": str(len(intents)),
+        "ts_ns": str(ts_ns),
+    }
+    for index, intent in enumerate(intents):
+        fields[f"intent_{index}"] = encode_signal_intent(intent)
+    return fields
+
+
+def parse_state_snapshot(fields: Mapping[str, str]) -> StateSnapshot7D | None:
+    instrument_id = fields.get("instrument_id", "")
+    if not instrument_id:
+        return None
+
+    def parse_dimension(name: str) -> dict[str, float] | None:
+        score_raw = fields.get(f"{name}_score")
+        confidence_raw = fields.get(f"{name}_confidence")
+        if score_raw is None or confidence_raw is None:
+            return None
+        try:
+            return {"score": float(score_raw), "confidence": float(confidence_raw)}
+        except ValueError:
+            return None
+
+    trend = parse_dimension("trend")
+    volatility = parse_dimension("volatility")
+    liquidity = parse_dimension("liquidity")
+    sentiment = parse_dimension("sentiment")
+    seasonality = parse_dimension("seasonality")
+    pattern = parse_dimension("pattern")
+    event_drive = parse_dimension("event_drive")
+    if (
+        trend is None
+        or volatility is None
+        or liquidity is None
+        or sentiment is None
+        or seasonality is None
+        or pattern is None
+        or event_drive is None
+    ):
+        return None
+
+    ts_raw = fields.get("ts_ns")
+    if ts_raw is None:
+        return None
+    try:
+        ts_ns = int(ts_raw)
+    except ValueError:
+        return None
+
+    return StateSnapshot7D(
+        instrument_id=instrument_id,
+        trend=trend,
+        volatility=volatility,
+        liquidity=liquidity,
+        sentiment=sentiment,
+        seasonality=seasonality,
+        pattern=pattern,
+        event_drive=event_drive,
+        ts_ns=ts_ns,
+    )
+
+
+def parse_order_event(fields: Mapping[str, str]) -> OrderEvent | None:
+    required = (
+        "account_id",
+        "client_order_id",
+        "instrument_id",
+        "status",
+        "total_volume",
+        "filled_volume",
+        "avg_fill_price",
+        "reason",
+        "ts_ns",
+    )
+    if any(fields.get(key) is None for key in required):
+        return None
+    trace_id = fields.get("trace_id", fields.get("client_order_id", ""))
+    try:
+        return OrderEvent(
+            account_id=fields["account_id"],
+            client_order_id=fields["client_order_id"],
+            instrument_id=fields["instrument_id"],
+            status=fields["status"],
+            total_volume=int(fields["total_volume"]),
+            filled_volume=int(fields["filled_volume"]),
+            avg_fill_price=float(fields["avg_fill_price"]),
+            reason=fields["reason"],
+            ts_ns=int(fields["ts_ns"]),
+            trace_id=trace_id,
+        )
+    except ValueError:
+        return None

@@ -76,6 +76,34 @@ void RedisRealtimeStoreClientAdapter::UpsertPositionSnapshot(
     (void)WriteWithRetry(key, fields);
 }
 
+void RedisRealtimeStoreClientAdapter::UpsertStateSnapshot7D(
+    const StateSnapshot7D& snapshot) {
+    if (snapshot.instrument_id.empty()) {
+        return;
+    }
+
+    const auto key = RedisKeyBuilder::StateSnapshot7DLatest(snapshot.instrument_id);
+    std::unordered_map<std::string, std::string> fields{
+        {"instrument_id", snapshot.instrument_id},
+        {"trend_score", ToString(snapshot.trend.score)},
+        {"trend_confidence", ToString(snapshot.trend.confidence)},
+        {"volatility_score", ToString(snapshot.volatility.score)},
+        {"volatility_confidence", ToString(snapshot.volatility.confidence)},
+        {"liquidity_score", ToString(snapshot.liquidity.score)},
+        {"liquidity_confidence", ToString(snapshot.liquidity.confidence)},
+        {"sentiment_score", ToString(snapshot.sentiment.score)},
+        {"sentiment_confidence", ToString(snapshot.sentiment.confidence)},
+        {"seasonality_score", ToString(snapshot.seasonality.score)},
+        {"seasonality_confidence", ToString(snapshot.seasonality.confidence)},
+        {"pattern_score", ToString(snapshot.pattern.score)},
+        {"pattern_confidence", ToString(snapshot.pattern.confidence)},
+        {"event_drive_score", ToString(snapshot.event_drive.score)},
+        {"event_drive_confidence", ToString(snapshot.event_drive.confidence)},
+        {"ts_ns", ToString(snapshot.ts_ns)},
+    };
+    (void)WriteWithRetry(key, fields);
+}
+
 bool RedisRealtimeStoreClientAdapter::GetMarketSnapshot(const std::string& instrument_id,
                                                         MarketSnapshot* out) const {
     if (out == nullptr || instrument_id.empty()) {
@@ -176,6 +204,66 @@ bool RedisRealtimeStoreClientAdapter::GetPositionSnapshot(
         return false;
     }
     *out = position;
+    return true;
+}
+
+bool RedisRealtimeStoreClientAdapter::GetStateSnapshot7D(const std::string& instrument_id,
+                                                         StateSnapshot7D* out) const {
+    if (out == nullptr || instrument_id.empty()) {
+        return false;
+    }
+
+    std::unordered_map<std::string, std::string> row;
+    if (!ReadHash(RedisKeyBuilder::StateSnapshot7DLatest(instrument_id), &row)) {
+        return false;
+    }
+
+    auto parse_dimension = [&](const char* prefix, StateDimension* dim) -> bool {
+        if (dim == nullptr) {
+            return false;
+        }
+        double score = 0.0;
+        double confidence = 0.0;
+        const std::string score_key = std::string(prefix) + "_score";
+        const std::string confidence_key = std::string(prefix) + "_confidence";
+        if (!ParseDouble(row, score_key, &score) || !ParseDouble(row, confidence_key, &confidence)) {
+            return false;
+        }
+        dim->score = score;
+        dim->confidence = confidence;
+        return true;
+    };
+
+    StateSnapshot7D snapshot;
+    snapshot.instrument_id = GetOrEmpty(row, "instrument_id");
+    if (snapshot.instrument_id.empty()) {
+        snapshot.instrument_id = instrument_id;
+    }
+    if (!parse_dimension("trend", &snapshot.trend)) {
+        return false;
+    }
+    if (!parse_dimension("volatility", &snapshot.volatility)) {
+        return false;
+    }
+    if (!parse_dimension("liquidity", &snapshot.liquidity)) {
+        return false;
+    }
+    if (!parse_dimension("sentiment", &snapshot.sentiment)) {
+        return false;
+    }
+    if (!parse_dimension("seasonality", &snapshot.seasonality)) {
+        return false;
+    }
+    if (!parse_dimension("pattern", &snapshot.pattern)) {
+        return false;
+    }
+    if (!parse_dimension("event_drive", &snapshot.event_drive)) {
+        return false;
+    }
+    if (!ParseInt64(row, "ts_ns", &snapshot.ts_ns)) {
+        return false;
+    }
+    *out = snapshot;
     return true;
 }
 

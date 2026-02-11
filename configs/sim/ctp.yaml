@@ -18,6 +18,10 @@ ctp:
   app_id: "simnow_client_test"
 
   query_rate_limit_qps: 10
+  instruments: "SHFE.ag2406,SHFE.rb2405"
+  strategy_ids: "demo"
+  strategy_poll_interval_ms: 200
+  account_id: "sim-account"
   connect_timeout_ms: 10000
   reconnect_max_attempts: 8
   reconnect_initial_backoff_ms: 500

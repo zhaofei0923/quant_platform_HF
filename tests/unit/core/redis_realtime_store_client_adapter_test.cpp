@@ -98,6 +98,31 @@ TEST(RedisRealtimeStoreClientAdapterTest, RoundTripsOrderAndMarketData) {
     EXPECT_EQ(got_order.filled_volume, 2);
 }
 
+TEST(RedisRealtimeStoreClientAdapterTest, RoundTripsStateSnapshot7D) {
+    auto client = std::make_shared<InMemoryRedisHashClient>();
+    RedisRealtimeStoreClientAdapter store(client, StorageRetryPolicy{});
+
+    StateSnapshot7D state;
+    state.instrument_id = "SHFE.ag2406";
+    state.trend = {0.12, 0.9};
+    state.volatility = {0.34, 0.8};
+    state.liquidity = {0.56, 0.7};
+    state.sentiment = {-0.78, 0.6};
+    state.seasonality = {0.0, 0.2};
+    state.pattern = {0.1, 0.3};
+    state.event_drive = {0.0, 0.2};
+    state.ts_ns = 123;
+
+    store.UpsertStateSnapshot7D(state);
+
+    StateSnapshot7D got;
+    ASSERT_TRUE(store.GetStateSnapshot7D("SHFE.ag2406", &got));
+    EXPECT_EQ(got.instrument_id, "SHFE.ag2406");
+    EXPECT_DOUBLE_EQ(got.trend.score, 0.12);
+    EXPECT_DOUBLE_EQ(got.trend.confidence, 0.9);
+    EXPECT_EQ(got.ts_ns, 123);
+}
+
 TEST(RedisRealtimeStoreClientAdapterTest, RetriesTransientWriteFailure) {
     auto client = std::make_shared<FlakyRedisClient>(2);
     StorageRetryPolicy policy;

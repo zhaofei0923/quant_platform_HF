@@ -13,6 +13,7 @@ public:
     virtual void UpsertMarketSnapshot(const MarketSnapshot& snapshot) = 0;
     virtual void UpsertOrderEvent(const OrderEvent& event) = 0;
     virtual void UpsertPositionSnapshot(const PositionSnapshot& position) = 0;
+    virtual void UpsertStateSnapshot7D(const StateSnapshot7D& snapshot) = 0;
 
     virtual bool GetMarketSnapshot(const std::string& instrument_id,
                                    MarketSnapshot* out) const = 0;
@@ -22,6 +23,8 @@ public:
                                      const std::string& instrument_id,
                                      PositionDirection direction,
                                      PositionSnapshot* out) const = 0;
+    virtual bool GetStateSnapshot7D(const std::string& instrument_id,
+                                    StateSnapshot7D* out) const = 0;
 };
 
 }  // namespace quant_hft

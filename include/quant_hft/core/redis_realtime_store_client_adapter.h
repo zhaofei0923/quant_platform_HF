@@ -18,6 +18,7 @@ public:
     void UpsertMarketSnapshot(const MarketSnapshot& snapshot) override;
     void UpsertOrderEvent(const OrderEvent& event) override;
     void UpsertPositionSnapshot(const PositionSnapshot& position) override;
+    void UpsertStateSnapshot7D(const StateSnapshot7D& snapshot) override;
 
     bool GetMarketSnapshot(const std::string& instrument_id,
                            MarketSnapshot* out) const override;
@@ -27,6 +28,8 @@ public:
                              const std::string& instrument_id,
                              PositionDirection direction,
                              PositionSnapshot* out) const override;
+    bool GetStateSnapshot7D(const std::string& instrument_id,
+                            StateSnapshot7D* out) const override;
 
 private:
     bool WriteWithRetry(const std::string& key,

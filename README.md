@@ -38,6 +38,31 @@ export CTP_SIM_PASSWORD='your_password'
   1. `password` in YAML
   2. `password_env` in YAML (fallback default `CTP_SIM_PASSWORD`)
 
+## Redis Strategy Bridge (Strategy Closed Loop)
+
+Protocol: `docs/STRATEGY_BRIDGE_REDIS_PROTOCOL.md`
+
+This bridge connects:
+- C++ `core_engine`: publishes `market:state7d:*`, consumes `strategy:intent:*`, writes `trade:order:*`
+- Python strategy runner: consumes `market:state7d:*`, writes `strategy:intent:*`, consumes `trade:order:*`
+
+Run with external Redis:
+
+```bash
+docker run --rm -p 6379:6379 redis:7-alpine
+
+cmake -S . -B build -DQUANT_HFT_BUILD_TESTS=ON -DQUANT_HFT_ENABLE_REDIS_EXTERNAL=ON
+cmake --build build -j
+
+export CTP_SIM_PASSWORD='your_password'
+export QUANT_HFT_REDIS_MODE=external
+export QUANT_HFT_REDIS_HOST=127.0.0.1
+export QUANT_HFT_REDIS_PORT=6379
+
+./build/core_engine configs/sim/ctp.yaml --run-seconds 30
+.venv/bin/python scripts/strategy/run_strategy.py --config configs/sim/ctp.yaml --strategy-id demo --run-seconds 30
+```
+
 ## Real CTP probe (optional)
 
 ```bash

@@ -108,3 +108,14 @@ kubectl -n quant-hft logs deploy/quant-hft-data-pipeline --tail=200
 Acceptance:
 - rollback completes without stuck rollout
 - pipeline pod returns to Ready and resumes periodic export logs
+
+Evidence template:
+- `docs/templates/DEPLOY_ROLLBACK_RESULT.md`
+
+Machine verification:
+
+```bash
+python3 scripts/ops/verify_deploy_rollback_evidence.py \
+  --evidence-file docs/results/deploy_rollback_result.env \
+  --max-rollback-seconds 180
+```

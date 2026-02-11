@@ -117,3 +117,14 @@ journalctl -u quant-hft-data-pipeline.service -n 100 --no-pager
 Acceptance:
 - both services active after rollback
 - no repeated crash loop in latest 5 minutes logs
+
+Evidence template:
+- `docs/templates/DEPLOY_ROLLBACK_RESULT.md`
+
+Machine verification:
+
+```bash
+python3 scripts/ops/verify_deploy_rollback_evidence.py \
+  --evidence-file docs/results/deploy_rollback_result.env \
+  --max-rollback-seconds 180
+```

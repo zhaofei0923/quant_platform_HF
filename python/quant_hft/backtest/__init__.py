@@ -1,4 +1,5 @@
 from .replay import (
+    BacktestPerformanceSummary,
     BacktestRunResult,
     BacktestRunSpec,
     DeterministicReplayReport,
@@ -13,6 +14,7 @@ from .replay import (
 __all__ = [
     "BacktestRunSpec",
     "BacktestRunResult",
+    "BacktestPerformanceSummary",
     "ReplayReport",
     "InstrumentPnlSnapshot",
     "DeterministicReplayReport",

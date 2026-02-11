@@ -112,6 +112,12 @@ def test_run_backtest_spec_is_reproducible_and_populates_ctx(tmp_path: Path) -> 
     assert result1.to_dict() == result2.to_dict()
     assert result1.run_id == "spec-run-1"
     assert result1.deterministic is not None
+    assert result1.deterministic.performance.total_pnl == pytest.approx(3.0)
+    assert result1.deterministic.performance.order_status_counts["FILLED"] == 2
+    deterministic_payload = result1.to_dict()["deterministic"]
+    assert isinstance(deterministic_payload, dict)
+    assert "performance" in deterministic_payload
+    assert deterministic_payload["performance"]["total_pnl"] == pytest.approx(3.0)
     for key in BACKTEST_CTX_REQUIRED_KEYS:
         assert key in ctx1
         assert key in ctx2

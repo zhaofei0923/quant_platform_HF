@@ -93,6 +93,26 @@ Completion rule:
 - Status:
   - `done`
 
+## Sprint A3 (2026-05-20 ~ 2026-06-02)
+- Objective:
+  - standardize deterministic backtest performance summary
+  - align replay output fields with strategy/order contracts
+- Scope:
+  - `python/quant_hft/backtest/replay.py`
+  - `python/quant_hft/backtest/__init__.py`
+  - `scripts/backtest/replay_csv.py`
+  - `python/tests/test_backtest_replay.py`
+  - `python/tests/test_backtest_scenarios.py`
+- Test Evidence:
+  - [x] `.venv/bin/pytest -q python/tests/test_backtest_replay.py python/tests/test_backtest_scenarios.py`
+  - [x] `.venv/bin/pytest -q python/tests`
+- Develop Docs Synced:
+  - [x] `develop/00-实现对齐矩阵与缺口总览.md`
+  - [x] `develop/00-未完成能力补齐路线图.md`
+  - [x] `develop/02-策略研究平台设计/02-03-策略模版与绩效分析体系.md`
+- Status:
+  - `done`
+
 ## Completed in this bootstrap
 - Stage 0 foundation:
   - C++/Python project skeleton

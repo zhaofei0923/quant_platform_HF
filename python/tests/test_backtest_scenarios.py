@@ -158,3 +158,7 @@ def test_deterministic_replay_tracks_pnl_invariants(tmp_path: Path) -> None:
     assert report.total_realized_pnl == pytest.approx(4.0)
     assert report.total_unrealized_pnl == pytest.approx(0.0)
     assert report.invariant_violations == ()
+    assert report.performance.total_pnl == pytest.approx(4.0)
+    assert report.performance.max_drawdown == pytest.approx(1.0)
+    assert report.performance.order_status_counts["ACCEPTED"] == report.intents_processed
+    assert report.performance.order_status_counts["FILLED"] == report.intents_processed

@@ -86,7 +86,9 @@ def main() -> int:
             "csv_replay_deterministic "
             f"order_events={result.deterministic.order_events_emitted} "
             f"wal_records={result.deterministic.wal_records} "
-            f"invariant_violations={len(result.deterministic.invariant_violations)}"
+            f"invariant_violations={len(result.deterministic.invariant_violations)} "
+            f"total_pnl={result.deterministic.performance.total_pnl:.4f} "
+            f"max_drawdown={result.deterministic.performance.max_drawdown:.4f}"
         )
 
     if args.report_json:

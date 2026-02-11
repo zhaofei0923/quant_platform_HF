@@ -61,7 +61,19 @@ class DeterministicReplayReport:
     instrument_pnl: dict[str, InstrumentPnlSnapshot]
     total_realized_pnl: float
     total_unrealized_pnl: float
+    performance: BacktestPerformanceSummary
     invariant_violations: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class BacktestPerformanceSummary:
+    total_realized_pnl: float
+    total_unrealized_pnl: float
+    total_pnl: float
+    max_equity: float
+    min_equity: float
+    max_drawdown: float
+    order_status_counts: dict[str, int]
 
 
 @dataclass(frozen=True)
@@ -140,6 +152,15 @@ class BacktestRunResult:
                 },
                 "total_realized_pnl": self.deterministic.total_realized_pnl,
                 "total_unrealized_pnl": self.deterministic.total_unrealized_pnl,
+                "performance": {
+                    "total_realized_pnl": self.deterministic.performance.total_realized_pnl,
+                    "total_unrealized_pnl": self.deterministic.performance.total_unrealized_pnl,
+                    "total_pnl": self.deterministic.performance.total_pnl,
+                    "max_equity": self.deterministic.performance.max_equity,
+                    "min_equity": self.deterministic.performance.min_equity,
+                    "max_drawdown": self.deterministic.performance.max_drawdown,
+                    "order_status_counts": self.deterministic.performance.order_status_counts,
+                },
                 "invariant_violations": list(self.deterministic.invariant_violations),
             }
         return payload
@@ -277,6 +298,40 @@ def _compute_unrealized(net_position: int, avg_open_price: float, last_price: fl
     if net_position < 0:
         return (avg_open_price - last_price) * float(abs(net_position))
     return 0.0
+
+
+def _compute_total_equity(
+    instrument_state: dict[str, _InstrumentPnlState],
+    mark_prices: dict[str, float],
+) -> float:
+    total = 0.0
+    for instrument_id in instrument_state:
+        state = instrument_state[instrument_id]
+        mark_price = mark_prices.get(instrument_id, state.avg_open_price)
+        total += state.realized_pnl + _compute_unrealized(
+            state.net_position, state.avg_open_price, mark_price
+        )
+    return total
+
+
+def _compute_equity_profile(equity_points: list[float]) -> tuple[float, float, float]:
+    if not equity_points:
+        return 0.0, 0.0, 0.0
+    max_equity = equity_points[0]
+    min_equity = equity_points[0]
+    running_peak = equity_points[0]
+    max_drawdown = 0.0
+    for equity in equity_points:
+        if equity > max_equity:
+            max_equity = equity
+        if equity < min_equity:
+            min_equity = equity
+        if equity > running_peak:
+            running_peak = equity
+        drawdown = running_peak - equity
+        if drawdown > max_drawdown:
+            max_drawdown = drawdown
+    return max_equity, min_equity, max_drawdown
 
 
 def _validate_invariants(
@@ -453,6 +508,8 @@ def replay_csv_with_deterministic_fills(
     instrument_bars: defaultdict[str, int] = defaultdict(int)
     last_close_price: dict[str, float] = {}
     instrument_state: defaultdict[str, _InstrumentPnlState] = defaultdict(_InstrumentPnlState)
+    order_status_counts: defaultdict[str, int] = defaultdict(int)
+    equity_points: list[float] = []
 
     bucket: list[CsvTick] = []
     current_key = ""
@@ -518,6 +575,8 @@ def replay_csv_with_deterministic_fills(
                 runtime.on_order_event(ctx, accepted)
                 runtime.on_order_event(ctx, filled)
                 order_events_emitted += 2
+                order_status_counts[accepted.status] += 1
+                order_status_counts[filled.status] += 1
 
                 state = instrument_state[intent.instrument_id]
                 _apply_trade(state, intent.side, intent.volume, fill_price)
@@ -528,6 +587,8 @@ def replay_csv_with_deterministic_fills(
                     _emit_wal_line(wal_fp, seq=next_wal_seq, kind="trade", event=filled)
                     next_wal_seq += 1
                     wal_records += 2
+
+            equity_points.append(_compute_total_equity(instrument_state, last_close_price))
 
             bucket = [tick]
             current_key = key
@@ -574,6 +635,8 @@ def replay_csv_with_deterministic_fills(
                 runtime.on_order_event(ctx, accepted)
                 runtime.on_order_event(ctx, filled)
                 order_events_emitted += 2
+                order_status_counts[accepted.status] += 1
+                order_status_counts[filled.status] += 1
 
                 state = instrument_state[intent.instrument_id]
                 _apply_trade(state, intent.side, intent.volume, fill_price)
@@ -584,6 +647,7 @@ def replay_csv_with_deterministic_fills(
                     _emit_wal_line(wal_fp, seq=next_wal_seq, kind="trade", event=filled)
                     next_wal_seq += 1
                     wal_records += 2
+            equity_points.append(_compute_total_equity(instrument_state, last_close_price))
     finally:
         if wal_fp is not None:
             wal_fp.close()
@@ -616,6 +680,17 @@ def replay_csv_with_deterministic_fills(
         last_instrument=last_instrument,
     )
 
+    max_equity, min_equity, max_drawdown = _compute_equity_profile(equity_points)
+    performance = BacktestPerformanceSummary(
+        total_realized_pnl=total_realized_pnl,
+        total_unrealized_pnl=total_unrealized_pnl,
+        total_pnl=total_realized_pnl + total_unrealized_pnl,
+        max_equity=max_equity,
+        min_equity=min_equity,
+        max_drawdown=max_drawdown,
+        order_status_counts=dict(order_status_counts),
+    )
+
     return DeterministicReplayReport(
         replay=replay_report,
         intents_processed=intents_processed,
@@ -625,5 +700,6 @@ def replay_csv_with_deterministic_fills(
         instrument_pnl=instrument_pnl,
         total_realized_pnl=total_realized_pnl,
         total_unrealized_pnl=total_unrealized_pnl,
+        performance=performance,
         invariant_violations=_validate_invariants(instrument_pnl),
     )

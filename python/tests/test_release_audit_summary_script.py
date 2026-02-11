@@ -87,3 +87,33 @@ def test_release_audit_summary_fails_when_manifest_is_missing(tmp_path: Path) ->
     completed = subprocess.run(command, check=False, capture_output=True, text=True)
     assert completed.returncode != 0
     assert "manifest" in (completed.stdout + completed.stderr).lower()
+
+
+def test_release_audit_summary_generates_json_file(tmp_path: Path) -> None:
+    bundle_path, checksum_path = _build_bundle(tmp_path, version="v1.2.4")
+    markdown_path = tmp_path / "release_audit.md"
+    json_path = tmp_path / "release_audit.json"
+    command = [
+        sys.executable,
+        "scripts/build/release_audit_summary.py",
+        "--bundle",
+        str(bundle_path),
+        "--checksum",
+        str(checksum_path),
+        "--output",
+        str(markdown_path),
+        "--json-output",
+        str(json_path),
+    ]
+    completed = subprocess.run(command, check=False, capture_output=True, text=True)
+    assert completed.returncode == 0, completed.stderr + completed.stdout
+
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload["release_version"] == "v1.2.4"
+    assert payload["git_commit"] == "deadbeefcafe"
+    assert payload["component_count"] == 2
+    assert payload["components"] == [
+        "core_engine(service template)",
+        "data_pipeline(non-hotpath)",
+    ]
+    assert payload["bundle_name"] == bundle_path.name

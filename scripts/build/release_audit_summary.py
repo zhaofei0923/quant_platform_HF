@@ -23,6 +23,11 @@ def _parse_args() -> argparse.Namespace:
         default="",
         help="Write markdown output to file (default: stdout only)",
     )
+    parser.add_argument(
+        "--json-output",
+        default="",
+        help="Write structured JSON summary to file (optional)",
+    )
     return parser.parse_args()
 
 
@@ -98,11 +103,34 @@ def _build_markdown(
     return "\n".join(lines) + "\n"
 
 
+def _build_json_payload(
+    *,
+    bundle_path: Path,
+    actual_checksum: str,
+    root_dir: str,
+    manifest: dict[str, object],
+) -> dict[str, object]:
+    components = _as_list(manifest.get("components"))
+    return {
+        "bundle_name": bundle_path.name,
+        "bundle_size_bytes": bundle_path.stat().st_size,
+        "bundle_root_directory": root_dir,
+        "release_version": str(manifest.get("release_version", "unknown")),
+        "build_ts_utc": str(manifest.get("build_ts_utc", "unknown")),
+        "git_commit": str(manifest.get("git_commit", "unknown")),
+        "manifest_bundle_name": str(manifest.get("bundle_name", "unknown")),
+        "sha256": actual_checksum,
+        "component_count": len(components),
+        "components": components,
+    }
+
+
 def main() -> int:
     args = _parse_args()
     bundle_path = Path(args.bundle)
     checksum_path = Path(args.checksum) if args.checksum else Path(f"{bundle_path}.sha256")
     output_path = Path(args.output) if args.output else None
+    json_output_path = Path(args.json_output) if args.json_output else None
 
     if not bundle_path.exists():
         print(f"error: bundle not found: {bundle_path}")
@@ -132,6 +160,18 @@ def main() -> int:
     if output_path is not None:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(markdown, encoding="utf-8")
+    if json_output_path is not None:
+        json_output_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = _build_json_payload(
+            bundle_path=bundle_path,
+            actual_checksum=actual_checksum,
+            root_dir=root_dir,
+            manifest=manifest,
+        )
+        json_output_path.write_text(
+            json.dumps(payload, ensure_ascii=True, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
     print(markdown, end="")
     return 0
 

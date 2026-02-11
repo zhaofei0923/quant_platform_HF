@@ -11,7 +11,8 @@ python3 scripts/build/verify_nonhotpath_release.py \
 python3 scripts/build/release_audit_summary.py \
   --bundle dist/quant-hft-nonhotpath-v0.2.0.tar.gz \
   --checksum dist/quant-hft-nonhotpath-v0.2.0.tar.gz.sha256 \
-  --output docs/results/release_audit_summary.md
+  --output docs/results/release_audit_summary.md \
+  --json-output docs/results/release_audit_summary.json
 ```
 
 ## Scope

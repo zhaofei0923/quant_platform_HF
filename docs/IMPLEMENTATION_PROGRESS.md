@@ -389,6 +389,29 @@ Completion rule:
 - Status:
   - `done`
 
+## Sprint D10 (2026-02-11 ~ 2026-02-24)
+- Objective:
+  - execute formal operational drills for Epic D acceptance
+  - archive deploy/rollback and WAL recovery evidence with measured RTO/RPO
+- Scope:
+  - `docs/results/deploy_rollback_result.env`
+  - `docs/results/deploy_rollback_drill.log`
+  - `docs/results/wal_recovery_result.env`
+  - `docs/results/wal_recovery_drill.log`
+  - `docs/results/epic_d_operational_drill_report_2026-02-11.md`
+  - `develop/00-未完成能力补齐路线图.md`
+  - `develop/00-实现对齐矩阵与缺口总览.md`
+- Test Evidence:
+  - [x] `python3 scripts/build/verify_nonhotpath_release.py --bundle dist/quant-hft-nonhotpath-v0.2.9-dev2.tar.gz --checksum dist/quant-hft-nonhotpath-v0.2.9-dev2.tar.gz.sha256 --expect-version v0.2.9-dev2`
+  - [x] `python3 scripts/build/verify_nonhotpath_release.py --bundle dist/quant-hft-nonhotpath-v0.2.9-dev1.tar.gz --checksum dist/quant-hft-nonhotpath-v0.2.9-dev1.tar.gz.sha256 --expect-version v0.2.9-dev1`
+  - [x] `python3 scripts/ops/verify_deploy_rollback_evidence.py --evidence-file docs/results/deploy_rollback_result.env --max-rollback-seconds 180`
+  - [x] `python3 scripts/ops/verify_wal_recovery_evidence.py --evidence-file docs/results/wal_recovery_result.env --max-rto-seconds 10 --max-rpo-events 0`
+- Develop Docs Synced:
+  - [x] `develop/00-实现对齐矩阵与缺口总览.md`
+  - [x] `develop/00-未完成能力补齐路线图.md`
+- Status:
+  - `done`
+
 ## Sprint A1 + A2 (2026-02-25 ~ 2026-03-24)
 - Objective:
   - reproducible backtest run spec/result

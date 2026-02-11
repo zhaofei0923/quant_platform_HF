@@ -1,0 +1,10 @@
+[INFO] drill_id=20260211-081214
+verification passed: dist/quant-hft-nonhotpath-v0.2.9-dev2.tar.gz
+verification passed: dist/quant-hft-nonhotpath-v0.2.9-dev1.tar.gz
+[INFO] deployed candidate=v0.2.9-dev2
+{"run_id": "20260211T081214496525Z", "exported_rows": {"market_snapshots": 0, "order_events": 0}, "archived_objects_count": 3, "manifest_path": "runtime/deploy_rollback_drill_20260211-081214/work/exports/20260211T081214496525Z/manifest.json"}
+[INFO] post_fault_health_rc=2
+[INFO] rollback target=v0.2.9-dev1
+{"run_id": "20260211T081214622684Z", "exported_rows": {"market_snapshots": 0, "order_events": 0}, "archived_objects_count": 3, "manifest_path": "runtime/deploy_rollback_drill_20260211-081214/work/exports/20260211T081214622684Z/manifest.json"}
+[INFO] rollback_seconds=0.110
+[INFO] deploy rollback evidence written

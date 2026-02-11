@@ -1,0 +1,7 @@
+[INFO] drill_id=20260211-081236
+[INFO] wal_path=runtime_events.wal
+[INFO] failure_start_utc=2026-02-11T08:12:36Z
+[INFO] recovery_complete_utc=2026-02-11T08:12:36Z
+[INFO] rto_seconds=0.018
+[INFO] rpo_events=0
+[INFO] wal_replay_output=WAL replay completed path=runtime_events.wal lines=4 events=4 parse_errors=0 state_rejected=0 ledger_applied=4

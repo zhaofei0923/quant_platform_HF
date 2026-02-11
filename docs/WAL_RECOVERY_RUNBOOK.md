@@ -79,3 +79,24 @@ python3 scripts/ops/verify_wal_recovery_evidence.py \
 Acceptance target:
 - RTO measured and documented for every drill
 - RPO explicitly measured (expected 0 for clean WAL replay path)
+
+## Multi-Host Failover Drill Linkage
+
+WAL recovery drills should be paired with multi-host failover evidence in the same operation window:
+
+```bash
+bash scripts/infra/bootstrap_prodlike_multi_host.sh \
+  --compose-file infra/docker-compose.prodlike.multi-host.yaml \
+  --project-name quant-hft-prodlike-multi-host \
+  --dry-run \
+  --output-file docs/results/prodlike_multi_host_bootstrap_result.env
+
+python3 scripts/ops/failover_orchestrator.py \
+  --env-config configs/deploy/environments/prodlike_multi_host.yaml \
+  --output-file docs/results/failover_result.env
+
+python3 scripts/ops/verify_failover_evidence.py \
+  --evidence-file docs/results/failover_result.env \
+  --max-failover-seconds 300 \
+  --max-data-lag-events 0
+```

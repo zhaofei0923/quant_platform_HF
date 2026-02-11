@@ -65,8 +65,16 @@ jobs:
           grep -q -- "--strategy-bridge-state-key-count 2" runtime/ops_smoke.out
           grep -q -- "--strategy-bridge-intent-count 1" runtime/ops_smoke.out
           grep -q -- "--strategy-bridge-order-key-count 1" runtime/ops_smoke.out
+          python scripts/ops/failover_orchestrator.py \
+            --env-config configs/deploy/environments/prodlike_multi_host.yaml \
+            --output-file docs/results/failover_result.env
+          python scripts/ops/verify_failover_evidence.py \
+            --evidence-file docs/results/failover_result.env \
+            --max-failover-seconds 300 \
+            --max-data-lag-events 0
           test -f docs/results/ops_alert_report.json
           test -f docs/results/ops_alert_report.md
+          test -f docs/results/failover_result.env
           grep -q "quant_hft_strategy_bridge_chain_integrity" docs/results/ops_health_report.md
       - name: Upload Ops Smoke Artifacts
         if: always()
@@ -81,5 +89,6 @@ jobs:
             docs/results/ops_health_report.md
             docs/results/ops_alert_report.json
             docs/results/ops_alert_report.md
+            docs/results/failover_result.env
           if-no-files-found: error
           retention-days: 14

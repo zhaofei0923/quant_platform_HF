@@ -168,3 +168,24 @@ python3 scripts/infra/check_prodlike_health.py \
 ```
 
 For real execution, replace `--dry-run` with `--execute`.
+
+## Repository Multi-Host Failover Drill
+
+Run multi-host bootstrap + failover orchestration with machine-verifiable evidence:
+
+```bash
+bash scripts/infra/bootstrap_prodlike_multi_host.sh \
+  --compose-file infra/docker-compose.prodlike.multi-host.yaml \
+  --project-name quant-hft-prodlike-multi-host \
+  --dry-run \
+  --output-file docs/results/prodlike_multi_host_bootstrap_result.env
+
+python3 scripts/ops/failover_orchestrator.py \
+  --env-config configs/deploy/environments/prodlike_multi_host.yaml \
+  --output-file docs/results/failover_result.env
+
+python3 scripts/ops/verify_failover_evidence.py \
+  --evidence-file docs/results/failover_result.env \
+  --max-failover-seconds 300 \
+  --max-data-lag-events 0
+```

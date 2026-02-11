@@ -119,20 +119,31 @@
       "description": "部署与灾备能力必须形成回滚和恢复证据链。",
       "code_paths": [
         "scripts/ops/verify_deploy_rollback_evidence.py",
+        "scripts/ops/failover_orchestrator.py",
+        "scripts/ops/verify_failover_evidence.py",
         "scripts/infra/bootstrap_prodlike.sh",
+        "scripts/infra/bootstrap_prodlike_multi_host.sh",
         "scripts/infra/check_prodlike_health.py",
-        "infra/docker-compose.prodlike.yaml"
+        "scripts/infra/check_prodlike_multi_host_health.py",
+        "infra/docker-compose.prodlike.yaml",
+        "infra/docker-compose.prodlike.multi-host.yaml"
       ],
       "test_paths": [
         "python/tests/test_verify_deploy_rollback_evidence_script.py",
+        "python/tests/test_failover_orchestrator_script.py",
+        "python/tests/test_verify_failover_evidence_script.py",
         "python/tests/test_bootstrap_prodlike_script.py",
+        "python/tests/test_bootstrap_prodlike_multi_host_script.py",
         "python/tests/test_check_prodlike_health_script.py",
-        "python/tests/test_prodlike_infra_assets.py"
+        "python/tests/test_check_prodlike_multi_host_health_script.py",
+        "python/tests/test_prodlike_infra_assets.py",
+        "python/tests/test_prodlike_multi_host_infra_assets.py"
       ],
       "evidence_paths": [
         "docs/results/deploy_rollback_result.env",
         "docs/results/prodlike_bootstrap_result.env",
-        "docs/results/prodlike_health_report.json"
+        "docs/results/prodlike_health_report.json",
+        "docs/results/failover_result.env"
       ]
     },
     {
@@ -187,9 +198,19 @@
       "id": "REQ-07-02-OPS-RUNBOOK",
       "doc": "develop/07-部署与运维/07-02-运维操作手册.md",
       "description": "运维手册必须映射到故障演练与恢复验证脚本。",
-      "code_paths": ["scripts/ops/verify_wal_recovery_evidence.py"],
-      "test_paths": ["python/tests/test_verify_wal_recovery_evidence_script.py"],
-      "evidence_paths": ["docs/results/wal_recovery_result.env"]
+      "code_paths": [
+        "scripts/ops/verify_wal_recovery_evidence.py",
+        "scripts/ops/failover_orchestrator.py",
+        "scripts/ops/verify_failover_evidence.py"
+      ],
+      "test_paths": [
+        "python/tests/test_verify_wal_recovery_evidence_script.py",
+        "python/tests/test_runbook_failover_commands.py"
+      ],
+      "evidence_paths": [
+        "docs/results/wal_recovery_result.env",
+        "docs/results/failover_result.env"
+      ]
     },
     {
       "id": "REQ-08-01-TEST-STRATEGY",

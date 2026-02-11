@@ -1,0 +1,8 @@
+environment: prodlike-multi-host
+deploy_target: prodlike-multi-host
+precheck_cmd: "echo precheck_prodlike_multi_host"
+backup_sync_check_cmd: "echo backup_sync_check_prodlike_multi_host"
+demote_primary_cmd: "echo demote_primary_prodlike_multi_host"
+promote_standby_cmd: "echo promote_standby_prodlike_multi_host"
+verify_cmd: "echo verify_prodlike_multi_host"
+data_sync_lag_events: "0"

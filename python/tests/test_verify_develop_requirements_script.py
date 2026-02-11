@@ -162,3 +162,19 @@ def test_verify_develop_requirements_can_generate_report_evidence_in_same_run(
     completed = subprocess.run(command, check=False, capture_output=True, text=True)
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert report_path.exists()
+
+
+def test_verify_develop_requirements_manifest_includes_multi_host_failover_mapping() -> None:
+    payload = json.loads(
+        Path("docs/requirements/develop_requirements.yaml").read_text(encoding="utf-8")
+    )
+    requirements = payload.get("requirements", [])
+    by_id = {item["id"]: item for item in requirements if isinstance(item, dict) and "id" in item}
+
+    req = by_id["REQ-04-02-DEPLOY-DR"]
+    assert "scripts/ops/failover_orchestrator.py" in req["code_paths"]
+    assert "scripts/ops/verify_failover_evidence.py" in req["code_paths"]
+    assert "scripts/infra/bootstrap_prodlike_multi_host.sh" in req["code_paths"]
+    assert "python/tests/test_failover_orchestrator_script.py" in req["test_paths"]
+    assert "python/tests/test_verify_failover_evidence_script.py" in req["test_paths"]
+    assert "docs/results/failover_result.env" in req["evidence_paths"]

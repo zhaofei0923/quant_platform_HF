@@ -1,4 +1,9 @@
-# Systemd Deployment Runbook (Stage Bootstrap)
+# Systemd Deployment Runbook (Single-Host Production Baseline)
+
+Current production acceptance profile:
+- single-host deployment on one PC host or one cloud VM
+- release -> fault injection -> rollback -> recovery evidence chain
+- multi-host backup and failover are handled in a later rollout phase
 
 ## 0) Verify release bundle integrity (if deploying from package)
 

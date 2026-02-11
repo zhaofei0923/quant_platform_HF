@@ -101,6 +101,30 @@ Completion rule:
 - Status:
   - `done`
 
+## Sprint M9 (2026-02-11 ~ 2026-02-24)
+- Objective:
+  - align production acceptance scope to single-host baseline
+  - move multi-host backup/failover to later milestones
+- Scope:
+  - `develop/00-项目总览与设计原则.md`
+  - `develop/00-实现对齐矩阵与缺口总览.md`
+  - `develop/00-未完成能力补齐路线图.md`
+  - `develop/04-基础设施与运维/04-02-部署、灾备与持续集成方案.md`
+  - `develop/07-部署与运维/07-02-运维操作手册.md`
+  - `develop/09-数据库设计/09-01-数据库设计.md`
+  - `docs/SYSTEMD_DEPLOYMENT_RUNBOOK.md`
+  - `docs/K8S_DEPLOYMENT_RUNBOOK.md`
+- Test Evidence:
+  - [x] `python3 scripts/build/verify_develop_requirements.py --requirements-file docs/requirements/develop_requirements.yaml --completion-language-report docs/results/develop_completion_language_report.json`
+  - [x] `rg -n "未落地|规划中|部分落地|规划内容（未落地）|规划示例（未落地）|规划 SOP（未落地）|进入实现阶段触发条件|未来扩展（未落地）" develop`
+- Develop Docs Synced:
+  - [x] `develop/00-实现对齐矩阵与缺口总览.md`
+  - [x] `develop/00-未完成能力补齐路线图.md`
+  - [x] `develop/04-基础设施与运维/04-02-部署、灾备与持续集成方案.md`
+  - [x] `develop/07-部署与运维/07-02-运维操作手册.md`
+- Status:
+  - `done`
+
 ## Sprint B3 (2026-02-11 ~ 2026-02-24)
 - Objective:
   - add timeout-based cancel strategy in core execution loop

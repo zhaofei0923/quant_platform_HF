@@ -1,5 +1,10 @@
 # Kubernetes Deployment Runbook (Non-Hotpath Components)
 
+Current production acceptance profile:
+- single-node cluster or single cloud environment baseline
+- non-hotpath deployment validation and rollback drill
+- multi-node backup/failover scenarios are scheduled for a later phase
+
 ## 0) Verify release bundle integrity (if deploying from package)
 
 ```bash

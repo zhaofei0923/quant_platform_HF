@@ -27,9 +27,20 @@ jobs:
       - name: Build non-hotpath release bundle
         id: package
         run: |
-          VERSION="${GITHUB_REF_NAME:-manual-$(date -u +%Y%m%dT%H%M%SZ)}"
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" && "${GITHUB_REF_NAME:-}" == v* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="$(date -u +%Y%m%dT%H%M%SZ)"
+          fi
           bash scripts/build/package_nonhotpath_release.sh "$VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Verify non-hotpath release bundle
+        run: |
+          python scripts/build/verify_nonhotpath_release.py \
+            --bundle "dist/quant-hft-nonhotpath-${{ steps.package.outputs.version }}.tar.gz" \
+            --checksum "dist/quant-hft-nonhotpath-${{ steps.package.outputs.version }}.tar.gz.sha256" \
+            --expect-version "${{ steps.package.outputs.version }}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

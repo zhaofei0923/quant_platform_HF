@@ -102,18 +102,18 @@ def _read_command(fileobj) -> list[str]:
 
 
 def _encode_simple(value: str) -> bytes:
-    return f"+{value}\r\n".encode("utf-8")
+    return f"+{value}\r\n".encode()
 
 
 def _encode_error(value: str) -> bytes:
-    return f"-ERR {value}\r\n".encode("utf-8")
+    return f"-ERR {value}\r\n".encode()
 
 
 def _encode_array(values: Sequence[str]) -> bytes:
-    chunks = [f"*{len(values)}\r\n".encode("utf-8")]
+    chunks = [f"*{len(values)}\r\n".encode()]
     for value in values:
         raw = value.encode("utf-8")
-        chunks.append(f"${len(raw)}\r\n".encode("utf-8"))
+        chunks.append(f"${len(raw)}\r\n".encode())
         chunks.append(raw)
         chunks.append(b"\r\n")
     return b"".join(chunks)

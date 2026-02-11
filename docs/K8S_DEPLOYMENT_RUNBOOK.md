@@ -1,5 +1,14 @@
 # Kubernetes Deployment Runbook (Non-Hotpath Components)
 
+## 0) Verify release bundle integrity (if deploying from package)
+
+```bash
+python3 scripts/build/verify_nonhotpath_release.py \
+  --bundle dist/quant-hft-nonhotpath-v0.2.0.tar.gz \
+  --checksum dist/quant-hft-nonhotpath-v0.2.0.tar.gz.sha256 \
+  --expect-version v0.2.0
+```
+
 ## Scope
 
 - This runbook targets non-hotpath components only.

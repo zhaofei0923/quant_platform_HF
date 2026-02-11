@@ -1,5 +1,98 @@
 # Implementation Progress (Current)
 
+## Sprint Update Template (P0 baseline)
+
+Use this fixed template for every sprint update:
+
+```markdown
+## Sprint <ID> (<YYYY-MM-DD> ~ <YYYY-MM-DD>)
+- Objective:
+- Scope:
+  - <code path A>
+  - <code path B>
+- Test Evidence:
+  - [ ] `ctest --test-dir build --output-on-failure`
+  - [ ] `pytest python/tests -q`
+  - [ ] `./scripts/build/bootstrap.sh`
+- Develop Docs Synced:
+  - [ ] `develop/00-实现对齐矩阵与缺口总览.md`
+  - [ ] `develop/00-未完成能力补齐路线图.md`
+- Status:
+  - `in_progress` / `done` / `blocked`
+- Notes:
+```
+
+Completion rule:
+- A sprint is marked `done` only when code, tests, and `develop/` status updates are all completed.
+
+## Sprint A1 + A2 (2026-02-25 ~ 2026-03-24)
+- Objective:
+  - reproducible backtest run spec/result
+  - strategy template contract guard in runtime
+- Scope:
+  - `python/quant_hft/backtest/replay.py`
+  - `scripts/backtest/replay_csv.py`
+  - `python/quant_hft/strategy/base.py`
+  - `python/quant_hft/runtime/engine.py`
+  - `python/tests/test_backtest_replay.py`
+  - `python/tests/test_runtime_engine.py`
+- Test Evidence:
+  - [x] `.venv/bin/ruff check python scripts`
+  - [x] `.venv/bin/black --check python scripts`
+  - [x] `.venv/bin/mypy python/quant_hft`
+  - [x] `.venv/bin/pytest python/tests -q`
+- Develop Docs Synced:
+  - [x] `develop/00-实现对齐矩阵与缺口总览.md`
+  - [x] `develop/00-未完成能力补齐路线图.md`
+- Status:
+  - `done`
+
+## Sprint B1 + B2 (2026-03-25 ~ 2026-04-21)
+- Objective:
+  - configurable risk rule groups
+  - direct/sliced execution mode in core path
+- Scope:
+  - `include/quant_hft/contracts/types.h`
+  - `include/quant_hft/core/ctp_config*.h`
+  - `src/core/ctp/ctp_config_loader.cpp`
+  - `include/quant_hft/services/basic_risk_engine.h`
+  - `src/services/risk/basic_risk_engine.cpp`
+  - `src/apps/core_engine_main.cpp`
+  - `tests/unit/services/basic_risk_engine_test.cpp`
+  - `tests/unit/core/ctp_config_loader_test.cpp`
+  - `tests/unit/services/order_state_machine_test.cpp`
+- Test Evidence:
+  - [x] `cmake --build build -j`
+  - [x] `ctest --test-dir build --output-on-failure`
+- Develop Docs Synced:
+  - [x] `develop/00-实现对齐矩阵与缺口总览.md`
+  - [x] `develop/00-未完成能力补齐路线图.md`
+- Status:
+  - `done`
+
+## Sprint C1 + D1 (2026-04-22 ~ 2026-05-19)
+- Objective:
+  - minimal ops health SLI report
+  - deployment/rollback/WAL drill evidence templates
+- Scope:
+  - `python/quant_hft/ops/monitoring.py`
+  - `scripts/ops/reconnect_slo_report.py`
+  - `scripts/ops/run_reconnect_evidence.py`
+  - `.github/workflows/ci.yml`
+  - `scripts/build/package_nonhotpath_release.sh`
+  - `docs/SYSTEMD_DEPLOYMENT_RUNBOOK.md`
+  - `docs/K8S_DEPLOYMENT_RUNBOOK.md`
+  - `docs/WAL_RECOVERY_RUNBOOK.md`
+- Test Evidence:
+  - [x] `.venv/bin/pytest python/tests -q`
+  - [x] `python3 scripts/ops/run_reconnect_evidence.py --dry-run ...`
+  - [x] `./scripts/build/package_nonhotpath_release.sh v0.2.0`
+- Develop Docs Synced:
+  - [x] `develop/00-实现对齐矩阵与缺口总览.md`
+  - [x] `develop/00-未完成能力补齐路线图.md`
+- Status:
+  - `done`
+
 ## Completed in this bootstrap
 - Stage 0 foundation:
   - C++/Python project skeleton

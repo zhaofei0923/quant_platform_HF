@@ -102,7 +102,10 @@ struct OrderIntent {
 struct RiskDecision {
     RiskAction action{RiskAction::kReview};
     std::string rule_id;
+    std::string rule_group{"default"};
+    std::string rule_version{"v1"};
     std::string reason;
+    EpochNanos decision_ts_ns{0};
 };
 
 struct OrderEvent {

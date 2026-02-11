@@ -57,6 +57,14 @@ def _build_parser() -> argparse.ArgumentParser:
         default="docs/results/reconnect_fault_result.md",
     )
     parser.add_argument(
+        "--health-json-file",
+        default="docs/results/ops_health_report.json",
+    )
+    parser.add_argument(
+        "--health-markdown-file",
+        default="docs/results/ops_health_report.md",
+    )
+    parser.add_argument(
         "--fault-script",
         default="scripts/ops/ctp_fault_inject.py",
     )
@@ -73,7 +81,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--disconnect-mode",
         choices=("drop", "reset"),
         default="reset",
-        help="disconnect action for iptables scenario (recommended: reset for fast disconnect detection)",
+        help=(
+            "disconnect action for iptables scenario "
+            "(recommended: reset for fast disconnect detection)"
+        ),
     )
     parser.add_argument("--target-ip", default="182.254.243.31")
     parser.add_argument("--ports", default="40001,40011,30001,30011,30002,30012,30003,30013")
@@ -81,6 +92,17 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--health-interval-ms", type=int, default=1000)
     parser.add_argument("--warmup-seconds", type=int, default=8)
     parser.add_argument("--target-p99-sec", type=float, default=10.0)
+    parser.add_argument("--strategy-bridge-target-ms", type=float, default=1500.0)
+    parser.add_argument(
+        "--storage-redis-health",
+        choices=("unknown", "healthy", "unhealthy"),
+        default="unknown",
+    )
+    parser.add_argument(
+        "--storage-timescale-health",
+        choices=("unknown", "healthy", "unhealthy"),
+        default="unknown",
+    )
     parser.add_argument("--operator", default=os.getenv("USER", ""))
     parser.add_argument("--host", default="")
     parser.add_argument("--build", default="")
@@ -327,8 +349,18 @@ def main() -> int:
             str(probe_log),
             "--output-file",
             str(report_file),
+            "--health-json-file",
+            str(args.health_json_file),
+            "--health-markdown-file",
+            str(args.health_markdown_file),
             "--target-p99-sec",
             f"{args.target_p99_sec:g}",
+            "--strategy-bridge-target-ms",
+            f"{args.strategy_bridge_target_ms:g}",
+            "--storage-redis-health",
+            args.storage_redis_health,
+            "--storage-timescale-health",
+            args.storage_timescale_health,
             "--operator",
             args.operator,
             "--host",

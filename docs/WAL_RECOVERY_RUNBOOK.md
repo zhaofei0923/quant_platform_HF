@@ -46,3 +46,24 @@ Acceptance:
 - Keep WAL on durable storage.
 - Archive rotated WAL files before truncation.
 - For incident analysis, preserve the original WAL and replay a copy.
+
+## Recovery Evidence Template (RTO/RPO)
+
+Record after each drill:
+
+```text
+drill_id=<YYYYMMDD-HHMM>
+release_version=<vX.Y.Z or timestamp>
+wal_path=<path>
+failure_start_utc=<ISO8601>
+recovery_complete_utc=<ISO8601>
+rto_seconds=<measured>
+rpo_events=<lost_or_replayed_gap_count>
+operator=<name>
+result=<pass|fail>
+notes=<short summary>
+```
+
+Acceptance target:
+- RTO measured and documented for every drill
+- RPO explicitly measured (expected 0 for clean WAL replay path)

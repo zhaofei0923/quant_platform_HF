@@ -2,14 +2,35 @@
 from __future__ import annotations
 
 import argparse
+import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from quant_hft.ops.reconnect_slo import (
-    evaluate_reconnect_slo,
-    load_fault_events,
-    load_probe_health_events,
-)
+try:
+    from quant_hft.ops.monitoring import (
+        build_ops_health_report,
+        ops_health_report_to_dict,
+        render_ops_health_markdown,
+    )
+    from quant_hft.ops.reconnect_slo import (
+        evaluate_reconnect_slo,
+        load_fault_events,
+        load_probe_health_events,
+    )
+except ModuleNotFoundError:
+    repo_python = Path(__file__).resolve().parents[2] / "python"
+    sys.path.insert(0, str(repo_python))
+    from quant_hft.ops.monitoring import (  # type: ignore[no-redef]
+        build_ops_health_report,
+        ops_health_report_to_dict,
+        render_ops_health_markdown,
+    )
+    from quant_hft.ops.reconnect_slo import (  # type: ignore[no-redef]
+        evaluate_reconnect_slo,
+        load_fault_events,
+        load_probe_health_events,
+    )
 
 
 def _ts_iso(ts_ns: int) -> str:
@@ -32,6 +53,19 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--build", default="")
     parser.add_argument("--config-profile", default="")
     parser.add_argument("--interface", default="")
+    parser.add_argument("--health-json-file", default="")
+    parser.add_argument("--health-markdown-file", default="")
+    parser.add_argument("--strategy-bridge-target-ms", type=float, default=1500.0)
+    parser.add_argument(
+        "--storage-redis-health",
+        choices=("unknown", "healthy", "unhealthy"),
+        default="unknown",
+    )
+    parser.add_argument(
+        "--storage-timescale-health",
+        choices=("unknown", "healthy", "unhealthy"),
+        default="unknown",
+    )
     return parser
 
 
@@ -125,6 +159,41 @@ def main() -> int:
         print(str(output))
     else:
         print(markdown)
+
+    core_process_alive = bool(health_events)
+    strategy_bridge_latency_ms = (
+        None if report.p99_recovery_seconds is None else report.p99_recovery_seconds * 1000.0
+    )
+    ops_health_report = build_ops_health_report(
+        strategy_bridge_latency_ms=strategy_bridge_latency_ms,
+        strategy_bridge_target_ms=args.strategy_bridge_target_ms,
+        core_process_alive=core_process_alive,
+        redis_health=args.storage_redis_health,
+        timescale_health=args.storage_timescale_health,
+        metadata={
+            "operator": args.operator,
+            "host": args.host,
+            "build": args.build,
+            "config_profile": args.config_profile,
+            "interface": args.interface,
+        },
+    )
+
+    if args.health_json_file:
+        health_json = Path(args.health_json_file)
+        health_json.parent.mkdir(parents=True, exist_ok=True)
+        health_json.write_text(
+            json.dumps(ops_health_report_to_dict(ops_health_report), ensure_ascii=True, indent=2)
+            + "\n",
+            encoding="utf-8",
+        )
+        print(str(health_json))
+
+    if args.health_markdown_file:
+        health_md = Path(args.health_markdown_file)
+        health_md.parent.mkdir(parents=True, exist_ok=True)
+        health_md.write_text(render_ops_health_markdown(ops_health_report), encoding="utf-8")
+        print(str(health_md))
 
     return 0
 

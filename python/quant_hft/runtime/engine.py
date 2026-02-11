@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from quant_hft.contracts import OrderEvent, SignalIntent, StateSnapshot7D
-from quant_hft.strategy.base import StrategyBase
+from quant_hft.strategy.base import StrategyBase, validate_signal_intents
 
 
 @dataclass
@@ -18,7 +18,9 @@ class StrategyRuntime:
     ) -> list[SignalIntent]:
         intents: list[SignalIntent] = []
         for strategy in self.strategies:
-            intents.extend(strategy.on_bar(ctx, bar_batch))
+            produced = strategy.on_bar(ctx, bar_batch)
+            validate_signal_intents(produced)
+            intents.extend(produced)
         return intents
 
     def on_state(
@@ -26,7 +28,9 @@ class StrategyRuntime:
     ) -> list[SignalIntent]:
         intents: list[SignalIntent] = []
         for strategy in self.strategies:
-            intents.extend(strategy.on_state(ctx, state_snapshot))
+            produced = strategy.on_state(ctx, state_snapshot)
+            validate_signal_intents(produced)
+            intents.extend(produced)
         return intents
 
     def on_order_event(self, ctx: dict[str, object], order_event: OrderEvent) -> None:

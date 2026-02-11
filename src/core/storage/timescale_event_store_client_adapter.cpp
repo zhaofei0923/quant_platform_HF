@@ -63,6 +63,8 @@ void TimescaleEventStoreClientAdapter::AppendOrderEvent(const OrderEvent& event)
 void TimescaleEventStoreClientAdapter::AppendRiskDecision(
     const OrderIntent& intent,
     const RiskDecision& decision) {
+    const auto decision_ts_ns = decision.decision_ts_ns > 0 ? decision.decision_ts_ns
+                                                             : NowEpochNanos();
     std::unordered_map<std::string, std::string> row{
         {"account_id", intent.account_id},
         {"client_order_id", intent.client_order_id},
@@ -75,7 +77,10 @@ void TimescaleEventStoreClientAdapter::AppendRiskDecision(
         {"trace_id", intent.trace_id},
         {"risk_action", RiskActionToString(decision.action)},
         {"rule_id", decision.rule_id},
+        {"rule_group", decision.rule_group},
+        {"rule_version", decision.rule_version},
         {"reason", decision.reason},
+        {"decision_ts_ns", ToString(decision_ts_ns)},
     };
     (void)InsertWithRetry(kTableRiskDecisions, row);
 }
@@ -182,8 +187,19 @@ std::vector<RiskDecisionRow> TimescaleEventStoreClientAdapter::GetRiskDecisionRo
             continue;
         }
         item.decision.rule_id = GetOrEmpty(row, "rule_id");
+        item.decision.rule_group = GetOrEmpty(row, "rule_group");
+        if (item.decision.rule_group.empty()) {
+            item.decision.rule_group = "default";
+        }
+        item.decision.rule_version = GetOrEmpty(row, "rule_version");
+        if (item.decision.rule_version.empty()) {
+            item.decision.rule_version = "v1";
+        }
         item.decision.reason = GetOrEmpty(row, "reason");
-        item.ts_ns = item.intent.ts_ns;
+        if (!ParseInt64(row, "decision_ts_ns", &item.decision.decision_ts_ns)) {
+            item.decision.decision_ts_ns = item.intent.ts_ns;
+        }
+        item.ts_ns = item.decision.decision_ts_ns;
         out.push_back(item);
     }
     return out;

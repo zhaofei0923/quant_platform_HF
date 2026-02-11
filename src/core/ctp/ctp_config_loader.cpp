@@ -94,6 +94,18 @@ bool ParseIntValue(const std::string& value, int* out) {
     }
 }
 
+bool ParseDoubleValue(const std::string& value, double* out) {
+    if (out == nullptr) {
+        return false;
+    }
+    try {
+        *out = std::stod(value);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 void SetOptionalInt(const std::unordered_map<std::string, std::string>& kv,
                     const char* key,
                     int* target,
@@ -112,6 +124,32 @@ void SetOptionalInt(const std::unordered_map<std::string, std::string>& kv,
     *target = parsed;
 }
 
+void SetOptionalDouble(const std::unordered_map<std::string, std::string>& kv,
+                       const char* key,
+                       double* target,
+                       std::string* error) {
+    const auto it = kv.find(key);
+    if (it == kv.end()) {
+        return;
+    }
+    double parsed = 0.0;
+    if (!ParseDoubleValue(it->second, &parsed)) {
+        if (error != nullptr) {
+            *error = std::string("invalid double for key: ") + key;
+        }
+        return;
+    }
+    *target = parsed;
+}
+
+bool IsValidHhmm(int value) {
+    if (value < 0 || value > 2359) {
+        return false;
+    }
+    const int minute = value % 100;
+    return minute >= 0 && minute < 60;
+}
+
 std::vector<std::string> SplitCsvList(const std::string& raw) {
     std::vector<std::string> values;
     std::size_t start = 0;
@@ -128,6 +166,22 @@ std::vector<std::string> SplitCsvList(const std::string& raw) {
         start = end + 1;
     }
     return values;
+}
+
+bool ParseExecutionMode(const std::string& raw, ExecutionMode* out) {
+    if (out == nullptr) {
+        return false;
+    }
+    const auto normalized = Lowercase(Trim(raw));
+    if (normalized.empty() || normalized == "direct") {
+        *out = ExecutionMode::kDirect;
+        return true;
+    }
+    if (normalized == "sliced") {
+        *out = ExecutionMode::kSliced;
+        return true;
+    }
+    return false;
 }
 
 }  // namespace
@@ -203,7 +257,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         }
     }
 
-    auto get_value = [&](const char* key) -> std::string {
+    auto get_value = [&](const std::string& key) -> std::string {
         const auto it = kv.find(key);
         if (it == kv.end()) {
             return "";
@@ -310,6 +364,156 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
     loaded.account_id = get_value("account_id");
     if (loaded.account_id.empty()) {
         loaded.account_id = loaded.runtime.user_id;
+    }
+
+    loaded.execution.mode = ExecutionMode::kDirect;
+    if (!ParseExecutionMode(get_value("execution_mode"), &loaded.execution.mode)) {
+        if (error != nullptr) {
+            *error = "execution_mode must be direct or sliced";
+        }
+        return false;
+    }
+    loaded.execution.slice_size = 1;
+    SetOptionalInt(kv, "slice_size", &loaded.execution.slice_size, &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.execution.slice_size <= 0) {
+        if (error != nullptr) {
+            *error = "slice_size must be > 0";
+        }
+        return false;
+    }
+    loaded.execution.slice_interval_ms = 200;
+    SetOptionalInt(kv, "slice_interval_ms", &loaded.execution.slice_interval_ms, &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.execution.slice_interval_ms < 0) {
+        if (error != nullptr) {
+            *error = "slice_interval_ms must be >= 0";
+        }
+        return false;
+    }
+
+    loaded.risk.default_max_order_volume = 200;
+    SetOptionalInt(kv,
+                   "risk_default_max_order_volume",
+                   &loaded.risk.default_max_order_volume,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.risk.default_max_order_volume <= 0) {
+        if (error != nullptr) {
+            *error = "risk_default_max_order_volume must be > 0";
+        }
+        return false;
+    }
+    loaded.risk.default_max_order_notional = 1'000'000.0;
+    SetOptionalDouble(kv,
+                      "risk_default_max_order_notional",
+                      &loaded.risk.default_max_order_notional,
+                      &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.risk.default_max_order_notional <= 0.0) {
+        if (error != nullptr) {
+            *error = "risk_default_max_order_notional must be > 0";
+        }
+        return false;
+    }
+    loaded.risk.default_rule_group = get_value("risk_default_rule_group");
+    if (loaded.risk.default_rule_group.empty()) {
+        loaded.risk.default_rule_group = "default";
+    }
+    loaded.risk.default_rule_version = get_value("risk_default_rule_version");
+    if (loaded.risk.default_rule_version.empty()) {
+        loaded.risk.default_rule_version = "v1";
+    }
+
+    const auto rule_groups = SplitCsvList(get_value("risk_rule_groups"));
+    for (const auto& group : rule_groups) {
+        RiskRuleConfig rule;
+        rule.rule_group = group;
+        rule.rule_id = get_value("risk_rule_" + group + "_id");
+        if (rule.rule_id.empty()) {
+            rule.rule_id = "risk." + group;
+        }
+        rule.rule_version = get_value("risk_rule_" + group + "_version");
+        if (rule.rule_version.empty()) {
+            rule.rule_version = loaded.risk.default_rule_version;
+        }
+
+        rule.account_id = get_value("risk_rule_" + group + "_account_id");
+        if (rule.account_id == "*") {
+            rule.account_id.clear();
+        }
+        rule.instrument_id = get_value("risk_rule_" + group + "_instrument_id");
+        if (rule.instrument_id == "*") {
+            rule.instrument_id.clear();
+        }
+
+        const auto start_hhmm = get_value("risk_rule_" + group + "_start_hhmm");
+        if (!start_hhmm.empty()) {
+            if (!ParseIntValue(start_hhmm, &rule.window_start_hhmm) ||
+                !IsValidHhmm(rule.window_start_hhmm)) {
+                if (error != nullptr) {
+                    *error = "invalid risk rule start_hhmm for group: " + group;
+                }
+                return false;
+            }
+        }
+        const auto end_hhmm = get_value("risk_rule_" + group + "_end_hhmm");
+        if (!end_hhmm.empty()) {
+            if (!ParseIntValue(end_hhmm, &rule.window_end_hhmm) ||
+                !IsValidHhmm(rule.window_end_hhmm)) {
+                if (error != nullptr) {
+                    *error = "invalid risk rule end_hhmm for group: " + group;
+                }
+                return false;
+            }
+        }
+
+        const auto max_vol = get_value("risk_rule_" + group + "_max_order_volume");
+        if (!max_vol.empty()) {
+            if (!ParseIntValue(max_vol, &rule.max_order_volume) || rule.max_order_volume <= 0) {
+                if (error != nullptr) {
+                    *error = "invalid risk rule max_order_volume for group: " + group;
+                }
+                return false;
+            }
+        } else {
+            rule.max_order_volume = loaded.risk.default_max_order_volume;
+        }
+
+        const auto max_notional = get_value("risk_rule_" + group + "_max_order_notional");
+        if (!max_notional.empty()) {
+            if (!ParseDoubleValue(max_notional, &rule.max_order_notional) ||
+                rule.max_order_notional <= 0.0) {
+                if (error != nullptr) {
+                    *error = "invalid risk rule max_order_notional for group: " + group;
+                }
+                return false;
+            }
+        } else {
+            rule.max_order_notional = loaded.risk.default_max_order_notional;
+        }
+
+        loaded.risk.rules.push_back(std::move(rule));
     }
 
     loaded.runtime.password = get_value("password");

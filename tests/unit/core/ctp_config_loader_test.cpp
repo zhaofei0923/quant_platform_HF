@@ -184,6 +184,59 @@ TEST(CtpConfigLoaderTest, LoadsStrategyBridgeKeysAndSplitsLists) {
     std::filesystem::remove(config_path);
 }
 
+TEST(CtpConfigLoaderTest, LoadsExecutionAndRiskRuleConfigs) {
+    const auto config_path = WriteTempConfig(
+        "ctp:\n"
+        "  environment: sim\n"
+        "  is_production_mode: false\n"
+        "  broker_id: \"9999\"\n"
+        "  user_id: \"191202\"\n"
+        "  investor_id: \"191202\"\n"
+        "  market_front: \"tcp://127.0.0.1:40011\"\n"
+        "  trader_front: \"tcp://127.0.0.1:40001\"\n"
+        "  password: \"plain-secret\"\n"
+        "  execution_mode: \"sliced\"\n"
+        "  slice_size: 3\n"
+        "  slice_interval_ms: 120\n"
+        "  risk_default_max_order_volume: 12\n"
+        "  risk_default_max_order_notional: 200000\n"
+        "  risk_default_rule_group: \"global-default\"\n"
+        "  risk_default_rule_version: \"2026.02\"\n"
+        "  risk_rule_groups: \"ag_open,acc_guard\"\n"
+        "  risk_rule_ag_open_id: \"risk.ag.open\"\n"
+        "  risk_rule_ag_open_instrument_id: \"SHFE.ag2406\"\n"
+        "  risk_rule_ag_open_max_order_volume: 2\n"
+        "  risk_rule_ag_open_max_order_notional: 12000\n"
+        "  risk_rule_ag_open_version: \"2026.03\"\n"
+        "  risk_rule_acc_guard_account_id: \"sim-account\"\n"
+        "  risk_rule_acc_guard_max_order_volume: 5\n"
+        "  risk_rule_acc_guard_max_order_notional: 50000\n");
+
+    CtpFileConfig config;
+    std::string error;
+    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error))
+        << error;
+
+    EXPECT_EQ(config.execution.mode, ExecutionMode::kSliced);
+    EXPECT_EQ(config.execution.slice_size, 3);
+    EXPECT_EQ(config.execution.slice_interval_ms, 120);
+
+    EXPECT_EQ(config.risk.default_max_order_volume, 12);
+    EXPECT_DOUBLE_EQ(config.risk.default_max_order_notional, 200000.0);
+    EXPECT_EQ(config.risk.default_rule_group, "global-default");
+    EXPECT_EQ(config.risk.default_rule_version, "2026.02");
+
+    ASSERT_EQ(config.risk.rules.size(), 2U);
+    EXPECT_EQ(config.risk.rules[0].rule_id, "risk.ag.open");
+    EXPECT_EQ(config.risk.rules[0].rule_group, "ag_open");
+    EXPECT_EQ(config.risk.rules[0].instrument_id, "SHFE.ag2406");
+    EXPECT_EQ(config.risk.rules[0].max_order_volume, 2);
+    EXPECT_EQ(config.risk.rules[1].account_id, "sim-account");
+    EXPECT_EQ(config.risk.rules[1].rule_group, "acc_guard");
+
+    std::filesystem::remove(config_path);
+}
+
 TEST(CtpConfigLoaderTest, DefaultsAccountIdToUserIdWhenNotConfigured) {
     const auto config_path = WriteTempConfig(
         "ctp:\n"

@@ -33,3 +33,15 @@ jobs:
           black --check python scripts
           mypy python/quant_hft
           pytest python/tests -q
+      - name: Ops Smoke
+        run: |
+          mkdir -p runtime docs/results
+          python scripts/ops/run_reconnect_evidence.py \
+            --dry-run \
+            --skip-preflight \
+            --probe-bin /bin/echo \
+            --config configs/sim/ctp.yaml \
+            --scenarios disconnect \
+            --report-file docs/results/reconnect_fault_result.md \
+            --health-json-file docs/results/ops_health_report.json \
+            --health-markdown-file docs/results/ops_health_report.md

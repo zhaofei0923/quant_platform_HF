@@ -57,3 +57,35 @@ kubectl -n quant-hft get pvc quant-hft-runtime
 - Default storage request is `20Gi`; tune `--runtime-pvc-size` when rendering.
 - Use release bundle script for reproducible packaging:
   - `scripts/build/package_nonhotpath_release.sh`
+
+## Rollback Drill
+
+1. Record current revision:
+
+```bash
+kubectl -n quant-hft rollout history deploy/quant-hft-data-pipeline
+```
+
+2. Deploy new image/manifests and confirm rollout:
+
+```bash
+kubectl -n quant-hft rollout status deploy/quant-hft-data-pipeline --timeout=180s
+```
+
+3. Simulate failure and rollback:
+
+```bash
+kubectl -n quant-hft rollout undo deploy/quant-hft-data-pipeline
+kubectl -n quant-hft rollout status deploy/quant-hft-data-pipeline --timeout=180s
+```
+
+4. Validate:
+
+```bash
+kubectl -n quant-hft get pods -l app.kubernetes.io/name=quant-hft-data-pipeline
+kubectl -n quant-hft logs deploy/quant-hft-data-pipeline --tail=200
+```
+
+Acceptance:
+- rollback completes without stuck rollout
+- pipeline pod returns to Ready and resumes periodic export logs

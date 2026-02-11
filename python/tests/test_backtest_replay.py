@@ -3,10 +3,15 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from quant_hft.backtest.replay import replay_csv_minute_bars
+from quant_hft.backtest.replay import (
+    BacktestRunSpec,
+    load_backtest_run_spec,
+    replay_csv_minute_bars,
+    run_backtest_spec,
+)
 from quant_hft.contracts import OffsetFlag, OrderEvent, Side, SignalIntent, StateSnapshot7D
 from quant_hft.runtime.engine import StrategyRuntime
-from quant_hft.strategy.base import StrategyBase
+from quant_hft.strategy.base import BACKTEST_CTX_REQUIRED_KEYS, StrategyBase
 
 
 class EmitPerBarStrategy(StrategyBase):
@@ -72,3 +77,54 @@ def test_replay_smoke_on_real_backtest_file_if_present() -> None:
     assert report.ticks_read == 2000
     assert report.bars_emitted > 0
     assert report.first_instrument.lower().startswith("rb")
+
+
+def test_run_backtest_spec_is_reproducible_and_populates_ctx(tmp_path: Path) -> None:
+    csv_path = tmp_path / "sample_spec.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "TradingDay,InstrumentID,UpdateTime,UpdateMillisec,LastPrice,Volume,BidPrice1,BidVolume1,AskPrice1,AskVolume1,AveragePrice,Turnover,OpenInterest",
+                "20230103,rb2305,09:00:01,0,4100.0,1,4099.0,10,4101.0,12,4100.0,0.0,100",
+                "20230103,rb2305,09:01:02,0,4103.0,5,4102.0,10,4104.0,15,4102.0,0.0,100",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    spec = BacktestRunSpec(
+        csv_path=str(csv_path),
+        max_ticks=100,
+        deterministic_fills=True,
+        run_id="spec-run-1",
+    )
+
+    runtime1 = StrategyRuntime()
+    runtime1.add_strategy(EmitPerBarStrategy("s1"))
+    ctx1: dict[str, object] = {}
+    result1 = run_backtest_spec(spec, runtime1, ctx=ctx1)
+
+    runtime2 = StrategyRuntime()
+    runtime2.add_strategy(EmitPerBarStrategy("s1"))
+    ctx2: dict[str, object] = {}
+    result2 = run_backtest_spec(spec, runtime2, ctx=ctx2)
+
+    assert result1.input_signature == result2.input_signature
+    assert result1.to_dict() == result2.to_dict()
+    assert result1.run_id == "spec-run-1"
+    assert result1.deterministic is not None
+    for key in BACKTEST_CTX_REQUIRED_KEYS:
+        assert key in ctx1
+        assert key in ctx2
+
+
+def test_load_backtest_run_spec_from_json(tmp_path: Path) -> None:
+    spec_path = tmp_path / "spec.json"
+    spec_path.write_text(
+        '{"csv_path":"data.csv","max_ticks":1000,"deterministic_fills":false,"run_id":"spec-1"}',
+        encoding="utf-8",
+    )
+    spec = load_backtest_run_spec(spec_path)
+    assert spec.csv_path == "data.csv"
+    assert spec.max_ticks == 1000
+    assert spec.deterministic_fills is False
+    assert spec.run_id == "spec-1"

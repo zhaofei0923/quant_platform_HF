@@ -42,6 +42,37 @@ struct CtpFrontPair {
     std::string td_front;
 };
 
+enum class ExecutionMode {
+    kDirect,
+    kSliced,
+};
+
+struct ExecutionConfig {
+    ExecutionMode mode{ExecutionMode::kDirect};
+    int slice_size{1};
+    int slice_interval_ms{200};
+};
+
+struct RiskRuleConfig {
+    std::string rule_id;
+    std::string rule_group;
+    std::string rule_version{"v1"};
+    std::string account_id;
+    std::string instrument_id;
+    int window_start_hhmm{0};
+    int window_end_hhmm{2359};
+    int max_order_volume{200};
+    double max_order_notional{1'000'000.0};
+};
+
+struct RiskConfig {
+    int default_max_order_volume{200};
+    double default_max_order_notional{1'000'000.0};
+    std::string default_rule_group{"default"};
+    std::string default_rule_version{"v1"};
+    std::vector<RiskRuleConfig> rules;
+};
+
 // Build candidate front pairs for connection retries.
 // - always includes the configured pair first.
 // - for known SimNow trading-hours groups (30001/11, 30002/12, 30003/13),

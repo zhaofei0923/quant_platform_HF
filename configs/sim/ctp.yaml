@@ -22,6 +22,19 @@ ctp:
   strategy_ids: "demo"
   strategy_poll_interval_ms: 200
   account_id: "sim-account"
+  execution_mode: "direct"   # direct | sliced
+  slice_size: 2
+  slice_interval_ms: 120
+  risk_default_max_order_volume: 200
+  risk_default_max_order_notional: 1000000
+  risk_default_rule_group: "default"
+  risk_default_rule_version: "v1"
+  risk_rule_groups: "ag_open"
+  risk_rule_ag_open_id: "risk.ag.open"
+  risk_rule_ag_open_instrument_id: "SHFE.ag2406"
+  risk_rule_ag_open_max_order_volume: 20
+  risk_rule_ag_open_max_order_notional: 120000
+  risk_rule_ag_open_version: "2026.02"
   connect_timeout_ms: 10000
   reconnect_max_attempts: 8
   reconnect_initial_backoff_ms: 500

@@ -125,4 +125,46 @@ TEST(OrderStateMachineTest, RecoveryCanBootstrapOrderFromWalEvent) {
     EXPECT_EQ(snapshot.filled_volume, 1);
 }
 
+TEST(OrderStateMachineTest, HandlesMultipleSlicedOrdersIndependently) {
+    OrderStateMachine machine;
+
+    OrderIntent slice1;
+    slice1.client_order_id = "trace-1#slice-1";
+    slice1.account_id = "a1";
+    slice1.instrument_id = "SHFE.ag2406";
+    slice1.volume = 2;
+    slice1.price = 4500.0;
+    slice1.ts_ns = 1;
+
+    OrderIntent slice2 = slice1;
+    slice2.client_order_id = "trace-1#slice-2";
+    slice2.ts_ns = 2;
+
+    ASSERT_TRUE(machine.OnOrderIntent(slice1));
+    ASSERT_TRUE(machine.OnOrderIntent(slice2));
+
+    OrderEvent fill1;
+    fill1.client_order_id = "trace-1#slice-1";
+    fill1.account_id = "a1";
+    fill1.instrument_id = "SHFE.ag2406";
+    fill1.status = OrderStatus::kFilled;
+    fill1.total_volume = 2;
+    fill1.filled_volume = 2;
+    fill1.ts_ns = 3;
+    ASSERT_TRUE(machine.OnOrderEvent(fill1));
+
+    OrderEvent cancel2 = fill1;
+    cancel2.client_order_id = "trace-1#slice-2";
+    cancel2.status = OrderStatus::kCanceled;
+    cancel2.filled_volume = 0;
+    cancel2.ts_ns = 4;
+    ASSERT_TRUE(machine.OnOrderEvent(cancel2));
+
+    const auto snapshot1 = machine.GetOrderSnapshot("trace-1#slice-1");
+    const auto snapshot2 = machine.GetOrderSnapshot("trace-1#slice-2");
+    EXPECT_EQ(snapshot1.status, OrderStatus::kFilled);
+    EXPECT_EQ(snapshot2.status, OrderStatus::kCanceled);
+    EXPECT_EQ(machine.ActiveOrderCount(), 0U);
+}
+
 }  // namespace quant_hft

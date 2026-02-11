@@ -6,6 +6,11 @@ RAW_VERSION="${1:-$(date -u +%Y%m%dT%H%M%SZ)}"
 VERSION="${RAW_VERSION//\//-}"
 VERSION="${VERSION//:/-}"
 OUT_DIR="${2:-$ROOT_DIR/dist}"
+if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9]+)*$ ]] && \
+   [[ ! "$VERSION" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then
+  echo "error: version must be semver (vX.Y.Z) or UTC timestamp (YYYYMMDDTHHMMSSZ)" >&2
+  exit 2
+fi
 BUNDLE_NAME="quant-hft-nonhotpath-${VERSION}"
 STAGE_DIR="$(mktemp -d)"
 PAYLOAD_DIR="$STAGE_DIR/$BUNDLE_NAME"
@@ -29,6 +34,7 @@ cp "$ROOT_DIR/pyproject.toml" "$PAYLOAD_DIR/"
 cp "$ROOT_DIR/README.md" "$PAYLOAD_DIR/"
 cp "$ROOT_DIR/docs/K8S_DEPLOYMENT_RUNBOOK.md" "$PAYLOAD_DIR/docs/"
 cp "$ROOT_DIR/docs/SYSTEMD_DEPLOYMENT_RUNBOOK.md" "$PAYLOAD_DIR/docs/"
+cp "$ROOT_DIR/docs/WAL_RECOVERY_RUNBOOK.md" "$PAYLOAD_DIR/docs/"
 cp "$ROOT_DIR/docs/CTP_SIMNOW_RECONNECT_FAULT_INJECTION_RUNBOOK.md" "$PAYLOAD_DIR/docs/"
 cp "$ROOT_DIR/docs/templates/RECONNECT_FAULT_INJECTION_RESULT.md" "$PAYLOAD_DIR/docs/"
 cp "$ROOT_DIR/configs/sim/ctp.yaml" "$PAYLOAD_DIR/configs/sim/"
@@ -42,6 +48,28 @@ cp "$ROOT_DIR/scripts/ops/reconnect_slo_report.py" "$PAYLOAD_DIR/scripts/ops/"
 cp "$ROOT_DIR/scripts/ops/render_k8s_manifests.py" "$PAYLOAD_DIR/scripts/ops/"
 cp "$ROOT_DIR/scripts/ops/render_systemd_units.py" "$PAYLOAD_DIR/scripts/ops/"
 cp "$ROOT_DIR/scripts/ops/run_reconnect_evidence.py" "$PAYLOAD_DIR/scripts/ops/"
+
+BUILD_TS_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+if GIT_COMMIT="$(git -C "$ROOT_DIR" rev-parse --short=12 HEAD 2>/dev/null)"; then
+  :
+else
+  GIT_COMMIT="unknown"
+fi
+cat >"$PAYLOAD_DIR/deploy/release_manifest.json" <<EOF
+{
+  "release_version": "$VERSION",
+  "build_ts_utc": "$BUILD_TS_UTC",
+  "git_commit": "$GIT_COMMIT",
+  "bundle_name": "$BUNDLE_NAME",
+  "components": [
+    "core_engine(service template)",
+    "data_pipeline(non-hotpath)",
+    "systemd manifests",
+    "k8s manifests(non-hotpath)",
+    "ops runbooks"
+  ]
+}
+EOF
 
 cp -r "$ROOT_DIR/python/quant_hft" "$PAYLOAD_DIR/python/"
 find "$PAYLOAD_DIR/python" -type f -name '*.pyc' -delete

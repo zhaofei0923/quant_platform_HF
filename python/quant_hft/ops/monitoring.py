@@ -43,6 +43,25 @@ class ObservabilitySnapshot:
     alerts: tuple[AlertRecord, ...]
 
 
+@dataclass(frozen=True)
+class SliRecord:
+    name: str
+    value: float | None
+    target: float | None
+    unit: str
+    healthy: bool
+    detail: str
+
+
+@dataclass(frozen=True)
+class OpsHealthReport:
+    generated_ts_ns: int
+    scope: str
+    overall_healthy: bool
+    slis: tuple[SliRecord, ...]
+    metadata: dict[str, str]
+
+
 def _normalize_labels(labels: Mapping[str, str] | None) -> dict[str, str]:
     if labels is None:
         return {}
@@ -192,3 +211,138 @@ class InMemoryObservability:
 
     def _append_trace(self, span: TraceSpanRecord) -> None:
         self._traces.append(span)
+
+
+def _normalize_health_flag(raw: str) -> bool | None:
+    normalized = raw.strip().lower()
+    if normalized in {"healthy", "ok", "true", "1"}:
+        return True
+    if normalized in {"unhealthy", "failed", "false", "0"}:
+        return False
+    return None
+
+
+def build_ops_health_report(
+    *,
+    strategy_bridge_latency_ms: float | None,
+    strategy_bridge_target_ms: float,
+    core_process_alive: bool,
+    redis_health: str = "unknown",
+    timescale_health: str = "unknown",
+    scope: str = "core_engine + strategy_bridge + storage",
+    metadata: Mapping[str, str] | None = None,
+    now_ns_fn: Callable[[], int] | None = None,
+) -> OpsHealthReport:
+    if strategy_bridge_target_ms <= 0:
+        raise ValueError("strategy_bridge_target_ms must be > 0")
+    now_ns = int((now_ns_fn or time.time_ns)())
+    slis: list[SliRecord] = []
+    slis.append(
+        SliRecord(
+            name="core_process_alive",
+            value=1.0 if core_process_alive else 0.0,
+            target=1.0,
+            unit="bool",
+            healthy=core_process_alive,
+            detail="probe process stayed alive during collection",
+        )
+    )
+
+    latency_healthy = (
+        strategy_bridge_latency_ms is not None
+        and strategy_bridge_latency_ms <= strategy_bridge_target_ms
+    )
+    slis.append(
+        SliRecord(
+            name="strategy_bridge_latency_p99_ms",
+            value=strategy_bridge_latency_ms,
+            target=strategy_bridge_target_ms,
+            unit="ms",
+            healthy=latency_healthy,
+            detail="derived from reconnect recovery samples",
+        )
+    )
+
+    redis_ok = _normalize_health_flag(redis_health)
+    slis.append(
+        SliRecord(
+            name="storage_redis_health",
+            value=1.0 if redis_ok else 0.0 if redis_ok is False else None,
+            target=1.0,
+            unit="bool",
+            healthy=redis_ok is True,
+            detail=f"input={redis_health}",
+        )
+    )
+
+    timescale_ok = _normalize_health_flag(timescale_health)
+    slis.append(
+        SliRecord(
+            name="storage_timescale_health",
+            value=1.0 if timescale_ok else 0.0 if timescale_ok is False else None,
+            target=1.0,
+            unit="bool",
+            healthy=timescale_ok is True,
+            detail=f"input={timescale_health}",
+        )
+    )
+
+    overall_healthy = all(item.healthy for item in slis)
+    return OpsHealthReport(
+        generated_ts_ns=now_ns,
+        scope=scope,
+        overall_healthy=overall_healthy,
+        slis=tuple(slis),
+        metadata=_normalize_labels(metadata),
+    )
+
+
+def ops_health_report_to_dict(report: OpsHealthReport) -> dict[str, object]:
+    return {
+        "generated_ts_ns": report.generated_ts_ns,
+        "scope": report.scope,
+        "overall_healthy": report.overall_healthy,
+        "metadata": dict(report.metadata),
+        "slis": [
+            {
+                "name": item.name,
+                "value": item.value,
+                "target": item.target,
+                "unit": item.unit,
+                "healthy": item.healthy,
+                "detail": item.detail,
+            }
+            for item in report.slis
+        ],
+    }
+
+
+def render_ops_health_markdown(report: OpsHealthReport) -> str:
+    lines = [
+        "# Ops Health Report",
+        "",
+        f"- Scope: {report.scope}",
+        f"- Generated TS (ns): {report.generated_ts_ns}",
+        f"- Overall healthy: {'yes' if report.overall_healthy else 'no'}",
+        "",
+        "## SLI",
+        "| Name | Value | Target | Healthy | Detail |",
+        "|---|---:|---:|---|---|",
+    ]
+    for item in report.slis:
+        value = "n/a" if item.value is None else f"{item.value:g}"
+        target = "n/a" if item.target is None else f"{item.target:g}"
+        lines.append(
+            "| {name} | {value} | {target} | {healthy} | {detail} |".format(
+                name=item.name,
+                value=value,
+                target=target,
+                healthy="yes" if item.healthy else "no",
+                detail=item.detail,
+            )
+        )
+    if report.metadata:
+        lines.extend(["", "## Metadata"])
+        for key in sorted(report.metadata):
+            lines.append(f"- {key}: {report.metadata[key]}")
+    return "\n".join(lines) + "\n"

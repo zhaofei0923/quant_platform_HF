@@ -102,6 +102,9 @@ TEST(TimescaleEventStoreClientAdapterTest, RoundTripsRowsByKey) {
     RiskDecision decision;
     decision.action = RiskAction::kAllow;
     decision.rule_id = "BASIC_LIMIT";
+    decision.rule_group = "default";
+    decision.rule_version = "v1";
+    decision.decision_ts_ns = 25;
     decision.reason = "ok";
     OrderIntent intent;
     intent.account_id = "acc-1";
@@ -113,7 +116,11 @@ TEST(TimescaleEventStoreClientAdapterTest, RoundTripsRowsByKey) {
 
     EXPECT_EQ(store.GetMarketSnapshots("SHFE.ag2406").size(), 1U);
     EXPECT_EQ(store.GetOrderEvents("ord-1").size(), 1U);
-    EXPECT_EQ(store.GetRiskDecisionRows().size(), 1U);
+    const auto rows = store.GetRiskDecisionRows();
+    ASSERT_EQ(rows.size(), 1U);
+    EXPECT_EQ(rows[0].decision.rule_group, "default");
+    EXPECT_EQ(rows[0].decision.rule_version, "v1");
+    EXPECT_EQ(rows[0].decision.decision_ts_ns, 25);
 }
 
 TEST(TimescaleEventStoreClientAdapterTest, RetriesTransientInsertFailure) {

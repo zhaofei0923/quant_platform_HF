@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 from collections import defaultdict
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TextIO, cast
+from typing import Any, TextIO, cast
 
 from quant_hft.contracts import OrderEvent, Side
 from quant_hft.runtime.engine import StrategyRuntime
+from quant_hft.strategy.base import ensure_backtest_ctx
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,87 @@ class DeterministicReplayReport:
     total_realized_pnl: float
     total_unrealized_pnl: float
     invariant_violations: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class BacktestRunSpec:
+    csv_path: str
+    max_ticks: int | None = None
+    deterministic_fills: bool = True
+    wal_path: str | None = None
+    account_id: str = "sim-account"
+    run_id: str = "run-default"
+
+    @staticmethod
+    def from_dict(raw: dict[str, Any]) -> BacktestRunSpec:
+        max_ticks_raw = raw.get("max_ticks")
+        max_ticks = int(max_ticks_raw) if max_ticks_raw is not None else None
+        wal_path_raw = raw.get("wal_path")
+        wal_path = str(wal_path_raw) if wal_path_raw is not None else None
+        return BacktestRunSpec(
+            csv_path=str(raw["csv_path"]),
+            max_ticks=max_ticks,
+            deterministic_fills=bool(raw.get("deterministic_fills", True)),
+            wal_path=wal_path,
+            account_id=str(raw.get("account_id", "sim-account")),
+            run_id=str(raw.get("run_id", "run-default")),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "csv_path": self.csv_path,
+            "max_ticks": self.max_ticks,
+            "deterministic_fills": self.deterministic_fills,
+            "wal_path": self.wal_path,
+            "account_id": self.account_id,
+            "run_id": self.run_id,
+        }
+
+
+@dataclass(frozen=True)
+class BacktestRunResult:
+    run_id: str
+    mode: str
+    spec: BacktestRunSpec
+    replay: ReplayReport
+    deterministic: DeterministicReplayReport | None
+    input_signature: str
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "run_id": self.run_id,
+            "mode": self.mode,
+            "spec": self.spec.to_dict(),
+            "input_signature": self.input_signature,
+            "replay": {
+                "ticks_read": self.replay.ticks_read,
+                "bars_emitted": self.replay.bars_emitted,
+                "intents_emitted": self.replay.intents_emitted,
+                "first_instrument": self.replay.first_instrument,
+                "last_instrument": self.replay.last_instrument,
+            },
+        }
+        if self.deterministic is not None:
+            payload["deterministic"] = {
+                "intents_processed": self.deterministic.intents_processed,
+                "order_events_emitted": self.deterministic.order_events_emitted,
+                "wal_records": self.deterministic.wal_records,
+                "instrument_bars": self.deterministic.instrument_bars,
+                "instrument_pnl": {
+                    instrument_id: {
+                        "net_position": item.net_position,
+                        "avg_open_price": item.avg_open_price,
+                        "realized_pnl": item.realized_pnl,
+                        "unrealized_pnl": item.unrealized_pnl,
+                        "last_price": item.last_price,
+                    }
+                    for instrument_id, item in self.deterministic.instrument_pnl.items()
+                },
+                "total_realized_pnl": self.deterministic.total_realized_pnl,
+                "total_unrealized_pnl": self.deterministic.total_unrealized_pnl,
+                "invariant_violations": list(self.deterministic.invariant_violations),
+            }
+        return payload
 
 
 @dataclass
@@ -218,6 +301,57 @@ def _validate_invariants(
                 f"(got {snapshot.unrealized_pnl:.8f})"
             )
     return tuple(violations)
+
+
+def _build_input_signature(spec: BacktestRunSpec) -> str:
+    canonical = json.dumps(spec.to_dict(), ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def load_backtest_run_spec(spec_file: Path | str) -> BacktestRunSpec:
+    raw = json.loads(Path(spec_file).read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError("backtest spec must be a JSON object")
+    return BacktestRunSpec.from_dict(raw)
+
+
+def run_backtest_spec(
+    spec: BacktestRunSpec,
+    runtime: StrategyRuntime,
+    *,
+    ctx: dict[str, object] | None = None,
+) -> BacktestRunResult:
+    run_ctx: dict[str, object] = {} if ctx is None else ctx
+    mode = "deterministic" if spec.deterministic_fills else "bar_replay"
+    ensure_backtest_ctx(run_ctx, run_id=spec.run_id, mode=mode, clock_ns=0)
+
+    if spec.deterministic_fills:
+        deterministic = replay_csv_with_deterministic_fills(
+            spec.csv_path,
+            runtime,
+            run_ctx,
+            max_ticks=spec.max_ticks,
+            wal_path=spec.wal_path,
+            account_id=spec.account_id,
+        )
+        replay = deterministic.replay
+    else:
+        deterministic = None
+        replay = replay_csv_minute_bars(
+            spec.csv_path,
+            runtime,
+            run_ctx,
+            max_ticks=spec.max_ticks,
+        )
+
+    return BacktestRunResult(
+        run_id=spec.run_id,
+        mode=mode,
+        spec=spec,
+        replay=replay,
+        deterministic=deterministic,
+        input_signature=_build_input_signature(spec),
+    )
 
 
 def iter_csv_ticks(csv_path: Path | str, max_ticks: int | None = None) -> Iterator[CsvTick]:

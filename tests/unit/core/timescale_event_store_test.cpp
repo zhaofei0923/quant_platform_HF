@@ -70,6 +70,9 @@ TEST(TimescaleEventStoreTest, AppendsOrderAndRiskDecisionEvents) {
     RiskDecision decision;
     decision.action = RiskAction::kAllow;
     decision.rule_id = "BASIC_LIMIT";
+    decision.rule_group = "default";
+    decision.rule_version = "v1";
+    decision.decision_ts_ns = 30;
     decision.reason = "ok";
     store.AppendRiskDecision(MakeIntent("ord-1", 19), decision);
 
@@ -81,6 +84,9 @@ TEST(TimescaleEventStoreTest, AppendsOrderAndRiskDecisionEvents) {
     ASSERT_EQ(risks.size(), 1U);
     EXPECT_EQ(risks[0].intent.client_order_id, "ord-1");
     EXPECT_EQ(risks[0].decision.rule_id, "BASIC_LIMIT");
+    EXPECT_EQ(risks[0].decision.rule_group, "default");
+    EXPECT_EQ(risks[0].decision.rule_version, "v1");
+    EXPECT_EQ(risks[0].decision.decision_ts_ns, 30);
 }
 
 }  // namespace quant_hft

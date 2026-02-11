@@ -26,7 +26,10 @@ void TimescaleEventStore::AppendRiskDecision(const OrderIntent& intent,
     RiskDecisionRow row;
     row.intent = intent;
     row.decision = decision;
-    row.ts_ns = intent.ts_ns > 0 ? intent.ts_ns : NowEpochNanos();
+    if (row.decision.decision_ts_ns <= 0) {
+        row.decision.decision_ts_ns = NowEpochNanos();
+    }
+    row.ts_ns = row.decision.decision_ts_ns;
     risk_rows_.push_back(std::move(row));
 }
 

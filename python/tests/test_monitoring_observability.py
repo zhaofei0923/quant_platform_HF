@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from quant_hft.ops.monitoring import InMemoryObservability
+from quant_hft.ops.monitoring import (
+    InMemoryObservability,
+    build_ops_health_report,
+    ops_health_report_to_dict,
+    render_ops_health_markdown,
+)
 
 
 def test_observability_records_metric_span_and_alert() -> None:
@@ -44,3 +49,26 @@ def test_observability_records_metric_span_and_alert() -> None:
     assert len(snapshot.alerts) == 1
     assert snapshot.alerts[0].code == "PIPELINE_EXPORT_EMPTY"
     assert snapshot.alerts[0].severity == "warning"
+
+
+def test_ops_health_report_build_and_render() -> None:
+    report = build_ops_health_report(
+        strategy_bridge_latency_ms=320.0,
+        strategy_bridge_target_ms=1000.0,
+        core_process_alive=True,
+        redis_health="healthy",
+        timescale_health="healthy",
+        metadata={"env": "sim"},
+        now_ns_fn=lambda: 12345,
+    )
+
+    payload = ops_health_report_to_dict(report)
+    assert payload["overall_healthy"] is True
+    assert payload["generated_ts_ns"] == 12345
+    assert isinstance(payload["slis"], list)
+    assert len(payload["slis"]) == 4
+
+    markdown = render_ops_health_markdown(report)
+    assert "# Ops Health Report" in markdown
+    assert "strategy_bridge_latency_p99_ms" in markdown
+    assert "Overall healthy: yes" in markdown

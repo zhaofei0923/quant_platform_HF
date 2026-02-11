@@ -117,6 +117,70 @@ std::vector<std::string> ResolveStrategyIds(const quant_hft::CtpFileConfig& conf
     return {"demo"};
 }
 
+std::vector<quant_hft::BasicRiskRule> BuildRiskRules(const quant_hft::RiskConfig& risk_config) {
+    std::vector<quant_hft::BasicRiskRule> rules;
+    rules.reserve(risk_config.rules.size());
+    for (const auto& rule_cfg : risk_config.rules) {
+        quant_hft::BasicRiskRule rule;
+        rule.rule_id = rule_cfg.rule_id.empty() ? ("risk." + rule_cfg.rule_group)
+                                                : rule_cfg.rule_id;
+        rule.rule_group = rule_cfg.rule_group.empty() ? "default" : rule_cfg.rule_group;
+        rule.rule_version = rule_cfg.rule_version.empty() ? "v1" : rule_cfg.rule_version;
+        rule.account_id = rule_cfg.account_id;
+        rule.instrument_id = rule_cfg.instrument_id;
+        rule.window_start_hhmm = rule_cfg.window_start_hhmm;
+        rule.window_end_hhmm = rule_cfg.window_end_hhmm;
+        rule.max_order_volume = rule_cfg.max_order_volume;
+        rule.max_order_notional = rule_cfg.max_order_notional;
+        rules.push_back(std::move(rule));
+    }
+    return rules;
+}
+
+std::vector<quant_hft::OrderIntent> BuildExecutionIntents(
+    const quant_hft::SignalIntent& signal,
+    const std::string& account_id,
+    const quant_hft::ExecutionConfig& execution) {
+    std::vector<quant_hft::OrderIntent> intents;
+    if (signal.volume <= 0 || signal.trace_id.empty()) {
+        return intents;
+    }
+
+    const bool use_sliced_mode = execution.mode == quant_hft::ExecutionMode::kSliced &&
+                                 execution.slice_size > 0 &&
+                                 signal.volume > execution.slice_size;
+    const int slice_size = use_sliced_mode ? execution.slice_size : signal.volume;
+    int remaining = signal.volume;
+    int slice_index = 0;
+    const auto base_ts = signal.ts_ns == 0 ? quant_hft::NowEpochNanos() : signal.ts_ns;
+    while (remaining > 0) {
+        const int this_volume = std::min(remaining, slice_size);
+        ++slice_index;
+
+        quant_hft::OrderIntent intent;
+        intent.account_id = account_id;
+        intent.instrument_id = signal.instrument_id;
+        intent.side = signal.side;
+        intent.offset = signal.offset;
+        intent.type = quant_hft::OrderType::kLimit;
+        intent.volume = this_volume;
+        intent.price = signal.limit_price;
+        intent.ts_ns = base_ts + slice_index;
+        if (use_sliced_mode) {
+            intent.client_order_id =
+                signal.trace_id + "#slice-" + std::to_string(slice_index);
+            intent.trace_id = intent.client_order_id;
+        } else {
+            intent.client_order_id = signal.trace_id;
+            intent.trace_id = signal.trace_id;
+        }
+
+        intents.push_back(std::move(intent));
+        remaining -= this_volume;
+    }
+    return intents;
+}
+
 quant_hft::OrderEvent BuildRejectedEvent(const quant_hft::OrderIntent& intent,
                                          const std::string& reason) {
     quant_hft::OrderEvent event;
@@ -159,8 +223,13 @@ int main(int argc, char** argv) {
     const int poll_interval_ms = std::max(1, file_config.strategy_poll_interval_ms);
     const std::string account_id = file_config.account_id.empty() ? config.user_id
                                                                    : file_config.account_id;
-
-    BasicRiskEngine risk(BasicRiskLimits{});
+    const ExecutionConfig execution_config = file_config.execution;
+    BasicRiskLimits risk_limits;
+    risk_limits.max_order_volume = file_config.risk.default_max_order_volume;
+    risk_limits.max_order_notional = file_config.risk.default_max_order_notional;
+    risk_limits.rule_group = file_config.risk.default_rule_group;
+    risk_limits.rule_version = file_config.risk.default_rule_version;
+    BasicRiskEngine risk(risk_limits, BuildRiskRules(file_config.risk));
     CtpGatewayAdapter ctp_gateway(10);
     InMemoryPortfolioLedger ledger;
     OrderStateMachine order_state_machine;
@@ -300,36 +369,31 @@ int main(int argc, char** argv) {
                 }
 
                 for (const auto& signal : batch.intents) {
-                    OrderIntent intent;
-                    intent.account_id = account_id;
-                    intent.client_order_id = signal.trace_id;
-                    intent.instrument_id = signal.instrument_id;
-                    intent.side = signal.side;
-                    intent.offset = signal.offset;
-                    intent.type = OrderType::kLimit;
-                    intent.volume = signal.volume;
-                    intent.price = signal.limit_price;
-                    intent.ts_ns = signal.ts_ns == 0 ? NowEpochNanos() : signal.ts_ns;
-                    intent.trace_id = signal.trace_id;
+                    const auto intents =
+                        BuildExecutionIntents(signal, account_id, execution_config);
+                    for (std::size_t idx = 0; idx < intents.size(); ++idx) {
+                        const auto& intent = intents[idx];
+                        const auto decision = risk.PreCheck(intent);
+                        timeseries_store.AppendRiskDecision(intent, decision);
 
-                    const auto decision = risk.PreCheck(intent);
-                    timeseries_store.AppendRiskDecision(intent, decision);
+                        if (decision.action != RiskAction::kAllow) {
+                            process_order_event(
+                                BuildRejectedEvent(intent, "risk_reject:" + decision.reason));
+                        } else if (!order_state_machine.OnOrderIntent(intent)) {
+                            process_order_event(BuildRejectedEvent(
+                                intent, "order_state_reject:duplicate_or_invalid"));
+                        } else if (!ctp_gateway.PlaceOrder(intent)) {
+                            process_order_event(
+                                BuildRejectedEvent(intent, "gateway_reject:place_order_failed"));
+                        }
 
-                    if (decision.action != RiskAction::kAllow) {
-                        process_order_event(
-                            BuildRejectedEvent(intent, "risk_reject:" + decision.reason));
-                        continue;
-                    }
-
-                    if (!order_state_machine.OnOrderIntent(intent)) {
-                        process_order_event(
-                            BuildRejectedEvent(intent, "order_state_reject:duplicate_or_invalid"));
-                        continue;
-                    }
-
-                    if (!ctp_gateway.PlaceOrder(intent)) {
-                        process_order_event(
-                            BuildRejectedEvent(intent, "gateway_reject:place_order_failed"));
+                        const bool is_last_slice = idx + 1 == intents.size();
+                        if (!is_last_slice &&
+                            execution_config.mode == ExecutionMode::kSliced &&
+                            execution_config.slice_interval_ms > 0) {
+                            std::this_thread::sleep_for(
+                                std::chrono::milliseconds(execution_config.slice_interval_ms));
+                        }
                     }
                 }
             }

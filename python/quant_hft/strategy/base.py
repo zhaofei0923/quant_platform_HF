@@ -3,7 +3,41 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-from quant_hft.contracts import OrderEvent, SignalIntent, StateSnapshot7D
+from quant_hft.contracts import OffsetFlag, OrderEvent, Side, SignalIntent, StateSnapshot7D
+
+BACKTEST_CTX_REQUIRED_KEYS = ("run_id", "mode", "clock_ns", "metrics", "artifacts")
+
+
+def ensure_backtest_ctx(
+    ctx: dict[str, Any],
+    *,
+    run_id: str,
+    mode: str,
+    clock_ns: int,
+) -> None:
+    """Populate required backtest context keys with deterministic defaults."""
+    ctx.setdefault("run_id", run_id)
+    ctx.setdefault("mode", mode)
+    ctx.setdefault("clock_ns", clock_ns)
+    ctx.setdefault("metrics", {})
+    ctx.setdefault("artifacts", {})
+
+
+def validate_signal_intents(intents: list[SignalIntent]) -> None:
+    """Validate strategy outputs against SignalIntent contract constraints."""
+    for index, intent in enumerate(intents):
+        if not intent.strategy_id:
+            raise ValueError(f"intent[{index}] strategy_id is required")
+        if not intent.instrument_id:
+            raise ValueError(f"intent[{index}] instrument_id is required")
+        if not isinstance(intent.side, Side):
+            raise ValueError(f"intent[{index}] side must be Side enum")
+        if not isinstance(intent.offset, OffsetFlag):
+            raise ValueError(f"intent[{index}] offset must be OffsetFlag enum")
+        if intent.volume <= 0:
+            raise ValueError(f"intent[{index}] volume must be positive")
+        if intent.trace_id == "":
+            raise ValueError(f"intent[{index}] trace_id is required")
 
 
 class StrategyBase(ABC):

@@ -4,6 +4,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "quant_hft/contracts/types.h"
 
@@ -30,6 +31,7 @@ public:
 
     bool HasOrder(const std::string& client_order_id) const;
     ManagedOrderSnapshot GetOrderSnapshot(const std::string& client_order_id) const;
+    std::vector<ManagedOrderSnapshot> GetActiveOrders() const;
     std::size_t ActiveOrderCount() const;
 
 private:

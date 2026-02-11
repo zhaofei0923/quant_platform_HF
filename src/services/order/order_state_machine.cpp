@@ -169,6 +169,18 @@ ManagedOrderSnapshot OrderStateMachine::GetOrderSnapshot(
     return it->second;
 }
 
+std::vector<ManagedOrderSnapshot> OrderStateMachine::GetActiveOrders() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<ManagedOrderSnapshot> active_orders;
+    active_orders.reserve(orders_.size());
+    for (const auto& item : orders_) {
+        if (!item.second.is_terminal) {
+            active_orders.push_back(item.second);
+        }
+    }
+    return active_orders;
+}
+
 std::size_t OrderStateMachine::ActiveOrderCount() const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::size_t active = 0;

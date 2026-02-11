@@ -167,4 +167,44 @@ TEST(OrderStateMachineTest, HandlesMultipleSlicedOrdersIndependently) {
     EXPECT_EQ(machine.ActiveOrderCount(), 0U);
 }
 
+TEST(OrderStateMachineTest, ReturnsOnlyNonTerminalOrdersFromActiveView) {
+    OrderStateMachine machine;
+
+    OrderIntent active_intent;
+    active_intent.client_order_id = "ord-active";
+    active_intent.account_id = "a1";
+    active_intent.instrument_id = "SHFE.ag2406";
+    active_intent.volume = 2;
+    active_intent.price = 4500.0;
+    active_intent.ts_ns = 100;
+    ASSERT_TRUE(machine.OnOrderIntent(active_intent));
+
+    OrderEvent active_event;
+    active_event.client_order_id = "ord-active";
+    active_event.account_id = "a1";
+    active_event.instrument_id = "SHFE.ag2406";
+    active_event.status = OrderStatus::kAccepted;
+    active_event.total_volume = 2;
+    active_event.filled_volume = 0;
+    active_event.ts_ns = 120;
+    ASSERT_TRUE(machine.OnOrderEvent(active_event));
+
+    OrderIntent terminal_intent = active_intent;
+    terminal_intent.client_order_id = "ord-terminal";
+    terminal_intent.ts_ns = 130;
+    ASSERT_TRUE(machine.OnOrderIntent(terminal_intent));
+
+    OrderEvent terminal_event = active_event;
+    terminal_event.client_order_id = "ord-terminal";
+    terminal_event.status = OrderStatus::kCanceled;
+    terminal_event.ts_ns = 140;
+    ASSERT_TRUE(machine.OnOrderEvent(terminal_event));
+
+    const auto active_orders = machine.GetActiveOrders();
+    ASSERT_EQ(active_orders.size(), 1U);
+    EXPECT_EQ(active_orders[0].client_order_id, "ord-active");
+    EXPECT_EQ(active_orders[0].status, OrderStatus::kAccepted);
+    EXPECT_EQ(active_orders[0].last_update_ts_ns, 120);
+}
+
 }  // namespace quant_hft

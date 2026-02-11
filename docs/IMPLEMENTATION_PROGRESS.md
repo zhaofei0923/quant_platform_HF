@@ -25,6 +25,29 @@ Use this fixed template for every sprint update:
 Completion rule:
 - A sprint is marked `done` only when code, tests, and `develop/` status updates are all completed.
 
+## Sprint B3 (2026-02-11 ~ 2026-02-24)
+- Objective:
+  - add timeout-based cancel strategy in core execution loop
+  - make cancel cadence configurable via CTP yaml keys
+- Scope:
+  - `include/quant_hft/core/ctp_config.h`
+  - `src/core/ctp/ctp_config_loader.cpp`
+  - `src/apps/core_engine_main.cpp`
+  - `include/quant_hft/services/order_state_machine.h`
+  - `src/services/order/order_state_machine.cpp`
+  - `tests/unit/core/ctp_config_loader_test.cpp`
+  - `tests/unit/services/order_state_machine_test.cpp`
+  - `configs/sim/ctp.yaml`
+- Test Evidence:
+  - [x] `ctest --test-dir build --output-on-failure --tests-regex "(CtpConfigLoaderTest|OrderStateMachineTest)"`
+  - [x] `./scripts/build/bootstrap.sh`
+- Develop Docs Synced:
+  - [x] `develop/00-实现对齐矩阵与缺口总览.md`
+  - [x] `develop/00-未完成能力补齐路线图.md`
+  - [x] `develop/03-实盘交易系统核心设计/03-02-订单与执行引擎设计.md`
+- Status:
+  - `done`
+
 ## Sprint A1 + A2 (2026-02-25 ~ 2026-03-24)
 - Objective:
   - reproducible backtest run spec/result

@@ -51,6 +51,9 @@ struct ExecutionConfig {
     ExecutionMode mode{ExecutionMode::kDirect};
     int slice_size{1};
     int slice_interval_ms{200};
+    // 0 disables timeout-based cancel requests.
+    int cancel_after_ms{0};
+    int cancel_check_interval_ms{200};
 };
 
 struct RiskRuleConfig {

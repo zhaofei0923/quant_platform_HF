@@ -401,6 +401,37 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         }
         return false;
     }
+    loaded.execution.cancel_after_ms = 0;
+    SetOptionalInt(kv, "cancel_after_ms", &loaded.execution.cancel_after_ms, &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.execution.cancel_after_ms < 0) {
+        if (error != nullptr) {
+            *error = "cancel_after_ms must be >= 0";
+        }
+        return false;
+    }
+    loaded.execution.cancel_check_interval_ms = 200;
+    SetOptionalInt(kv,
+                   "cancel_check_interval_ms",
+                   &loaded.execution.cancel_check_interval_ms,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.execution.cancel_check_interval_ms <= 0) {
+        if (error != nullptr) {
+            *error = "cancel_check_interval_ms must be > 0";
+        }
+        return false;
+    }
 
     loaded.risk.default_max_order_volume = 200;
     SetOptionalInt(kv,

@@ -198,6 +198,8 @@ TEST(CtpConfigLoaderTest, LoadsExecutionAndRiskRuleConfigs) {
         "  execution_mode: \"sliced\"\n"
         "  slice_size: 3\n"
         "  slice_interval_ms: 120\n"
+        "  cancel_after_ms: 1500\n"
+        "  cancel_check_interval_ms: 250\n"
         "  risk_default_max_order_volume: 12\n"
         "  risk_default_max_order_notional: 200000\n"
         "  risk_default_rule_group: \"global-default\"\n"
@@ -220,6 +222,8 @@ TEST(CtpConfigLoaderTest, LoadsExecutionAndRiskRuleConfigs) {
     EXPECT_EQ(config.execution.mode, ExecutionMode::kSliced);
     EXPECT_EQ(config.execution.slice_size, 3);
     EXPECT_EQ(config.execution.slice_interval_ms, 120);
+    EXPECT_EQ(config.execution.cancel_after_ms, 1500);
+    EXPECT_EQ(config.execution.cancel_check_interval_ms, 250);
 
     EXPECT_EQ(config.risk.default_max_order_volume, 12);
     EXPECT_DOUBLE_EQ(config.risk.default_max_order_notional, 200000.0);
@@ -257,6 +261,44 @@ TEST(CtpConfigLoaderTest, DefaultsAccountIdToUserIdWhenNotConfigured) {
     EXPECT_EQ(config.account_id, "191202");
 
     std::filesystem::remove(config_path);
+}
+
+TEST(CtpConfigLoaderTest, RejectsInvalidCancelExecutionConfigs) {
+    const auto negative_cancel_after = WriteTempConfig(
+        "ctp:\n"
+        "  environment: sim\n"
+        "  is_production_mode: false\n"
+        "  broker_id: \"9999\"\n"
+        "  user_id: \"191202\"\n"
+        "  investor_id: \"191202\"\n"
+        "  market_front: \"tcp://127.0.0.1:40011\"\n"
+        "  trader_front: \"tcp://127.0.0.1:40001\"\n"
+        "  password: \"plain-secret\"\n"
+        "  cancel_after_ms: -1\n");
+
+    CtpFileConfig config;
+    std::string error;
+    EXPECT_FALSE(
+        CtpConfigLoader::LoadFromYaml(negative_cancel_after.string(), &config, &error));
+    EXPECT_NE(error.find("cancel_after_ms"), std::string::npos);
+    std::filesystem::remove(negative_cancel_after);
+
+    const auto invalid_scan_interval = WriteTempConfig(
+        "ctp:\n"
+        "  environment: sim\n"
+        "  is_production_mode: false\n"
+        "  broker_id: \"9999\"\n"
+        "  user_id: \"191202\"\n"
+        "  investor_id: \"191202\"\n"
+        "  market_front: \"tcp://127.0.0.1:40011\"\n"
+        "  trader_front: \"tcp://127.0.0.1:40001\"\n"
+        "  password: \"plain-secret\"\n"
+        "  cancel_check_interval_ms: 0\n");
+    error.clear();
+    EXPECT_FALSE(
+        CtpConfigLoader::LoadFromYaml(invalid_scan_interval.string(), &config, &error));
+    EXPECT_NE(error.find("cancel_check_interval_ms"), std::string::npos);
+    std::filesystem::remove(invalid_scan_interval);
 }
 
 }  // namespace

@@ -4,8 +4,10 @@
 #include <csignal>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 
 #include "quant_hft/contracts/types.h"
@@ -198,6 +200,12 @@ quant_hft::OrderEvent BuildRejectedEvent(const quant_hft::OrderIntent& intent,
     return event;
 }
 
+bool IsTerminalStatus(quant_hft::OrderStatus status) {
+    return status == quant_hft::OrderStatus::kFilled ||
+           status == quant_hft::OrderStatus::kCanceled ||
+           status == quant_hft::OrderStatus::kRejected;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -233,6 +241,8 @@ int main(int argc, char** argv) {
     CtpGatewayAdapter ctp_gateway(10);
     InMemoryPortfolioLedger ledger;
     OrderStateMachine order_state_machine;
+    std::mutex cancel_pending_mutex;
+    std::unordered_set<std::string> cancel_pending_orders;
     WalReplayLoader replay_loader;
     StorageRetryPolicy storage_retry_policy;
     storage_retry_policy.max_attempts = 3;
@@ -295,6 +305,10 @@ int main(int argc, char** argv) {
             std::cerr << "order event dropped for " << event.client_order_id << '\n';
             return;
         }
+        if (IsTerminalStatus(event.status)) {
+            std::lock_guard<std::mutex> lock(cancel_pending_mutex);
+            cancel_pending_orders.erase(event.client_order_id);
+        }
         ledger.OnOrderEvent(event);
         wal_sink.AppendOrderEvent(event);
         realtime_cache.UpsertOrderEvent(event);
@@ -356,6 +370,7 @@ int main(int argc, char** argv) {
 
     std::atomic<bool> strategy_loop_stop{false};
     std::thread strategy_poll_thread([&]() {
+        auto next_cancel_scan = std::chrono::steady_clock::now();
         while (!strategy_loop_stop.load()) {
             for (const auto& strategy_id : strategy_ids) {
                 StrategyIntentBatch batch;
@@ -395,6 +410,43 @@ int main(int argc, char** argv) {
                                 std::chrono::milliseconds(execution_config.slice_interval_ms));
                         }
                     }
+                }
+            }
+
+            if (execution_config.cancel_after_ms > 0) {
+                const auto now = std::chrono::steady_clock::now();
+                if (now >= next_cancel_scan) {
+                    const auto now_ns = NowEpochNanos();
+                    const auto cancel_after_ns =
+                        static_cast<EpochNanos>(execution_config.cancel_after_ms) * 1'000'000;
+                    const auto cutoff_ns = now_ns - cancel_after_ns;
+                    for (const auto& order : order_state_machine.GetActiveOrders()) {
+                        if (order.last_update_ts_ns == 0 ||
+                            order.last_update_ts_ns > cutoff_ns) {
+                            continue;
+                        }
+
+                        bool first_request = false;
+                        {
+                            std::lock_guard<std::mutex> lock(cancel_pending_mutex);
+                            first_request = cancel_pending_orders
+                                                .insert(order.client_order_id)
+                                                .second;
+                        }
+                        if (!first_request) {
+                            continue;
+                        }
+
+                        if (!ctp_gateway.CancelOrder(order.client_order_id,
+                                                     order.client_order_id)) {
+                            std::lock_guard<std::mutex> lock(cancel_pending_mutex);
+                            cancel_pending_orders.erase(order.client_order_id);
+                        }
+                    }
+
+                    next_cancel_scan =
+                        now + std::chrono::milliseconds(std::max(
+                                  1, execution_config.cancel_check_interval_ms));
                 }
             }
 

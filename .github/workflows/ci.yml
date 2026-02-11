@@ -36,12 +36,23 @@ jobs:
       - name: Ops Smoke
         run: |
           mkdir -p runtime docs/results
+          python scripts/ops/fake_redis_bridge_server.py --host 127.0.0.1 --port 16379 > runtime/fake_redis.log 2>&1 &
+          FAKE_REDIS_PID=$!
+          trap "kill ${FAKE_REDIS_PID}" EXIT
+          sleep 1
+          QUANT_HFT_REDIS_HOST=127.0.0.1 QUANT_HFT_REDIS_PORT=16379 \
           python scripts/ops/run_reconnect_evidence.py \
             --dry-run \
             --skip-preflight \
             --probe-bin /bin/echo \
             --config configs/sim/ctp.yaml \
             --scenarios disconnect \
+            --strategy-bridge-chain-status auto \
             --report-file docs/results/reconnect_fault_result.md \
             --health-json-file docs/results/ops_health_report.json \
-            --health-markdown-file docs/results/ops_health_report.md
+            --health-markdown-file docs/results/ops_health_report.md | tee runtime/ops_smoke.out
+          grep -q -- "--strategy-bridge-chain-status complete" runtime/ops_smoke.out
+          grep -q -- "--strategy-bridge-chain-source auto_detected" runtime/ops_smoke.out
+          grep -q -- "--strategy-bridge-state-key-count 2" runtime/ops_smoke.out
+          grep -q -- "--strategy-bridge-intent-count 1" runtime/ops_smoke.out
+          grep -q -- "--strategy-bridge-order-key-count 1" runtime/ops_smoke.out

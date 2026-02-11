@@ -98,6 +98,31 @@ Completion rule:
 - Status:
   - `done`
 
+## Sprint C5 (2026-02-11 ~ 2026-02-24)
+- Objective:
+  - validate auto chain detection over real TCP RESP path in CI
+  - make ops smoke fail fast when chain evidence is not complete
+- Scope:
+  - `scripts/ops/fake_redis_bridge_server.py`
+  - `.github/workflows/ci.yml`
+  - `python/tests/test_ops_auto_chain_smoke.py`
+  - `develop/04-基础设施与运维/04-01-监控、日志与告警体系设计.md`
+  - `develop/00-实现对齐矩阵与缺口总览.md`
+  - `develop/00-未完成能力补齐路线图.md`
+- Test Evidence:
+  - [x] `.venv/bin/pytest -q python/tests/test_ops_auto_chain_smoke.py`
+  - [x] `.venv/bin/pytest -q python/tests/test_run_reconnect_evidence_script.py python/tests/test_monitoring_observability.py`
+  - [x] `.venv/bin/ruff check python scripts`
+  - [x] `.venv/bin/black --check python scripts`
+  - [x] `.venv/bin/mypy python/quant_hft`
+  - [x] `./scripts/build/bootstrap.sh`
+- Develop Docs Synced:
+  - [x] `develop/00-实现对齐矩阵与缺口总览.md`
+  - [x] `develop/00-未完成能力补齐路线图.md`
+  - [x] `develop/04-基础设施与运维/04-01-监控、日志与告警体系设计.md`
+- Status:
+  - `done`
+
 ## Sprint A1 + A2 (2026-02-25 ~ 2026-03-24)
 - Objective:
   - reproducible backtest run spec/result

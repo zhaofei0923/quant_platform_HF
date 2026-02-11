@@ -39,6 +39,10 @@ class ReplayReport:
     intents_emitted: int
     first_instrument: str
     last_instrument: str
+    instrument_count: int
+    instrument_universe: tuple[str, ...]
+    first_ts_ns: int
+    last_ts_ns: int
 
 
 @dataclass(frozen=True)
@@ -187,6 +191,10 @@ class BacktestRunResult:
                 "intents_emitted": self.replay.intents_emitted,
                 "first_instrument": self.replay.first_instrument,
                 "last_instrument": self.replay.last_instrument,
+                "instrument_count": self.replay.instrument_count,
+                "instrument_universe": list(self.replay.instrument_universe),
+                "first_ts_ns": self.replay.first_ts_ns,
+                "last_ts_ns": self.replay.last_ts_ns,
             },
         }
         if self.deterministic is not None:
@@ -513,12 +521,20 @@ def replay_csv_minute_bars(
     intents_emitted = 0
     first_instrument = ""
     last_instrument = ""
+    instrument_ids: set[str] = set()
+    first_ts_ns = 0
+    last_ts_ns = 0
 
     bucket: list[CsvTick] = []
     current_key = ""
 
     for tick in iter_csv_ticks(csv_path, max_ticks=max_ticks):
         ticks_read += 1
+        instrument_ids.add(tick.instrument_id)
+        tick_ts_ns = _to_ts_ns(tick.trading_day, tick.update_time, tick.update_millisec)
+        if first_ts_ns == 0:
+            first_ts_ns = tick_ts_ns
+        last_ts_ns = tick_ts_ns
         if not first_instrument:
             first_instrument = tick.instrument_id
         last_instrument = tick.instrument_id
@@ -551,6 +567,10 @@ def replay_csv_minute_bars(
         intents_emitted=intents_emitted,
         first_instrument=first_instrument,
         last_instrument=last_instrument,
+        instrument_count=len(instrument_ids),
+        instrument_universe=tuple(sorted(instrument_ids)),
+        first_ts_ns=first_ts_ns,
+        last_ts_ns=last_ts_ns,
     )
 
 
@@ -570,6 +590,9 @@ def replay_csv_with_deterministic_fills(
     wal_records = 0
     first_instrument = ""
     last_instrument = ""
+    instrument_ids: set[str] = set()
+    first_ts_ns = 0
+    last_ts_ns = 0
     next_order_id = 1
     next_wal_seq = 1
     instrument_bars: defaultdict[str, int] = defaultdict(int)
@@ -587,6 +610,11 @@ def replay_csv_with_deterministic_fills(
     try:
         for tick in iter_csv_ticks(csv_path, max_ticks=max_ticks):
             ticks_read += 1
+            instrument_ids.add(tick.instrument_id)
+            tick_ts_ns = _to_ts_ns(tick.trading_day, tick.update_time, tick.update_millisec)
+            if first_ts_ns == 0:
+                first_ts_ns = tick_ts_ns
+            last_ts_ns = tick_ts_ns
             if not first_instrument:
                 first_instrument = tick.instrument_id
             last_instrument = tick.instrument_id
@@ -745,6 +773,10 @@ def replay_csv_with_deterministic_fills(
         intents_emitted=intents_processed,
         first_instrument=first_instrument,
         last_instrument=last_instrument,
+        instrument_count=len(instrument_ids),
+        instrument_universe=tuple(sorted(instrument_ids)),
+        first_ts_ns=first_ts_ns,
+        last_ts_ns=last_ts_ns,
     )
 
     max_equity, min_equity, max_drawdown = _compute_equity_profile(equity_points)

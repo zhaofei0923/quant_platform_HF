@@ -66,6 +66,10 @@ def test_replay_emits_minute_bars_and_intents(tmp_path: Path) -> None:
     assert report.intents_emitted == 2
     assert report.first_instrument == "rb2305"
     assert report.last_instrument == "rb2305"
+    assert report.instrument_count == 1
+    assert report.instrument_universe == ("rb2305",)
+    assert report.first_ts_ns > 0
+    assert report.last_ts_ns >= report.first_ts_ns
 
 
 def test_replay_smoke_on_real_backtest_file_if_present() -> None:
@@ -120,9 +124,35 @@ def test_run_backtest_spec_is_reproducible_and_populates_ctx(tmp_path: Path) -> 
     assert isinstance(deterministic_payload, dict)
     assert "performance" in deterministic_payload
     assert deterministic_payload["performance"]["total_pnl"] == pytest.approx(3.0)
+    replay_payload = result1.to_dict()["replay"]
+    assert replay_payload["instrument_count"] == 1
+    assert replay_payload["instrument_universe"] == ["rb2305"]
+    assert replay_payload["first_ts_ns"] > 0
+    assert replay_payload["last_ts_ns"] >= replay_payload["first_ts_ns"]
     for key in BACKTEST_CTX_REQUIRED_KEYS:
         assert key in ctx1
         assert key in ctx2
+
+
+def test_replay_tracks_multi_instrument_overview(tmp_path: Path) -> None:
+    csv_path = tmp_path / "multi.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "TradingDay,InstrumentID,UpdateTime,UpdateMillisec,LastPrice,Volume,BidPrice1,BidVolume1,AskPrice1,AskVolume1,AveragePrice,Turnover,OpenInterest",
+                "20230103,rb2305,09:00:01,0,4100.0,1,4099.0,10,4101.0,12,4100.0,0.0,100",
+                "20230103,ag2406,09:00:30,0,5100.0,1,5099.0,10,5101.0,12,5100.0,0.0,100",
+                "20230103,rb2305,09:01:01,0,4102.0,2,4101.0,10,4103.0,12,4101.0,0.0,100",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    runtime = StrategyRuntime()
+    report = replay_csv_minute_bars(csv_path, runtime, ctx={})
+    assert report.instrument_count == 2
+    assert report.instrument_universe == ("ag2406", "rb2305")
+    assert report.first_ts_ns > 0
+    assert report.last_ts_ns >= report.first_ts_ns
 
 
 def test_run_backtest_spec_data_signature_changes_when_csv_changes(tmp_path: Path) -> None:

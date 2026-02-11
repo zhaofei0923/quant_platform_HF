@@ -171,6 +171,37 @@ Completion rule:
 - Status:
   - `done`
 
+## Sprint D3 (2026-02-11 ~ 2026-02-24)
+- Objective:
+  - publish release audit facts (manifest + checksum + components) directly in CI summary
+  - archive release audit summary with release artifacts for traceability
+- Scope:
+  - `scripts/build/release_audit_summary.py`
+  - `python/tests/test_release_audit_summary_script.py`
+  - `scripts/build/package_nonhotpath_release.sh`
+  - `scripts/build/verify_nonhotpath_release.py`
+  - `.github/workflows/release-package.yml`
+  - `develop/00-实现对齐矩阵与缺口总览.md`
+  - `develop/00-未完成能力补齐路线图.md`
+  - `develop/04-基础设施与运维/04-02-部署、灾备与持续集成方案.md`
+- Test Evidence:
+  - [x] `.venv/bin/pytest -q python/tests/test_release_audit_summary_script.py`
+  - [x] `.venv/bin/pytest -q python/tests/test_verify_nonhotpath_release_script.py`
+  - [x] `VERSION=v0.2.2-dev1 && bash scripts/build/package_nonhotpath_release.sh "$VERSION"`
+  - [x] `python3 scripts/build/verify_nonhotpath_release.py --bundle dist/quant-hft-nonhotpath-v0.2.2-dev1.tar.gz --checksum dist/quant-hft-nonhotpath-v0.2.2-dev1.tar.gz.sha256 --expect-version v0.2.2-dev1`
+  - [x] `python3 scripts/build/release_audit_summary.py --bundle dist/quant-hft-nonhotpath-v0.2.2-dev1.tar.gz --checksum dist/quant-hft-nonhotpath-v0.2.2-dev1.tar.gz.sha256 --output docs/results/release_audit_summary.md`
+  - [x] `.venv/bin/ruff check python scripts`
+  - [x] `.venv/bin/black --check python scripts`
+  - [x] `.venv/bin/mypy python/quant_hft`
+  - [x] `.venv/bin/pytest python/tests -q`
+  - [x] `./scripts/build/bootstrap.sh`
+- Develop Docs Synced:
+  - [x] `develop/00-实现对齐矩阵与缺口总览.md`
+  - [x] `develop/00-未完成能力补齐路线图.md`
+  - [x] `develop/04-基础设施与运维/04-02-部署、灾备与持续集成方案.md`
+- Status:
+  - `done`
+
 ## Sprint A1 + A2 (2026-02-25 ~ 2026-03-24)
 - Objective:
   - reproducible backtest run spec/result

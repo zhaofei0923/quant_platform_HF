@@ -42,6 +42,15 @@ jobs:
             --checksum "dist/quant-hft-nonhotpath-${{ steps.package.outputs.version }}.tar.gz.sha256" \
             --expect-version "${{ steps.package.outputs.version }}"
 
+      - name: Generate release audit summary
+        run: |
+          mkdir -p docs/results
+          python scripts/build/release_audit_summary.py \
+            --bundle "dist/quant-hft-nonhotpath-${{ steps.package.outputs.version }}.tar.gz" \
+            --checksum "dist/quant-hft-nonhotpath-${{ steps.package.outputs.version }}.tar.gz.sha256" \
+            --output docs/results/release_audit_summary.md
+          cat docs/results/release_audit_summary.md >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -49,6 +58,7 @@ jobs:
           path: |
             dist/quant-hft-nonhotpath-${{ steps.package.outputs.version }}.tar.gz
             dist/quant-hft-nonhotpath-${{ steps.package.outputs.version }}.tar.gz.sha256
+            docs/results/release_audit_summary.md
 
       - name: Publish GitHub Release Assets
         if: startsWith(github.ref, 'refs/tags/')

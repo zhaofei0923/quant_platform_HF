@@ -204,6 +204,10 @@ print(runtime.on_bar({}, [{"instrument_id": "SHFE.ag2406"}]))
 
 - 文档：`docs/BACKTEST_REPLAY_HARNESS.md`
 - CLI：`scripts/backtest/replay_csv.py`
+- 关键参数：
+  - `--scenario-template`：场景模板回放
+  - `--emit-state-snapshots`：回放时派发 `StateSnapshot7D`（研究输入对齐实盘合约）
+  - `--report-json` / `--report-md`：输出结构化与可读报告
 
 ## 7. 数据管道（quant_hft.data_pipeline）
 

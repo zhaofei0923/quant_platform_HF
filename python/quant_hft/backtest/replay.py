@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TextIO, cast
 
-from quant_hft.contracts import OrderEvent, Side
+from quant_hft.contracts import OrderEvent, Side, SignalIntent, StateSnapshot7D
 from quant_hft.runtime.engine import StrategyRuntime
 from quant_hft.strategy.base import ensure_backtest_ctx
 
@@ -88,6 +88,7 @@ class BacktestRunSpec:
     wal_path: str | None = None
     account_id: str = "sim-account"
     run_id: str = "run-default"
+    emit_state_snapshots: bool = False
 
     @staticmethod
     def from_dict(raw: dict[str, Any]) -> BacktestRunSpec:
@@ -102,6 +103,7 @@ class BacktestRunSpec:
             wal_path=wal_path,
             account_id=str(raw.get("account_id", "sim-account")),
             run_id=str(raw.get("run_id", "run-default")),
+            emit_state_snapshots=bool(raw.get("emit_state_snapshots", False)),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -112,6 +114,7 @@ class BacktestRunSpec:
             "wal_path": self.wal_path,
             "account_id": self.account_id,
             "run_id": self.run_id,
+            "emit_state_snapshots": self.emit_state_snapshots,
         }
 
 
@@ -288,6 +291,66 @@ def _status_to_code(status: str) -> int:
     return mapping.get(status, 5)
 
 
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, value))
+
+
+def _build_state_snapshot_from_bar(bar: dict[str, object]) -> StateSnapshot7D:
+    instrument_id = str(bar["instrument_id"])
+    open_price = cast(float, bar["open"])
+    high_price = cast(float, bar["high"])
+    low_price = cast(float, bar["low"])
+    close_price = cast(float, bar["close"])
+    bid_volume = cast(float, bar["bid_volume_1"])
+    ask_volume = cast(float, bar["ask_volume_1"])
+    ts_ns = cast(int, bar["ts_ns"])
+
+    if abs(open_price) > 1e-9:
+        trend_score = (close_price - open_price) / abs(open_price)
+    else:
+        trend_score = 0.0
+    trend_confidence = _clamp01(abs(trend_score) * 10.0)
+
+    volatility_score = (
+        (high_price - low_price) / abs(close_price) if abs(close_price) > 1e-9 else 0.0
+    )
+    volatility_confidence = _clamp01(volatility_score * 5.0)
+
+    liquidity_depth = max(0.0, bid_volume + ask_volume)
+    liquidity_balance = min(bid_volume, ask_volume)
+    liquidity_score = _clamp01(liquidity_depth / 1000.0)
+    liquidity_confidence = _clamp01(liquidity_balance / 500.0)
+
+    pattern_score = 1.0 if close_price > open_price else (-1.0 if close_price < open_price else 0.0)
+    pattern_confidence = 0.7 if pattern_score != 0.0 else 0.2
+
+    return StateSnapshot7D(
+        instrument_id=instrument_id,
+        trend={"score": trend_score, "confidence": trend_confidence},
+        volatility={"score": volatility_score, "confidence": volatility_confidence},
+        liquidity={"score": liquidity_score, "confidence": liquidity_confidence},
+        sentiment={"score": 0.0, "confidence": 0.1},
+        seasonality={"score": 0.0, "confidence": 0.1},
+        pattern={"score": pattern_score, "confidence": pattern_confidence},
+        event_drive={"score": 0.0, "confidence": 0.1},
+        ts_ns=ts_ns,
+    )
+
+
+def _collect_strategy_intents(
+    runtime: StrategyRuntime,
+    ctx: dict[str, object],
+    bar: dict[str, object],
+    *,
+    emit_state_snapshots: bool,
+) -> list[SignalIntent]:
+    intents: list[SignalIntent] = []
+    if emit_state_snapshots:
+        intents.extend(runtime.on_state(ctx, _build_state_snapshot_from_bar(bar)))
+    intents.extend(runtime.on_bar(ctx, [bar]))
+    return intents
+
+
 def _emit_wal_line(
     fp: TextIO,
     *,
@@ -462,6 +525,7 @@ def run_backtest_spec(
             max_ticks=spec.max_ticks,
             wal_path=spec.wal_path,
             account_id=spec.account_id,
+            emit_state_snapshots=spec.emit_state_snapshots,
         )
         replay = deterministic.replay
     else:
@@ -471,6 +535,7 @@ def run_backtest_spec(
             runtime,
             run_ctx,
             max_ticks=spec.max_ticks,
+            emit_state_snapshots=spec.emit_state_snapshots,
         )
 
     return BacktestRunResult(
@@ -515,6 +580,7 @@ def replay_csv_minute_bars(
     ctx: dict[str, object],
     *,
     max_ticks: int | None = None,
+    emit_state_snapshots: bool = False,
 ) -> ReplayReport:
     ticks_read = 0
     bars_emitted = 0
@@ -550,7 +616,14 @@ def replay_csv_minute_bars(
             continue
 
         bar = _build_bar(bucket)
-        intents_emitted += len(runtime.on_bar(ctx, [bar]))
+        intents_emitted += len(
+            _collect_strategy_intents(
+                runtime,
+                ctx,
+                bar,
+                emit_state_snapshots=emit_state_snapshots,
+            )
+        )
         bars_emitted += 1
 
         bucket = [tick]
@@ -558,7 +631,14 @@ def replay_csv_minute_bars(
 
     if bucket:
         bar = _build_bar(bucket)
-        intents_emitted += len(runtime.on_bar(ctx, [bar]))
+        intents_emitted += len(
+            _collect_strategy_intents(
+                runtime,
+                ctx,
+                bar,
+                emit_state_snapshots=emit_state_snapshots,
+            )
+        )
         bars_emitted += 1
 
     return ReplayReport(
@@ -582,6 +662,7 @@ def replay_csv_with_deterministic_fills(
     max_ticks: int | None = None,
     wal_path: Path | str | None = None,
     account_id: str = "sim-account",
+    emit_state_snapshots: bool = False,
 ) -> DeterministicReplayReport:
     ticks_read = 0
     bars_emitted = 0
@@ -636,7 +717,12 @@ def replay_csv_with_deterministic_fills(
             fill_price = cast(float, bar["close"])
             last_close_price[instrument_id] = fill_price
 
-            intents = runtime.on_bar(ctx, [bar])
+            intents = _collect_strategy_intents(
+                runtime,
+                ctx,
+                bar,
+                emit_state_snapshots=emit_state_snapshots,
+            )
             intents_processed += len(intents)
             for intent in intents:
                 client_order_id = f"bt-{next_order_id:09d}"
@@ -696,7 +782,12 @@ def replay_csv_with_deterministic_fills(
             fill_price = cast(float, bar["close"])
             last_close_price[instrument_id] = fill_price
 
-            intents = runtime.on_bar(ctx, [bar])
+            intents = _collect_strategy_intents(
+                runtime,
+                ctx,
+                bar,
+                emit_state_snapshots=emit_state_snapshots,
+            )
             intents_processed += len(intents)
             for intent in intents:
                 client_order_id = f"bt-{next_order_id:09d}"

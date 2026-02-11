@@ -46,6 +46,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--report-md", default="", help="optional output path for markdown report")
     parser.add_argument("--run-id", default="", help="override run_id in spec/cli")
     parser.add_argument(
+        "--emit-state-snapshots",
+        action="store_true",
+        help="emit synthetic StateSnapshot7D from replay bars before on_bar",
+    )
+    parser.add_argument(
         "--deterministic-fills",
         action="store_true",
         help="emit deterministic order events and pnl report",
@@ -105,6 +110,17 @@ def main() -> int:
                 wal_path=spec.wal_path,
                 account_id=spec.account_id,
                 run_id=args.run_id,
+                emit_state_snapshots=args.emit_state_snapshots or spec.emit_state_snapshots,
+            )
+        elif args.emit_state_snapshots and not spec.emit_state_snapshots:
+            spec = BacktestRunSpec(
+                csv_path=spec.csv_path,
+                max_ticks=spec.max_ticks,
+                deterministic_fills=spec.deterministic_fills,
+                wal_path=spec.wal_path,
+                account_id=spec.account_id,
+                run_id=spec.run_id,
+                emit_state_snapshots=True,
             )
     else:
         if not args.csv:
@@ -125,6 +141,17 @@ def main() -> int:
                     wal_path=spec.wal_path,
                     account_id=spec.account_id,
                     run_id=spec.run_id,
+                    emit_state_snapshots=args.emit_state_snapshots or spec.emit_state_snapshots,
+                )
+            elif args.emit_state_snapshots:
+                spec = BacktestRunSpec(
+                    csv_path=spec.csv_path,
+                    max_ticks=spec.max_ticks,
+                    deterministic_fills=spec.deterministic_fills,
+                    wal_path=spec.wal_path,
+                    account_id=spec.account_id,
+                    run_id=spec.run_id,
+                    emit_state_snapshots=True,
                 )
         else:
             spec = BacktestRunSpec(
@@ -134,6 +161,7 @@ def main() -> int:
                 wal_path=None,
                 account_id="sim-account",
                 run_id=args.run_id or "run-default",
+                emit_state_snapshots=args.emit_state_snapshots,
             )
 
     result = run_backtest_spec(spec, runtime, ctx={})

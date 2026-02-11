@@ -114,3 +114,21 @@ def test_replay_csv_can_emit_markdown_report(tmp_path: Path) -> None:
     assert "# Backtest Replay Result" in text
     assert "- Run ID: `cli-report-md`" in text
     assert "- Instrument Universe: `rb2305`" in text
+
+
+def test_replay_csv_can_enable_emit_state_snapshots(tmp_path: Path) -> None:
+    csv_path = tmp_path / "ticks.csv"
+    report_path = tmp_path / "state_enabled.json"
+    _write_sample_csv(csv_path)
+    cmd = [
+        sys.executable,
+        "scripts/backtest/replay_csv.py",
+        "--csv",
+        str(csv_path),
+        "--emit-state-snapshots",
+        "--report-json",
+        str(report_path),
+    ]
+    subprocess.run(cmd, check=True, cwd=Path.cwd())
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert payload["spec"]["emit_state_snapshots"] is True

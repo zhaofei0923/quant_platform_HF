@@ -43,6 +43,35 @@ class EmitPerBarStrategy(StrategyBase):
         return None
 
 
+class StateOnlyStrategy(StrategyBase):
+    def on_bar(
+        self, ctx: dict[str, object], bar_batch: list[dict[str, object]]
+    ) -> list[SignalIntent]:
+        return []
+
+    def on_state(
+        self, ctx: dict[str, object], state_snapshot: StateSnapshot7D
+    ) -> list[SignalIntent]:
+        observed = ctx.setdefault("state_observed", [])
+        assert isinstance(observed, list)
+        observed.append(state_snapshot)
+        return [
+            SignalIntent(
+                strategy_id=self.strategy_id,
+                instrument_id=state_snapshot.instrument_id,
+                side=Side.BUY,
+                offset=OffsetFlag.OPEN,
+                volume=1,
+                limit_price=state_snapshot.trend["score"] + 4000.0,
+                ts_ns=state_snapshot.ts_ns,
+                trace_id=f"{self.strategy_id}-{state_snapshot.ts_ns}",
+            )
+        ]
+
+    def on_order_event(self, ctx: dict[str, object], order_event: OrderEvent) -> None:
+        return None
+
+
 def test_replay_emits_minute_bars_and_intents(tmp_path: Path) -> None:
     csv_path = tmp_path / "sample.csv"
     csv_path.write_text(
@@ -134,6 +163,45 @@ def test_run_backtest_spec_is_reproducible_and_populates_ctx(tmp_path: Path) -> 
         assert key in ctx2
 
 
+def test_run_backtest_spec_can_emit_state_snapshot_contract(tmp_path: Path) -> None:
+    csv_path = tmp_path / "sample_state.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "TradingDay,InstrumentID,UpdateTime,UpdateMillisec,LastPrice,Volume,BidPrice1,BidVolume1,AskPrice1,AskVolume1,AveragePrice,Turnover,OpenInterest",
+                "20230103,rb2305,09:00:01,0,4100.0,1,4099.0,10,4101.0,12,4100.0,0.0,100",
+                "20230103,rb2305,09:01:02,0,4103.0,5,4102.0,10,4104.0,15,4102.0,0.0,100",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    runtime = StrategyRuntime()
+    runtime.add_strategy(StateOnlyStrategy("state-demo"))
+    ctx: dict[str, object] = {}
+
+    result = run_backtest_spec(
+        BacktestRunSpec(
+            csv_path=str(csv_path),
+            max_ticks=100,
+            deterministic_fills=False,
+            emit_state_snapshots=True,
+            run_id="state-run",
+        ),
+        runtime,
+        ctx=ctx,
+    )
+
+    assert result.replay.bars_emitted == 2
+    assert result.replay.intents_emitted == 2
+    observed = ctx.get("state_observed")
+    assert isinstance(observed, list)
+    assert len(observed) == 2
+    snapshot = observed[0]
+    assert isinstance(snapshot, StateSnapshot7D)
+    assert snapshot.instrument_id == "rb2305"
+    assert "score" in snapshot.trend
+
+
 def test_replay_tracks_multi_instrument_overview(tmp_path: Path) -> None:
     csv_path = tmp_path / "multi.csv"
     csv_path.write_text(
@@ -196,6 +264,7 @@ def test_load_backtest_run_spec_from_json(tmp_path: Path) -> None:
     assert spec.max_ticks == 1000
     assert spec.deterministic_fills is False
     assert spec.run_id == "spec-1"
+    assert spec.emit_state_snapshots is False
 
 
 def test_build_backtest_spec_from_template(tmp_path: Path) -> None:

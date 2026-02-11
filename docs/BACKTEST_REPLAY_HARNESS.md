@@ -40,6 +40,7 @@ Optional report outputs:
 scripts/backtest/replay_csv.py \
   --csv backtest_data/rb.csv \
   --scenario-template deterministic_regression \
+  --emit-state-snapshots \
   --report-json runtime/backtest/report.json \
   --report-md runtime/backtest/report.md
 ```

@@ -1,0 +1,16 @@
+{
+  "develop_root": "develop",
+  "forbidden_terms": [
+    "未落地",
+    "规划中",
+    "部分落地",
+    "规划内容（未落地）",
+    "规划示例（未落地）",
+    "规划 SOP（未落地）",
+    "进入实现阶段触发条件",
+    "未来扩展（未落地）"
+  ],
+  "docs_scanned": 23,
+  "finding_count": 0,
+  "findings": []
+}

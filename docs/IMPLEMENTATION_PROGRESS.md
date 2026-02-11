@@ -25,6 +25,82 @@ Use this fixed template for every sprint update:
 Completion rule:
 - A sprint is marked `done` only when code, tests, and `develop/` status updates are all completed.
 
+## Sprint M1 (2026-02-11 ~ 2026-02-24)
+- Objective:
+  - add repository-local prodlike infrastructure bootstrap for external dependencies
+  - provide machine-verifiable health report contract for prodlike stack
+- Scope:
+  - `infra/docker-compose.prodlike.yaml`
+  - `infra/prometheus/prometheus.yml`
+  - `infra/alertmanager/alertmanager.yml`
+  - `infra/loki/loki-config.yml`
+  - `infra/tempo/tempo.yml`
+  - `infra/grafana/provisioning/datasources/datasources.yml`
+  - `infra/env/prodlike.env`
+  - `scripts/infra/bootstrap_prodlike.sh`
+  - `scripts/infra/check_prodlike_health.py`
+  - `python/tests/test_bootstrap_prodlike_script.py`
+  - `python/tests/test_check_prodlike_health_script.py`
+  - `python/tests/test_prodlike_infra_assets.py`
+  - `develop/00-实现对齐矩阵与缺口总览.md`
+  - `develop/00-未完成能力补齐路线图.md`
+  - `develop/04-基础设施与运维/04-02-部署、灾备与持续集成方案.md`
+- Test Evidence:
+  - [x] `.venv/bin/pytest -q python/tests/test_bootstrap_prodlike_script.py python/tests/test_check_prodlike_health_script.py python/tests/test_prodlike_infra_assets.py`
+  - [x] `.venv/bin/ruff check python scripts`
+  - [x] `.venv/bin/black --check python scripts`
+  - [x] `.venv/bin/mypy python/quant_hft`
+  - [x] `.venv/bin/pytest python/tests -q`
+  - [x] `ctest --test-dir build --output-on-failure`
+  - [x] `./scripts/build/bootstrap.sh`
+- Develop Docs Synced:
+  - [x] `develop/00-实现对齐矩阵与缺口总览.md`
+  - [x] `develop/00-未完成能力补齐路线图.md`
+  - [x] `develop/04-基础设施与运维/04-02-部署、灾备与持续集成方案.md`
+- Status:
+  - `done`
+
+## Sprint M8 (2026-02-11 ~ 2026-02-24)
+- Objective:
+  - converge all `develop/` docs to repository-delivered completion language
+  - enforce completion-language gate in requirements verification
+- Scope:
+  - `scripts/build/verify_develop_requirements.py`
+  - `python/tests/test_verify_develop_requirements_script.py`
+  - `docs/requirements/develop_requirements.yaml`
+  - `develop/00-项目总览与设计原则.md`
+  - `develop/00-实现对齐矩阵与缺口总览.md`
+  - `develop/02-策略研究平台设计/02-01-研究环境与数据接口规范.md`
+  - `develop/02-策略研究平台设计/02-02-因子研究与回测引擎设计.md`
+  - `develop/02-策略研究平台设计/02-03-策略模版与绩效分析体系.md`
+  - `develop/03-实盘交易系统核心设计/03-01-实时风控体系设计.md`
+  - `develop/03-实盘交易系统核心设计/03-02-订单与执行引擎设计.md`
+  - `develop/03-实盘交易系统核心设计/03-03-高性能基础组件设计（内存管理、网络等）.md`
+  - `develop/04-基础设施与运维/04-01-监控、日志与告警体系设计.md`
+  - `develop/04-基础设施与运维/04-02-部署、灾备与持续集成方案.md`
+  - `develop/07-部署与运维/07-02-运维操作手册.md`
+  - `develop/09-数据库设计/09-01-数据库设计.md`
+  - `docs/results/develop_completion_language_report.json`
+- Test Evidence:
+  - [x] `.venv/bin/pytest -q python/tests/test_verify_develop_requirements_script.py`
+  - [x] `python3 scripts/build/verify_develop_requirements.py --requirements-file docs/requirements/develop_requirements.yaml --completion-language-report docs/results/develop_completion_language_report.json`
+  - [x] `.venv/bin/ruff check python scripts`
+  - [x] `.venv/bin/black --check python scripts`
+  - [x] `.venv/bin/mypy python/quant_hft`
+  - [x] `.venv/bin/pytest python/tests -q`
+  - [x] `ctest --test-dir build --output-on-failure`
+  - [x] `./scripts/build/bootstrap.sh`
+- Develop Docs Synced:
+  - [x] `develop/00-实现对齐矩阵与缺口总览.md`
+  - [x] `develop/00-未完成能力补齐路线图.md`
+  - [x] `develop/02-*`
+  - [x] `develop/03-*`
+  - [x] `develop/04-*`
+  - [x] `develop/07-02-运维操作手册.md`
+  - [x] `develop/09-01-数据库设计.md`
+- Status:
+  - `done`
+
 ## Sprint B3 (2026-02-11 ~ 2026-02-24)
 - Objective:
   - add timeout-based cancel strategy in core execution loop

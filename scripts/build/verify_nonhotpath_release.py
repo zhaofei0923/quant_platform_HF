@@ -16,6 +16,7 @@ _REQUIRED_RELATIVE_PATHS = (
     "scripts/build/release_audit_index.py",
     "scripts/build/release_audit_summary.py",
     "scripts/build/verify_nonhotpath_release.py",
+    "scripts/build/verify_release_audit_index.py",
     "scripts/build/verify_release_audit_summary.py",
     "scripts/ops/run_reconnect_evidence.py",
     "scripts/ops/reconnect_slo_report.py",

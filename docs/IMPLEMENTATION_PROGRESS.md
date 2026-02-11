@@ -295,6 +295,35 @@ Completion rule:
 - Status:
   - `done`
 
+## Sprint D7 (2026-02-11 ~ 2026-02-24)
+- Objective:
+  - enforce release audit index JSONL as a hard gate in release workflow
+  - guarantee audit index stays contract-valid and summary-consistent
+- Scope:
+  - `scripts/build/verify_release_audit_index.py`
+  - `python/tests/test_verify_release_audit_index_script.py`
+  - `.github/workflows/release-package.yml`
+  - `scripts/build/package_nonhotpath_release.sh`
+  - `scripts/build/verify_nonhotpath_release.py`
+  - `python/tests/test_verify_nonhotpath_release_script.py`
+  - `develop/00-实现对齐矩阵与缺口总览.md`
+  - `develop/00-未完成能力补齐路线图.md`
+  - `develop/04-基础设施与运维/04-02-部署、灾备与持续集成方案.md`
+- Test Evidence:
+  - [x] `.venv/bin/pytest -q python/tests/test_verify_release_audit_index_script.py python/tests/test_verify_nonhotpath_release_script.py`
+  - [x] `python3 scripts/build/verify_release_audit_index.py --summary-json docs/results/release_audit_summary.json --index-jsonl docs/results/release_audit_index.jsonl`
+  - [x] `.venv/bin/ruff check python scripts`
+  - [x] `.venv/bin/black --check python scripts`
+  - [x] `.venv/bin/mypy python/quant_hft`
+  - [x] `.venv/bin/pytest python/tests -q`
+  - [x] `./scripts/build/bootstrap.sh`
+- Develop Docs Synced:
+  - [x] `develop/00-实现对齐矩阵与缺口总览.md`
+  - [x] `develop/00-未完成能力补齐路线图.md`
+  - [x] `develop/04-基础设施与运维/04-02-部署、灾备与持续集成方案.md`
+- Status:
+  - `done`
+
 ## Sprint A1 + A2 (2026-02-25 ~ 2026-03-24)
 - Objective:
   - reproducible backtest run spec/result

@@ -44,6 +44,7 @@ cp "$ROOT_DIR/scripts/build/package_nonhotpath_release.sh" "$PAYLOAD_DIR/scripts
 cp "$ROOT_DIR/scripts/build/release_audit_index.py" "$PAYLOAD_DIR/scripts/build/"
 cp "$ROOT_DIR/scripts/build/release_audit_summary.py" "$PAYLOAD_DIR/scripts/build/"
 cp "$ROOT_DIR/scripts/build/verify_nonhotpath_release.py" "$PAYLOAD_DIR/scripts/build/"
+cp "$ROOT_DIR/scripts/build/verify_release_audit_index.py" "$PAYLOAD_DIR/scripts/build/"
 cp "$ROOT_DIR/scripts/build/verify_release_audit_summary.py" "$PAYLOAD_DIR/scripts/build/"
 cp "$ROOT_DIR/scripts/data_pipeline/run_pipeline.py" "$PAYLOAD_DIR/scripts/data_pipeline/"
 cp "$ROOT_DIR/scripts/ops/ctp_fault_inject.py" "$PAYLOAD_DIR/scripts/ops/"

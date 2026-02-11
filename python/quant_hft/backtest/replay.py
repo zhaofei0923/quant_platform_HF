@@ -111,6 +111,59 @@ class BacktestRunSpec:
         }
 
 
+_SCENARIO_TEMPLATE_DEFAULTS: dict[str, dict[str, Any]] = {
+    "smoke_fast": {
+        "max_ticks": 2000,
+        "deterministic_fills": False,
+        "account_id": "sim-account",
+    },
+    "baseline_replay": {
+        "max_ticks": 10000,
+        "deterministic_fills": False,
+        "account_id": "sim-account",
+    },
+    "deterministic_regression": {
+        "max_ticks": 20000,
+        "deterministic_fills": True,
+        "account_id": "sim-account",
+    },
+}
+
+
+def build_backtest_spec_from_template(
+    template_name: str,
+    *,
+    csv_path: str,
+    run_id: str | None = None,
+    account_id: str | None = None,
+    wal_dir: Path | str | None = None,
+) -> BacktestRunSpec:
+    normalized = template_name.strip().lower()
+    defaults = _SCENARIO_TEMPLATE_DEFAULTS.get(normalized)
+    if defaults is None:
+        allowed = ", ".join(sorted(_SCENARIO_TEMPLATE_DEFAULTS))
+        raise ValueError(f"unknown scenario template: {template_name}; allowed: {allowed}")
+
+    resolved_run_id = run_id or f"{normalized}-run"
+    resolved_account = account_id or str(defaults.get("account_id", "sim-account"))
+    deterministic = bool(defaults.get("deterministic_fills", True))
+
+    wal_path: str | None = None
+    if deterministic and wal_dir is not None:
+        wal_root = Path(wal_dir)
+        wal_root.mkdir(parents=True, exist_ok=True)
+        wal_path = str((wal_root / f"{resolved_run_id}.wal").resolve())
+
+    return BacktestRunSpec(
+        csv_path=csv_path,
+        max_ticks=int(defaults.get("max_ticks", 10000)),
+        deterministic_fills=deterministic,
+        wal_path=wal_path,
+        account_id=resolved_account,
+        run_id=resolved_run_id,
+    )
+
+
 @dataclass(frozen=True)
 class BacktestRunResult:
     run_id: str

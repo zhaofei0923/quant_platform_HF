@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from quant_hft.backtest.replay import (
     BacktestRunSpec,
+    build_backtest_spec_from_template,
     load_backtest_run_spec,
     replay_csv_minute_bars,
     run_backtest_spec,
@@ -134,3 +135,24 @@ def test_load_backtest_run_spec_from_json(tmp_path: Path) -> None:
     assert spec.max_ticks == 1000
     assert spec.deterministic_fills is False
     assert spec.run_id == "spec-1"
+
+
+def test_build_backtest_spec_from_template(tmp_path: Path) -> None:
+    wal_dir = tmp_path / "wal"
+    spec = build_backtest_spec_from_template(
+        "deterministic_regression",
+        csv_path="backtest_data/rb.csv",
+        run_id="reg-001",
+        wal_dir=wal_dir,
+    )
+    assert spec.csv_path == "backtest_data/rb.csv"
+    assert spec.max_ticks == 20000
+    assert spec.deterministic_fills is True
+    assert spec.run_id == "reg-001"
+    assert spec.wal_path is not None
+    assert spec.wal_path.endswith("reg-001.wal")
+
+
+def test_build_backtest_spec_from_unknown_template_raises() -> None:
+    with pytest.raises(ValueError):
+        build_backtest_spec_from_template("unknown-template", csv_path="backtest_data/rb.csv")

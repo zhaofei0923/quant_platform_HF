@@ -9,6 +9,7 @@ from pathlib import Path
 try:
     from quant_hft.backtest.replay import (
         BacktestRunSpec,
+        build_backtest_spec_from_template,
         load_backtest_run_spec,
         run_backtest_spec,
     )
@@ -18,6 +19,7 @@ except ModuleNotFoundError:
     sys.path.insert(0, str(repo_python))
     from quant_hft.backtest.replay import (  # type: ignore[no-redef]
         BacktestRunSpec,
+        build_backtest_spec_from_template,
         load_backtest_run_spec,
         run_backtest_spec,
     )
@@ -29,6 +31,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--csv", default="", help="path to csv file")
     parser.add_argument("--max-ticks", type=int, default=50000, help="max ticks to replay")
     parser.add_argument("--spec-file", default="", help="path to JSON backtest spec")
+    parser.add_argument(
+        "--scenario-template",
+        default="",
+        help="scenario template name (smoke_fast | baseline_replay | deterministic_regression)",
+    )
     parser.add_argument("--report-json", default="", help="optional output path for JSON report")
     parser.add_argument("--run-id", default="", help="override run_id in spec/cli")
     parser.add_argument(
@@ -58,14 +65,31 @@ def main() -> int:
         if not args.csv:
             print("error: --csv is required when --spec-file is not provided", file=sys.stderr)
             return 2
-        spec = BacktestRunSpec(
-            csv_path=args.csv,
-            max_ticks=args.max_ticks,
-            deterministic_fills=args.deterministic_fills,
-            wal_path=None,
-            account_id="sim-account",
-            run_id=args.run_id or "run-default",
-        )
+        if args.scenario_template:
+            spec = build_backtest_spec_from_template(
+                args.scenario_template,
+                csv_path=args.csv,
+                run_id=args.run_id or None,
+                wal_dir=Path("runtime/backtest"),
+            )
+            if args.max_ticks > 0:
+                spec = BacktestRunSpec(
+                    csv_path=spec.csv_path,
+                    max_ticks=args.max_ticks,
+                    deterministic_fills=spec.deterministic_fills,
+                    wal_path=spec.wal_path,
+                    account_id=spec.account_id,
+                    run_id=spec.run_id,
+                )
+        else:
+            spec = BacktestRunSpec(
+                csv_path=args.csv,
+                max_ticks=args.max_ticks,
+                deterministic_fills=args.deterministic_fills,
+                wal_path=None,
+                account_id="sim-account",
+                run_id=args.run_id or "run-default",
+            )
 
     result = run_backtest_spec(spec, runtime, ctx={})
     report = result.replay

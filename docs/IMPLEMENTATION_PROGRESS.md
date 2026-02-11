@@ -113,6 +113,32 @@ Completion rule:
 - Status:
   - `done`
 
+## Sprint A4 (2026-06-03 ~ 2026-06-16)
+- Objective:
+  - add reusable scenario templates for replay execution
+  - make template-based CLI invocation deterministic and auditable
+- Scope:
+  - `python/quant_hft/backtest/replay.py`
+  - `python/quant_hft/backtest/__init__.py`
+  - `scripts/backtest/replay_csv.py`
+  - `python/tests/test_backtest_replay.py`
+  - `develop/02-策略研究平台设计/02-02-因子研究与回测引擎设计.md`
+  - `develop/00-实现对齐矩阵与缺口总览.md`
+  - `develop/00-未完成能力补齐路线图.md`
+- Test Evidence:
+  - [x] `.venv/bin/pytest -q python/tests/test_backtest_replay.py`
+  - [x] `.venv/bin/ruff check python scripts`
+  - [x] `.venv/bin/black --check python scripts`
+  - [x] `.venv/bin/mypy python/quant_hft`
+  - [x] `.venv/bin/pytest python/tests -q`
+  - [x] `./scripts/build/bootstrap.sh`
+- Develop Docs Synced:
+  - [x] `develop/02-策略研究平台设计/02-02-因子研究与回测引擎设计.md`
+  - [x] `develop/00-实现对齐矩阵与缺口总览.md`
+  - [x] `develop/00-未完成能力补齐路线图.md`
+- Status:
+  - `done`
+
 ## Completed in this bootstrap
 - Stage 0 foundation:
   - C++/Python project skeleton

@@ -7,6 +7,8 @@ from dataclasses import dataclass
 
 from quant_hft.ops.sli_catalog import with_prefix
 
+_CANONICAL_ALERT_SEVERITIES = {"info", "warn", "critical"}
+
 
 @dataclass(frozen=True)
 class MetricRecord:
@@ -76,6 +78,16 @@ def _normalize_labels(labels: Mapping[str, str] | None) -> dict[str, str]:
     if labels is None:
         return {}
     return {str(key): str(value) for key, value in labels.items()}
+
+
+def _normalize_alert_severity(severity: str) -> str:
+    normalized = severity.strip().lower()
+    if normalized == "warning":
+        normalized = "warn"
+    if normalized not in _CANONICAL_ALERT_SEVERITIES:
+        supported = "|".join(sorted(_CANONICAL_ALERT_SEVERITIES))
+        raise ValueError(f"alert severity must be one of {supported}")
+    return normalized
 
 
 class _ActiveSpan:
@@ -197,10 +209,11 @@ class InMemoryObservability:
             raise ValueError("alert severity is required")
         if not message:
             raise ValueError("alert message is required")
+        normalized_severity = _normalize_alert_severity(severity)
         self._alerts.append(
             AlertRecord(
                 code=code,
-                severity=severity,
+                severity=normalized_severity,
                 message=message,
                 labels=_normalize_labels(labels),
                 ts_ns=self.now_ns(),

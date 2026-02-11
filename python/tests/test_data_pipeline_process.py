@@ -134,3 +134,6 @@ def test_data_pipeline_emits_observability_metrics_and_alerts(tmp_path: Path) ->
     assert any(item.trace_id == report.trace_id for item in snapshot.traces)
     assert "PIPELINE_EXPORT_EMPTY" in report.alert_codes
     assert any(item.code == "PIPELINE_EXPORT_EMPTY" for item in snapshot.alerts)
+    assert any(
+        item.code == "PIPELINE_EXPORT_EMPTY" and item.severity == "warn" for item in snapshot.alerts
+    )

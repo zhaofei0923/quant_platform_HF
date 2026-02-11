@@ -326,7 +326,7 @@ class DataPipelineProcess:
         for code in alert_codes:
             self._obs.emit_alert(
                 code=code,
-                severity="warning",
+                severity="warn",
                 message=f"pipeline alert triggered: {code}",
                 labels={"run_id": run_id, "trace_id": trace_id},
             )

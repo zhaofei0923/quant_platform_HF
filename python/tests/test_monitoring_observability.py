@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from quant_hft.ops.monitoring import (
     InMemoryObservability,
     build_ops_health_report,
@@ -48,7 +49,17 @@ def test_observability_records_metric_span_and_alert() -> None:
 
     assert len(snapshot.alerts) == 1
     assert snapshot.alerts[0].code == "PIPELINE_EXPORT_EMPTY"
-    assert snapshot.alerts[0].severity == "warning"
+    assert snapshot.alerts[0].severity == "warn"
+
+
+def test_observability_rejects_unsupported_alert_severity() -> None:
+    obs = InMemoryObservability()
+    with pytest.raises(ValueError, match="alert severity must be one of"):
+        obs.emit_alert(
+            code="PIPELINE_EXPORT_EMPTY",
+            severity="notice",
+            message="unsupported severity",
+        )
 
 
 def test_ops_health_report_build_and_render() -> None:

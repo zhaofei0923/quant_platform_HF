@@ -1,0 +1,24 @@
+ctp:
+  profile: "simnow_trading_hours_group3"
+  environment: sim
+  # Official trading-hours front_se uses monitoring-center production secret key (CTP v6.7.11+).
+  is_production_mode: true
+  enable_real_api: false
+  enable_terminal_auth: true
+
+  # SimNow trading-hours group3 (official front)
+  broker_id: "9999"
+  user_id: "191202"
+  investor_id: "191202"
+  market_front: "tcp://182.254.243.31:30013"
+  trader_front: "tcp://182.254.243.31:30003"
+
+  password_env: "CTP_SIM_PASSWORD"
+  auth_code: "0000000000000000"
+  app_id: "simnow_client_test"
+
+  query_rate_limit_qps: 10
+  connect_timeout_ms: 10000
+  reconnect_max_attempts: 8
+  reconnect_initial_backoff_ms: 500
+  reconnect_max_backoff_ms: 8000

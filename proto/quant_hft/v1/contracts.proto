@@ -1,0 +1,94 @@
+syntax = "proto3";
+
+package quant_hft.v1;
+
+message MarketSnapshot {
+  string instrument_id = 1;
+  double last_price = 2;
+  double bid_price_1 = 3;
+  double ask_price_1 = 4;
+  int64 bid_volume_1 = 5;
+  int64 ask_volume_1 = 6;
+  int64 volume = 7;
+  int64 exchange_ts_ns = 8;
+  int64 recv_ts_ns = 9;
+}
+
+message StateDimension {
+  double score = 1;
+  double confidence = 2;
+}
+
+message StateSnapshot7D {
+  string instrument_id = 1;
+  StateDimension trend = 2;
+  StateDimension volatility = 3;
+  StateDimension liquidity = 4;
+  StateDimension sentiment = 5;
+  StateDimension seasonality = 6;
+  StateDimension pattern = 7;
+  StateDimension event_drive = 8;
+  int64 ts_ns = 9;
+}
+
+message SignalIntent {
+  string strategy_id = 1;
+  string instrument_id = 2;
+  string side = 3;
+  string offset = 4;
+  int32 volume = 5;
+  double limit_price = 6;
+  int64 ts_ns = 7;
+  string trace_id = 8;
+}
+
+message OrderIntent {
+  string account_id = 1;
+  string client_order_id = 2;
+  string instrument_id = 3;
+  string side = 4;
+  string offset = 5;
+  string order_type = 6;
+  int32 volume = 7;
+  double price = 8;
+  int64 ts_ns = 9;
+  string trace_id = 10;
+}
+
+message RiskDecision {
+  string action = 1;
+  string rule_id = 2;
+  string reason = 3;
+}
+
+message OrderEvent {
+  string account_id = 1;
+  string client_order_id = 2;
+  string exchange_order_id = 3;
+  string instrument_id = 4;
+  string status = 5;
+  int32 total_volume = 6;
+  int32 filled_volume = 7;
+  double avg_fill_price = 8;
+  string reason = 9;
+  int64 ts_ns = 10;
+  string trace_id = 11;
+}
+
+message PositionSnapshot {
+  string account_id = 1;
+  string instrument_id = 2;
+  string direction = 3;
+  int32 volume = 4;
+  double avg_price = 5;
+  double unrealized_pnl = 6;
+  double margin = 7;
+  int64 ts_ns = 8;
+}
+
+message HealthEvent {
+  string component = 1;
+  string level = 2;
+  string message = 3;
+  int64 ts_ns = 4;
+}

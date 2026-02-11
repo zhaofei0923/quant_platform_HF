@@ -1,0 +1,21 @@
+ctp:
+  profile: "prod"
+  environment: prod
+  is_production_mode: true
+  enable_real_api: true
+
+  broker_id: "<broker_id>"
+  user_id: "<user_id>"
+  investor_id: "<investor_id>"
+  market_front: "tcp://<prod_md_front>"
+  trader_front: "tcp://<prod_td_front>"
+
+  password_env: "CTP_PROD_PASSWORD"
+  auth_code: "<auth_code>"
+  app_id: "<app_id>"
+
+  query_rate_limit_qps: 10
+  connect_timeout_ms: 10000
+  reconnect_max_attempts: 8
+  reconnect_initial_backoff_ms: 500
+  reconnect_max_backoff_ms: 8000

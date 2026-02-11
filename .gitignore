@@ -1,0 +1,39 @@
+# Build artifacts
+build/
+out/
+cmake-build-*/
+dist/
+dist-test/
+build-real*/
+
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.pyc
+*.egg-info/
+
+# Large datasets / external binaries (kept out of git)
+backtest_data/
+ctp_api/
+docs_dev/
+tmp/
+runtime/
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+
+# Git worktrees
+.worktrees/
+worktrees/
+
+# Runtime artifacts
+logs/
+*.wal
+*.db

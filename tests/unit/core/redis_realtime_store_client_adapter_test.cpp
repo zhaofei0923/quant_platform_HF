@@ -1,0 +1,135 @@
+#include <memory>
+#include <string>
+#include <unordered_map>
+
+#include <gtest/gtest.h>
+
+#include "quant_hft/contracts/types.h"
+#include "quant_hft/core/redis_hash_client.h"
+#include "quant_hft/core/redis_realtime_store_client_adapter.h"
+
+namespace quant_hft {
+
+namespace {
+
+class FlakyRedisClient : public IRedisHashClient {
+public:
+    explicit FlakyRedisClient(int fail_times) : fail_times_(fail_times) {}
+
+    bool HSet(const std::string& key,
+              const std::unordered_map<std::string, std::string>& fields,
+              std::string* error) override {
+        ++hset_calls_;
+        if (hset_calls_ <= fail_times_) {
+            if (error != nullptr) {
+                *error = "transient";
+            }
+            return false;
+        }
+        storage_[key] = fields;
+        return true;
+    }
+
+    bool HGetAll(const std::string& key,
+                 std::unordered_map<std::string, std::string>* out,
+                 std::string* error) const override {
+        const auto it = storage_.find(key);
+        if (it == storage_.end()) {
+            if (error != nullptr) {
+                *error = "missing";
+            }
+            return false;
+        }
+        if (out == nullptr) {
+            if (error != nullptr) {
+                *error = "null out";
+            }
+            return false;
+        }
+        *out = it->second;
+        return true;
+    }
+
+    bool Ping(std::string* error) const override {
+        (void)error;
+        return true;
+    }
+
+    int hset_calls() const { return hset_calls_; }
+
+private:
+    int fail_times_{0};
+    int hset_calls_{0};
+    std::unordered_map<std::string,
+                       std::unordered_map<std::string, std::string>>
+        storage_;
+};
+
+}  // namespace
+
+TEST(RedisRealtimeStoreClientAdapterTest, RoundTripsOrderAndMarketData) {
+    auto client = std::make_shared<InMemoryRedisHashClient>();
+    RedisRealtimeStoreClientAdapter store(client, StorageRetryPolicy{});
+
+    MarketSnapshot market;
+    market.instrument_id = "SHFE.ag2406";
+    market.last_price = 4520.5;
+    market.recv_ts_ns = 100;
+    store.UpsertMarketSnapshot(market);
+
+    OrderEvent order;
+    order.account_id = "acc-1";
+    order.client_order_id = "ord-1";
+    order.instrument_id = "SHFE.ag2406";
+    order.status = OrderStatus::kPartiallyFilled;
+    order.total_volume = 4;
+    order.filled_volume = 2;
+    order.avg_fill_price = 4520.0;
+    order.ts_ns = 101;
+    store.UpsertOrderEvent(order);
+
+    MarketSnapshot got_market;
+    ASSERT_TRUE(store.GetMarketSnapshot("SHFE.ag2406", &got_market));
+    EXPECT_DOUBLE_EQ(got_market.last_price, 4520.5);
+
+    OrderEvent got_order;
+    ASSERT_TRUE(store.GetOrderEvent("ord-1", &got_order));
+    EXPECT_EQ(got_order.status, OrderStatus::kPartiallyFilled);
+    EXPECT_EQ(got_order.filled_volume, 2);
+}
+
+TEST(RedisRealtimeStoreClientAdapterTest, RetriesTransientWriteFailure) {
+    auto client = std::make_shared<FlakyRedisClient>(2);
+    StorageRetryPolicy policy;
+    policy.max_attempts = 3;
+    policy.initial_backoff_ms = 0;
+    policy.max_backoff_ms = 0;
+    RedisRealtimeStoreClientAdapter store(client, policy);
+
+    MarketSnapshot market;
+    market.instrument_id = "SHFE.ag2406";
+    market.last_price = 4520.5;
+    market.recv_ts_ns = 100;
+    store.UpsertMarketSnapshot(market);
+
+    EXPECT_EQ(client->hset_calls(), 3);
+}
+
+TEST(RedisRealtimeStoreClientAdapterTest, StopsAtMaxAttempts) {
+    auto client = std::make_shared<FlakyRedisClient>(10);
+    StorageRetryPolicy policy;
+    policy.max_attempts = 2;
+    policy.initial_backoff_ms = 0;
+    policy.max_backoff_ms = 0;
+    RedisRealtimeStoreClientAdapter store(client, policy);
+
+    MarketSnapshot market;
+    market.instrument_id = "SHFE.ag2406";
+    market.last_price = 4520.5;
+    market.recv_ts_ns = 100;
+    store.UpsertMarketSnapshot(market);
+
+    EXPECT_EQ(client->hset_calls(), 2);
+}
+
+}  // namespace quant_hft

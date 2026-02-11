@@ -1,0 +1,48 @@
+name: Release Package
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  package-nonhotpath:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Build non-hotpath release bundle
+        id: package
+        run: |
+          VERSION="${GITHUB_REF_NAME:-manual-$(date -u +%Y%m%dT%H%M%SZ)}"
+          bash scripts/build/package_nonhotpath_release.sh "$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: quant-hft-nonhotpath-${{ steps.package.outputs.version }}
+          path: |
+            dist/quant-hft-nonhotpath-${{ steps.package.outputs.version }}.tar.gz
+            dist/quant-hft-nonhotpath-${{ steps.package.outputs.version }}.tar.gz.sha256
+
+      - name: Publish GitHub Release Assets
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/quant-hft-nonhotpath-${{ steps.package.outputs.version }}.tar.gz
+            dist/quant-hft-nonhotpath-${{ steps.package.outputs.version }}.tar.gz.sha256

@@ -1,0 +1,9 @@
+Checks: >
+  bugprone-*,
+  cppcoreguidelines-*,
+  modernize-*,
+  performance-*,
+  readability-*
+WarningsAsErrors: ''
+HeaderFilterRegex: 'include/quant_hft/.*|src/.*'
+FormatStyle: file

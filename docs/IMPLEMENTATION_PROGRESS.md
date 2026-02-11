@@ -1,0 +1,250 @@
+# Implementation Progress (Current)
+
+## Completed in this bootstrap
+- Stage 0 foundation:
+  - C++/Python project skeleton
+  - CMake build, Conan placeholder, CI workflow
+  - C++ unit tests (GTest) + Python tests (pytest)
+  - quality gates: ruff/black/mypy in CI
+- Stage 1/2 skeleton:
+  - `CtpConfigValidator` with explicit production-mode enforcement
+  - SimNow config profiles updated:
+    - `configs/sim/ctp.yaml` -> 7x24 profile (`182.254.243.31:40011/40001`)
+    - `configs/sim/ctp_trading_hours.yaml` -> trading-hours profile (`182.254.243.31:30011/30001`)
+    - `configs/sim/ctp_trading_hours_group2.yaml` -> trading-hours group2 (`182.254.243.31:30012/30002`)
+    - `configs/sim/ctp_trading_hours_group3.yaml` -> trading-hours group3 (`182.254.243.31:30013/30003`)
+  - CTP gateway upgraded to dual mode:
+    - simulated in-memory mode (default)
+    - real API mode (guarded by `QUANT_HFT_ENABLE_CTP_REAL_API`)
+    - real-api front fallback in core path:
+      - `BuildCtpFrontCandidates(...)` derives candidate groups for SimNow trading-hours fronts
+      - connect/reconnect path retries group1/group2/group3 automatically on same host
+    - terminal auth toggle support:
+      - `enable_terminal_auth` in YAML/runtime config (default true)
+      - false => skip `ReqAuthenticate` and login directly
+    - connect diagnostics improved:
+      - exposes `GetLastConnectDiagnostic()` in gateway
+      - captures per-front attempt outcome and CTP `ErrorID/ErrorMsg` when callback provides rsp info
+    - callback lock-safety hardened: simulated `PlaceOrder/CancelOrder` callbacks are invoked outside the gateway mutex
+    - reconnect strategy hardened: background reconnect worker with exponential backoff
+    - reconnect-aware session state: disconnect marks unhealthy and triggers retry
+    - MD auto-resubscribe after relogin for existing instrument subscriptions
+  - `simnow_probe` CLI added for real API connectivity verification
+  - CTP runtime config externalized and unified:
+    - `CtpConfigLoader` added (`include/quant_hft/core/ctp_config_loader.h`)
+    - `core_engine` now reads YAML (`configs/sim/ctp.yaml` by default) instead of hard-coded creds
+    - `simnow_probe` now reuses shared loader (removed duplicated YAML parsing logic)
+    - password resolution supports `password` or `password_env` (default `CTP_SIM_PASSWORD`)
+    - unit tests:
+      - `ctp_config_loader_test`
+  - SimNow reconnect fault-injection tooling:
+    - `scripts/ops/ctp_preflight_check.py` (config/password/libs/TCP preflight)
+      - trading-hours profile timeout hint added (`service_window_hint`)
+      - auto-probes official group2/group3 availability when group1 timeout is detected
+    - `scripts/ops/ctp_fault_inject.py` (disconnect/latency/jitter/loss/combined)
+      - resolves `iptables`/`iptables-nft`/`tc` via absolute paths to survive `sudo` PATH restrictions
+      - Ctrl-C safe: always attempts clear in `finally` to avoid leaving `tc netem`/iptables state behind
+      - disconnect mode supports `drop` and `reset` (`iptables REJECT --reject-with tcp-reset`) for fast disconnect detection
+    - event timeline recording (`--event-log-file` JSONL: apply/clear timestamps)
+    - `docs/CTP_SIMNOW_RECONNECT_FAULT_INJECTION_RUNBOOK.md`
+    - `docs/templates/RECONNECT_FAULT_INJECTION_RESULT.md`
+    - `scripts/ops/reconnect_slo_report.py` (auto scenario matrix + recovery P99 report)
+    - `scripts/ops/run_reconnect_evidence.py` (probe + injection + report one-shot runner)
+      - built-in preflight gate before run
+      - scenario selection via `--scenarios`
+      - dependency guard for `iptables`/`tc` to avoid mid-run traceback
+      - exits cleanly with code 130 on user abort (SIGINT) and always terminates probe process
+      - auto-fallback for trading-hours front groups (group1 -> group2/group3) when preflight finds reachable alternate groups
+    - `simnow_probe` health timeline output:
+      - periodic `[health] ts_ns=... state=healthy|unhealthy`
+      - tunable `--monitor-seconds` and `--health-interval-ms`
+  - `QueryScheduler` with priority queues and QPS limit
+  - `CtpGatewayAdapter` skeleton with user-session query hook and `ApplySrc` handling
+  - `OrderStateMachine` introduced:
+    - lifecycle transition validation (`new -> accepted/partial/filled/canceled/rejected`)
+    - terminal-state guard and duplicate-event idempotency
+  - `InMemoryPortfolioLedger` hardened to replay-safe semantics:
+    - fill-delta accounting per order (`filled_volume` cumulative -> delta apply)
+    - duplicate-event dedupe key to prevent double counting during replay
+  - `BasicRiskEngine`, `RuleMarketStateEngine`
+  - `core_engine` callback path now gates order events through order state machine before ledger/WAL append
+  - local WAL regulatory sink upgraded:
+    - richer WAL schema for replay (`exchange_order_id/total_volume/avg_fill_price/reason/trace_id`)
+    - sequence bootstrap from existing WAL file to avoid sequence reuse after restart
+  - `WalReplayLoader` and restart recovery workflow completed:
+    - replay from WAL file into `OrderStateMachine` + `InMemoryPortfolioLedger`
+    - supports both legacy WAL lines and extended schema
+  - `wal_replay_tool` CLI added for offline verification
+  - backtest replay harness completed (phase-1):
+    - `quant_hft.backtest.replay` minute-bar replay from `backtest_data/*.csv`
+    - `scripts/backtest/replay_csv.py` CLI for fast replay smoke and regression checks
+    - tests include synthetic deterministic fixture + real-data smoke (`backtest_data/rb.csv`)
+  - deterministic backtest scenario suite (phase-2) completed:
+    - `replay_csv_with_deterministic_fills(...)` for deterministic fill simulation
+    - per-instrument bar counting, deterministic order-event stream, optional WAL JSONL output
+    - per-instrument PnL snapshots + invariant validation (flat-position/unrealized/avg-price checks)
+    - regression tests: multi-instrument rollup, WAL consistency, PnL invariants
+  - storage adapter baseline (phase-4 data path) completed:
+    - interfaces:
+      - `IRealtimeCache` (`include/quant_hft/interfaces/realtime_cache.h`)
+      - `ITimeseriesStore` (`include/quant_hft/interfaces/timeseries_store.h`)
+    - concrete adapters (in-memory baseline):
+      - `RedisRealtimeStore` + `RedisKeyBuilder`
+      - `TimescaleEventStore`
+    - `core_engine` integration:
+      - market snapshot -> realtime cache + timeseries store
+      - order event -> realtime cache(order/position) + timeseries store
+      - risk decision -> timeseries store
+    - unit tests:
+      - `redis_realtime_store_test`
+      - `timescale_event_store_test`
+  - storage external-integration preparation (phase-4.5) completed:
+    - low-level client interfaces:
+      - `IRedisHashClient` + `InMemoryRedisHashClient`
+      - `ITimescaleSqlClient` + `InMemoryTimescaleSqlClient`
+    - retry policy:
+      - `StorageRetryPolicy` (`max_attempts/initial_backoff_ms/max_backoff_ms`)
+    - client-backed adapters:
+      - `RedisRealtimeStoreClientAdapter` (HSET/HGETALL style mapping + retry)
+      - `TimescaleEventStoreClientAdapter` (row append/query mapping + retry)
+    - `core_engine` switched to client-backed adapter path (default in-memory clients)
+    - unit tests:
+      - `redis_realtime_store_client_adapter_test`
+      - `timescale_event_store_client_adapter_test`
+  - storage reliability enhancements (phase-4.6) completed:
+    - connection pool wrappers:
+      - `RedisHashClientPool` / `PooledRedisHashClient`
+      - `TimescaleSqlClientPool` / `PooledTimescaleSqlClient`
+    - async batch write path:
+      - `TimescaleBufferedEventStore` (background worker + batch flush + explicit `Flush()`)
+      - worker path reuses `TimescaleEventStoreClientAdapter` retry policy
+    - health-check contract:
+      - `Ping()` added to `IRedisHashClient` / `ITimescaleSqlClient`
+    - `core_engine` integration:
+      - switched to pooled redis client
+      - switched to pooled + buffered timescale writer
+    - unit tests:
+      - `storage_client_pool_test`
+      - `timescale_buffered_event_store_test`
+  - storage external-driver bootstrap framework (phase-4.7) completed:
+    - connection config model:
+      - `StorageConnectionConfig` (`redis/timescale/allow_inmemory_fallback`)
+      - environment loader `StorageConnectionConfig::FromEnvironment()`
+    - storage client factory:
+      - `StorageClientFactory::CreateRedisClient(...)`
+      - `StorageClientFactory::CreateTimescaleClient(...)`
+      - external mode disabled path returns explicit unavailable clients
+      - optional in-memory fallback controlled by config
+    - build flags added:
+      - `QUANT_HFT_ENABLE_REDIS_EXTERNAL`
+      - `QUANT_HFT_ENABLE_TIMESCALE_EXTERNAL`
+    - `core_engine` integration:
+      - storage clients now created by factory + startup ping health-check
+    - unit tests:
+      - `storage_client_factory_test`
+  - storage external redis client integration (phase-4.8) completed:
+    - `TcpRedisHashClient`:
+      - TCP RESP client without third-party dependency
+      - supports `PING` / `HSET` / `HGETALL`
+      - supports optional `AUTH` (`username/password` or password-only)
+      - connect/read timeout and reply parsing with error propagation
+    - `StorageClientFactory`:
+      - when `QUANT_HFT_ENABLE_REDIS_EXTERNAL=ON` and redis mode is `external`,
+        factory now creates real `TcpRedisHashClient`
+      - startup health check still enforced; fallback/unavailable semantics unchanged
+    - unit tests:
+      - `tcp_redis_hash_client_test` (fake RESP server protocol-level verification)
+  - storage external timescaledb client integration (phase-4.9) completed:
+    - `LibpqTimescaleSqlClient`:
+      - runtime `libpq` dynamic loading (`dlopen`) to avoid hard build dependency
+      - supports `Ping(SELECT 1)` / `InsertRow` / `QueryRows` / `QueryAllRows`
+      - identifier validation and parameterized SQL (`PQexecParams`)
+      - config-driven connection string (`dsn` or host/port/db/user/password/sslmode/timeout)
+    - `StorageClientFactory`:
+      - when `QUANT_HFT_ENABLE_TIMESCALE_EXTERNAL=ON` and timescale mode is `external`,
+        factory now creates real `LibpqTimescaleSqlClient`
+      - startup health check and fallback/unavailable semantics preserved
+    - unit tests:
+      - `libpq_timescale_sql_client_test`
+  - data pipeline DuckDB/MinIO concrete adapters (phase-5.0) completed:
+    - Python data-pipeline package:
+      - `quant_hft.data_pipeline.DuckDbAnalyticsStore`
+      - `quant_hft.data_pipeline.MinioArchiveStore`
+      - `MarketSnapshotRecord`
+    - DuckDB adapter:
+      - prefers real `duckdb` module when available
+      - sqlite fallback for deterministic local/dev execution
+      - supports market/order append, query, and table CSV export
+    - MinIO adapter:
+      - prefers real `minio` SDK when available
+      - local filesystem fallback mode (`bucket/object` layout)
+      - supports put/get/list for archive objects
+    - unit tests:
+      - `test_data_pipeline_adapters.py`
+  - data pipeline process split (phase-5.1) completed:
+    - independent process module:
+      - `quant_hft.data_pipeline.process.DataPipelineProcess`
+      - `run_once()` and `run_loop(max_iterations=...)`
+      - per-run export bundle (`market_snapshots.csv`, `order_events.csv`, `manifest.json`)
+    - archive integration:
+      - exported files are archived to MinIO/local fallback with run-id prefix
+    - standalone CLI:
+      - `scripts/data_pipeline/run_pipeline.py`
+      - supports `--run-once` and loop mode (`--iterations`, `--interval-seconds`)
+    - unit tests:
+      - `test_data_pipeline_process.py`
+  - data pipeline observability integration (phase-5.2) completed:
+    - in-memory monitoring/tracing/alerting primitives:
+      - `quant_hft.ops.monitoring.InMemoryObservability`
+      - `MetricRecord`, `TraceSpanRecord`, `AlertRecord`, `ObservabilitySnapshot`
+    - `DataPipelineProcess` integration:
+      - trace spans: `data_pipeline.run_once`, `data_pipeline.export_table`
+      - metrics: run latency, run counter, table export rows/latency, archive object count
+      - alert gates: `PIPELINE_EXPORT_EMPTY`, `PIPELINE_ARCHIVE_INCOMPLETE`,
+        `PIPELINE_RUN_SLOW`, `PIPELINE_RUN_FAILED`
+      - report extension: `trace_id`, `run_latency_ms`, `alert_codes`
+    - unit tests:
+      - `test_monitoring_observability.py`
+      - `test_data_pipeline_process.py` (observability assertions)
+  - deployment bootstrap artifacts (phase-6.0) completed:
+    - systemd bundle renderer:
+      - `quant_hft.ops.systemd.SystemdRenderConfig`
+      - `render_systemd_bundle(...)`
+      - `write_systemd_bundle(...)`
+      - CLI: `scripts/ops/render_systemd_units.py`
+    - generated artifacts include:
+      - `quant-hft-core-engine.service`
+      - `quant-hft-data-pipeline.service`
+      - env templates for both services
+    - unit tests:
+      - `test_systemd_render.py`
+  - kubernetes + release packaging pipeline (phase-6.1) completed:
+    - kubernetes manifest renderer for non-hotpath `data_pipeline`:
+      - `quant_hft.ops.k8s.K8sRenderConfig`
+      - `render_k8s_bundle(...)`
+      - `write_k8s_bundle(...)`
+      - CLI: `scripts/ops/render_k8s_manifests.py`
+    - generated k8s artifacts include:
+      - `namespace.yaml`
+      - `configmap-data-pipeline.yaml`
+      - `secret-archive.example.yaml`
+      - `persistentvolumeclaim-runtime.yaml`
+      - `deployment-data-pipeline.yaml`
+      - `kustomization.yaml`
+    - release bundle script:
+      - `scripts/build/package_nonhotpath_release.sh`
+      - outputs `tar.gz` + `sha256`
+    - GitHub release workflow:
+      - `.github/workflows/release-package.yml`
+      - supports `workflow_dispatch` and `v*` tag publish
+    - unit tests:
+      - `test_k8s_render.py`
+- Strategy runtime:
+  - `StrategyBase` with only `on_bar/on_state/on_order_event`
+  - runtime dispatcher and typed contracts
+- Contract layer:
+  - versioned Protobuf schema in `proto/quant_hft/v1/contracts.proto`
+
+## Pending for next increments
+- execute runbook on real SimNow session and archive measured reconnect SLO evidence
+  (`docs/results/reconnect_fault_result.md`, target P99 < 10s)

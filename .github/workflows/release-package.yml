@@ -52,6 +52,14 @@ jobs:
             --json-output docs/results/release_audit_summary.json
           cat docs/results/release_audit_summary.md >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Verify release audit summary JSON
+        run: |
+          EXPECTED_GIT_COMMIT="$(git rev-parse --short=12 HEAD)"
+          python scripts/build/verify_release_audit_summary.py \
+            --summary-json docs/results/release_audit_summary.json \
+            --expect-version "${{ steps.package.outputs.version }}" \
+            --expect-git-commit "$EXPECTED_GIT_COMMIT"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:

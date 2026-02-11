@@ -13,6 +13,10 @@ python3 scripts/build/release_audit_summary.py \
   --checksum dist/quant-hft-nonhotpath-v0.2.0.tar.gz.sha256 \
   --output docs/results/release_audit_summary.md \
   --json-output docs/results/release_audit_summary.json
+
+python3 scripts/build/verify_release_audit_summary.py \
+  --summary-json docs/results/release_audit_summary.json \
+  --expect-version v0.2.0
 ```
 
 ## 1) Render unit bundle

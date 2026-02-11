@@ -64,6 +64,18 @@ result=<pass|fail>
 notes=<short summary>
 ```
 
+Template file:
+- `docs/templates/WAL_RECOVERY_RESULT.md`
+
+Machine verification:
+
+```bash
+python3 scripts/ops/verify_wal_recovery_evidence.py \
+  --evidence-file docs/results/wal_recovery_result.env \
+  --max-rto-seconds 10 \
+  --max-rpo-events 0
+```
+
 Acceptance target:
 - RTO measured and documented for every drill
 - RPO explicitly measured (expected 0 for clean WAL replay path)

@@ -14,6 +14,7 @@ def _required_relative_paths() -> list[str]:
         "docs/SYSTEMD_DEPLOYMENT_RUNBOOK.md",
         "docs/K8S_DEPLOYMENT_RUNBOOK.md",
         "docs/WAL_RECOVERY_RUNBOOK.md",
+        "docs/WAL_RECOVERY_RESULT.md",
         "scripts/build/package_nonhotpath_release.sh",
         "scripts/build/release_audit_index.py",
         "scripts/build/release_audit_summary.py",
@@ -22,6 +23,7 @@ def _required_relative_paths() -> list[str]:
         "scripts/build/verify_release_audit_summary.py",
         "scripts/ops/run_reconnect_evidence.py",
         "scripts/ops/reconnect_slo_report.py",
+        "scripts/ops/verify_wal_recovery_evidence.py",
         "configs/sim/ctp.yaml",
         "python/quant_hft/__init__.py",
     ]

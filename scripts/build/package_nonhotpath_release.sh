@@ -37,6 +37,7 @@ cp "$ROOT_DIR/docs/SYSTEMD_DEPLOYMENT_RUNBOOK.md" "$PAYLOAD_DIR/docs/"
 cp "$ROOT_DIR/docs/WAL_RECOVERY_RUNBOOK.md" "$PAYLOAD_DIR/docs/"
 cp "$ROOT_DIR/docs/CTP_SIMNOW_RECONNECT_FAULT_INJECTION_RUNBOOK.md" "$PAYLOAD_DIR/docs/"
 cp "$ROOT_DIR/docs/templates/RECONNECT_FAULT_INJECTION_RESULT.md" "$PAYLOAD_DIR/docs/"
+cp "$ROOT_DIR/docs/templates/WAL_RECOVERY_RESULT.md" "$PAYLOAD_DIR/docs/"
 cp "$ROOT_DIR/configs/sim/ctp.yaml" "$PAYLOAD_DIR/configs/sim/"
 cp "$ROOT_DIR/configs/sim/ctp_trading_hours.yaml" "$PAYLOAD_DIR/configs/sim/"
 
@@ -53,6 +54,7 @@ cp "$ROOT_DIR/scripts/ops/reconnect_slo_report.py" "$PAYLOAD_DIR/scripts/ops/"
 cp "$ROOT_DIR/scripts/ops/render_k8s_manifests.py" "$PAYLOAD_DIR/scripts/ops/"
 cp "$ROOT_DIR/scripts/ops/render_systemd_units.py" "$PAYLOAD_DIR/scripts/ops/"
 cp "$ROOT_DIR/scripts/ops/run_reconnect_evidence.py" "$PAYLOAD_DIR/scripts/ops/"
+cp "$ROOT_DIR/scripts/ops/verify_wal_recovery_evidence.py" "$PAYLOAD_DIR/scripts/ops/"
 
 BUILD_TS_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 if GIT_COMMIT="$(git -C "$ROOT_DIR" rev-parse --short=12 HEAD 2>/dev/null)"; then

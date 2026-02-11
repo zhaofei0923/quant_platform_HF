@@ -324,6 +324,38 @@ Completion rule:
 - Status:
   - `done`
 
+## Sprint D8 (2026-02-11 ~ 2026-02-24)
+- Objective:
+  - enforce WAL recovery drill evidence as machine-verifiable contract
+  - package WAL evidence template + verifier for deployment artifact parity
+- Scope:
+  - `scripts/ops/verify_wal_recovery_evidence.py`
+  - `python/tests/test_verify_wal_recovery_evidence_script.py`
+  - `docs/WAL_RECOVERY_RUNBOOK.md`
+  - `docs/templates/WAL_RECOVERY_RESULT.md`
+  - `scripts/build/package_nonhotpath_release.sh`
+  - `scripts/build/verify_nonhotpath_release.py`
+  - `python/tests/test_verify_nonhotpath_release_script.py`
+  - `develop/00-实现对齐矩阵与缺口总览.md`
+  - `develop/00-未完成能力补齐路线图.md`
+  - `develop/04-基础设施与运维/04-02-部署、灾备与持续集成方案.md`
+  - `develop/07-部署与运维/07-02-运维操作手册.md`
+- Test Evidence:
+  - [x] `.venv/bin/pytest -q python/tests/test_verify_wal_recovery_evidence_script.py python/tests/test_verify_nonhotpath_release_script.py`
+  - [x] `python3 scripts/ops/verify_wal_recovery_evidence.py --evidence-file docs/results/wal_recovery_result.env --max-rto-seconds 10 --max-rpo-events 0`
+  - [x] `.venv/bin/ruff check python scripts`
+  - [x] `.venv/bin/black --check python scripts`
+  - [x] `.venv/bin/mypy python/quant_hft`
+  - [x] `.venv/bin/pytest python/tests -q`
+  - [x] `./scripts/build/bootstrap.sh`
+- Develop Docs Synced:
+  - [x] `develop/00-实现对齐矩阵与缺口总览.md`
+  - [x] `develop/00-未完成能力补齐路线图.md`
+  - [x] `develop/04-基础设施与运维/04-02-部署、灾备与持续集成方案.md`
+  - [x] `develop/07-部署与运维/07-02-运维操作手册.md`
+- Status:
+  - `done`
+
 ## Sprint A1 + A2 (2026-02-25 ~ 2026-03-24)
 - Objective:
   - reproducible backtest run spec/result

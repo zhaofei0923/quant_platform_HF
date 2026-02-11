@@ -104,6 +104,7 @@ def main() -> int:
         f"run_id={result.run_id} "
         f"mode={result.mode} "
         f"input_sig={result.input_signature[:12]} "
+        f"data_sig={result.data_signature[:12]} "
         f"ticks={report.ticks_read} "
         f"bars={report.bars_emitted} "
         f"intents={report.intents_emitted} "

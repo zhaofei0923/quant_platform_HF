@@ -172,6 +172,7 @@ class BacktestRunResult:
     replay: ReplayReport
     deterministic: DeterministicReplayReport | None
     input_signature: str
+    data_signature: str
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -179,6 +180,7 @@ class BacktestRunResult:
             "mode": self.mode,
             "spec": self.spec.to_dict(),
             "input_signature": self.input_signature,
+            "data_signature": self.data_signature,
             "replay": {
                 "ticks_read": self.replay.ticks_read,
                 "bars_emitted": self.replay.bars_emitted,
@@ -416,6 +418,17 @@ def _build_input_signature(spec: BacktestRunSpec) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _build_data_signature(csv_path: Path | str) -> str:
+    hasher = hashlib.sha256()
+    with Path(csv_path).open("rb") as fp:
+        while True:
+            chunk = fp.read(1024 * 1024)
+            if not chunk:
+                break
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
 def load_backtest_run_spec(spec_file: Path | str) -> BacktestRunSpec:
     raw = json.loads(Path(spec_file).read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
@@ -459,6 +472,7 @@ def run_backtest_spec(
         replay=replay,
         deterministic=deterministic,
         input_signature=_build_input_signature(spec),
+        data_signature=_build_data_signature(spec.csv_path),
     )
 
 

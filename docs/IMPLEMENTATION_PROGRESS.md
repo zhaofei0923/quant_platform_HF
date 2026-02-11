@@ -161,6 +161,32 @@ Completion rule:
 - Status:
   - `done`
 
+## Sprint A6 (2026-07-01 ~ 2026-07-14)
+- Objective:
+  - strengthen replay reproducibility evidence with separate input/data signatures
+  - prevent silent data drift under unchanged run spec
+- Scope:
+  - `python/quant_hft/backtest/replay.py`
+  - `scripts/backtest/replay_csv.py`
+  - `python/tests/test_backtest_replay.py`
+  - `python/tests/test_backtest_replay_cli.py`
+  - `develop/00-实现对齐矩阵与缺口总览.md`
+  - `develop/00-未完成能力补齐路线图.md`
+  - `develop/02-策略研究平台设计/02-02-因子研究与回测引擎设计.md`
+- Test Evidence:
+  - [x] `.venv/bin/pytest -q python/tests/test_backtest_replay.py python/tests/test_backtest_replay_cli.py`
+  - [x] `.venv/bin/ruff check python scripts`
+  - [x] `.venv/bin/black --check python scripts`
+  - [x] `.venv/bin/mypy python/quant_hft`
+  - [x] `.venv/bin/pytest python/tests -q`
+  - [x] `./scripts/build/bootstrap.sh`
+- Develop Docs Synced:
+  - [x] `develop/00-实现对齐矩阵与缺口总览.md`
+  - [x] `develop/00-未完成能力补齐路线图.md`
+  - [x] `develop/02-策略研究平台设计/02-02-因子研究与回测引擎设计.md`
+- Status:
+  - `done`
+
 ## Completed in this bootstrap
 - Stage 0 foundation:
   - C++/Python project skeleton

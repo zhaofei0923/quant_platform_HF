@@ -110,6 +110,7 @@ def test_run_backtest_spec_is_reproducible_and_populates_ctx(tmp_path: Path) -> 
     result2 = run_backtest_spec(spec, runtime2, ctx=ctx2)
 
     assert result1.input_signature == result2.input_signature
+    assert result1.data_signature == result2.data_signature
     assert result1.to_dict() == result2.to_dict()
     assert result1.run_id == "spec-run-1"
     assert result1.deterministic is not None
@@ -122,6 +123,36 @@ def test_run_backtest_spec_is_reproducible_and_populates_ctx(tmp_path: Path) -> 
     for key in BACKTEST_CTX_REQUIRED_KEYS:
         assert key in ctx1
         assert key in ctx2
+
+
+def test_run_backtest_spec_data_signature_changes_when_csv_changes(tmp_path: Path) -> None:
+    csv_path = tmp_path / "sample_sig.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "TradingDay,InstrumentID,UpdateTime,UpdateMillisec,LastPrice,Volume,BidPrice1,BidVolume1,AskPrice1,AskVolume1,AveragePrice,Turnover,OpenInterest",
+                "20230103,rb2305,09:00:01,0,4100.0,1,4099.0,10,4101.0,12,4100.0,0.0,100",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    spec = BacktestRunSpec(csv_path=str(csv_path), max_ticks=10, deterministic_fills=False)
+    runtime = StrategyRuntime()
+
+    result1 = run_backtest_spec(spec, runtime, ctx={})
+    csv_path.write_text(
+        "\n".join(
+            [
+                "TradingDay,InstrumentID,UpdateTime,UpdateMillisec,LastPrice,Volume,BidPrice1,BidVolume1,AskPrice1,AskVolume1,AveragePrice,Turnover,OpenInterest",
+                "20230103,rb2305,09:00:01,0,4200.0,1,4199.0,10,4201.0,12,4200.0,0.0,100",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    result2 = run_backtest_spec(spec, runtime, ctx={})
+
+    assert result1.input_signature == result2.input_signature
+    assert result1.data_signature != result2.data_signature
 
 
 def test_load_backtest_run_spec_from_json(tmp_path: Path) -> None:

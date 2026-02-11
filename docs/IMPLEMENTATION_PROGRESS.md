@@ -76,9 +76,10 @@ Completion rule:
 ## Sprint C3 (2026-02-11 ~ 2026-02-24)
 - Objective:
   - auto-detect strategy bridge chain status from Redis live keys
-  - remove manual-only chain status tagging in reconnect evidence flow
+  - remove manual-only chain status tagging in reconnect evidence flow and emit evidence metadata
 - Scope:
   - `scripts/ops/run_reconnect_evidence.py`
+  - `scripts/ops/reconnect_slo_report.py`
   - `python/tests/test_run_reconnect_evidence_script.py`
   - `develop/04-基础设施与运维/04-01-监控、日志与告警体系设计.md`
   - `develop/00-实现对齐矩阵与缺口总览.md`

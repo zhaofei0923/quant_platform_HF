@@ -62,6 +62,14 @@ def _build_parser() -> argparse.ArgumentParser:
         default="unknown",
     )
     parser.add_argument(
+        "--strategy-bridge-chain-source",
+        choices=("manual", "auto_detected"),
+        default="manual",
+    )
+    parser.add_argument("--strategy-bridge-state-key-count", type=int, default=0)
+    parser.add_argument("--strategy-bridge-intent-count", type=int, default=0)
+    parser.add_argument("--strategy-bridge-order-key-count", type=int, default=0)
+    parser.add_argument(
         "--storage-redis-health",
         choices=("unknown", "healthy", "unhealthy"),
         default="unknown",
@@ -182,6 +190,10 @@ def main() -> int:
             "build": args.build,
             "config_profile": args.config_profile,
             "interface": args.interface,
+            "strategy_bridge_chain_source": args.strategy_bridge_chain_source,
+            "strategy_bridge_state_key_count": str(args.strategy_bridge_state_key_count),
+            "strategy_bridge_intent_count": str(args.strategy_bridge_intent_count),
+            "strategy_bridge_order_key_count": str(args.strategy_bridge_order_key_count),
         },
     )
 

@@ -258,6 +258,18 @@ def test_run_reconnect_evidence_passes_chain_status_to_report(tmp_path: Path, mo
     assert "--strategy-bridge-chain-status" in report_cmd
     idx = report_cmd.index("--strategy-bridge-chain-status")
     assert report_cmd[idx + 1] == "complete"
+    assert "--strategy-bridge-chain-source" in report_cmd
+    source_idx = report_cmd.index("--strategy-bridge-chain-source")
+    assert report_cmd[source_idx + 1] == "manual"
+    assert "--strategy-bridge-state-key-count" in report_cmd
+    state_idx = report_cmd.index("--strategy-bridge-state-key-count")
+    assert report_cmd[state_idx + 1] == "0"
+    assert "--strategy-bridge-intent-count" in report_cmd
+    intent_idx = report_cmd.index("--strategy-bridge-intent-count")
+    assert report_cmd[intent_idx + 1] == "0"
+    assert "--strategy-bridge-order-key-count" in report_cmd
+    order_idx = report_cmd.index("--strategy-bridge-order-key-count")
+    assert report_cmd[order_idx + 1] == "0"
 
 
 def test_run_reconnect_evidence_auto_detects_chain_status(tmp_path: Path, monkeypatch) -> None:
@@ -281,12 +293,17 @@ def test_run_reconnect_evidence_auto_detects_chain_status(tmp_path: Path, monkey
 
     detect_calls: list[Path] = []
 
-    def _fake_detect(cfg_path: Path) -> str:
+    def _fake_detect(cfg_path: Path) -> dict[str, object]:
         detect_calls.append(cfg_path)
-        return "complete"
+        return {
+            "status": "complete",
+            "state_key_count": 2,
+            "intent_count": 1,
+            "order_key_count": 1,
+        }
 
     monkeypatch.setattr(module, "_run", _fake_run)
-    monkeypatch.setattr(module, "_detect_strategy_bridge_chain_status", _fake_detect)
+    monkeypatch.setattr(module, "_detect_strategy_bridge_chain_evidence", _fake_detect)
 
     argv = [
         str(script_path),
@@ -322,6 +339,18 @@ def test_run_reconnect_evidence_auto_detects_chain_status(tmp_path: Path, monkey
     assert "--strategy-bridge-chain-status" in report_cmd
     idx = report_cmd.index("--strategy-bridge-chain-status")
     assert report_cmd[idx + 1] == "complete"
+    assert "--strategy-bridge-chain-source" in report_cmd
+    source_idx = report_cmd.index("--strategy-bridge-chain-source")
+    assert report_cmd[source_idx + 1] == "auto_detected"
+    assert "--strategy-bridge-state-key-count" in report_cmd
+    state_idx = report_cmd.index("--strategy-bridge-state-key-count")
+    assert report_cmd[state_idx + 1] == "2"
+    assert "--strategy-bridge-intent-count" in report_cmd
+    intent_idx = report_cmd.index("--strategy-bridge-intent-count")
+    assert report_cmd[intent_idx + 1] == "1"
+    assert "--strategy-bridge-order-key-count" in report_cmd
+    order_idx = report_cmd.index("--strategy-bridge-order-key-count")
+    assert report_cmd[order_idx + 1] == "1"
 
 
 def test_detect_strategy_bridge_chain_status_returns_complete(tmp_path: Path, monkeypatch) -> None:

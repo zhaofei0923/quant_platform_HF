@@ -229,52 +229,75 @@ def _tool_available(tool: str) -> bool:
         return False
 
 
-def _detect_strategy_bridge_chain_status(config_path: Path) -> str:
+def _detect_strategy_bridge_chain_evidence(config_path: Path) -> dict[str, int | str]:
+    evidence: dict[str, int | str] = {
+        "status": "unknown",
+        "source": "auto_detected",
+        "state_key_count": 0,
+        "intent_count": 0,
+        "order_key_count": 0,
+    }
     try:
         runner_config = load_runner_config(str(config_path))
         redis_client = load_redis_client_from_env(TcpRedisHashClient)
         if not redis_client.ping():
-            return "unknown"
+            return evidence
 
         for instrument_id in runner_config.instruments:
             state_fields = redis_client.hgetall(state_snapshot_key(instrument_id))
             if not state_fields or parse_state_snapshot(state_fields) is None:
-                return "incomplete"
+                evidence["status"] = "incomplete"
+                return evidence
+            evidence["state_key_count"] = int(evidence["state_key_count"]) + 1
 
         intent_fields = redis_client.hgetall(strategy_intent_key(runner_config.strategy_id))
         if not intent_fields:
-            return "incomplete"
+            evidence["status"] = "incomplete"
+            return evidence
 
         raw_count = intent_fields.get("count", "0")
         try:
             count = max(0, int(raw_count))
         except ValueError:
-            return "incomplete"
+            evidence["status"] = "incomplete"
+            return evidence
+        evidence["intent_count"] = count
 
         trace_ids: list[str] = []
         for index in range(count):
             encoded = intent_fields.get(f"intent_{index}", "")
             parts = encoded.split("|")
             if len(parts) != 7:
-                return "incomplete"
+                evidence["status"] = "incomplete"
+                return evidence
             trace_id = parts[6].strip()
             if not trace_id:
-                return "incomplete"
+                evidence["status"] = "incomplete"
+                return evidence
             trace_ids.append(trace_id)
 
         if not trace_ids:
-            return "unknown"
+            return evidence
 
         for trace_id in trace_ids:
             order_fields = redis_client.hgetall(order_event_key(trace_id))
             if not order_fields:
-                return "incomplete"
+                evidence["status"] = "incomplete"
+                return evidence
             if parse_order_event(order_fields) is None:
-                return "incomplete"
+                evidence["status"] = "incomplete"
+                return evidence
+            evidence["order_key_count"] = int(evidence["order_key_count"]) + 1
 
-        return "complete"
+        evidence["status"] = "complete"
+        return evidence
     except Exception:
-        return "unknown"
+        return evidence
+
+
+def _detect_strategy_bridge_chain_status(config_path: Path) -> str:
+    detected = _detect_strategy_bridge_chain_evidence(config_path)
+    return str(detected.get("status", "unknown"))
 
 
 def main() -> int:
@@ -386,8 +409,17 @@ def main() -> int:
     )
 
     resolved_chain_status = args.strategy_bridge_chain_status
+    resolved_chain_source = "manual"
+    state_key_count = 0
+    intent_count = 0
+    order_key_count = 0
     if resolved_chain_status == "auto":
-        resolved_chain_status = _detect_strategy_bridge_chain_status(config)
+        detected = _detect_strategy_bridge_chain_evidence(config)
+        resolved_chain_status = str(detected.get("status", "unknown"))
+        resolved_chain_source = str(detected.get("source", "auto_detected"))
+        state_key_count = int(detected.get("state_key_count", 0))
+        intent_count = int(detected.get("intent_count", 0))
+        order_key_count = int(detected.get("order_key_count", 0))
 
     exit_code = 0
     try:
@@ -437,6 +469,14 @@ def main() -> int:
             f"{args.strategy_bridge_target_ms:g}",
             "--strategy-bridge-chain-status",
             resolved_chain_status,
+            "--strategy-bridge-chain-source",
+            resolved_chain_source,
+            "--strategy-bridge-state-key-count",
+            str(state_key_count),
+            "--strategy-bridge-intent-count",
+            str(intent_count),
+            "--strategy-bridge-order-key-count",
+            str(order_key_count),
             "--storage-redis-health",
             args.storage_redis_health,
             "--storage-timescale-health",

@@ -139,6 +139,28 @@ Completion rule:
 - Status:
   - `done`
 
+## Sprint A5 (2026-06-17 ~ 2026-06-30)
+- Objective:
+  - fix CLI/template parameter precedence for reproducible replay specs
+  - add script-level regression tests for template defaults and explicit overrides
+- Scope:
+  - `scripts/backtest/replay_csv.py`
+  - `python/tests/test_backtest_replay_cli.py`
+  - `develop/02-策略研究平台设计/02-02-因子研究与回测引擎设计.md`
+  - `develop/00-未完成能力补齐路线图.md`
+- Test Evidence:
+  - [x] `.venv/bin/pytest -q python/tests/test_backtest_replay_cli.py`
+  - [x] `.venv/bin/ruff check python scripts`
+  - [x] `.venv/bin/black --check python scripts`
+  - [x] `.venv/bin/mypy python/quant_hft`
+  - [x] `.venv/bin/pytest python/tests -q`
+  - [x] `./scripts/build/bootstrap.sh`
+- Develop Docs Synced:
+  - [x] `develop/02-策略研究平台设计/02-02-因子研究与回测引擎设计.md`
+  - [x] `develop/00-未完成能力补齐路线图.md`
+- Status:
+  - `done`
+
 ## Completed in this bootstrap
 - Stage 0 foundation:
   - C++/Python project skeleton

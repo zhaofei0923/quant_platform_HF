@@ -29,7 +29,12 @@ except ModuleNotFoundError:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Replay CSV ticks into minute bars.")
     parser.add_argument("--csv", default="", help="path to csv file")
-    parser.add_argument("--max-ticks", type=int, default=50000, help="max ticks to replay")
+    parser.add_argument(
+        "--max-ticks",
+        type=int,
+        default=None,
+        help="max ticks to replay (defaults: template preset, or 50000 without template)",
+    )
     parser.add_argument("--spec-file", default="", help="path to JSON backtest spec")
     parser.add_argument(
         "--scenario-template",
@@ -72,7 +77,7 @@ def main() -> int:
                 run_id=args.run_id or None,
                 wal_dir=Path("runtime/backtest"),
             )
-            if args.max_ticks > 0:
+            if args.max_ticks is not None and args.max_ticks > 0:
                 spec = BacktestRunSpec(
                     csv_path=spec.csv_path,
                     max_ticks=args.max_ticks,
@@ -84,7 +89,7 @@ def main() -> int:
         else:
             spec = BacktestRunSpec(
                 csv_path=args.csv,
-                max_ticks=args.max_ticks,
+                max_ticks=args.max_ticks if args.max_ticks is not None else 50000,
                 deterministic_fills=args.deterministic_fills,
                 wal_path=None,
                 account_id="sim-account",

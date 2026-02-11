@@ -17,7 +17,11 @@
   - optional `max_ticks`
   - optional `wal_path` (deterministic fill mode)
 - Output:
-  - `ReplayReport(ticks_read, bars_emitted, intents_emitted, first_instrument, last_instrument)`
+  - `ReplayReport(...)` with:
+    - `ticks_read/bars_emitted/intents_emitted`
+    - `first_instrument/last_instrument`
+    - `instrument_count/instrument_universe`
+    - `first_ts_ns/last_ts_ns`
   - `DeterministicReplayReport(...)` with:
     - replay summary
     - `instrument_bars`
@@ -31,9 +35,18 @@
 scripts/backtest/replay_csv.py --csv backtest_data/rb.csv --max-ticks 5000
 ```
 
+Optional report outputs:
+```bash
+scripts/backtest/replay_csv.py \
+  --csv backtest_data/rb.csv \
+  --scenario-template deterministic_regression \
+  --report-json runtime/backtest/report.json \
+  --report-md runtime/backtest/report.md
+```
+
 Example output:
 ```text
-csv_replay_report ticks=5000 bars=44 intents=0 first_instrument=rb2305 last_instrument=rb2305
+csv_replay_report run_id=... mode=... input_sig=... data_sig=... ticks=5000 bars=44 intents=0 instruments=1 time_range=... first_instrument=rb2305 last_instrument=rb2305
 ```
 
 ## Current Regression Coverage

@@ -5,6 +5,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 try:
     from quant_hft.backtest.replay import (
@@ -42,6 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="scenario template name (smoke_fast | baseline_replay | deterministic_regression)",
     )
     parser.add_argument("--report-json", default="", help="optional output path for JSON report")
+    parser.add_argument("--report-md", default="", help="optional output path for markdown report")
     parser.add_argument("--run-id", default="", help="override run_id in spec/cli")
     parser.add_argument(
         "--deterministic-fills",
@@ -49,6 +51,44 @@ def build_parser() -> argparse.ArgumentParser:
         help="emit deterministic order events and pnl report",
     )
     return parser
+
+
+def _render_markdown_report(result: Any) -> str:
+    # Keep script self-contained; report object shape is produced by run_backtest_spec.
+    replay = result.replay
+    lines = [
+        "# Backtest Replay Result",
+        "",
+        "## Metadata",
+        f"- Run ID: `{result.run_id}`",
+        f"- Mode: `{result.mode}`",
+        f"- Input Signature: `{result.input_signature}`",
+        f"- Data Signature: `{result.data_signature}`",
+        "",
+        "## Replay Overview",
+        f"- Ticks Read: `{replay.ticks_read}`",
+        f"- Bars Emitted: `{replay.bars_emitted}`",
+        f"- Intents Emitted: `{replay.intents_emitted}`",
+        f"- Instrument Count: `{replay.instrument_count}`",
+        f"- Instrument Universe: `{','.join(replay.instrument_universe)}`",
+        f"- Time Range (ns): `{replay.first_ts_ns}:{replay.last_ts_ns}`",
+        "",
+    ]
+
+    deterministic = result.deterministic
+    if deterministic is not None:
+        lines.extend(
+            [
+                "## Deterministic Summary",
+                f"- Order Events: `{deterministic.order_events_emitted}`",
+                f"- WAL Records: `{deterministic.wal_records}`",
+                f"- Total PnL: `{deterministic.performance.total_pnl:.4f}`",
+                f"- Max Drawdown: `{deterministic.performance.max_drawdown:.4f}`",
+                "",
+            ]
+        )
+
+    return "\n".join(lines)
 
 
 def main() -> int:
@@ -108,6 +148,8 @@ def main() -> int:
         f"ticks={report.ticks_read} "
         f"bars={report.bars_emitted} "
         f"intents={report.intents_emitted} "
+        f"instruments={report.instrument_count} "
+        f"time_range={report.first_ts_ns}:{report.last_ts_ns} "
         f"first_instrument={report.first_instrument} "
         f"last_instrument={report.last_instrument}"
     )
@@ -128,6 +170,10 @@ def main() -> int:
             json.dumps(result.to_dict(), ensure_ascii=True, sort_keys=True, indent=2) + "\n",
             encoding="utf-8",
         )
+    if args.report_md:
+        output = Path(args.report_md)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(_render_markdown_report(result), encoding="utf-8")
 
     return 0
 

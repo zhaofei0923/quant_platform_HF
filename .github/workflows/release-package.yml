@@ -60,6 +60,12 @@ jobs:
             --expect-version "${{ steps.package.outputs.version }}" \
             --expect-git-commit "$EXPECTED_GIT_COMMIT"
 
+      - name: Generate release audit index JSONL
+        run: |
+          python scripts/build/release_audit_index.py \
+            --summary-json docs/results/release_audit_summary.json \
+            --output-jsonl docs/results/release_audit_index.jsonl
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -69,6 +75,7 @@ jobs:
             dist/quant-hft-nonhotpath-${{ steps.package.outputs.version }}.tar.gz.sha256
             docs/results/release_audit_summary.md
             docs/results/release_audit_summary.json
+            docs/results/release_audit_index.jsonl
 
       - name: Publish GitHub Release Assets
         if: startsWith(github.ref, 'refs/tags/')
@@ -79,3 +86,4 @@ jobs:
             dist/quant-hft-nonhotpath-${{ steps.package.outputs.version }}.tar.gz.sha256
             docs/results/release_audit_summary.md
             docs/results/release_audit_summary.json
+            docs/results/release_audit_index.jsonl

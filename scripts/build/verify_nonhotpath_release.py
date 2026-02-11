@@ -13,6 +13,7 @@ _REQUIRED_RELATIVE_PATHS = (
     "docs/K8S_DEPLOYMENT_RUNBOOK.md",
     "docs/WAL_RECOVERY_RUNBOOK.md",
     "scripts/build/package_nonhotpath_release.sh",
+    "scripts/build/release_audit_index.py",
     "scripts/build/release_audit_summary.py",
     "scripts/build/verify_nonhotpath_release.py",
     "scripts/build/verify_release_audit_summary.py",

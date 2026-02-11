@@ -482,6 +482,45 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         }
         return false;
     }
+    loaded.execution.preferred_venue = get_value("preferred_venue");
+    if (loaded.execution.preferred_venue.empty()) {
+        loaded.execution.preferred_venue = get_value("execution_preferred_venue");
+    }
+    if (loaded.execution.preferred_venue.empty()) {
+        loaded.execution.preferred_venue = "SIM";
+    }
+    loaded.execution.participation_rate_limit = 1.0;
+    SetOptionalDouble(kv,
+                      "participation_rate_limit",
+                      &loaded.execution.participation_rate_limit,
+                      &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.execution.participation_rate_limit <= 0.0 ||
+        loaded.execution.participation_rate_limit > 1.0) {
+        if (error != nullptr) {
+            *error = "participation_rate_limit must be in (0, 1]";
+        }
+        return false;
+    }
+    loaded.execution.impact_cost_bps = 0.0;
+    SetOptionalDouble(kv, "impact_cost_bps", &loaded.execution.impact_cost_bps, &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.execution.impact_cost_bps < 0.0) {
+        if (error != nullptr) {
+            *error = "impact_cost_bps must be >= 0";
+        }
+        return false;
+    }
     loaded.execution.cancel_after_ms = 0;
     SetOptionalInt(kv, "cancel_after_ms", &loaded.execution.cancel_after_ms, &load_error);
     if (!load_error.empty()) {

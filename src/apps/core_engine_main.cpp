@@ -26,6 +26,7 @@
 #include "quant_hft/core/wal_replay_loader.h"
 #include "quant_hft/services/basic_risk_engine.h"
 #include "quant_hft/services/execution_planner.h"
+#include "quant_hft/services/execution_router.h"
 #include "quant_hft/services/in_memory_portfolio_ledger.h"
 #include "quant_hft/services/order_state_machine.h"
 #include "quant_hft/services/risk_policy_engine.h"
@@ -155,6 +156,10 @@ struct ExecutionMetadata {
     std::int32_t slice_index{0};
     std::int32_t slice_total{0};
     bool throttle_applied{false};
+    std::string venue;
+    std::string route_id;
+    double slippage_bps{0.0};
+    double impact_cost{0.0};
 };
 
 double EstimatePositionNotional(const quant_hft::InMemoryPortfolioLedger& ledger,
@@ -180,6 +185,8 @@ quant_hft::RiskContext BuildRiskContext(
     context.instrument_id = intent.instrument_id;
     context.active_order_count = static_cast<std::int32_t>(order_state_machine.ActiveOrderCount());
     context.account_position_notional = EstimatePositionNotional(ledger, intent);
+    context.account_cross_gross_notional = context.account_position_notional;
+    context.account_cross_net_notional = context.account_position_notional;
     context.session_hhmm = -1;
     return context;
 }
@@ -203,6 +210,10 @@ quant_hft::OrderEvent BuildRejectedEvent(const quant_hft::OrderIntent& intent,
     event.slice_index = metadata.slice_index;
     event.slice_total = metadata.slice_total;
     event.throttle_applied = metadata.throttle_applied;
+    event.venue = metadata.venue;
+    event.route_id = metadata.route_id;
+    event.slippage_bps = metadata.slippage_bps;
+    event.impact_cost = metadata.impact_cost;
     return event;
 }
 
@@ -250,6 +261,7 @@ int main(int argc, char** argv) {
     risk_defaults.rule_version = file_config.risk.default_rule_version;
     RiskPolicyEngine risk(risk_defaults, BuildRiskPolicyRules(file_config.risk));
     ExecutionPlanner execution_planner;
+    ExecutionRouter execution_router;
     CtpGatewayAdapter ctp_gateway(10);
     InMemoryPortfolioLedger ledger;
     OrderStateMachine order_state_machine;
@@ -323,6 +335,18 @@ int main(int argc, char** argv) {
                 event.slice_index = it->second.slice_index;
                 event.slice_total = it->second.slice_total;
                 event.throttle_applied = event.throttle_applied || it->second.throttle_applied;
+                if (event.venue.empty()) {
+                    event.venue = it->second.venue;
+                }
+                if (event.route_id.empty()) {
+                    event.route_id = it->second.route_id;
+                }
+                if (std::fabs(event.slippage_bps) < 1e-9) {
+                    event.slippage_bps = it->second.slippage_bps;
+                }
+                if (std::fabs(event.impact_cost) < 1e-9) {
+                    event.impact_cost = it->second.impact_cost;
+                }
             }
         }
 
@@ -443,6 +467,14 @@ int main(int argc, char** argv) {
                         metadata.execution_algo_id = planned.execution_algo_id;
                         metadata.slice_index = planned.slice_index;
                         metadata.slice_total = planned.slice_total;
+                        const std::int64_t observed_market_volume =
+                            recent_market.empty() ? 0 : recent_market.back().volume;
+                        const auto route =
+                            execution_router.Route(planned, execution_config, observed_market_volume);
+                        metadata.venue = route.venue;
+                        metadata.route_id = route.route_id;
+                        metadata.slippage_bps = route.slippage_bps;
+                        metadata.impact_cost = route.impact_cost;
                         {
                             std::lock_guard<std::mutex> lock(execution_metadata_mutex);
                             execution_metadata_by_order[intent.client_order_id] = metadata;

@@ -48,11 +48,19 @@ class ObservabilitySnapshot:
 @dataclass(frozen=True)
 class SliRecord:
     name: str
+    slo_name: str
+    environment: str
+    service: str
     value: float | None
     target: float | None
     unit: str
     healthy: bool
     detail: str
+
+
+@dataclass(frozen=True)
+class SliSloConfig:
+    strategy_bridge_latency_target_ms: float = 1500.0
 
 
 @dataclass(frozen=True)
@@ -242,16 +250,25 @@ def build_ops_health_report(
     redis_health: str = "unknown",
     timescale_health: str = "unknown",
     scope: str = "core_engine + strategy_bridge + storage",
+    environment: str = "unknown",
+    service: str = "core_engine",
+    sli_slo_config: SliSloConfig | None = None,
     metadata: Mapping[str, str] | None = None,
     now_ns_fn: Callable[[], int] | None = None,
 ) -> OpsHealthReport:
-    if strategy_bridge_target_ms <= 0:
+    effective_config = sli_slo_config or SliSloConfig(
+        strategy_bridge_latency_target_ms=strategy_bridge_target_ms
+    )
+    if effective_config.strategy_bridge_latency_target_ms <= 0:
         raise ValueError("strategy_bridge_target_ms must be > 0")
     now_ns = int((now_ns_fn or time.time_ns)())
     slis: list[SliRecord] = []
     slis.append(
         SliRecord(
             name=with_prefix("core_process_alive"),
+            slo_name=with_prefix("core_process_alive"),
+            environment=environment,
+            service=service,
             value=1.0 if core_process_alive else 0.0,
             target=1.0,
             unit="bool",
@@ -262,13 +279,16 @@ def build_ops_health_report(
 
     latency_healthy = (
         strategy_bridge_latency_ms is not None
-        and strategy_bridge_latency_ms <= strategy_bridge_target_ms
+        and strategy_bridge_latency_ms <= effective_config.strategy_bridge_latency_target_ms
     )
     slis.append(
         SliRecord(
             name=with_prefix("strategy_bridge_latency_p99_ms"),
+            slo_name=with_prefix("strategy_bridge_latency_p99_ms"),
+            environment=environment,
+            service=service,
             value=strategy_bridge_latency_ms,
-            target=strategy_bridge_target_ms,
+            target=effective_config.strategy_bridge_latency_target_ms,
             unit="ms",
             healthy=latency_healthy,
             detail="derived from reconnect recovery samples",
@@ -279,6 +299,9 @@ def build_ops_health_report(
     slis.append(
         SliRecord(
             name=with_prefix("strategy_bridge_chain_integrity"),
+            slo_name=with_prefix("strategy_bridge_chain_integrity"),
+            environment=environment,
+            service=service,
             value=1.0 if chain_ok else 0.0 if chain_ok is False else None,
             target=1.0,
             unit="bool",
@@ -291,6 +314,9 @@ def build_ops_health_report(
     slis.append(
         SliRecord(
             name=with_prefix("storage_redis_health"),
+            slo_name=with_prefix("storage_redis_health"),
+            environment=environment,
+            service=service,
             value=1.0 if redis_ok else 0.0 if redis_ok is False else None,
             target=1.0,
             unit="bool",
@@ -303,6 +329,9 @@ def build_ops_health_report(
     slis.append(
         SliRecord(
             name=with_prefix("storage_timescale_health"),
+            slo_name=with_prefix("storage_timescale_health"),
+            environment=environment,
+            service=service,
             value=1.0 if timescale_ok else 0.0 if timescale_ok is False else None,
             target=1.0,
             unit="bool",
@@ -317,7 +346,11 @@ def build_ops_health_report(
         scope=scope,
         overall_healthy=overall_healthy,
         slis=tuple(slis),
-        metadata=_normalize_labels(metadata),
+        metadata={
+            **_normalize_labels(metadata),
+            "environment": environment,
+            "service": service,
+        },
     )
 
 
@@ -330,6 +363,9 @@ def ops_health_report_to_dict(report: OpsHealthReport) -> dict[str, object]:
         "slis": [
             {
                 "name": item.name,
+                "slo_name": item.slo_name,
+                "environment": item.environment,
+                "service": item.service,
                 "value": item.value,
                 "target": item.target,
                 "unit": item.unit,

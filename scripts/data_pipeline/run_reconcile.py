@@ -27,6 +27,10 @@ _RECONCILE_FIELDS = (
     "slice_index",
     "slice_total",
     "throttle_applied",
+    "venue",
+    "route_id",
+    "slippage_bps",
+    "impact_cost",
 )
 
 
@@ -73,6 +77,10 @@ def _normalize(row: dict[str, object]) -> dict[str, object]:
         out["slice_total"] = _to_int(out["slice_total"])
     if "avg_fill_price" in out:
         out["avg_fill_price"] = _to_float(out["avg_fill_price"])
+    if "slippage_bps" in out and str(out["slippage_bps"]).strip() != "":
+        out["slippage_bps"] = _to_float(out["slippage_bps"])
+    if "impact_cost" in out and str(out["impact_cost"]).strip() != "":
+        out["impact_cost"] = _to_float(out["impact_cost"])
     if "throttle_applied" in out:
         out["throttle_applied"] = _to_bool(out["throttle_applied"])
     return out
@@ -160,6 +168,18 @@ def main() -> int:
 
     mismatch_count = len(missing_in_redis) + len(missing_in_timescale) + len(field_mismatches)
     consistent = mismatch_count == 0 and not dictionary_errors
+    classification = "consistent"
+    severity = "info"
+    auto_fixable = False
+    if dictionary_errors:
+        classification = "schema_violation"
+        severity = "critical"
+    elif missing_in_redis or missing_in_timescale:
+        classification = "record_presence_mismatch"
+        severity = "critical"
+    elif field_mismatches:
+        classification = "field_mismatch"
+        severity = "warn"
 
     report = {
         "redis_records": len(redis_rows),
@@ -171,6 +191,17 @@ def main() -> int:
         "dictionary_errors": dictionary_errors,
         "mismatch_count": mismatch_count,
         "consistent": consistent,
+        "severity": severity,
+        "classification": classification,
+        "auto_fixable": auto_fixable,
+        "schema_versions": {
+            "redis_order_event": dictionary.schema_version("redis_order_event"),
+            "timescale_order_event": dictionary.schema_version("timescale_order_event"),
+        },
+        "migration_strategies": {
+            "redis_order_event": dictionary.migration_strategy("redis_order_event"),
+            "timescale_order_event": dictionary.migration_strategy("timescale_order_event"),
+        },
     }
 
     output = Path(args.report_json)

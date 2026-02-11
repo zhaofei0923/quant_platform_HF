@@ -86,6 +86,10 @@ TEST(RedisRealtimeStoreClientAdapterTest, RoundTripsOrderAndMarketData) {
     order.filled_volume = 2;
     order.avg_fill_price = 4520.0;
     order.ts_ns = 101;
+    order.venue = "SIM";
+    order.route_id = "route-sim-2";
+    order.slippage_bps = 1.0;
+    order.impact_cost = 6.5;
     store.UpsertOrderEvent(order);
 
     MarketSnapshot got_market;
@@ -96,6 +100,10 @@ TEST(RedisRealtimeStoreClientAdapterTest, RoundTripsOrderAndMarketData) {
     ASSERT_TRUE(store.GetOrderEvent("ord-1", &got_order));
     EXPECT_EQ(got_order.status, OrderStatus::kPartiallyFilled);
     EXPECT_EQ(got_order.filled_volume, 2);
+    EXPECT_EQ(got_order.venue, "SIM");
+    EXPECT_EQ(got_order.route_id, "route-sim-2");
+    EXPECT_DOUBLE_EQ(got_order.slippage_bps, 1.0);
+    EXPECT_DOUBLE_EQ(got_order.impact_cost, 6.5);
 }
 
 TEST(RedisRealtimeStoreClientAdapterTest, RoundTripsStateSnapshot7D) {

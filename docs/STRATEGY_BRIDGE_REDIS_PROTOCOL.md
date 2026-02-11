@@ -76,6 +76,9 @@ Notes:
 - The producer (`core_engine`) writes this via `RedisRealtimeStoreClientAdapter`.
 - The consumer (`strategy_runner`) should treat it as the latest snapshot of the order.
 - Because `client_order_id == trace_id` by default, Python can locate the order event by `trace_id`.
+- Optional execution metadata fields:
+  - `execution_algo_id`, `slice_index`, `slice_total`, `throttle_applied`
+  - `venue`, `route_id`, `slippage_bps`, `impact_cost`
 
 ## Sequencing and idempotency
 

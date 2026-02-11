@@ -45,6 +45,10 @@ class OrderEvent:
     slice_index: int = 0
     slice_total: int = 0
     throttle_applied: bool = False
+    venue: str = ""
+    route_id: str = ""
+    slippage_bps: float = 0.0
+    impact_cost: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -73,3 +77,12 @@ class StateSnapshot7D:
     pattern: dict[str, float]
     event_drive: dict[str, float]
     ts_ns: int
+
+
+@dataclass(frozen=True)
+class ResearchRunContract:
+    dataset_version: str = "local"
+    factor_set_version: str = "default"
+    experiment_id: str = ""
+    attribution: dict[str, float] | None = None
+    risk_decomposition: dict[str, float] | None = None

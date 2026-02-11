@@ -59,6 +59,8 @@ def test_ops_health_report_build_and_render() -> None:
         core_process_alive=True,
         redis_health="healthy",
         timescale_health="healthy",
+        environment="sim",
+        service="core_engine",
         metadata={"env": "sim"},
         now_ns_fn=lambda: 12345,
     )
@@ -68,8 +70,13 @@ def test_ops_health_report_build_and_render() -> None:
     assert payload["generated_ts_ns"] == 12345
     assert isinstance(payload["slis"], list)
     assert len(payload["slis"]) == 5
+    assert payload["metadata"]["environment"] == "sim"
+    assert payload["metadata"]["service"] == "core_engine"
     sli_names = [item["name"] for item in payload["slis"]]
     assert "quant_hft_strategy_bridge_chain_integrity" in sli_names
+    assert all(item["slo_name"] for item in payload["slis"])
+    assert all(item["environment"] == "sim" for item in payload["slis"])
+    assert all(item["service"] == "core_engine" for item in payload["slis"])
 
     markdown = render_ops_health_markdown(report)
     assert "# Ops Health Report" in markdown

@@ -202,6 +202,9 @@ TEST(CtpConfigLoaderTest, LoadsExecutionAndRiskRuleConfigs) {
         "  twap_duration_ms: 2500\n"
         "  vwap_lookback_bars: 30\n"
         "  throttle_reject_ratio: 0.25\n"
+        "  preferred_venue: \"SIM\"\n"
+        "  participation_rate_limit: 0.35\n"
+        "  impact_cost_bps: 7.5\n"
         "  cancel_after_ms: 1500\n"
         "  cancel_check_interval_ms: 250\n"
         "  risk_default_max_order_volume: 12\n"
@@ -240,6 +243,9 @@ TEST(CtpConfigLoaderTest, LoadsExecutionAndRiskRuleConfigs) {
     EXPECT_EQ(config.execution.twap_duration_ms, 2500);
     EXPECT_EQ(config.execution.vwap_lookback_bars, 30);
     EXPECT_DOUBLE_EQ(config.execution.throttle_reject_ratio, 0.25);
+    EXPECT_EQ(config.execution.preferred_venue, "SIM");
+    EXPECT_DOUBLE_EQ(config.execution.participation_rate_limit, 0.35);
+    EXPECT_DOUBLE_EQ(config.execution.impact_cost_bps, 7.5);
     EXPECT_EQ(config.execution.cancel_after_ms, 1500);
     EXPECT_EQ(config.execution.cancel_check_interval_ms, 250);
 

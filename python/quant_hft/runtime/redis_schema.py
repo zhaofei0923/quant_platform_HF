@@ -117,10 +117,14 @@ def parse_order_event(fields: Mapping[str, str]) -> OrderEvent | None:
     raw_slice_index = fields.get("slice_index", "0")
     raw_slice_total = fields.get("slice_total", "0")
     raw_throttle_applied = fields.get("throttle_applied", "0")
+    raw_slippage_bps = fields.get("slippage_bps", "0")
+    raw_impact_cost = fields.get("impact_cost", "0")
     try:
         slice_index = int(raw_slice_index)
         slice_total = int(raw_slice_total)
         throttle_applied = raw_throttle_applied.strip().lower() in {"1", "true", "yes"}
+        slippage_bps = float(raw_slippage_bps)
+        impact_cost = float(raw_impact_cost)
         return OrderEvent(
             account_id=fields["account_id"],
             client_order_id=fields["client_order_id"],
@@ -137,6 +141,10 @@ def parse_order_event(fields: Mapping[str, str]) -> OrderEvent | None:
             slice_index=slice_index,
             slice_total=slice_total,
             throttle_applied=throttle_applied,
+            venue=fields.get("venue", ""),
+            route_id=fields.get("route_id", ""),
+            slippage_bps=slippage_bps,
+            impact_cost=impact_cost,
         )
     except ValueError:
         return None

@@ -101,6 +101,10 @@ TEST(TimescaleEventStoreClientAdapterTest, RoundTripsRowsByKey) {
     order.slice_index = 1;
     order.slice_total = 2;
     order.throttle_applied = true;
+    order.venue = "SIM";
+    order.route_id = "route-sim-1";
+    order.slippage_bps = 1.25;
+    order.impact_cost = 8.5;
     store.AppendOrderEvent(order);
 
     RiskDecision decision;
@@ -131,6 +135,10 @@ TEST(TimescaleEventStoreClientAdapterTest, RoundTripsRowsByKey) {
     EXPECT_EQ(orders[0].slice_index, 1);
     EXPECT_EQ(orders[0].slice_total, 2);
     EXPECT_TRUE(orders[0].throttle_applied);
+    EXPECT_EQ(orders[0].venue, "SIM");
+    EXPECT_EQ(orders[0].route_id, "route-sim-1");
+    EXPECT_DOUBLE_EQ(orders[0].slippage_bps, 1.25);
+    EXPECT_DOUBLE_EQ(orders[0].impact_cost, 8.5);
     const auto rows = store.GetRiskDecisionRows();
     ASSERT_EQ(rows.size(), 1U);
     EXPECT_EQ(rows[0].decision.rule_group, "default");

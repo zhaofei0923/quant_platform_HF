@@ -85,6 +85,10 @@ message OrderEvent {
   int32 slice_index = 13;
   int32 slice_total = 14;
   bool throttle_applied = 15;
+  string venue = 16;
+  string route_id = 17;
+  double slippage_bps = 18;
+  double impact_cost = 19;
 }
 
 message PositionSnapshot {

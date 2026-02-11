@@ -62,6 +62,20 @@ RiskDecision BasicRiskEngine::PreCheck(const OrderIntent& intent,
     return build_decision(RiskAction::kAllow, rule_prefix + ".allow", "pass");
 }
 
+bool BasicRiskEngine::ReloadPolicies(const std::vector<RiskPolicyDefinition>& /*policies*/,
+                                     std::string* error) {
+    if (error != nullptr) {
+        *error = "BasicRiskEngine does not support policy hot-reload";
+    }
+    return false;
+}
+
+double BasicRiskEngine::EvaluateExposure(const RiskContext& context) const {
+    return std::fabs(context.account_position_notional) +
+           std::fabs(context.account_cross_gross_notional) +
+           std::fabs(context.account_cross_net_notional);
+}
+
 const BasicRiskRule* BasicRiskEngine::MatchRule(const OrderIntent& intent) const {
     const int hhmm = ToUtcHhmm(intent.ts_ns == 0 ? NowEpochNanos() : intent.ts_ns);
     const BasicRiskRule* selected = nullptr;

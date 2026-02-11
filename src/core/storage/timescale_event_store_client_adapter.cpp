@@ -60,6 +60,10 @@ void TimescaleEventStoreClientAdapter::AppendOrderEvent(const OrderEvent& event)
         {"slice_index", ToString(event.slice_index)},
         {"slice_total", ToString(event.slice_total)},
         {"throttle_applied", event.throttle_applied ? "1" : "0"},
+        {"venue", event.venue},
+        {"route_id", event.route_id},
+        {"slippage_bps", ToString(event.slippage_bps)},
+        {"impact_cost", ToString(event.impact_cost)},
     };
     (void)InsertWithRetry(kTableOrderEvents, row);
 }
@@ -172,6 +176,14 @@ std::vector<OrderEvent> TimescaleEventStoreClientAdapter::GetOrderEvents(
             if (raw == "true" || raw == "TRUE" || raw == "yes" || raw == "YES") {
                 event.throttle_applied = true;
             }
+        }
+        event.venue = GetOrEmpty(row, "venue");
+        event.route_id = GetOrEmpty(row, "route_id");
+        if (!ParseDouble(row, "slippage_bps", &event.slippage_bps)) {
+            event.slippage_bps = 0.0;
+        }
+        if (!ParseDouble(row, "impact_cost", &event.impact_cost)) {
+            event.impact_cost = 0.0;
         }
         out.push_back(event);
     }

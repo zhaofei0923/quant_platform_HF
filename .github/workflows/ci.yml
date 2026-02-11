@@ -40,6 +40,7 @@ jobs:
           black --check python scripts
           mypy python/quant_hft
           python scripts/build/verify_contract_sync.py
+          python scripts/build/verify_develop_requirements.py
           pytest python/tests -q
       - name: Ops Smoke
         run: |

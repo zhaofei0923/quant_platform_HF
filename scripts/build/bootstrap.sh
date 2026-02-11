@@ -15,4 +15,5 @@ python3 -m venv .venv
 .venv/bin/black --check python scripts
 .venv/bin/mypy python/quant_hft
 .venv/bin/python scripts/build/verify_contract_sync.py
+.venv/bin/python scripts/build/verify_develop_requirements.py
 .venv/bin/pytest python/tests -q

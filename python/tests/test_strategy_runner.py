@@ -116,6 +116,10 @@ def test_strategy_runner_emits_intent_batch_and_reads_order_event() -> None:
     assert strategy.events[0].slice_index == 0
     assert strategy.events[0].slice_total == 0
     assert strategy.events[0].throttle_applied is False
+    assert strategy.events[0].venue == ""
+    assert strategy.events[0].route_id == ""
+    assert strategy.events[0].slippage_bps == 0.0
+    assert strategy.events[0].impact_cost == 0.0
 
 
 def test_strategy_runner_reads_optional_execution_metadata_from_order_event() -> None:
@@ -156,6 +160,10 @@ def test_strategy_runner_reads_optional_execution_metadata_from_order_event() ->
             "slice_index": "2",
             "slice_total": "5",
             "throttle_applied": "1",
+            "venue": "SIM",
+            "route_id": "route-sim-1",
+            "slippage_bps": "1.25",
+            "impact_cost": "8.5",
         },
     )
 
@@ -166,3 +174,7 @@ def test_strategy_runner_reads_optional_execution_metadata_from_order_event() ->
     assert strategy.events[0].slice_index == 2
     assert strategy.events[0].slice_total == 5
     assert strategy.events[0].throttle_applied is True
+    assert strategy.events[0].venue == "SIM"
+    assert strategy.events[0].route_id == "route-sim-1"
+    assert strategy.events[0].slippage_bps == 1.25
+    assert strategy.events[0].impact_cost == 8.5

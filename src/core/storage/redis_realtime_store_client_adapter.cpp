@@ -50,6 +50,14 @@ void RedisRealtimeStoreClientAdapter::UpsertOrderEvent(const OrderEvent& event) 
         {"reason", event.reason},
         {"ts_ns", ToString(event.ts_ns)},
         {"trace_id", event.trace_id},
+        {"execution_algo_id", event.execution_algo_id},
+        {"slice_index", ToString(event.slice_index)},
+        {"slice_total", ToString(event.slice_total)},
+        {"throttle_applied", event.throttle_applied ? "1" : "0"},
+        {"venue", event.venue},
+        {"route_id", event.route_id},
+        {"slippage_bps", ToString(event.slippage_bps)},
+        {"impact_cost", ToString(event.impact_cost)},
     };
     (void)WriteWithRetry(key, fields);
 }
@@ -164,6 +172,30 @@ bool RedisRealtimeStoreClientAdapter::GetOrderEvent(const std::string& client_or
         return false;
     }
     event.trace_id = GetOrEmpty(row, "trace_id");
+    event.execution_algo_id = GetOrEmpty(row, "execution_algo_id");
+    if (!ParseInt32(row, "slice_index", &event.slice_index)) {
+        event.slice_index = 0;
+    }
+    if (!ParseInt32(row, "slice_total", &event.slice_total)) {
+        event.slice_total = 0;
+    }
+    std::int32_t throttle_applied = 0;
+    if (ParseInt32(row, "throttle_applied", &throttle_applied)) {
+        event.throttle_applied = throttle_applied > 0;
+    } else {
+        const auto raw = GetOrEmpty(row, "throttle_applied");
+        if (raw == "true" || raw == "TRUE" || raw == "yes" || raw == "YES") {
+            event.throttle_applied = true;
+        }
+    }
+    event.venue = GetOrEmpty(row, "venue");
+    event.route_id = GetOrEmpty(row, "route_id");
+    if (!ParseDouble(row, "slippage_bps", &event.slippage_bps)) {
+        event.slippage_bps = 0.0;
+    }
+    if (!ParseDouble(row, "impact_cost", &event.impact_cost)) {
+        event.impact_cost = 0.0;
+    }
     *out = event;
     return true;
 }

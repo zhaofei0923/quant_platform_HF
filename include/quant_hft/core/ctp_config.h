@@ -62,6 +62,9 @@ struct ExecutionConfig {
     int twap_duration_ms{0};
     int vwap_lookback_bars{20};
     double throttle_reject_ratio{0.0};
+    std::string preferred_venue{"SIM"};
+    double participation_rate_limit{1.0};
+    double impact_cost_bps{0.0};
     // 0 disables timeout-based cancel requests.
     int cancel_after_ms{0};
     int cancel_check_interval_ms{200};

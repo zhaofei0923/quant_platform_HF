@@ -119,5 +119,43 @@ TEST(RiskPolicyEngineTest, AppliesSessionWindowPolicy) {
     EXPECT_DOUBLE_EQ(decision.threshold_value, 1000.0);
 }
 
+TEST(RiskPolicyEngineTest, ReloadsPoliciesAndEvaluatesExposure) {
+    RiskPolicyDefaults defaults;
+    defaults.max_order_volume = 50;
+    defaults.max_order_notional = 500000.0;
+    defaults.policy_id = "policy.global";
+    defaults.policy_scope = "global";
+
+    RiskPolicyEngine engine(defaults, {});
+
+    RiskContext context;
+    context.account_id = "acc-A";
+    context.instrument_id = "SHFE.ag2406";
+    context.account_position_notional = 1000.0;
+    context.account_cross_gross_notional = 500.0;
+    context.account_cross_net_notional = -250.0;
+
+    const auto before = engine.PreCheck(MakeIntent("acc-A", "SHFE.ag2406", 5, 1000.0), context);
+    EXPECT_EQ(before.action, RiskAction::kAllow);
+    EXPECT_DOUBLE_EQ(engine.EvaluateExposure(context), 1750.0);
+
+    RiskPolicyDefinition policy;
+    policy.policy_id = "policy.account.instrument";
+    policy.policy_scope = "instrument";
+    policy.account_id = "acc-A";
+    policy.instrument_id = "SHFE.ag2406";
+    policy.max_order_volume = 2;
+    policy.max_order_notional = 10000.0;
+    policy.decision_tags = "reloaded";
+
+    std::string error;
+    ASSERT_TRUE(engine.ReloadPolicies({policy}, &error)) << error;
+
+    const auto after = engine.PreCheck(MakeIntent("acc-A", "SHFE.ag2406", 5, 1000.0), context);
+    EXPECT_EQ(after.action, RiskAction::kReject);
+    EXPECT_EQ(after.policy_id, "policy.account.instrument");
+    EXPECT_EQ(after.decision_tags, "reloaded");
+}
+
 }  // namespace
 }  // namespace quant_hft

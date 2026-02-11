@@ -1,0 +1,13 @@
+[
+  {"Service": "redis-primary", "State": "running", "Health": "healthy"},
+  {"Service": "redis-replica", "State": "running", "Health": "healthy"},
+  {"Service": "redis-sentinel", "State": "running", "Health": "healthy"},
+  {"Service": "timescale-primary", "State": "running", "Health": "healthy"},
+  {"Service": "timescale-replica", "State": "running", "Health": "healthy"},
+  {"Service": "prometheus", "State": "running", "Health": "healthy"},
+  {"Service": "alertmanager", "State": "running", "Health": "healthy"},
+  {"Service": "loki", "State": "running", "Health": "healthy"},
+  {"Service": "tempo", "State": "running", "Health": "healthy"},
+  {"Service": "grafana", "State": "running", "Health": "healthy"},
+  {"Service": "minio", "State": "running", "Health": "healthy"}
+]

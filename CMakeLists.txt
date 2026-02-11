@@ -37,6 +37,7 @@ add_library(quant_hft_core STATIC
     src/services/risk/basic_risk_engine.cpp
     src/services/risk/risk_policy_engine.cpp
     src/services/order/execution_planner.cpp
+    src/services/order/execution_router.cpp
     src/services/order/in_memory_order_gateway.cpp
     src/services/order/order_state_machine.cpp
     src/services/portfolio/in_memory_portfolio_ledger.cpp
@@ -177,6 +178,9 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(execution_planner_test tests/unit/services/execution_planner_test.cpp)
     target_link_libraries(execution_planner_test PRIVATE quant_hft_core GTest::gtest_main)
 
+    add_executable(execution_router_test tests/unit/services/execution_router_test.cpp)
+    target_link_libraries(execution_router_test PRIVATE quant_hft_core GTest::gtest_main)
+
     add_executable(rule_market_state_engine_test tests/unit/services/rule_market_state_engine_test.cpp)
     target_link_libraries(rule_market_state_engine_test PRIVATE quant_hft_core GTest::gtest_main)
 
@@ -202,5 +206,6 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(in_memory_portfolio_ledger_test)
     gtest_discover_tests(order_state_machine_test)
     gtest_discover_tests(execution_planner_test)
+    gtest_discover_tests(execution_router_test)
     gtest_discover_tests(rule_market_state_engine_test)
 endif()

@@ -121,6 +121,10 @@ def main() -> int:
         "slice_index",
         "slice_total",
         "throttle_applied",
+        "venue",
+        "route_id",
+        "slippage_bps",
+        "impact_cost",
     ]
 
     cpp_risk = _parse_cpp_struct_fields(cpp_path, "RiskDecision")

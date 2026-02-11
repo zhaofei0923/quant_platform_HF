@@ -114,6 +114,53 @@ RiskDecision RiskPolicyEngine::PreCheck(const OrderIntent& intent,
     return build(RiskAction::kAllow, "allow", "pass", 0.0, 0.0);
 }
 
+bool RiskPolicyEngine::ReloadPolicies(const std::vector<RiskPolicyDefinition>& policies,
+                                      std::string* error) {
+    std::vector<RiskPolicyRule> reloaded;
+    reloaded.reserve(policies.size());
+    for (const auto& policy : policies) {
+        if (policy.policy_id.empty()) {
+            if (error != nullptr) {
+                *error = "policy_id is required";
+            }
+            return false;
+        }
+        if (policy.max_order_volume < 0 || policy.max_order_notional < 0.0 ||
+            policy.max_active_orders < 0 || policy.max_position_notional < 0.0) {
+            if (error != nullptr) {
+                *error = "policy thresholds must be non-negative";
+            }
+            return false;
+        }
+        RiskPolicyRule rule;
+        rule.policy_id = policy.policy_id;
+        rule.policy_scope = policy.policy_scope.empty() ? "global" : policy.policy_scope;
+        rule.account_id = policy.account_id;
+        rule.instrument_id = policy.instrument_id;
+        rule.window_start_hhmm = policy.window_start_hhmm;
+        rule.window_end_hhmm = policy.window_end_hhmm;
+        rule.max_order_volume = policy.max_order_volume;
+        rule.max_order_notional = policy.max_order_notional;
+        rule.max_active_orders = policy.max_active_orders;
+        rule.max_position_notional = policy.max_position_notional;
+        rule.decision_tags = policy.decision_tags;
+        rule.rule_group = policy.rule_group;
+        rule.rule_version = policy.rule_version;
+        reloaded.push_back(std::move(rule));
+    }
+    rules_ = std::move(reloaded);
+    if (error != nullptr) {
+        error->clear();
+    }
+    return true;
+}
+
+double RiskPolicyEngine::EvaluateExposure(const RiskContext& context) const {
+    return std::fabs(context.account_position_notional) +
+           std::fabs(context.account_cross_gross_notional) +
+           std::fabs(context.account_cross_net_notional);
+}
+
 const RiskPolicyRule* RiskPolicyEngine::MatchRule(const OrderIntent& intent, int hhmm) const {
     const RiskPolicyRule* selected = nullptr;
     int best_score = -1;

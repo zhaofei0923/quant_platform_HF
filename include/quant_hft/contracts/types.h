@@ -129,6 +129,10 @@ struct OrderEvent {
     std::int32_t slice_index{0};
     std::int32_t slice_total{0};
     bool throttle_applied{false};
+    std::string venue;
+    std::string route_id;
+    double slippage_bps{0.0};
+    double impact_cost{0.0};
 };
 
 struct PositionSnapshot {

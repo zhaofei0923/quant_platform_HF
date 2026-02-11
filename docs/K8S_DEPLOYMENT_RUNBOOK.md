@@ -136,3 +136,21 @@ python3 scripts/ops/verify_rollout_evidence.py \
 ```
 
 Production-like execution requires explicit `--execute`.
+
+## Repository Prodlike Infra Bootstrap
+
+Before staging profile rollout, validate the repository-local prodlike dependencies:
+
+```bash
+bash scripts/infra/bootstrap_prodlike.sh \
+  --compose-file infra/docker-compose.prodlike.yaml \
+  --project-name quant-hft-prodlike \
+  --dry-run \
+  --output-file docs/results/prodlike_bootstrap_result.env
+
+python3 scripts/infra/check_prodlike_health.py \
+  --ps-json-file docs/results/prodlike_ps_snapshot.json \
+  --report-json docs/results/prodlike_health_report.json
+```
+
+Use `--execute` only when the host has Docker/Compose runtime available.

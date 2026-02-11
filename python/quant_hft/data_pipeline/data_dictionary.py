@@ -18,6 +18,12 @@ class SchemaDiff:
     unexpected_fields: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class SchemaMetadata:
+    version: str
+    migration_strategy: str
+
+
 class DataDictionary:
     """Repository-local data dictionary for Redis/Timescale contracts."""
 
@@ -39,6 +45,10 @@ class DataDictionary:
                 FieldRule("slice_index", False, "int"),
                 FieldRule("slice_total", False, "int"),
                 FieldRule("throttle_applied", False, "bool"),
+                FieldRule("venue", False, "str"),
+                FieldRule("route_id", False, "str"),
+                FieldRule("slippage_bps", False, "float"),
+                FieldRule("impact_cost", False, "float"),
             ),
             "timescale_order_event": (
                 FieldRule("account_id", True, "str"),
@@ -56,6 +66,10 @@ class DataDictionary:
                 FieldRule("slice_index", False, "int"),
                 FieldRule("slice_total", False, "int"),
                 FieldRule("throttle_applied", False, "bool"),
+                FieldRule("venue", False, "str"),
+                FieldRule("route_id", False, "str"),
+                FieldRule("slippage_bps", False, "float"),
+                FieldRule("impact_cost", False, "float"),
             ),
             "redis_state_snapshot": (
                 FieldRule("instrument_id", True, "str"),
@@ -75,6 +89,13 @@ class DataDictionary:
                 FieldRule("event_drive_confidence", True, "float"),
                 FieldRule("ts_ns", True, "int"),
             ),
+        }
+        self._schema_metadata: dict[str, SchemaMetadata] = {
+            schema_name: SchemaMetadata(
+                version="v1",
+                migration_strategy="additive_backward_compatible",
+            )
+            for schema_name in self._schemas
         }
 
     def schema_names(self) -> tuple[str, ...]:
@@ -120,12 +141,27 @@ class DataDictionary:
         missing = sorted(left_required - right_required)
         return tuple(missing)
 
+    def schema_version(self, schema_name: str) -> str:
+        self._schema(schema_name)
+        return self._schema_meta(schema_name).version
+
+    def migration_strategy(self, schema_name: str) -> str:
+        self._schema(schema_name)
+        return self._schema_meta(schema_name).migration_strategy
+
     def _schema(self, schema_name: str) -> tuple[FieldRule, ...]:
         schema = self._schemas.get(schema_name)
         if schema is None:
             allowed = ", ".join(sorted(self._schemas))
             raise ValueError(f"unknown schema: {schema_name}; allowed schemas: {allowed}")
         return schema
+
+    def _schema_meta(self, schema_name: str) -> SchemaMetadata:
+        metadata = self._schema_metadata.get(schema_name)
+        if metadata is None:
+            allowed = ", ".join(sorted(self._schema_metadata))
+            raise ValueError(f"unknown schema metadata: {schema_name}; allowed schemas: {allowed}")
+        return metadata
 
     @staticmethod
     def _matches_type(value: object, value_type: str) -> bool:

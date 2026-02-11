@@ -145,3 +145,21 @@ python3 scripts/ops/verify_rollout_evidence.py \
 ```
 
 For real command execution, append `--execute` explicitly.
+
+## Repository Prodlike Infra Bootstrap
+
+Use the repository-local prodlike stack bootstrap before host-level rollout drills:
+
+```bash
+bash scripts/infra/bootstrap_prodlike.sh \
+  --compose-file infra/docker-compose.prodlike.yaml \
+  --project-name quant-hft-prodlike \
+  --dry-run \
+  --output-file docs/results/prodlike_bootstrap_result.env
+
+python3 scripts/infra/check_prodlike_health.py \
+  --ps-json-file docs/results/prodlike_ps_snapshot.json \
+  --report-json docs/results/prodlike_health_report.json
+```
+
+For real execution, replace `--dry-run` with `--execute`.

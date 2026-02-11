@@ -5,7 +5,7 @@ import hashlib
 import json
 from collections import defaultdict
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TextIO, cast
@@ -90,6 +90,9 @@ class BacktestRunSpec:
     account_id: str = "sim-account"
     run_id: str = "run-default"
     emit_state_snapshots: bool = False
+    dataset_version: str = "local"
+    factor_set_version: str = "default"
+    experiment_id: str = ""
 
     @staticmethod
     def from_dict(raw: dict[str, Any]) -> BacktestRunSpec:
@@ -105,6 +108,9 @@ class BacktestRunSpec:
             account_id=str(raw.get("account_id", "sim-account")),
             run_id=str(raw.get("run_id", "run-default")),
             emit_state_snapshots=bool(raw.get("emit_state_snapshots", False)),
+            dataset_version=str(raw.get("dataset_version", "local")),
+            factor_set_version=str(raw.get("factor_set_version", "default")),
+            experiment_id=str(raw.get("experiment_id", "")),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -116,6 +122,9 @@ class BacktestRunSpec:
             "account_id": self.account_id,
             "run_id": self.run_id,
             "emit_state_snapshots": self.emit_state_snapshots,
+            "dataset_version": self.dataset_version,
+            "factor_set_version": self.factor_set_version,
+            "experiment_id": self.experiment_id,
         }
 
 
@@ -181,6 +190,8 @@ class BacktestRunResult:
     deterministic: DeterministicReplayReport | None
     input_signature: str
     data_signature: str
+    attribution: dict[str, float] = field(default_factory=dict)
+    risk_decomposition: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -190,6 +201,8 @@ class BacktestRunResult:
             "spec": self.spec.to_dict(),
             "input_signature": self.input_signature,
             "data_signature": self.data_signature,
+            "attribution": dict(self.attribution),
+            "risk_decomposition": dict(self.risk_decomposition),
             "replay": {
                 "ticks_read": self.replay.ticks_read,
                 "bars_emitted": self.replay.bars_emitted,
@@ -549,6 +562,8 @@ def run_backtest_spec(
         deterministic=deterministic,
         input_signature=_build_input_signature(spec),
         data_signature=_build_data_signature(spec.csv_path),
+        attribution={},
+        risk_decomposition={},
     )
 
 

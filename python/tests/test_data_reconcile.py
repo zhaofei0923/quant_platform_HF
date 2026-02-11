@@ -71,6 +71,9 @@ def test_run_reconcile_script_passes_for_consistent_records(tmp_path: Path) -> N
     payload = json.loads(report_file.read_text(encoding="utf-8"))
     assert payload["consistent"] is True
     assert payload["mismatch_count"] == 0
+    assert payload["severity"] == "info"
+    assert payload["classification"] == "consistent"
+    assert payload["auto_fixable"] is False
 
 
 def test_run_reconcile_script_fails_for_mismatch(tmp_path: Path) -> None:
@@ -117,3 +120,5 @@ def test_run_reconcile_script_fails_for_mismatch(tmp_path: Path) -> None:
     assert payload["consistent"] is False
     assert payload["mismatch_count"] >= 1
     assert any(item["field"] == "status" for item in payload["field_mismatches"])
+    assert payload["severity"] in {"warn", "critical"}
+    assert payload["classification"] == "field_mismatch"

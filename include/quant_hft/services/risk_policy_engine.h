@@ -42,6 +42,9 @@ public:
 
     RiskDecision PreCheck(const OrderIntent& intent,
                           const RiskContext& context) const override;
+    bool ReloadPolicies(const std::vector<RiskPolicyDefinition>& policies,
+                        std::string* error) override;
+    double EvaluateExposure(const RiskContext& context) const override;
 
 private:
     const RiskPolicyRule* MatchRule(const OrderIntent& intent, int hhmm) const;

@@ -49,6 +49,8 @@ def test_data_dictionary_alignment_between_redis_and_timescale() -> None:
     dictionary = DataDictionary()
     missing = dictionary.validate_schema_alignment("redis_order_event", "timescale_order_event")
     assert missing == ()
+    assert dictionary.schema_version("redis_order_event") == "v1"
+    assert dictionary.migration_strategy("redis_order_event") == "additive_backward_compatible"
 
 
 def test_data_dictionary_raises_for_unknown_schema() -> None:

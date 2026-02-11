@@ -1,0 +1,137 @@
+version: "3.9"
+
+services:
+  redis-primary:
+    image: redis:7.2-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_primary_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  redis-replica:
+    image: redis:7.2-alpine
+    command: ["redis-server", "--replicaof", "redis-primary", "6379"]
+    depends_on:
+      - redis-primary
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  redis-sentinel:
+    image: redis:7.2-alpine
+    command: ["redis-sentinel", "/etc/redis/sentinel.conf"]
+    depends_on:
+      - redis-primary
+      - redis-replica
+    volumes:
+      - ./redis/sentinel.conf:/etc/redis/sentinel.conf:ro
+    ports:
+      - "26379:26379"
+
+  timescale-primary:
+    image: timescale/timescaledb:2.14.2-pg16
+    environment:
+      POSTGRES_DB: quant_hft
+      POSTGRES_USER: quant_hft
+      POSTGRES_PASSWORD: ${TIMESCALE_PASSWORD:-quant_hft}
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescale_primary_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quant_hft -d quant_hft"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  timescale-replica:
+    image: timescale/timescaledb:2.14.2-pg16
+    environment:
+      POSTGRES_DB: quant_hft
+      POSTGRES_USER: quant_hft
+      POSTGRES_PASSWORD: ${TIMESCALE_PASSWORD:-quant_hft}
+    depends_on:
+      - timescale-primary
+    ports:
+      - "5433:5432"
+    command: ["postgres", "-c", "hot_standby=on"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quant_hft -d quant_hft"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml"]
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "9093:9093"
+
+  loki:
+    image: grafana/loki:3.2.0
+    command: ["-config.file=/etc/loki/loki-config.yml"]
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+    ports:
+      - "3100:3100"
+
+  tempo:
+    image: grafana/tempo:2.5.0
+    command: ["-config.file=/etc/tempo/tempo.yml"]
+    volumes:
+      - ./tempo/tempo.yml:/etc/tempo/tempo.yml:ro
+    ports:
+      - "3200:3200"
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - ./grafana/provisioning/datasources/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+
+  minio:
+    image: minio/minio:RELEASE.2024-08-03T04-33-23Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+
+volumes:
+  redis_primary_data:
+  timescale_primary_data:
+  grafana_data:
+  minio_data:

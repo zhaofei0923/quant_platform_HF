@@ -120,4 +120,20 @@ TEST(BasicRiskEngineTest, FallsBackToDefaultWhenNoRuleMatches) {
     EXPECT_EQ(decision.rule_id, "risk.default.max_order_volume");
 }
 
+TEST(BasicRiskEngineTest, ExposesContextAndRejectsPolicyReload) {
+    BasicRiskEngine engine(BasicRiskLimits{});
+
+    RiskContext context;
+    context.account_position_notional = 1200.0;
+    context.account_cross_gross_notional = 800.0;
+    context.account_cross_net_notional = -200.0;
+
+    EXPECT_DOUBLE_EQ(engine.EvaluateExposure(context), 2200.0);
+
+    std::string error;
+    const bool reloaded = engine.ReloadPolicies({}, &error);
+    EXPECT_FALSE(reloaded);
+    EXPECT_NE(error.find("does not support"), std::string::npos);
+}
+
 }  // namespace quant_hft

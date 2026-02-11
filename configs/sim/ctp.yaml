@@ -13,6 +13,7 @@ ctp:
   trader_front: "tcp://182.254.243.31:40001"
 
   # Credentials should be injected from environment in real usage.
+  password: "zhaoFEI202601*"
   password_env: "CTP_SIM_PASSWORD"
   auth_code: "0000000000000000"
   app_id: "simnow_client_test"

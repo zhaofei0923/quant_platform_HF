@@ -45,6 +45,8 @@ Completion rule:
   - [x] `develop/00-实现对齐矩阵与缺口总览.md`
   - [x] `develop/00-未完成能力补齐路线图.md`
   - [x] `develop/03-实盘交易系统核心设计/03-02-订单与执行引擎设计.md`
+  - [x] `develop/05-API文档/05-01-C++核心API参考.md`
+  - [x] `develop/06-开发者指南/06-01-环境搭建与快速开始.md`
 - Status:
   - `done`
 

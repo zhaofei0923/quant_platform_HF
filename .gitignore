@@ -1,10 +1,10 @@
 # Build artifacts
-build/
-out/
-cmake-build-*/
-dist/
-dist-test/
-build-real*/
+/build/
+/out/
+/cmake-build-*/
+/dist/
+/dist-test/
+/build-real*/
 
 # Python
 .venv/
@@ -16,11 +16,11 @@ __pycache__/
 *.egg-info/
 
 # Large datasets / external binaries (kept out of git)
-backtest_data/
-ctp_api/
-docs_dev/
-tmp/
-runtime/
+/backtest_data/
+/ctp_api/
+/docs_dev/
+/tmp/
+/runtime/
 
 # IDE
 .vscode/

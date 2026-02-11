@@ -25,6 +25,15 @@ try:
         required_tools_for_scenarios,
         select_scenarios,
     )
+    from quant_hft.runtime.redis_hash import TcpRedisHashClient
+    from quant_hft.runtime.redis_schema import (
+        order_event_key,
+        parse_order_event,
+        parse_state_snapshot,
+        state_snapshot_key,
+        strategy_intent_key,
+    )
+    from quant_hft.runtime.strategy_runner import load_redis_client_from_env, load_runner_config
 except ModuleNotFoundError:
     repo_python = Path(__file__).resolve().parents[2] / "python"
     sys.path.insert(0, str(repo_python))
@@ -41,6 +50,18 @@ except ModuleNotFoundError:
         parse_fallback_config_paths,
         required_tools_for_scenarios,
         select_scenarios,
+    )
+    from quant_hft.runtime.redis_hash import TcpRedisHashClient  # type: ignore[no-redef]
+    from quant_hft.runtime.redis_schema import (  # type: ignore[no-redef]
+        order_event_key,
+        parse_order_event,
+        parse_state_snapshot,
+        state_snapshot_key,
+        strategy_intent_key,
+    )
+    from quant_hft.runtime.strategy_runner import (  # type: ignore[no-redef]
+        load_redis_client_from_env,
+        load_runner_config,
     )
 
 
@@ -95,7 +116,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--strategy-bridge-target-ms", type=float, default=1500.0)
     parser.add_argument(
         "--strategy-bridge-chain-status",
-        choices=("unknown", "complete", "incomplete"),
+        choices=("unknown", "complete", "incomplete", "auto"),
         default="unknown",
     )
     parser.add_argument(
@@ -208,6 +229,54 @@ def _tool_available(tool: str) -> bool:
         return False
 
 
+def _detect_strategy_bridge_chain_status(config_path: Path) -> str:
+    try:
+        runner_config = load_runner_config(str(config_path))
+        redis_client = load_redis_client_from_env(TcpRedisHashClient)
+        if not redis_client.ping():
+            return "unknown"
+
+        for instrument_id in runner_config.instruments:
+            state_fields = redis_client.hgetall(state_snapshot_key(instrument_id))
+            if not state_fields or parse_state_snapshot(state_fields) is None:
+                return "incomplete"
+
+        intent_fields = redis_client.hgetall(strategy_intent_key(runner_config.strategy_id))
+        if not intent_fields:
+            return "incomplete"
+
+        raw_count = intent_fields.get("count", "0")
+        try:
+            count = max(0, int(raw_count))
+        except ValueError:
+            return "incomplete"
+
+        trace_ids: list[str] = []
+        for index in range(count):
+            encoded = intent_fields.get(f"intent_{index}", "")
+            parts = encoded.split("|")
+            if len(parts) != 7:
+                return "incomplete"
+            trace_id = parts[6].strip()
+            if not trace_id:
+                return "incomplete"
+            trace_ids.append(trace_id)
+
+        if not trace_ids:
+            return "unknown"
+
+        for trace_id in trace_ids:
+            order_fields = redis_client.hgetall(order_event_key(trace_id))
+            if not order_fields:
+                return "incomplete"
+            if parse_order_event(order_fields) is None:
+                return "incomplete"
+
+        return "complete"
+    except Exception:
+        return "unknown"
+
+
 def main() -> int:
     args = _build_parser().parse_args()
     probe_bin = Path(args.probe_bin)
@@ -316,6 +385,10 @@ def main() -> int:
         dry_run=args.dry_run,
     )
 
+    resolved_chain_status = args.strategy_bridge_chain_status
+    if resolved_chain_status == "auto":
+        resolved_chain_status = _detect_strategy_bridge_chain_status(config)
+
     exit_code = 0
     try:
         if not args.dry_run:
@@ -363,7 +436,7 @@ def main() -> int:
             "--strategy-bridge-target-ms",
             f"{args.strategy_bridge_target_ms:g}",
             "--strategy-bridge-chain-status",
-            args.strategy_bridge_chain_status,
+            resolved_chain_status,
             "--storage-redis-health",
             args.storage_redis_health,
             "--storage-timescale-health",

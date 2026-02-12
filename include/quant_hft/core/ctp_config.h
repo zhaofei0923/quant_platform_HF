@@ -49,6 +49,8 @@ struct CtpRuntimeConfig {
     int audit_cold_days{180};
 
     std::string md_front;
+    std::string log_level{"info"};
+    std::string log_sink{"stderr"};
     std::string td_front;
     std::string flow_path;
 

@@ -506,5 +506,60 @@ TEST(CtpConfigLoaderTest, LoadsFlowBreakerAndAuditSettings) {
     std::filesystem::remove(config_path);
 }
 
+TEST(CtpConfigLoaderTest, LoadsAndValidatesLoggingSettings) {
+    const auto config_path = WriteTempConfig(
+        "ctp:\n"
+        "  environment: sim\n"
+        "  is_production_mode: false\n"
+        "  broker_id: \"9999\"\n"
+        "  user_id: \"191202\"\n"
+        "  investor_id: \"191202\"\n"
+        "  market_front: \"tcp://127.0.0.1:40011\"\n"
+        "  trader_front: \"tcp://127.0.0.1:40001\"\n"
+        "  password: \"plain-secret\"\n"
+        "  log_level: \"warn\"\n"
+        "  log_sink: \"stdout\"\n");
+
+    CtpFileConfig config;
+    std::string error;
+    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error))
+        << error;
+    EXPECT_EQ(config.runtime.log_level, "warn");
+    EXPECT_EQ(config.runtime.log_sink, "stdout");
+    std::filesystem::remove(config_path);
+
+    const auto invalid_level = WriteTempConfig(
+        "ctp:\n"
+        "  environment: sim\n"
+        "  is_production_mode: false\n"
+        "  broker_id: \"9999\"\n"
+        "  user_id: \"191202\"\n"
+        "  investor_id: \"191202\"\n"
+        "  market_front: \"tcp://127.0.0.1:40011\"\n"
+        "  trader_front: \"tcp://127.0.0.1:40001\"\n"
+        "  password: \"plain-secret\"\n"
+        "  log_level: \"verbose\"\n");
+    error.clear();
+    EXPECT_FALSE(CtpConfigLoader::LoadFromYaml(invalid_level.string(), &config, &error));
+    EXPECT_NE(error.find("log_level"), std::string::npos);
+    std::filesystem::remove(invalid_level);
+
+    const auto invalid_sink = WriteTempConfig(
+        "ctp:\n"
+        "  environment: sim\n"
+        "  is_production_mode: false\n"
+        "  broker_id: \"9999\"\n"
+        "  user_id: \"191202\"\n"
+        "  investor_id: \"191202\"\n"
+        "  market_front: \"tcp://127.0.0.1:40011\"\n"
+        "  trader_front: \"tcp://127.0.0.1:40001\"\n"
+        "  password: \"plain-secret\"\n"
+        "  log_sink: \"file\"\n");
+    error.clear();
+    EXPECT_FALSE(CtpConfigLoader::LoadFromYaml(invalid_sink.string(), &config, &error));
+    EXPECT_NE(error.find("log_sink"), std::string::npos);
+    std::filesystem::remove(invalid_sink);
+}
+
 }  // namespace
 }  // namespace quant_hft

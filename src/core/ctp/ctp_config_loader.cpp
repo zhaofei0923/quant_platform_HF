@@ -106,6 +106,17 @@ bool ParseDoubleValue(const std::string& value, double* out) {
     }
 }
 
+bool IsValidLogLevel(const std::string& value) {
+    const auto normalized = Lowercase(Trim(value));
+    return normalized == "debug" || normalized == "info" || normalized == "warn" ||
+           normalized == "warning" || normalized == "error";
+}
+
+bool IsValidLogSink(const std::string& value) {
+    const auto normalized = Lowercase(Trim(value));
+    return normalized == "stdout" || normalized == "stderr";
+}
+
 void SetOptionalInt(const std::unordered_map<std::string, std::string>& kv,
                     const char* key,
                     int* target,
@@ -318,6 +329,27 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
     }
     loaded.runtime.app_id = get_value("app_id");
     loaded.runtime.auth_code = get_value("auth_code");
+    if (!get_value("log_level").empty()) {
+        if (!IsValidLogLevel(get_value("log_level"))) {
+            if (error != nullptr) {
+                *error = "invalid log_level, expected one of: debug/info/warn/error";
+            }
+            return false;
+        }
+        loaded.runtime.log_level = Lowercase(get_value("log_level"));
+        if (loaded.runtime.log_level == "warning") {
+            loaded.runtime.log_level = "warn";
+        }
+    }
+    if (!get_value("log_sink").empty()) {
+        if (!IsValidLogSink(get_value("log_sink"))) {
+            if (error != nullptr) {
+                *error = "invalid log_sink, expected one of: stdout/stderr";
+            }
+            return false;
+        }
+        loaded.runtime.log_sink = Lowercase(get_value("log_sink"));
+    }
     loaded.runtime.last_login_time = get_value("last_login_time");
     loaded.runtime.reserve_info = get_value("reserve_info");
     if (!get_value("offset_apply_src").empty()) {

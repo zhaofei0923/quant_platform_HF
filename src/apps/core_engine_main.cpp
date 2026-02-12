@@ -22,6 +22,7 @@
 #include "quant_hft/core/market_bus_producer.h"
 #include "quant_hft/monitoring/exporter.h"
 #include "quant_hft/core/redis_realtime_store_client_adapter.h"
+#include "quant_hft/core/structured_log.h"
 #include "quant_hft/core/storage_client_factory.h"
 #include "quant_hft/core/storage_client_pool.h"
 #include "quant_hft/core/storage_connection_config.h"
@@ -221,18 +222,28 @@ bool IsTerminalStatus(quant_hft::OrderStatus status) {
 int main(int argc, char** argv) {
     using namespace quant_hft;
 
+    CtpRuntimeConfig bootstrap_runtime;
+
     std::string config_path;
     int run_seconds = 0;
     std::string parse_error;
     if (!ParseArgs(argc, argv, &config_path, &run_seconds, &parse_error)) {
-        std::cerr << "invalid arguments: " << parse_error << '\n';
+        EmitStructuredLog(&bootstrap_runtime,
+                          "core_engine",
+                          "error",
+                          "invalid_arguments",
+                          {{"error", parse_error}});
         return 1;
     }
 
     CtpFileConfig file_config;
     std::string error;
     if (!CtpConfigLoader::LoadFromYaml(config_path, &file_config, &error)) {
-        std::cerr << "failed to load CTP config: " << error << '\n';
+        EmitStructuredLog(&bootstrap_runtime,
+                          "core_engine",
+                          "error",
+                          "config_load_failed",
+                          {{"config_path", config_path}, {"error", error}});
         return 1;
     }
     const auto& config = file_config.runtime;
@@ -312,12 +323,17 @@ int main(int argc, char** argv) {
     const auto storage_config = StorageConnectionConfig::FromEnvironment();
     auto redis_client = StorageClientFactory::CreateRedisClient(storage_config, &error);
     if (redis_client == nullptr) {
-        std::cerr << "failed to create redis client: " << error << '\n';
+        EmitStructuredLog(
+            &config, "core_engine", "error", "redis_client_create_failed", {{"error", error}});
         return 5;
     }
     std::string redis_ping_error;
     if (!redis_client->Ping(&redis_ping_error)) {
-        std::cerr << "redis client unhealthy: " << redis_ping_error << '\n';
+        EmitStructuredLog(&config,
+                          "core_engine",
+                          "error",
+                          "redis_client_unhealthy",
+                          {{"error", redis_ping_error}});
         return 5;
     }
     auto pooled_redis = std::make_shared<PooledRedisHashClient>(
@@ -327,12 +343,20 @@ int main(int argc, char** argv) {
 
     auto timescale_client = StorageClientFactory::CreateTimescaleClient(storage_config, &error);
     if (timescale_client == nullptr) {
-        std::cerr << "failed to create timescale client: " << error << '\n';
+        EmitStructuredLog(&config,
+                          "core_engine",
+                          "error",
+                          "timescale_client_create_failed",
+                          {{"error", error}});
         return 6;
     }
     std::string timescale_ping_error;
     if (!timescale_client->Ping(&timescale_ping_error)) {
-        std::cerr << "timescale client unhealthy: " << timescale_ping_error << '\n';
+        EmitStructuredLog(&config,
+                          "core_engine",
+                          "error",
+                          "timescale_client_unhealthy",
+                          {{"error", timescale_ping_error}});
         return 6;
     }
     auto pooled_timescale = std::make_shared<PooledTimescaleSqlClient>(
@@ -432,9 +456,11 @@ int main(int argc, char** argv) {
             state_applied = order_state_machine.RecoverFromOrderEvent(event);
         }
         if (!state_applied) {
-            std::cerr << "legacy order_state_machine rejected event for "
-                      << event.client_order_id
-                      << ", continue with execution engine manager path\n";
+            EmitStructuredLog(&config,
+                              "core_engine",
+                              "warn",
+                              "legacy_state_machine_rejected",
+                              {{"client_order_id", event.client_order_id}});
         }
         execution_engine.HandleOrderEvent(event);
         if (IsTerminalStatus(event.status)) {
@@ -453,37 +479,47 @@ int main(int argc, char** argv) {
             std::lock_guard<std::mutex> lock(ctp_ledger_mutex);
             if (!ctp_position_ledger.ApplyOrderEvent(event, &ctp_ledger_error) &&
                 ctp_ledger_error != "order intent not registered") {
-                std::cerr << "ctp position ledger apply failed order=" << event.client_order_id
-                          << " error=" << ctp_ledger_error << '\n';
+                EmitStructuredLog(&config,
+                                  "core_engine",
+                                  "warn",
+                                  "ctp_position_ledger_apply_failed",
+                                  {{"client_order_id", event.client_order_id},
+                                   {"error", ctp_ledger_error}});
             }
         }
         if (!wal_sink.AppendOrderEvent(event)) {
             const auto failure_count = wal_write_failures.fetch_add(1) + 1;
-            std::cerr << "{\"component\":\"storage\","
-                      << "\"stage\":\"wal_append_order_event\","
-                      << "\"client_order_id\":\"" << event.client_order_id << "\","
-                      << "\"failure_count\":" << failure_count << "}" << '\n';
+            EmitStructuredLog(&config,
+                              "core_engine",
+                              "error",
+                              "wal_append_order_event_failed",
+                              {{"client_order_id", event.client_order_id},
+                               {"failure_count", std::to_string(failure_count)}});
         }
 
         std::string trading_error;
         if (!trading_ledger_store.AppendOrderEvent(event, &trading_error)) {
             const auto failure_count = trading_write_failures.fetch_add(1) + 1;
-            std::cerr << "{\"component\":\"storage\","
-                      << "\"stage\":\"trading_core_append_order_event\","
-                      << "\"client_order_id\":\"" << event.client_order_id << "\","
-                      << "\"error\":\"" << trading_error << "\","
-                      << "\"failure_count\":" << failure_count << "}" << '\n';
+            EmitStructuredLog(&config,
+                              "core_engine",
+                              "error",
+                              "trading_append_order_event_failed",
+                              {{"client_order_id", event.client_order_id},
+                               {"error", trading_error},
+                               {"failure_count", std::to_string(failure_count)}});
         }
         if ((event.status == OrderStatus::kPartiallyFilled || event.status == OrderStatus::kFilled) &&
             event.filled_volume > 0) {
             if (!trading_ledger_store.AppendTradeEvent(event, &trading_error)) {
                 const auto failure_count = trading_write_failures.fetch_add(1) + 1;
-                std::cerr << "{\"component\":\"storage\","
-                          << "\"stage\":\"trading_core_append_trade_event\","
-                          << "\"client_order_id\":\"" << event.client_order_id << "\","
-                          << "\"trade_id\":\"" << event.trade_id << "\","
-                          << "\"error\":\"" << trading_error << "\","
-                          << "\"failure_count\":" << failure_count << "}" << '\n';
+                EmitStructuredLog(&config,
+                                  "core_engine",
+                                  "error",
+                                  "trading_append_trade_event_failed",
+                                  {{"client_order_id", event.client_order_id},
+                                   {"trade_id", event.trade_id},
+                                   {"error", trading_error},
+                                   {"failure_count", std::to_string(failure_count)}});
             }
         }
 
@@ -517,9 +553,12 @@ int main(int argc, char** argv) {
         market_state.OnMarketSnapshot(snapshot);
         const auto publish_result = market_bus_producer.PublishTick(snapshot);
         if (!publish_result.ok) {
-            std::cerr << "{\"component\":\"market_bus\","
-                      << "\"topic\":\"" << config.kafka_topic_ticks << "\","
-                      << "\"reason\":\"" << publish_result.reason << "\"}" << '\n';
+            EmitStructuredLog(&config,
+                              "core_engine",
+                              "error",
+                              "market_bus_publish_failed",
+                              {{"topic", config.kafka_topic_ticks},
+                               {"reason", publish_result.reason}});
         }
     };
 
@@ -539,11 +578,13 @@ int main(int argc, char** argv) {
             std::string trading_error;
             if (!trading_ledger_store.AppendAccountSnapshot(snapshot, &trading_error)) {
                 const auto failure_count = trading_write_failures.fetch_add(1) + 1;
-                std::cerr << "{\"component\":\"storage\","
-                          << "\"stage\":\"trading_core_append_account_snapshot\","
-                          << "\"account_id\":\"" << snapshot.account_id << "\","
-                          << "\"error\":\"" << trading_error << "\","
-                          << "\"failure_count\":" << failure_count << "}" << '\n';
+                EmitStructuredLog(&config,
+                                  "core_engine",
+                                  "error",
+                                  "trading_append_account_snapshot_failed",
+                                  {{"account_id", snapshot.account_id},
+                                   {"error", trading_error},
+                                   {"failure_count", std::to_string(failure_count)}});
             }
             ctp_query_snapshot_store.AppendTradingAccountSnapshot(snapshot);
         });
@@ -555,20 +596,25 @@ int main(int argc, char** argv) {
                     std::lock_guard<std::mutex> lock(ctp_ledger_mutex);
                     if (!ctp_position_ledger.ApplyInvestorPositionSnapshot(snapshot,
                                                                            &ctp_ledger_error)) {
-                        std::cerr << "ctp position snapshot apply failed instrument="
-                                  << snapshot.instrument_id
-                                  << " error=" << ctp_ledger_error << '\n';
+                        EmitStructuredLog(&config,
+                                          "core_engine",
+                                          "warn",
+                                          "ctp_position_snapshot_apply_failed",
+                                          {{"instrument_id", snapshot.instrument_id},
+                                           {"error", ctp_ledger_error}});
                     }
                 }
                 std::string trading_error;
                 if (!trading_ledger_store.AppendPositionSnapshot(snapshot, &trading_error)) {
                     const auto failure_count = trading_write_failures.fetch_add(1) + 1;
-                    std::cerr << "{\"component\":\"storage\","
-                              << "\"stage\":\"trading_core_append_position_snapshot\","
-                              << "\"account_id\":\"" << snapshot.account_id << "\","
-                              << "\"instrument_id\":\"" << snapshot.instrument_id << "\","
-                              << "\"error\":\"" << trading_error << "\","
-                              << "\"failure_count\":" << failure_count << "}" << '\n';
+                    EmitStructuredLog(&config,
+                                      "core_engine",
+                                      "error",
+                                      "trading_append_position_snapshot_failed",
+                                      {{"account_id", snapshot.account_id},
+                                       {"instrument_id", snapshot.instrument_id},
+                                       {"error", trading_error},
+                                       {"failure_count", std::to_string(failure_count)}});
                 }
                 ctp_query_snapshot_store.AppendInvestorPositionSnapshot(snapshot);
             }
@@ -612,27 +658,33 @@ int main(int argc, char** argv) {
     connect_cfg.settlement_confirm_required = config.settlement_confirm_required;
 
     if (!ctp_trader->Connect(connect_cfg)) {
-        std::cerr << "CTP trader adapter connect failed" << '\n';
+        EmitStructuredLog(&config, "core_engine", "error", "ctp_trader_connect_failed");
         const auto diagnostic = ctp_trader->GetLastConnectDiagnostic();
         if (!diagnostic.empty()) {
-            std::cerr << "CTP connect diagnostic: " << diagnostic << '\n';
+            EmitStructuredLog(
+                &config, "core_engine", "error", "ctp_connect_diagnostic", {{"detail", diagnostic}});
         }
         return 2;
     }
     if (!ctp_md->Connect(connect_cfg)) {
-        std::cerr << "CTP md adapter connect failed" << '\n';
+        EmitStructuredLog(&config, "core_engine", "error", "ctp_md_connect_failed");
         const auto diagnostic = ctp_md->GetLastConnectDiagnostic();
         if (!diagnostic.empty()) {
-            std::cerr << "CTP connect diagnostic: " << diagnostic << '\n';
+            EmitStructuredLog(
+                &config, "core_engine", "error", "ctp_connect_diagnostic", {{"detail", diagnostic}});
         }
         return 2;
     }
     if (!ctp_trader->ConfirmSettlement()) {
-        std::cerr << "CTP settlement confirm failed" << '\n';
+        EmitStructuredLog(&config, "core_engine", "error", "ctp_settlement_confirm_failed");
         return 2;
     }
     if (!ctp_md->Subscribe(instruments)) {
-        std::cerr << "CTP subscribe failed" << '\n';
+        EmitStructuredLog(&config,
+                          "core_engine",
+                          "error",
+                          "ctp_subscribe_failed",
+                          {{"instrument_count", std::to_string(instruments.size())}});
         return 2;
     }
 
@@ -641,32 +693,40 @@ int main(int argc, char** argv) {
         return query_request_id.fetch_add(1);
     };
     if (!ctp_trader->EnqueueUserSessionQuery(next_query_request_id())) {
-        std::cerr << "warning: initial user session query failed" << '\n';
+        EmitStructuredLog(&config, "core_engine", "warn", "initial_user_session_query_failed");
     }
     try {
         (void)execution_engine.QueryTradingAccountAsync().get();
     } catch (...) {
-        std::cerr << "warning: initial trading account query failed" << '\n';
+        EmitStructuredLog(&config, "core_engine", "warn", "initial_trading_account_query_failed");
     }
     try {
         (void)execution_engine.QueryInvestorPositionAsync().get();
     } catch (...) {
-        std::cerr << "warning: initial investor position query failed" << '\n';
+        EmitStructuredLog(&config, "core_engine", "warn", "initial_investor_position_query_failed");
     }
     if (!ctp_trader->EnqueueInstrumentQuery(next_query_request_id())) {
-        std::cerr << "warning: initial instrument query failed" << '\n';
+        EmitStructuredLog(&config, "core_engine", "warn", "initial_instrument_query_failed");
     }
     if (!ctp_trader->EnqueueBrokerTradingParamsQuery(next_query_request_id())) {
-        std::cerr << "warning: initial broker trading params query failed" << '\n';
+        EmitStructuredLog(
+            &config, "core_engine", "warn", "initial_broker_trading_params_query_failed");
     }
     for (const auto& instrument_id : instruments) {
         if (!ctp_trader->EnqueueInstrumentMarginRateQuery(next_query_request_id(), instrument_id)) {
-            std::cerr << "warning: initial margin rate query failed for " << instrument_id << '\n';
+            EmitStructuredLog(&config,
+                              "core_engine",
+                              "warn",
+                              "initial_margin_rate_query_failed",
+                              {{"instrument_id", instrument_id}});
         }
         if (!ctp_trader->EnqueueInstrumentCommissionRateQuery(next_query_request_id(),
                                                               instrument_id)) {
-            std::cerr << "warning: initial commission rate query failed for "
-                      << instrument_id << '\n';
+            EmitStructuredLog(&config,
+                              "core_engine",
+                              "warn",
+                              "initial_commission_rate_query_failed",
+                              {{"instrument_id", instrument_id}});
         }
     }
 
@@ -722,8 +782,11 @@ int main(int argc, char** argv) {
                 std::string read_error;
                 if (!strategy_inbox.ReadLatest(strategy_id, &batch, &read_error)) {
                     if (read_error.find("missing") == std::string::npos) {
-                        std::cerr << "strategy inbox read failed strategy=" << strategy_id
-                                  << " error=" << read_error << '\n';
+                        EmitStructuredLog(&config,
+                                          "core_engine",
+                                          "warn",
+                                          "strategy_inbox_read_failed",
+                                          {{"strategy_id", strategy_id}, {"error", read_error}});
                     }
                     continue;
                 }

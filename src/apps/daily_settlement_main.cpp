@@ -8,6 +8,7 @@
 #include "quant_hft/core/ctp_trader_adapter.h"
 #include "quant_hft/core/flow_controller.h"
 #include "quant_hft/core/settlement_store_client_adapter.h"
+#include "quant_hft/core/structured_log.h"
 #include "quant_hft/core/storage_client_factory.h"
 #include "quant_hft/core/storage_client_pool.h"
 #include "quant_hft/core/storage_connection_config.h"
@@ -150,6 +151,8 @@ bool ParseArgs(int argc,
 int main(int argc, char** argv) {
     using namespace quant_hft;
 
+    CtpRuntimeConfig bootstrap_runtime;
+
     std::string config_path;
     std::string trading_day;
     bool force_run = false;
@@ -172,14 +175,22 @@ int main(int argc, char** argv) {
                    &price_cache_db_path,
                    &diff_report_path,
                    &parse_error)) {
-        std::cerr << "invalid arguments: " << parse_error << '\n';
+        EmitStructuredLog(&bootstrap_runtime,
+                          "daily_settlement",
+                          "error",
+                          "invalid_arguments",
+                          {{"error", parse_error}});
         return 1;
     }
 
     CtpFileConfig file_config;
     std::string config_error;
     if (!CtpConfigLoader::LoadFromYaml(config_path, &file_config, &config_error)) {
-        std::cerr << "failed to load CTP config: " << config_error << '\n';
+        EmitStructuredLog(&bootstrap_runtime,
+                          "daily_settlement",
+                          "error",
+                          "config_load_failed",
+                          {{"config_path", config_path}, {"error", config_error}});
         return 1;
     }
     const auto& runtime = file_config.runtime;
@@ -187,7 +198,11 @@ int main(int argc, char** argv) {
     const auto storage_config = StorageConnectionConfig::FromEnvironment();
     auto sql_client = StorageClientFactory::CreateTimescaleClient(storage_config, &config_error);
     if (sql_client == nullptr) {
-        std::cerr << "failed to create timescale client: " << config_error << '\n';
+        EmitStructuredLog(&runtime,
+                          "daily_settlement",
+                          "error",
+                          "timescale_client_create_failed",
+                          {{"error", config_error}});
         return 1;
     }
     auto pooled_sql = std::make_shared<PooledTimescaleSqlClient>(
@@ -230,12 +245,18 @@ int main(int argc, char** argv) {
     connect_cfg.recovery_quiet_period_ms = runtime.recovery_quiet_period_ms;
     connect_cfg.settlement_confirm_required = runtime.settlement_confirm_required;
     if (!trader->Connect(connect_cfg)) {
-        std::cerr << "failed to connect trader adapter: " << trader->GetLastConnectDiagnostic()
-                  << '\n';
+        EmitStructuredLog(&runtime,
+                          "daily_settlement",
+                          "error",
+                          "trader_connect_failed",
+                          {{"diagnostic", trader->GetLastConnectDiagnostic()}});
         return 2;
     }
     if (runtime.settlement_confirm_required && !trader->ConfirmSettlement()) {
-        std::cerr << "failed to confirm settlement for trader session" << '\n';
+        EmitStructuredLog(&runtime,
+                          "daily_settlement",
+                          "error",
+                          "settlement_confirm_failed");
         trader->Disconnect();
         return 2;
     }
@@ -278,21 +299,27 @@ int main(int argc, char** argv) {
     trader->Disconnect();
 
     if (!run_ok) {
-        std::cerr << "daily settlement run failed: " << run_error << '\n';
+        EmitStructuredLog(&runtime,
+                          "daily_settlement",
+                          "error",
+                          "run_failed",
+                          {{"error", run_error}, {"trading_day", settlement_cfg.trading_day}});
         return 2;
     }
 
-    std::cout << "{"
-              << "\"trading_day\":\"" << settlement_cfg.trading_day << "\","
-              << "\"account_id\":\"" << settlement_cfg.account_id << "\","
-              << "\"success\":" << (result.success ? "true" : "false") << ","
-              << "\"noop\":" << (result.noop ? "true" : "false") << ","
-              << "\"blocked\":" << (result.blocked ? "true" : "false") << ","
-              << "\"status\":\"" << result.status << "\","
-              << "\"message\":\"" << result.message << "\","
-              << "\"diff_report_path\":\""
-              << (!result.diff_report_path.empty() ? result.diff_report_path : diff_report_path)
-              << "\""
-              << "}" << '\n';
+    EmitStructuredLog(
+        &runtime,
+        "daily_settlement",
+        "info",
+        "run_completed",
+        {{"trading_day", settlement_cfg.trading_day},
+         {"account_id", settlement_cfg.account_id},
+         {"success", result.success ? "true" : "false"},
+         {"noop", result.noop ? "true" : "false"},
+         {"blocked", result.blocked ? "true" : "false"},
+         {"status", result.status},
+         {"message", result.message},
+         {"diff_report_path",
+          !result.diff_report_path.empty() ? result.diff_report_path : diff_report_path}});
     return result.success ? 0 : 2;
 }

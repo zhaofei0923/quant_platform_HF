@@ -19,6 +19,7 @@ struct CtpRuntimeConfig {
     int reconnect_max_attempts{8};
     int reconnect_initial_backoff_ms{500};
     int reconnect_max_backoff_ms{8'000};
+    int query_retry_backoff_ms{200};
 
     std::string md_front;
     std::string td_front;
@@ -79,12 +80,15 @@ struct RiskRuleConfig {
     std::string decision_tags;
     std::string account_id;
     std::string instrument_id;
+    std::string exchange_id;
     int window_start_hhmm{0};
     int window_end_hhmm{2359};
     int max_order_volume{200};
     double max_order_notional{1'000'000.0};
     int max_active_orders{0};
     double max_position_notional{0.0};
+    int max_cancel_count{0};
+    double max_cancel_ratio{0.0};
 };
 
 struct RiskConfig {
@@ -92,6 +96,8 @@ struct RiskConfig {
     double default_max_order_notional{1'000'000.0};
     int default_max_active_orders{0};
     double default_max_position_notional{0.0};
+    int default_max_cancel_count{0};
+    double default_max_cancel_ratio{0.0};
     std::string default_rule_group{"default"};
     std::string default_rule_version{"v1"};
     std::string default_policy_id{"policy.global"};

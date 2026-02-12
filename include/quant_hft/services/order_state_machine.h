@@ -35,11 +35,16 @@ public:
     std::size_t ActiveOrderCount() const;
 
 private:
+    std::string ResolveClientOrderIdLocked(const OrderEvent& event) const;
+    static std::string BuildStageOneOrderKey(const OrderEvent& event);
+    static std::string BuildStageTwoOrderKey(const OrderEvent& event);
     static bool IsTerminalStatus(OrderStatus status);
     static bool IsTransitionAllowed(OrderStatus from, OrderStatus to);
 
     mutable std::mutex mutex_;
     std::unordered_map<std::string, ManagedOrderSnapshot> orders_;
+    std::unordered_map<std::string, std::string> stage_one_key_to_client_id_;
+    std::unordered_map<std::string, std::string> stage_two_key_to_client_id_;
 };
 
 }  // namespace quant_hft

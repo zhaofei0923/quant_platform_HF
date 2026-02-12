@@ -43,11 +43,19 @@ void RedisRealtimeStoreClientAdapter::UpsertOrderEvent(const OrderEvent& event) 
         {"client_order_id", event.client_order_id},
         {"exchange_order_id", event.exchange_order_id},
         {"instrument_id", event.instrument_id},
+        {"exchange_id", event.exchange_id},
         {"status", OrderStatusToString(event.status)},
         {"total_volume", ToString(event.total_volume)},
         {"filled_volume", ToString(event.filled_volume)},
         {"avg_fill_price", ToString(event.avg_fill_price)},
         {"reason", event.reason},
+        {"status_msg", event.status_msg},
+        {"order_submit_status", event.order_submit_status},
+        {"order_ref", event.order_ref},
+        {"front_id", ToString(event.front_id)},
+        {"session_id", ToString(event.session_id)},
+        {"trade_id", event.trade_id},
+        {"event_source", event.event_source},
         {"ts_ns", ToString(event.ts_ns)},
         {"trace_id", event.trace_id},
         {"execution_algo_id", event.execution_algo_id},
@@ -155,6 +163,7 @@ bool RedisRealtimeStoreClientAdapter::GetOrderEvent(const std::string& client_or
     event.client_order_id = GetOrEmpty(row, "client_order_id");
     event.exchange_order_id = GetOrEmpty(row, "exchange_order_id");
     event.instrument_id = GetOrEmpty(row, "instrument_id");
+    event.exchange_id = GetOrEmpty(row, "exchange_id");
     if (!ParseOrderStatus(GetOrEmpty(row, "status"), &event.status)) {
         return false;
     }
@@ -168,6 +177,13 @@ bool RedisRealtimeStoreClientAdapter::GetOrderEvent(const std::string& client_or
         return false;
     }
     event.reason = GetOrEmpty(row, "reason");
+    event.status_msg = GetOrEmpty(row, "status_msg");
+    event.order_submit_status = GetOrEmpty(row, "order_submit_status");
+    event.order_ref = GetOrEmpty(row, "order_ref");
+    (void)ParseInt32(row, "front_id", &event.front_id);
+    (void)ParseInt32(row, "session_id", &event.session_id);
+    event.trade_id = GetOrEmpty(row, "trade_id");
+    event.event_source = GetOrEmpty(row, "event_source");
     if (!ParseInt64(row, "ts_ns", &event.ts_ns)) {
         return false;
     }

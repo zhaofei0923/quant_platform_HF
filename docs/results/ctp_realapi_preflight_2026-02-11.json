@@ -1,0 +1,53 @@
+{
+  "ok": true,
+  "items": [
+    {
+      "name": "config_exists",
+      "ok": true,
+      "skipped": false,
+      "detail": "configs/sim/ctp_trading_hours.yaml"
+    },
+    {
+      "name": "config_parse",
+      "ok": true,
+      "skipped": false,
+      "detail": "parsed simple YAML format"
+    },
+    {
+      "name": "required_fields",
+      "ok": true,
+      "skipped": false,
+      "detail": "all required fields present"
+    },
+    {
+      "name": "production_mode_guard",
+      "ok": true,
+      "skipped": false,
+      "detail": "mode/environment coherent"
+    },
+    {
+      "name": "password_source",
+      "ok": true,
+      "skipped": false,
+      "detail": "env:CTP_SIM_PASSWORD"
+    },
+    {
+      "name": "ctp_lib_files",
+      "ok": true,
+      "skipped": false,
+      "detail": "ctp_api/v6.7.11_20250617_api_traderapi_se_linux64"
+    },
+    {
+      "name": "tcp_connect_market_front",
+      "ok": true,
+      "skipped": true,
+      "detail": "skipped 182.254.243.31:30011"
+    },
+    {
+      "name": "tcp_connect_trader_front",
+      "ok": true,
+      "skipped": true,
+      "detail": "skipped 182.254.243.31:30001"
+    }
+  ]
+}

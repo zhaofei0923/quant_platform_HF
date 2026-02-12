@@ -12,6 +12,15 @@ message MarketSnapshot {
   int64 volume = 7;
   int64 exchange_ts_ns = 8;
   int64 recv_ts_ns = 9;
+  string exchange_id = 10;
+  string trading_day = 11;
+  string action_day = 12;
+  string update_time = 13;
+  int32 update_millisec = 14;
+  double settlement_price = 15;
+  double average_price_raw = 16;
+  double average_price_norm = 17;
+  bool is_valid_settlement = 18;
 }
 
 message StateDimension {
@@ -89,6 +98,14 @@ message OrderEvent {
   string route_id = 17;
   double slippage_bps = 18;
   double impact_cost = 19;
+  string exchange_id = 20;
+  string status_msg = 21;
+  string order_submit_status = 22;
+  string order_ref = 23;
+  int32 front_id = 24;
+  int32 session_id = 25;
+  string trade_id = 26;
+  string event_source = 27;
 }
 
 message PositionSnapshot {
@@ -107,4 +124,67 @@ message HealthEvent {
   string level = 2;
   string message = 3;
   int64 ts_ns = 4;
+}
+
+message TradingAccountSnapshot {
+  string account_id = 1;
+  string investor_id = 2;
+  double balance = 3;
+  double available = 4;
+  double curr_margin = 5;
+  double frozen_margin = 6;
+  double frozen_cash = 7;
+  double frozen_commission = 8;
+  double commission = 9;
+  double close_profit = 10;
+  double position_profit = 11;
+  string trading_day = 12;
+  int64 ts_ns = 13;
+  string source = 14;
+}
+
+message InvestorPositionSnapshot {
+  string account_id = 1;
+  string investor_id = 2;
+  string instrument_id = 3;
+  string exchange_id = 4;
+  string posi_direction = 5;
+  string hedge_flag = 6;
+  string position_date = 7;
+  int32 position = 8;
+  int32 today_position = 9;
+  int32 yd_position = 10;
+  int32 long_frozen = 11;
+  int32 short_frozen = 12;
+  int32 open_volume = 13;
+  int32 close_volume = 14;
+  double position_cost = 15;
+  double open_cost = 16;
+  double position_profit = 17;
+  double close_profit = 18;
+  double margin_rate_by_money = 19;
+  double margin_rate_by_volume = 20;
+  double use_margin = 21;
+  int64 ts_ns = 22;
+  string source = 23;
+}
+
+message BrokerTradingParamsSnapshot {
+  string account_id = 1;
+  string investor_id = 2;
+  string margin_price_type = 3;
+  string algorithm = 4;
+  int64 ts_ns = 5;
+  string source = 6;
+}
+
+message InstrumentMetaSnapshot {
+  string instrument_id = 1;
+  string exchange_id = 2;
+  string product_id = 3;
+  int32 volume_multiple = 4;
+  double price_tick = 5;
+  bool max_margin_side_algorithm = 6;
+  int64 ts_ns = 7;
+  string source = 8;
 }

@@ -20,12 +20,25 @@ public:
     void AppendOrderEvent(const OrderEvent& event) override;
     void AppendRiskDecision(const OrderIntent& intent,
                             const RiskDecision& decision) override;
+    void AppendTradingAccountSnapshot(const TradingAccountSnapshot& snapshot);
+    void AppendInvestorPositionSnapshot(const InvestorPositionSnapshot& snapshot);
+    void AppendBrokerTradingParamsSnapshot(const BrokerTradingParamsSnapshot& snapshot);
+    void AppendInstrumentMetaSnapshot(const InstrumentMetaSnapshot& snapshot);
 
     std::vector<MarketSnapshot> GetMarketSnapshots(
         const std::string& instrument_id) const override;
     std::vector<OrderEvent> GetOrderEvents(
         const std::string& client_order_id) const override;
     std::vector<RiskDecisionRow> GetRiskDecisionRows() const override;
+    std::vector<TradingAccountSnapshot> GetTradingAccountSnapshots(
+        const std::string& account_id) const;
+    std::vector<InvestorPositionSnapshot> GetInvestorPositionSnapshots(
+        const std::string& account_id,
+        const std::string& instrument_id) const;
+    std::vector<BrokerTradingParamsSnapshot> GetBrokerTradingParamsSnapshots(
+        const std::string& account_id) const;
+    std::vector<InstrumentMetaSnapshot> GetInstrumentMetaSnapshots(
+        const std::string& instrument_id) const;
 
 private:
     bool InsertWithRetry(const std::string& table,

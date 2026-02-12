@@ -366,6 +366,78 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         return false;
     }
 
+    loaded.account_query_interval_ms = 2000;
+    SetOptionalInt(kv,
+                   "account_query_interval_ms",
+                   &loaded.account_query_interval_ms,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.account_query_interval_ms <= 0) {
+        if (error != nullptr) {
+            *error = "account_query_interval_ms must be > 0";
+        }
+        return false;
+    }
+
+    loaded.position_query_interval_ms = 2000;
+    SetOptionalInt(kv,
+                   "position_query_interval_ms",
+                   &loaded.position_query_interval_ms,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.position_query_interval_ms <= 0) {
+        if (error != nullptr) {
+            *error = "position_query_interval_ms must be > 0";
+        }
+        return false;
+    }
+
+    loaded.instrument_query_interval_ms = 30000;
+    SetOptionalInt(kv,
+                   "instrument_query_interval_ms",
+                   &loaded.instrument_query_interval_ms,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.instrument_query_interval_ms <= 0) {
+        if (error != nullptr) {
+            *error = "instrument_query_interval_ms must be > 0";
+        }
+        return false;
+    }
+
+    loaded.runtime.query_retry_backoff_ms = 200;
+    SetOptionalInt(kv,
+                   "query_retry_backoff_ms",
+                   &loaded.runtime.query_retry_backoff_ms,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.runtime.query_retry_backoff_ms < 0) {
+        if (error != nullptr) {
+            *error = "query_retry_backoff_ms must be >= 0";
+        }
+        return false;
+    }
+
     loaded.instruments = SplitCsvList(get_value("instruments"));
     loaded.strategy_ids = SplitCsvList(get_value("strategy_ids"));
     loaded.strategy_poll_interval_ms = 200;
@@ -621,6 +693,40 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         }
         return false;
     }
+    loaded.risk.default_max_cancel_count = 0;
+    SetOptionalInt(kv,
+                   "risk_default_max_cancel_count",
+                   &loaded.risk.default_max_cancel_count,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.risk.default_max_cancel_count < 0) {
+        if (error != nullptr) {
+            *error = "risk_default_max_cancel_count must be >= 0";
+        }
+        return false;
+    }
+    loaded.risk.default_max_cancel_ratio = 0.0;
+    SetOptionalDouble(kv,
+                      "risk_default_max_cancel_ratio",
+                      &loaded.risk.default_max_cancel_ratio,
+                      &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.risk.default_max_cancel_ratio < 0.0) {
+        if (error != nullptr) {
+            *error = "risk_default_max_cancel_ratio must be >= 0";
+        }
+        return false;
+    }
     loaded.risk.default_rule_group = get_value("risk_default_rule_group");
     if (loaded.risk.default_rule_group.empty()) {
         loaded.risk.default_rule_group = "default";
@@ -671,6 +777,10 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         rule.instrument_id = get_value("risk_rule_" + group + "_instrument_id");
         if (rule.instrument_id == "*") {
             rule.instrument_id.clear();
+        }
+        rule.exchange_id = get_value("risk_rule_" + group + "_exchange_id");
+        if (rule.exchange_id == "*") {
+            rule.exchange_id.clear();
         }
 
         const auto start_hhmm = get_value("risk_rule_" + group + "_start_hhmm");
@@ -742,6 +852,32 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
             }
         } else {
             rule.max_position_notional = loaded.risk.default_max_position_notional;
+        }
+        const auto max_cancel_count =
+            get_value("risk_rule_" + group + "_max_cancel_count");
+        if (!max_cancel_count.empty()) {
+            if (!ParseIntValue(max_cancel_count, &rule.max_cancel_count) ||
+                rule.max_cancel_count < 0) {
+                if (error != nullptr) {
+                    *error = "invalid risk rule max_cancel_count for group: " + group;
+                }
+                return false;
+            }
+        } else {
+            rule.max_cancel_count = loaded.risk.default_max_cancel_count;
+        }
+        const auto max_cancel_ratio =
+            get_value("risk_rule_" + group + "_max_cancel_ratio");
+        if (!max_cancel_ratio.empty()) {
+            if (!ParseDoubleValue(max_cancel_ratio, &rule.max_cancel_ratio) ||
+                rule.max_cancel_ratio < 0.0) {
+                if (error != nullptr) {
+                    *error = "invalid risk rule max_cancel_ratio for group: " + group;
+                }
+                return false;
+            }
+        } else {
+            rule.max_cancel_ratio = loaded.risk.default_max_cancel_ratio;
         }
 
         loaded.risk.rules.push_back(std::move(rule));

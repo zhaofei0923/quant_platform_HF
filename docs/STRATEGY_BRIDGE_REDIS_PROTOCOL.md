@@ -6,6 +6,18 @@ This document freezes the cross-process contract between:
 
 The bridge uses Redis Hashes (`HSET` / `HGETALL`) and polling. No pub/sub is required.
 
+## Change Summary (2026-02-11)
+
+1. CTP order-state enrichment fields are now persisted in `trade:order:<client_order_id>:info`:
+   - `exchange_id`, `status_msg`, `order_submit_status`, `order_ref`
+   - `front_id`, `session_id`, `trade_id`, `event_source`
+2. Market snapshot normalization now standardizes CTP session/date semantics before write:
+   - `exchange_id`, `trading_day`, `action_day`, `update_time`, `update_millisec`
+   - `settlement_price`, `average_price_raw`, `average_price_norm`, `is_valid_settlement`
+3. Compatibility remains unchanged:
+   - existing readers can ignore unknown fields;
+   - default values are written for missing upstream fields.
+
 ## Conventions
 
 - All hash fields are stored as strings.
@@ -79,6 +91,8 @@ Notes:
 - Optional execution metadata fields:
   - `execution_algo_id`, `slice_index`, `slice_total`, `throttle_applied`
   - `venue`, `route_id`, `slippage_bps`, `impact_cost`
+  - CTP enrichment: `exchange_id`, `status_msg`, `order_submit_status`, `order_ref`,
+    `front_id`, `session_id`, `trade_id`, `event_source`
 
 ## Sequencing and idempotency
 

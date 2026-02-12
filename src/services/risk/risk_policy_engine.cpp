@@ -18,7 +18,7 @@ RiskDecision RiskPolicyEngine::PreCheck(const OrderIntent& intent,
     const int hhmm = context.session_hhmm > 0
                          ? context.session_hhmm
                          : ToUtcHhmm(intent.ts_ns == 0 ? decision_ts : intent.ts_ns);
-    const auto* matched = MatchRule(intent, hhmm);
+    const auto* matched = MatchRule(intent, context, hhmm);
 
     const std::int32_t max_order_volume = matched != nullptr && matched->max_order_volume > 0
                                               ? matched->max_order_volume
@@ -33,6 +33,12 @@ RiskDecision RiskPolicyEngine::PreCheck(const OrderIntent& intent,
         matched != nullptr && matched->max_position_notional > 0.0
             ? matched->max_position_notional
             : defaults_.max_position_notional;
+    const std::int32_t max_cancel_count = matched != nullptr && matched->max_cancel_count > 0
+                                              ? matched->max_cancel_count
+                                              : defaults_.max_cancel_count;
+    const double max_cancel_ratio = matched != nullptr && matched->max_cancel_ratio > 0.0
+                                        ? matched->max_cancel_ratio
+                                        : defaults_.max_cancel_ratio;
 
     const std::string policy_id = matched == nullptr || matched->policy_id.empty()
                                       ? defaults_.policy_id
@@ -111,6 +117,26 @@ RiskDecision RiskPolicyEngine::PreCheck(const OrderIntent& intent,
                      max_position_notional);
     }
 
+    if (max_cancel_count > 0 && context.cancel_count > max_cancel_count) {
+        return build(RiskAction::kReject,
+                     "max_cancel_count",
+                     "cancel count exceeds policy",
+                     static_cast<double>(context.cancel_count),
+                     static_cast<double>(max_cancel_count));
+    }
+
+    const double cancel_ratio = context.submit_count > 0
+                                    ? static_cast<double>(context.cancel_count) /
+                                          static_cast<double>(context.submit_count)
+                                    : 0.0;
+    if (max_cancel_ratio > 0.0 && cancel_ratio > max_cancel_ratio) {
+        return build(RiskAction::kReject,
+                     "max_cancel_ratio",
+                     "cancel ratio exceeds policy",
+                     cancel_ratio,
+                     max_cancel_ratio);
+    }
+
     return build(RiskAction::kAllow, "allow", "pass", 0.0, 0.0);
 }
 
@@ -126,7 +152,8 @@ bool RiskPolicyEngine::ReloadPolicies(const std::vector<RiskPolicyDefinition>& p
             return false;
         }
         if (policy.max_order_volume < 0 || policy.max_order_notional < 0.0 ||
-            policy.max_active_orders < 0 || policy.max_position_notional < 0.0) {
+            policy.max_active_orders < 0 || policy.max_position_notional < 0.0 ||
+            policy.max_cancel_count < 0 || policy.max_cancel_ratio < 0.0) {
             if (error != nullptr) {
                 *error = "policy thresholds must be non-negative";
             }
@@ -137,12 +164,15 @@ bool RiskPolicyEngine::ReloadPolicies(const std::vector<RiskPolicyDefinition>& p
         rule.policy_scope = policy.policy_scope.empty() ? "global" : policy.policy_scope;
         rule.account_id = policy.account_id;
         rule.instrument_id = policy.instrument_id;
+        rule.exchange_id = policy.exchange_id;
         rule.window_start_hhmm = policy.window_start_hhmm;
         rule.window_end_hhmm = policy.window_end_hhmm;
         rule.max_order_volume = policy.max_order_volume;
         rule.max_order_notional = policy.max_order_notional;
         rule.max_active_orders = policy.max_active_orders;
         rule.max_position_notional = policy.max_position_notional;
+        rule.max_cancel_count = policy.max_cancel_count;
+        rule.max_cancel_ratio = policy.max_cancel_ratio;
         rule.decision_tags = policy.decision_tags;
         rule.rule_group = policy.rule_group;
         rule.rule_version = policy.rule_version;
@@ -161,7 +191,9 @@ double RiskPolicyEngine::EvaluateExposure(const RiskContext& context) const {
            std::fabs(context.account_cross_net_notional);
 }
 
-const RiskPolicyRule* RiskPolicyEngine::MatchRule(const OrderIntent& intent, int hhmm) const {
+const RiskPolicyRule* RiskPolicyEngine::MatchRule(const OrderIntent& intent,
+                                                  const RiskContext& context,
+                                                  int hhmm) const {
     const RiskPolicyRule* selected = nullptr;
     int best_score = -1;
 
@@ -178,6 +210,12 @@ const RiskPolicyRule* RiskPolicyEngine::MatchRule(const OrderIntent& intent, int
                 continue;
             }
             score += 2;
+        }
+        if (!rule.exchange_id.empty()) {
+            if (rule.exchange_id != context.exchange_id) {
+                continue;
+            }
+            score += 1;
         }
         if (!MatchesTimeWindow(hhmm, rule.window_start_hhmm, rule.window_end_hhmm)) {
             continue;

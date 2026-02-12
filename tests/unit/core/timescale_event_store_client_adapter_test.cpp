@@ -185,4 +185,70 @@ TEST(TimescaleEventStoreClientAdapterTest, StopsAtMaxAttemptsOnFailure) {
     EXPECT_EQ(client->insert_calls(), 3);
 }
 
+TEST(TimescaleEventStoreClientAdapterTest, StoresAndLoadsCtpQuerySnapshots) {
+    auto client = std::make_shared<InMemoryTimescaleSqlClient>();
+    TimescaleEventStoreClientAdapter store(client, StorageRetryPolicy{});
+
+    TradingAccountSnapshot account;
+    account.account_id = "acc-1";
+    account.investor_id = "191202";
+    account.balance = 1'000'000.0;
+    account.available = 950'000.0;
+    account.curr_margin = 50'000.0;
+    account.trading_day = "20260211";
+    account.ts_ns = 123;
+    account.source = "ctp";
+    store.AppendTradingAccountSnapshot(account);
+
+    InvestorPositionSnapshot position;
+    position.account_id = "acc-1";
+    position.investor_id = "191202";
+    position.instrument_id = "SHFE.ag2406";
+    position.exchange_id = "SHFE";
+    position.posi_direction = "long";
+    position.position = 3;
+    position.today_position = 1;
+    position.yd_position = 2;
+    position.use_margin = 12'345.0;
+    position.ts_ns = 124;
+    position.source = "ctp";
+    store.AppendInvestorPositionSnapshot(position);
+
+    BrokerTradingParamsSnapshot broker_params;
+    broker_params.account_id = "acc-1";
+    broker_params.investor_id = "191202";
+    broker_params.margin_price_type = "1";
+    broker_params.algorithm = "THOST_FTDC_MPT_PreSettlementPrice";
+    broker_params.ts_ns = 125;
+    broker_params.source = "ctp";
+    store.AppendBrokerTradingParamsSnapshot(broker_params);
+
+    InstrumentMetaSnapshot instrument_meta;
+    instrument_meta.instrument_id = "SHFE.ag2406";
+    instrument_meta.exchange_id = "SHFE";
+    instrument_meta.product_id = "ag";
+    instrument_meta.volume_multiple = 15;
+    instrument_meta.price_tick = 1.0;
+    instrument_meta.max_margin_side_algorithm = true;
+    instrument_meta.ts_ns = 126;
+    instrument_meta.source = "ctp";
+    store.AppendInstrumentMetaSnapshot(instrument_meta);
+
+    const auto accounts = store.GetTradingAccountSnapshots("acc-1");
+    ASSERT_EQ(accounts.size(), 1U);
+    EXPECT_DOUBLE_EQ(accounts[0].balance, 1'000'000.0);
+
+    const auto positions = store.GetInvestorPositionSnapshots("acc-1", "SHFE.ag2406");
+    ASSERT_EQ(positions.size(), 1U);
+    EXPECT_EQ(positions[0].position, 3);
+
+    const auto params = store.GetBrokerTradingParamsSnapshots("acc-1");
+    ASSERT_EQ(params.size(), 1U);
+    EXPECT_EQ(params[0].margin_price_type, "1");
+
+    const auto metas = store.GetInstrumentMetaSnapshots("SHFE.ag2406");
+    ASSERT_EQ(metas.size(), 1U);
+    EXPECT_EQ(metas[0].exchange_id, "SHFE");
+}
+
 }  // namespace quant_hft

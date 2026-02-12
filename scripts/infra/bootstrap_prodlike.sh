@@ -9,6 +9,14 @@ OUTPUT_FILE="docs/results/prodlike_bootstrap_result.env"
 HEALTH_REPORT="docs/results/prodlike_health_report.json"
 DOCKER_BIN="docker"
 HEALTH_CHECK_SCRIPT="scripts/infra/check_prodlike_health.py"
+SCHEMA_INIT_SCRIPT="scripts/infra/init_timescale_schema.sh"
+SCHEMA_FILE="infra/timescale/init/001_quant_hft_schema.sql"
+SCHEMA_EVIDENCE="docs/results/timescale_schema_init_result.env"
+TIMESCALE_SERVICE="timescale-primary"
+TIMESCALE_DB="quant_hft"
+TIMESCALE_USER="quant_hft"
+HEALTH_WAIT_TIMEOUT_SEC=120
+HEALTH_WAIT_POLL_INTERVAL_SEC=3
 DRY_RUN=1
 
 usage() {
@@ -24,6 +32,14 @@ Options:
   --health-report <path>         Health report JSON output path
   --docker-bin <path>            Docker binary (default: docker)
   --health-check-script <path>   Health checker script path
+  --schema-init-script <path>    Timescale schema initializer script path
+  --schema-file <path>           Timescale SQL schema file path
+  --schema-evidence <path>       Timescale schema initializer evidence output path
+  --timescale-service <name>     Timescale service name (default: timescale-primary)
+  --timescale-db <name>          Timescale database name (default: quant_hft)
+  --timescale-user <name>        Timescale database user (default: quant_hft)
+  --health-wait-timeout-sec <sec> Wait timeout for health check (default: 120)
+  --health-wait-poll-interval-sec <sec> Poll interval for health check (default: 3)
   --dry-run                      Print/record commands without executing (default)
   --execute                      Execute commands
   -h, --help                     Show this help
@@ -64,6 +80,38 @@ while [[ $# -gt 0 ]]; do
       HEALTH_CHECK_SCRIPT="${2:-}"
       shift 2
       ;;
+    --schema-init-script)
+      SCHEMA_INIT_SCRIPT="${2:-}"
+      shift 2
+      ;;
+    --schema-file)
+      SCHEMA_FILE="${2:-}"
+      shift 2
+      ;;
+    --schema-evidence)
+      SCHEMA_EVIDENCE="${2:-}"
+      shift 2
+      ;;
+    --timescale-service)
+      TIMESCALE_SERVICE="${2:-}"
+      shift 2
+      ;;
+    --timescale-db)
+      TIMESCALE_DB="${2:-}"
+      shift 2
+      ;;
+    --timescale-user)
+      TIMESCALE_USER="${2:-}"
+      shift 2
+      ;;
+    --health-wait-timeout-sec)
+      HEALTH_WAIT_TIMEOUT_SEC="${2:-}"
+      shift 2
+      ;;
+    --health-wait-poll-interval-sec)
+      HEALTH_WAIT_POLL_INTERVAL_SEC="${2:-}"
+      shift 2
+      ;;
     --dry-run)
       DRY_RUN=1
       shift
@@ -96,6 +144,16 @@ if [[ ! -f "$COMPOSE_FILE" ]]; then
   echo "error: compose file not found: $COMPOSE_FILE" >&2
   exit 2
 fi
+if [[ "$ACTION" == "up" ]]; then
+  if [[ ! -f "$SCHEMA_INIT_SCRIPT" ]]; then
+    echo "error: schema init script not found: $SCHEMA_INIT_SCRIPT" >&2
+    exit 2
+  fi
+  if [[ ! -f "$SCHEMA_FILE" ]]; then
+    echo "error: schema file not found: $SCHEMA_FILE" >&2
+    exit 2
+  fi
+fi
 
 steps_name=()
 steps_cmd=()
@@ -110,8 +168,14 @@ fi
 if [[ "$ACTION" == "up" ]]; then
   steps_name+=("compose_up")
   steps_cmd+=("${compose_base[*]} up -d")
+  steps_name+=("timescale_schema_init")
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    steps_cmd+=("bash $SCHEMA_INIT_SCRIPT --compose-file $COMPOSE_FILE --project-name $PROJECT_NAME --env-file $ENV_FILE --schema-file $SCHEMA_FILE --timescale-service $TIMESCALE_SERVICE --timescale-db $TIMESCALE_DB --timescale-user $TIMESCALE_USER --docker-bin $DOCKER_BIN --output-file $SCHEMA_EVIDENCE --dry-run")
+  else
+    steps_cmd+=("bash $SCHEMA_INIT_SCRIPT --compose-file $COMPOSE_FILE --project-name $PROJECT_NAME --env-file $ENV_FILE --schema-file $SCHEMA_FILE --timescale-service $TIMESCALE_SERVICE --timescale-db $TIMESCALE_DB --timescale-user $TIMESCALE_USER --docker-bin $DOCKER_BIN --output-file $SCHEMA_EVIDENCE --execute")
+  fi
   steps_name+=("health_check")
-  steps_cmd+=("python3 $HEALTH_CHECK_SCRIPT --compose-file $COMPOSE_FILE --project-name $PROJECT_NAME --docker-bin $DOCKER_BIN --report-json $HEALTH_REPORT")
+  steps_cmd+=("python3 $HEALTH_CHECK_SCRIPT --compose-file $COMPOSE_FILE --project-name $PROJECT_NAME --docker-bin $DOCKER_BIN --report-json $HEALTH_REPORT (timeout=${HEALTH_WAIT_TIMEOUT_SEC}s interval=${HEALTH_WAIT_POLL_INTERVAL_SEC}s)")
 elif [[ "$ACTION" == "down" ]]; then
   steps_name+=("compose_down")
   steps_cmd+=("${compose_base[*]} down --remove-orphans")
@@ -120,8 +184,24 @@ elif [[ "$ACTION" == "ps" ]]; then
   steps_cmd+=("${compose_base[*]} ps")
 else
   steps_name+=("health_check")
-  steps_cmd+=("python3 $HEALTH_CHECK_SCRIPT --compose-file $COMPOSE_FILE --project-name $PROJECT_NAME --docker-bin $DOCKER_BIN --report-json $HEALTH_REPORT")
+  steps_cmd+=("python3 $HEALTH_CHECK_SCRIPT --compose-file $COMPOSE_FILE --project-name $PROJECT_NAME --docker-bin $DOCKER_BIN --report-json $HEALTH_REPORT (timeout=${HEALTH_WAIT_TIMEOUT_SEC}s interval=${HEALTH_WAIT_POLL_INTERVAL_SEC}s)")
 fi
+
+run_step_health_check() {
+  local elapsed=0
+  while (( elapsed <= HEALTH_WAIT_TIMEOUT_SEC )); do
+    if python3 "$HEALTH_CHECK_SCRIPT" \
+      --compose-file "$COMPOSE_FILE" \
+      --project-name "$PROJECT_NAME" \
+      --docker-bin "$DOCKER_BIN" \
+      --report-json "$HEALTH_REPORT"; then
+      return 0
+    fi
+    sleep "$HEALTH_WAIT_POLL_INTERVAL_SEC"
+    elapsed=$((elapsed + HEALTH_WAIT_POLL_INTERVAL_SEC))
+  done
+  return 1
+}
 
 failed_step=""
 for idx in "${!steps_name[@]}"; do
@@ -134,8 +214,13 @@ for idx in "${!steps_name[@]}"; do
     status="simulated_ok"
   else
     set +e
-    bash -lc "$command"
-    rc=$?
+    if [[ "$name" == "health_check" ]]; then
+      run_step_health_check
+      rc=$?
+    else
+      bash -lc "$command"
+      rc=$?
+    fi
     set -e
     if [[ $rc -eq 0 ]]; then
       status="ok"
@@ -177,6 +262,9 @@ mkdir -p "$(dirname "$OUTPUT_FILE")"
   echo "PRODLIKE_PROJECT_NAME=$PROJECT_NAME"
   echo "PRODLIKE_ENV_FILE=$ENV_FILE"
   echo "PRODLIKE_HEALTH_REPORT=$HEALTH_REPORT"
+  echo "PRODLIKE_TIMESCALE_SCHEMA_EVIDENCE=$SCHEMA_EVIDENCE"
+  echo "PRODLIKE_HEALTH_WAIT_TIMEOUT_SEC=$HEALTH_WAIT_TIMEOUT_SEC"
+  echo "PRODLIKE_HEALTH_WAIT_POLL_INTERVAL_SEC=$HEALTH_WAIT_POLL_INTERVAL_SEC"
   for idx in "${!steps_status[@]}"; do
     n=$((idx + 1))
     echo "STEP_${n}_NAME=${steps_name[$idx]}"

@@ -92,54 +92,137 @@ def main() -> int:
     proto_path = Path("proto/quant_hft/v1/contracts.proto")
     py_path = Path("python/quant_hft/contracts.py")
 
-    risk_expected = [
-        "action",
-        "rule_id",
-        "rule_group",
-        "rule_version",
-        "policy_id",
-        "policy_scope",
-        "observed_value",
-        "threshold_value",
-        "decision_tags",
-        "reason",
-        "decision_ts_ns",
-    ]
-    order_expected = [
-        "account_id",
-        "client_order_id",
-        "instrument_id",
-        "status",
-        "total_volume",
-        "filled_volume",
-        "avg_fill_price",
-        "reason",
-        "ts_ns",
-        "trace_id",
-        "exchange_order_id",
-        "execution_algo_id",
-        "slice_index",
-        "slice_total",
-        "throttle_applied",
-        "venue",
-        "route_id",
-        "slippage_bps",
-        "impact_cost",
-    ]
+    expected_fields = {
+        "MarketSnapshot": [
+            "instrument_id",
+            "exchange_id",
+            "trading_day",
+            "action_day",
+            "update_time",
+            "update_millisec",
+            "last_price",
+            "bid_price_1",
+            "ask_price_1",
+            "bid_volume_1",
+            "ask_volume_1",
+            "volume",
+            "settlement_price",
+            "average_price_raw",
+            "average_price_norm",
+            "is_valid_settlement",
+            "exchange_ts_ns",
+            "recv_ts_ns",
+        ],
+        "RiskDecision": [
+            "action",
+            "rule_id",
+            "rule_group",
+            "rule_version",
+            "policy_id",
+            "policy_scope",
+            "observed_value",
+            "threshold_value",
+            "decision_tags",
+            "reason",
+            "decision_ts_ns",
+        ],
+        "OrderEvent": [
+            "account_id",
+            "client_order_id",
+            "exchange_order_id",
+            "instrument_id",
+            "exchange_id",
+            "status",
+            "total_volume",
+            "filled_volume",
+            "avg_fill_price",
+            "reason",
+            "status_msg",
+            "order_submit_status",
+            "order_ref",
+            "front_id",
+            "session_id",
+            "trade_id",
+            "event_source",
+            "ts_ns",
+            "trace_id",
+            "execution_algo_id",
+            "slice_index",
+            "slice_total",
+            "throttle_applied",
+            "venue",
+            "route_id",
+            "slippage_bps",
+            "impact_cost",
+        ],
+        "TradingAccountSnapshot": [
+            "account_id",
+            "investor_id",
+            "balance",
+            "available",
+            "curr_margin",
+            "frozen_margin",
+            "frozen_cash",
+            "frozen_commission",
+            "commission",
+            "close_profit",
+            "position_profit",
+            "trading_day",
+            "ts_ns",
+            "source",
+        ],
+        "InvestorPositionSnapshot": [
+            "account_id",
+            "investor_id",
+            "instrument_id",
+            "exchange_id",
+            "posi_direction",
+            "hedge_flag",
+            "position_date",
+            "position",
+            "today_position",
+            "yd_position",
+            "long_frozen",
+            "short_frozen",
+            "open_volume",
+            "close_volume",
+            "position_cost",
+            "open_cost",
+            "position_profit",
+            "close_profit",
+            "margin_rate_by_money",
+            "margin_rate_by_volume",
+            "use_margin",
+            "ts_ns",
+            "source",
+        ],
+        "BrokerTradingParamsSnapshot": [
+            "account_id",
+            "investor_id",
+            "margin_price_type",
+            "algorithm",
+            "ts_ns",
+            "source",
+        ],
+        "InstrumentMetaSnapshot": [
+            "instrument_id",
+            "exchange_id",
+            "product_id",
+            "volume_multiple",
+            "price_tick",
+            "max_margin_side_algorithm",
+            "ts_ns",
+            "source",
+        ],
+    }
 
-    cpp_risk = _parse_cpp_struct_fields(cpp_path, "RiskDecision")
-    proto_risk = _parse_proto_message_fields(proto_path, "RiskDecision")
-    py_risk = _parse_python_dataclass_fields(py_path, "RiskDecision")
-    _assert_equal(cpp_risk, risk_expected, "RiskDecision", "C++")
-    _assert_equal(proto_risk, risk_expected, "RiskDecision", "proto")
-    _assert_equal(py_risk, risk_expected, "RiskDecision", "Python")
-
-    cpp_order = _parse_cpp_struct_fields(cpp_path, "OrderEvent")
-    proto_order = _parse_proto_message_fields(proto_path, "OrderEvent")
-    py_order = _parse_python_dataclass_fields(py_path, "OrderEvent")
-    _assert_equal(cpp_order, order_expected, "OrderEvent", "C++")
-    _assert_equal(proto_order, order_expected, "OrderEvent", "proto")
-    _assert_equal(py_order, order_expected, "OrderEvent", "Python")
+    for contract_name, expected in expected_fields.items():
+        cpp_fields = _parse_cpp_struct_fields(cpp_path, contract_name)
+        proto_fields = _parse_proto_message_fields(proto_path, contract_name)
+        py_fields = _parse_python_dataclass_fields(py_path, contract_name)
+        _assert_equal(cpp_fields, expected, contract_name, "C++")
+        _assert_equal(proto_fields, expected, contract_name, "proto")
+        _assert_equal(py_fields, expected, contract_name, "Python")
 
     print("contract sync verification passed")
     return 0

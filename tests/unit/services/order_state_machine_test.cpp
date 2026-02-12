@@ -207,4 +207,129 @@ TEST(OrderStateMachineTest, ReturnsOnlyNonTerminalOrdersFromActiveView) {
     EXPECT_EQ(active_orders[0].last_update_ts_ns, 120);
 }
 
+TEST(OrderStateMachineTest, KeepsOrderActiveWhenCancelActionIsRejected) {
+    OrderStateMachine machine;
+
+    OrderIntent intent;
+    intent.client_order_id = "ord-cancel-rejected";
+    intent.account_id = "a1";
+    intent.instrument_id = "SHFE.ag2406";
+    intent.volume = 2;
+    intent.price = 4500.0;
+    intent.ts_ns = 1;
+    ASSERT_TRUE(machine.OnOrderIntent(intent));
+
+    OrderEvent accepted;
+    accepted.client_order_id = intent.client_order_id;
+    accepted.account_id = intent.account_id;
+    accepted.instrument_id = intent.instrument_id;
+    accepted.status = OrderStatus::kAccepted;
+    accepted.total_volume = 2;
+    accepted.filled_volume = 0;
+    accepted.ts_ns = 2;
+    ASSERT_TRUE(machine.OnOrderEvent(accepted));
+
+    OrderEvent cancel_rejected = accepted;
+    cancel_rejected.event_source = "OnErrRtnOrderAction";
+    cancel_rejected.reason = "cancel_request_rejected";
+    cancel_rejected.ts_ns = 3;
+    ASSERT_TRUE(machine.OnOrderEvent(cancel_rejected));
+
+    const auto snapshot = machine.GetOrderSnapshot(intent.client_order_id);
+    EXPECT_EQ(snapshot.status, OrderStatus::kAccepted);
+    EXPECT_FALSE(snapshot.is_terminal);
+    EXPECT_EQ(snapshot.message, "cancel_request_rejected");
+    EXPECT_EQ(machine.ActiveOrderCount(), 1U);
+}
+
+TEST(OrderStateMachineTest, AllowsOrderRejectAfterAccepted) {
+    OrderStateMachine machine;
+
+    OrderIntent intent;
+    intent.client_order_id = "ord-exchange-reject";
+    intent.account_id = "a1";
+    intent.instrument_id = "SHFE.ag2406";
+    intent.volume = 2;
+    intent.price = 4500.0;
+    intent.ts_ns = 1;
+    ASSERT_TRUE(machine.OnOrderIntent(intent));
+
+    OrderEvent accepted;
+    accepted.client_order_id = intent.client_order_id;
+    accepted.account_id = intent.account_id;
+    accepted.instrument_id = intent.instrument_id;
+    accepted.status = OrderStatus::kAccepted;
+    accepted.total_volume = 2;
+    accepted.filled_volume = 0;
+    accepted.ts_ns = 2;
+    ASSERT_TRUE(machine.OnOrderEvent(accepted));
+
+    OrderEvent rejected = accepted;
+    rejected.status = OrderStatus::kRejected;
+    rejected.reason = "exchange_rejected";
+    rejected.event_source = "OnErrRtnOrderInsert";
+    rejected.ts_ns = 3;
+    ASSERT_TRUE(machine.OnOrderEvent(rejected));
+
+    const auto snapshot = machine.GetOrderSnapshot(intent.client_order_id);
+    EXPECT_EQ(snapshot.status, OrderStatus::kRejected);
+    EXPECT_TRUE(snapshot.is_terminal);
+    EXPECT_EQ(snapshot.message, "exchange_rejected");
+}
+
+TEST(OrderStateMachineTest, ResolvesCtpOrderKeysFromStageOneToStageTwo) {
+    OrderStateMachine machine;
+
+    OrderIntent intent;
+    intent.client_order_id = "ord-key-upgrade";
+    intent.account_id = "a1";
+    intent.instrument_id = "SHFE.ag2406";
+    intent.volume = 3;
+    intent.price = 4500.0;
+    intent.ts_ns = 1;
+    ASSERT_TRUE(machine.OnOrderIntent(intent));
+
+    OrderEvent accepted;
+    accepted.client_order_id = intent.client_order_id;
+    accepted.account_id = intent.account_id;
+    accepted.instrument_id = intent.instrument_id;
+    accepted.exchange_id = "SHFE";
+    accepted.status = OrderStatus::kAccepted;
+    accepted.total_volume = 3;
+    accepted.filled_volume = 0;
+    accepted.order_ref = "1001";
+    accepted.front_id = 7;
+    accepted.session_id = 9;
+    accepted.ts_ns = 2;
+    ASSERT_TRUE(machine.OnOrderEvent(accepted));
+
+    OrderEvent partial_stage_one = accepted;
+    partial_stage_one.client_order_id.clear();
+    partial_stage_one.status = OrderStatus::kPartiallyFilled;
+    partial_stage_one.filled_volume = 1;
+    partial_stage_one.ts_ns = 3;
+    ASSERT_TRUE(machine.OnOrderEvent(partial_stage_one));
+
+    OrderEvent exchange_key_bound = partial_stage_one;
+    exchange_key_bound.exchange_order_id = "000000000123";
+    exchange_key_bound.ts_ns = 4;
+    ASSERT_TRUE(machine.OnOrderEvent(exchange_key_bound));
+
+    OrderEvent final_trade = exchange_key_bound;
+    final_trade.client_order_id.clear();
+    final_trade.order_ref.clear();
+    final_trade.front_id = 0;
+    final_trade.session_id = 0;
+    final_trade.status = OrderStatus::kFilled;
+    final_trade.total_volume = 3;
+    final_trade.filled_volume = 3;
+    final_trade.ts_ns = 5;
+    ASSERT_TRUE(machine.OnOrderEvent(final_trade));
+
+    const auto snapshot = machine.GetOrderSnapshot(intent.client_order_id);
+    EXPECT_EQ(snapshot.status, OrderStatus::kFilled);
+    EXPECT_EQ(snapshot.filled_volume, 3);
+    EXPECT_TRUE(snapshot.is_terminal);
+}
+
 }  // namespace quant_hft

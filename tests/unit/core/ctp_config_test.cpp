@@ -14,6 +14,9 @@ TEST(CtpConfigTest, RejectsSimNowWithProductionMode) {
     cfg.user_id = "191202";
     cfg.investor_id = "191202";
     cfg.password = "pwd";
+    cfg.enable_terminal_auth = true;
+    cfg.app_id = "simnow_app";
+    cfg.auth_code = "simnow_auth";
 
     std::string error;
     EXPECT_FALSE(CtpConfigValidator::Validate(cfg, &error));
@@ -30,6 +33,9 @@ TEST(CtpConfigTest, AcceptsSimNowTradingHoursWithProductionMode) {
     cfg.user_id = "191202";
     cfg.investor_id = "191202";
     cfg.password = "pwd";
+    cfg.enable_terminal_auth = true;
+    cfg.app_id = "simnow_app";
+    cfg.auth_code = "simnow_auth";
 
     std::string error;
     EXPECT_TRUE(CtpConfigValidator::Validate(cfg, &error));
@@ -146,6 +152,44 @@ TEST(CtpConfigTest, FrontCandidatesRotatesFromGroup3) {
     EXPECT_EQ(candidates[1].td_front, "tcp://182.254.243.31:30001");
     EXPECT_EQ(candidates[2].md_front, "tcp://182.254.243.31:30012");
     EXPECT_EQ(candidates[2].td_front, "tcp://182.254.243.31:30002");
+}
+
+TEST(CtpConfigTest, RejectsProductionWhenTerminalAuthDisabled) {
+    CtpRuntimeConfig cfg;
+    cfg.environment = CtpEnvironment::kProduction;
+    cfg.is_production_mode = true;
+    cfg.enable_terminal_auth = false;
+    cfg.md_front = "tcp://180.168.146.187:10231";
+    cfg.td_front = "tcp://180.168.146.187:10201";
+    cfg.broker_id = "9999";
+    cfg.user_id = "191202";
+    cfg.investor_id = "191202";
+    cfg.password = "pwd";
+    cfg.app_id = "prod_app";
+    cfg.auth_code = "prod_auth";
+
+    std::string error;
+    EXPECT_FALSE(CtpConfigValidator::Validate(cfg, &error));
+    EXPECT_NE(error.find("enable_terminal_auth"), std::string::npos);
+}
+
+TEST(CtpConfigTest, RejectsProductionWhenAuthenticateFieldsMissing) {
+    CtpRuntimeConfig cfg;
+    cfg.environment = CtpEnvironment::kProduction;
+    cfg.is_production_mode = true;
+    cfg.enable_terminal_auth = true;
+    cfg.md_front = "tcp://180.168.146.187:10231";
+    cfg.td_front = "tcp://180.168.146.187:10201";
+    cfg.broker_id = "9999";
+    cfg.user_id = "191202";
+    cfg.investor_id = "191202";
+    cfg.password = "pwd";
+    cfg.app_id = "";
+    cfg.auth_code = "";
+
+    std::string error;
+    EXPECT_FALSE(CtpConfigValidator::Validate(cfg, &error));
+    EXPECT_NE(error.find("ReqAuthenticate"), std::string::npos);
 }
 
 }  // namespace quant_hft

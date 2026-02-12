@@ -105,19 +105,19 @@ TEST(CtpConfigLoaderTest, RejectsUnknownEnvironment) {
     std::filesystem::remove(config_path);
 }
 
-TEST(CtpConfigLoaderTest, SupportsDisablingTerminalAuth) {
+TEST(CtpConfigLoaderTest, SupportsDisablingTerminalAuthInNonProduction) {
     const ScopedEnvVar password_env("CTP_TEST_PASSWORD", "env-secret");
     const auto config_path = WriteTempConfig(
         "ctp:\n"
         "  environment: sim\n"
-        "  is_production_mode: true\n"
+        "  is_production_mode: false\n"
         "  enable_real_api: true\n"
         "  enable_terminal_auth: false\n"
         "  broker_id: \"9999\"\n"
         "  user_id: \"191202\"\n"
         "  investor_id: \"191202\"\n"
-        "  market_front: \"tcp://182.254.243.31:30012\"\n"
-        "  trader_front: \"tcp://182.254.243.31:30002\"\n"
+        "  market_front: \"tcp://182.254.243.31:40012\"\n"
+        "  trader_front: \"tcp://182.254.243.31:40002\"\n"
         "  password_env: \"CTP_TEST_PASSWORD\"\n");
 
     CtpFileConfig config;
@@ -126,6 +126,31 @@ TEST(CtpConfigLoaderTest, SupportsDisablingTerminalAuth) {
         << error;
     EXPECT_TRUE(config.runtime.enable_real_api);
     EXPECT_FALSE(config.runtime.enable_terminal_auth);
+
+    std::filesystem::remove(config_path);
+}
+
+TEST(CtpConfigLoaderTest, RejectsProductionConfigWhenTerminalAuthDisabled) {
+    const ScopedEnvVar password_env("CTP_TEST_PASSWORD", "env-secret");
+    const auto config_path = WriteTempConfig(
+        "ctp:\n"
+        "  environment: production\n"
+        "  is_production_mode: true\n"
+        "  enable_real_api: true\n"
+        "  enable_terminal_auth: false\n"
+        "  broker_id: \"9999\"\n"
+        "  user_id: \"191202\"\n"
+        "  investor_id: \"191202\"\n"
+        "  market_front: \"tcp://180.168.146.187:10231\"\n"
+        "  trader_front: \"tcp://180.168.146.187:10201\"\n"
+        "  password_env: \"CTP_TEST_PASSWORD\"\n"
+        "  app_id: \"prod_app\"\n"
+        "  auth_code: \"prod_auth\"\n");
+
+    CtpFileConfig config;
+    std::string error;
+    EXPECT_FALSE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error));
+    EXPECT_NE(error.find("enable_terminal_auth"), std::string::npos);
 
     std::filesystem::remove(config_path);
 }
@@ -211,6 +236,8 @@ TEST(CtpConfigLoaderTest, LoadsExecutionAndRiskRuleConfigs) {
         "  risk_default_max_order_notional: 200000\n"
         "  risk_default_max_active_orders: 4\n"
         "  risk_default_max_position_notional: 900000\n"
+        "  risk_default_max_cancel_count: 8\n"
+        "  risk_default_max_cancel_ratio: 0.45\n"
         "  risk_default_rule_group: \"global-default\"\n"
         "  risk_default_rule_version: \"2026.02\"\n"
         "  risk_default_policy_id: \"policy.global\"\n"
@@ -222,10 +249,13 @@ TEST(CtpConfigLoaderTest, LoadsExecutionAndRiskRuleConfigs) {
         "  risk_rule_ag_open_policy_scope: \"instrument\"\n"
         "  risk_rule_ag_open_decision_tags: \"ag,risk\"\n"
         "  risk_rule_ag_open_instrument_id: \"SHFE.ag2406\"\n"
+        "  risk_rule_ag_open_exchange_id: \"SHFE\"\n"
         "  risk_rule_ag_open_max_order_volume: 2\n"
         "  risk_rule_ag_open_max_order_notional: 12000\n"
         "  risk_rule_ag_open_max_active_orders: 1\n"
         "  risk_rule_ag_open_max_position_notional: 80000\n"
+        "  risk_rule_ag_open_max_cancel_count: 2\n"
+        "  risk_rule_ag_open_max_cancel_ratio: 0.25\n"
         "  risk_rule_ag_open_version: \"2026.03\"\n"
         "  risk_rule_acc_guard_account_id: \"sim-account\"\n"
         "  risk_rule_acc_guard_max_order_volume: 5\n"
@@ -253,6 +283,8 @@ TEST(CtpConfigLoaderTest, LoadsExecutionAndRiskRuleConfigs) {
     EXPECT_DOUBLE_EQ(config.risk.default_max_order_notional, 200000.0);
     EXPECT_EQ(config.risk.default_max_active_orders, 4);
     EXPECT_DOUBLE_EQ(config.risk.default_max_position_notional, 900000.0);
+    EXPECT_EQ(config.risk.default_max_cancel_count, 8);
+    EXPECT_DOUBLE_EQ(config.risk.default_max_cancel_ratio, 0.45);
     EXPECT_EQ(config.risk.default_rule_group, "global-default");
     EXPECT_EQ(config.risk.default_rule_version, "2026.02");
     EXPECT_EQ(config.risk.default_policy_id, "policy.global");
@@ -266,12 +298,17 @@ TEST(CtpConfigLoaderTest, LoadsExecutionAndRiskRuleConfigs) {
     EXPECT_EQ(config.risk.rules[0].policy_scope, "instrument");
     EXPECT_EQ(config.risk.rules[0].decision_tags, "ag,risk");
     EXPECT_EQ(config.risk.rules[0].instrument_id, "SHFE.ag2406");
+    EXPECT_EQ(config.risk.rules[0].exchange_id, "SHFE");
     EXPECT_EQ(config.risk.rules[0].max_order_volume, 2);
     EXPECT_EQ(config.risk.rules[0].max_active_orders, 1);
     EXPECT_DOUBLE_EQ(config.risk.rules[0].max_position_notional, 80000.0);
+    EXPECT_EQ(config.risk.rules[0].max_cancel_count, 2);
+    EXPECT_DOUBLE_EQ(config.risk.rules[0].max_cancel_ratio, 0.25);
     EXPECT_EQ(config.risk.rules[1].account_id, "sim-account");
     EXPECT_EQ(config.risk.rules[1].rule_group, "acc_guard");
     EXPECT_EQ(config.risk.rules[1].policy_id, "policy.global");
+    EXPECT_EQ(config.risk.rules[1].max_cancel_count, 8);
+    EXPECT_DOUBLE_EQ(config.risk.rules[1].max_cancel_ratio, 0.45);
 
     std::filesystem::remove(config_path);
 }
@@ -366,6 +403,50 @@ TEST(CtpConfigLoaderTest, RejectsInvalidCancelExecutionConfigs) {
     EXPECT_FALSE(CtpConfigLoader::LoadFromYaml(bad_reject_ratio.string(), &config, &error));
     EXPECT_NE(error.find("throttle_reject_ratio"), std::string::npos);
     std::filesystem::remove(bad_reject_ratio);
+}
+
+TEST(CtpConfigLoaderTest, LoadsAndValidatesCtpQueryIntervals) {
+    const auto config_path = WriteTempConfig(
+        "ctp:\n"
+        "  environment: sim\n"
+        "  is_production_mode: false\n"
+        "  broker_id: \"9999\"\n"
+        "  user_id: \"191202\"\n"
+        "  investor_id: \"191202\"\n"
+        "  market_front: \"tcp://127.0.0.1:40011\"\n"
+        "  trader_front: \"tcp://127.0.0.1:40001\"\n"
+        "  password: \"plain-secret\"\n"
+        "  account_query_interval_ms: 1500\n"
+        "  position_query_interval_ms: 1700\n"
+        "  instrument_query_interval_ms: 25000\n"
+        "  query_retry_backoff_ms: 300\n");
+
+    CtpFileConfig config;
+    std::string error;
+    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error))
+        << error;
+
+    EXPECT_EQ(config.account_query_interval_ms, 1500);
+    EXPECT_EQ(config.position_query_interval_ms, 1700);
+    EXPECT_EQ(config.instrument_query_interval_ms, 25000);
+    EXPECT_EQ(config.runtime.query_retry_backoff_ms, 300);
+    std::filesystem::remove(config_path);
+
+    const auto invalid = WriteTempConfig(
+        "ctp:\n"
+        "  environment: sim\n"
+        "  is_production_mode: false\n"
+        "  broker_id: \"9999\"\n"
+        "  user_id: \"191202\"\n"
+        "  investor_id: \"191202\"\n"
+        "  market_front: \"tcp://127.0.0.1:40011\"\n"
+        "  trader_front: \"tcp://127.0.0.1:40001\"\n"
+        "  password: \"plain-secret\"\n"
+        "  position_query_interval_ms: 0\n");
+    error.clear();
+    EXPECT_FALSE(CtpConfigLoader::LoadFromYaml(invalid.string(), &config, &error));
+    EXPECT_NE(error.find("position_query_interval_ms"), std::string::npos);
+    std::filesystem::remove(invalid);
 }
 
 }  // namespace

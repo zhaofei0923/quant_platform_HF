@@ -4,6 +4,7 @@ from pathlib import Path
 
 REQUIRED_PATHS = (
     Path("infra/docker-compose.prodlike.multi-host.yaml"),
+    Path("infra/timescale/init/001_quant_hft_schema.sql"),
     Path("infra/env/prodlike-primary.env"),
     Path("infra/env/prodlike-standby.env"),
 )
@@ -31,6 +32,8 @@ def test_prodlike_multi_host_compose_declares_required_services() -> None:
     )
     for service in required_services:
         assert service in compose
+    schema_mount = "/docker-entrypoint-initdb.d/001_quant_hft_schema.sql"
+    assert schema_mount not in compose
 
 
 def test_multi_host_envs_contain_role_keys() -> None:

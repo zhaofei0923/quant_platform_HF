@@ -1,0 +1,26 @@
+br-de9705c9e83e: Resource temporarily unavailable
+docker0: Invalid argument
+WARNING: you should run this program as super-user.
+WARNING: output may be incomplete or inaccurate, you should run this program as super-user.
+sh: 1: dmidecode: not found
+sh: 1: dmidecode: not found
+br-de9705c9e83e: No such file or directory
+docker0: No such file or directory
+br-de9705c9e83e: Resource temporarily unavailable
+docker0: Resource temporarily unavailable
+WARNING: you should run this program as super-user.
+WARNING: output may be incomplete or inaccurate, you should run this program as super-user.
+sh: 1: dmidecode: not found
+sh: 1: dmidecode: not found
+br-de9705c9e83e: No such file or directory
+docker0: No such file or directory
+br-de9705c9e83e: Resource temporarily unavailable
+docker0: Resource temporarily unavailable
+WARNING: you should run this program as super-user.
+WARNING: output may be incomplete or inaccurate, you should run this program as super-user.
+sh: 1: dmidecode: not found
+sh: 1: dmidecode: not found
+br-de9705c9e83e: No such file or directory
+docker0: No such file or directory
+Connect failed. fronts: md=tcp://182.254.243.31:30011 td=tcp://182.254.243.31:30001
+Connect diagnostic: all candidate fronts failed: md=tcp://182.254.243.31:30011 td=tcp://182.254.243.31:30001 => Td login failed (ErrorID=3, ErrorMsg=CTP:不合法的登录) | md=tcp://182.254.243.31:30012 td=tcp://182.254.243.31:30002 => Td login failed (ErrorID=3, ErrorMsg=CTP:不合法的登录) | md=tcp://182.254.243.31:30013 td=tcp://182.254.243.31:30003 => Td login failed (ErrorID=3, ErrorMsg=CTP:不合法的登录)

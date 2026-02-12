@@ -169,6 +169,32 @@ python3 scripts/infra/check_prodlike_health.py \
 
 For real execution, replace `--dry-run` with `--execute`.
 
+When running `--execute`, bootstrap now includes Timescale schema initialization:
+- SQL asset: `infra/timescale/init/001_quant_hft_schema.sql`
+- Evidence: `docs/results/timescale_schema_init_result.env`
+
+Standalone schema initialization command:
+
+```bash
+bash scripts/infra/init_timescale_schema.sh \
+  --compose-file infra/docker-compose.prodlike.yaml \
+  --project-name quant-hft-prodlike \
+  --env-file infra/env/prodlike.env \
+  --schema-file infra/timescale/init/001_quant_hft_schema.sql \
+  --output-file docs/results/timescale_schema_init_result.env \
+  --execute
+```
+
+Ubuntu target host build switches for external storage:
+
+```bash
+cmake -S . -B build \
+  -DQUANT_HFT_BUILD_TESTS=ON \
+  -DQUANT_HFT_ENABLE_REDIS_EXTERNAL=ON \
+  -DQUANT_HFT_ENABLE_TIMESCALE_EXTERNAL=ON
+cmake --build build -j
+```
+
 ## Repository Multi-Host Failover Drill
 
 Run multi-host bootstrap + failover orchestration with machine-verifiable evidence:

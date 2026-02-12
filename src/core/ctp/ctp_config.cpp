@@ -172,6 +172,18 @@ bool CtpConfigValidator::Validate(const CtpRuntimeConfig& config, std::string* e
         }
         return false;
     }
+    if (config.is_production_mode && !config.enable_terminal_auth) {
+        if (error != nullptr) {
+            *error = "Production requires enable_terminal_auth=true";
+        }
+        return false;
+    }
+    if (config.is_production_mode && (config.app_id.empty() || config.auth_code.empty())) {
+        if (error != nullptr) {
+            *error = "ReqAuthenticate requires non-empty app_id/auth_code in production";
+        }
+        return false;
+    }
     if (config.connect_timeout_ms <= 0) {
         if (error != nullptr) {
             *error = "connect_timeout_ms must be > 0";

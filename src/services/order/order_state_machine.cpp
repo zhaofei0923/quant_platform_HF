@@ -1,5 +1,7 @@
 #include "quant_hft/services/order_state_machine.h"
 
+#include <sstream>
+
 namespace quant_hft {
 
 bool OrderStateMachine::OnOrderIntent(const OrderIntent& intent) {
@@ -28,20 +30,55 @@ bool OrderStateMachine::OnOrderIntent(const OrderIntent& intent) {
 }
 
 bool OrderStateMachine::OnOrderEvent(const OrderEvent& event) {
-    if (event.client_order_id.empty()) {
-        return false;
-    }
-
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto it = orders_.find(event.client_order_id);
+    std::string resolved_client_order_id = event.client_order_id;
+    auto it = orders_.find(resolved_client_order_id);
+    if (resolved_client_order_id.empty() || it == orders_.end()) {
+        resolved_client_order_id = ResolveClientOrderIdLocked(event);
+        if (resolved_client_order_id.empty()) {
+            return false;
+        }
+        it = orders_.find(resolved_client_order_id);
+    }
     if (it == orders_.end()) {
         return false;
     }
 
     auto& order = it->second;
+    const bool is_cancel_feedback =
+        (event.event_source == "OnRspOrderAction" ||
+         event.event_source == "OnErrRtnOrderAction") &&
+        event.status == OrderStatus::kAccepted;
+    if (is_cancel_feedback) {
+        if (order.is_terminal) {
+            return false;
+        }
+        order.last_update_ts_ns = event.ts_ns;
+        if (!event.reason.empty()) {
+            order.message = event.reason;
+        }
+        const auto stage_one_key = BuildStageOneOrderKey(event);
+        if (!stage_one_key.empty()) {
+            stage_one_key_to_client_id_[stage_one_key] = resolved_client_order_id;
+        }
+        const auto stage_two_key = BuildStageTwoOrderKey(event);
+        if (!stage_two_key.empty()) {
+            stage_two_key_to_client_id_[stage_two_key] = resolved_client_order_id;
+        }
+        return true;
+    }
+
     const bool is_duplicate = order.status == event.status &&
                               order.filled_volume == event.filled_volume;
     if (is_duplicate) {
+        const auto stage_one_key = BuildStageOneOrderKey(event);
+        if (!stage_one_key.empty()) {
+            stage_one_key_to_client_id_[stage_one_key] = resolved_client_order_id;
+        }
+        const auto stage_two_key = BuildStageTwoOrderKey(event);
+        if (!stage_two_key.empty()) {
+            stage_two_key_to_client_id_[stage_two_key] = resolved_client_order_id;
+        }
         return true;
     }
 
@@ -81,19 +118,32 @@ bool OrderStateMachine::OnOrderEvent(const OrderEvent& event) {
     if (!event.instrument_id.empty()) {
         order.instrument_id = event.instrument_id;
     }
+    const auto stage_one_key = BuildStageOneOrderKey(event);
+    if (!stage_one_key.empty()) {
+        stage_one_key_to_client_id_[stage_one_key] = resolved_client_order_id;
+    }
+    const auto stage_two_key = BuildStageTwoOrderKey(event);
+    if (!stage_two_key.empty()) {
+        stage_two_key_to_client_id_[stage_two_key] = resolved_client_order_id;
+    }
     return true;
 }
 
 bool OrderStateMachine::RecoverFromOrderEvent(const OrderEvent& event) {
-    if (event.client_order_id.empty()) {
+    std::string resolved_client_order_id = event.client_order_id;
+    if (resolved_client_order_id.empty()) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        resolved_client_order_id = ResolveClientOrderIdLocked(event);
+    }
+    if (resolved_client_order_id.empty()) {
         return false;
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto it = orders_.find(event.client_order_id);
+    auto it = orders_.find(resolved_client_order_id);
     if (it == orders_.end()) {
         ManagedOrderSnapshot snapshot;
-        snapshot.client_order_id = event.client_order_id;
+        snapshot.client_order_id = resolved_client_order_id;
         snapshot.account_id = event.account_id;
         snapshot.instrument_id = event.instrument_id;
         snapshot.status = event.status;
@@ -103,7 +153,15 @@ bool OrderStateMachine::RecoverFromOrderEvent(const OrderEvent& event) {
         snapshot.last_update_ts_ns = event.ts_ns;
         snapshot.is_terminal = IsTerminalStatus(event.status);
         snapshot.message = "recovered from wal";
-        orders_.emplace(event.client_order_id, std::move(snapshot));
+        orders_.emplace(resolved_client_order_id, std::move(snapshot));
+        const auto stage_one_key = BuildStageOneOrderKey(event);
+        if (!stage_one_key.empty()) {
+            stage_one_key_to_client_id_[stage_one_key] = resolved_client_order_id;
+        }
+        const auto stage_two_key = BuildStageTwoOrderKey(event);
+        if (!stage_two_key.empty()) {
+            stage_two_key_to_client_id_[stage_two_key] = resolved_client_order_id;
+        }
         return true;
     }
 
@@ -147,6 +205,14 @@ bool OrderStateMachine::RecoverFromOrderEvent(const OrderEvent& event) {
     }
     if (!event.instrument_id.empty()) {
         order.instrument_id = event.instrument_id;
+    }
+    const auto stage_one_key = BuildStageOneOrderKey(event);
+    if (!stage_one_key.empty()) {
+        stage_one_key_to_client_id_[stage_one_key] = resolved_client_order_id;
+    }
+    const auto stage_two_key = BuildStageTwoOrderKey(event);
+    if (!stage_two_key.empty()) {
+        stage_two_key_to_client_id_[stage_two_key] = resolved_client_order_id;
     }
     return true;
 }
@@ -225,6 +291,42 @@ bool OrderStateMachine::IsTransitionAllowed(OrderStatus from, OrderStatus to) {
             return false;
     }
     return false;
+}
+
+std::string OrderStateMachine::ResolveClientOrderIdLocked(
+    const OrderEvent& event) const {
+    const auto stage_two_key = BuildStageTwoOrderKey(event);
+    if (!stage_two_key.empty()) {
+        const auto stage_two_it = stage_two_key_to_client_id_.find(stage_two_key);
+        if (stage_two_it != stage_two_key_to_client_id_.end()) {
+            return stage_two_it->second;
+        }
+    }
+
+    const auto stage_one_key = BuildStageOneOrderKey(event);
+    if (!stage_one_key.empty()) {
+        const auto stage_one_it = stage_one_key_to_client_id_.find(stage_one_key);
+        if (stage_one_it != stage_one_key_to_client_id_.end()) {
+            return stage_one_it->second;
+        }
+    }
+    return "";
+}
+
+std::string OrderStateMachine::BuildStageOneOrderKey(const OrderEvent& event) {
+    if (event.order_ref.empty() || event.front_id <= 0 || event.session_id <= 0) {
+        return "";
+    }
+    std::ostringstream oss;
+    oss << event.front_id << '|' << event.session_id << '|' << event.order_ref;
+    return oss.str();
+}
+
+std::string OrderStateMachine::BuildStageTwoOrderKey(const OrderEvent& event) {
+    if (event.exchange_id.empty() || event.exchange_order_id.empty()) {
+        return "";
+    }
+    return event.exchange_id + "|" + event.exchange_order_id;
 }
 
 }  // namespace quant_hft

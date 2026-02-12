@@ -36,11 +36,15 @@ add_library(quant_hft_core STATIC
     src/core/perf/object_pool.cpp
     src/services/risk/basic_risk_engine.cpp
     src/services/risk/risk_policy_engine.cpp
+    src/services/risk/self_trade_risk_engine.cpp
     src/services/order/execution_planner.cpp
     src/services/order/execution_router.cpp
     src/services/order/in_memory_order_gateway.cpp
     src/services/order/order_state_machine.cpp
+    src/services/portfolio/ctp_account_ledger.cpp
+    src/services/portfolio/ctp_position_ledger.cpp
     src/services/portfolio/in_memory_portfolio_ledger.cpp
+    src/services/market_state/bar_aggregator.cpp
     src/services/market_state/rule_market_state_engine.cpp
 )
 
@@ -172,6 +176,18 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(in_memory_portfolio_ledger_test tests/unit/services/in_memory_portfolio_ledger_test.cpp)
     target_link_libraries(in_memory_portfolio_ledger_test PRIVATE quant_hft_core GTest::gtest_main)
 
+    add_executable(ctp_position_ledger_test tests/unit/services/ctp_position_ledger_test.cpp)
+    target_link_libraries(ctp_position_ledger_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(ctp_account_ledger_test tests/unit/services/ctp_account_ledger_test.cpp)
+    target_link_libraries(ctp_account_ledger_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(self_trade_risk_engine_test tests/unit/services/self_trade_risk_engine_test.cpp)
+    target_link_libraries(self_trade_risk_engine_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(bar_aggregator_test tests/unit/services/bar_aggregator_test.cpp)
+    target_link_libraries(bar_aggregator_test PRIVATE quant_hft_core GTest::gtest_main)
+
     add_executable(order_state_machine_test tests/unit/services/order_state_machine_test.cpp)
     target_link_libraries(order_state_machine_test PRIVATE quant_hft_core GTest::gtest_main)
 
@@ -204,6 +220,10 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(basic_risk_engine_test)
     gtest_discover_tests(risk_policy_engine_test)
     gtest_discover_tests(in_memory_portfolio_ledger_test)
+    gtest_discover_tests(ctp_position_ledger_test)
+    gtest_discover_tests(ctp_account_ledger_test)
+    gtest_discover_tests(self_trade_risk_engine_test)
+    gtest_discover_tests(bar_aggregator_test)
     gtest_discover_tests(order_state_machine_test)
     gtest_discover_tests(execution_planner_test)
     gtest_discover_tests(execution_router_test)

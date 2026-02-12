@@ -94,3 +94,33 @@ def test_ops_health_report_build_and_render() -> None:
     assert "quant_hft_strategy_bridge_latency_p99_ms" in markdown
     assert "quant_hft_strategy_bridge_chain_integrity" in markdown
     assert "Overall healthy: yes" in markdown
+
+
+def test_ops_health_report_includes_ctp_specific_slis() -> None:
+    report = build_ops_health_report(
+        strategy_bridge_latency_ms=320.0,
+        strategy_bridge_target_ms=1000.0,
+        strategy_bridge_chain_status="complete",
+        core_process_alive=True,
+        redis_health="healthy",
+        timescale_health="healthy",
+        ctp_query_latency_ms=1800.0,
+        ctp_query_latency_target_ms=2000.0,
+        ctp_flow_control_hits=4,
+        ctp_flow_control_hits_target=10,
+        ctp_disconnect_recovery_success_rate=1.0,
+        ctp_disconnect_recovery_target=0.99,
+        ctp_reject_classified_ratio=1.0,
+        ctp_reject_classified_target=0.95,
+        environment="sim",
+        service="core_engine",
+        now_ns_fn=lambda: 67890,
+    )
+
+    payload = ops_health_report_to_dict(report)
+    sli_names = [item["name"] for item in payload["slis"]]
+    assert "quant_hft_ctp_query_latency_p99_ms" in sli_names
+    assert "quant_hft_ctp_flow_control_hits" in sli_names
+    assert "quant_hft_ctp_disconnect_recovery_success_rate" in sli_names
+    assert "quant_hft_ctp_reject_classified_ratio" in sli_names
+    assert len(payload["slis"]) == 9

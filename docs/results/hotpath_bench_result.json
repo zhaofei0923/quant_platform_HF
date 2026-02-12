@@ -3,10 +3,10 @@
   "iterations": 100000,
   "buffer_size": 256,
   "pool_capacity": 1024,
-  "baseline_ns_per_op": 96.3824,
-  "pooled_ns_per_op": 277.517,
+  "baseline_ns_per_op": 95.9081,
+  "pooled_ns_per_op": 279.834,
   "baseline_threshold_ns_per_op": 10000.0,
-  "regression_ratio": -0.9722483000000001,
+  "regression_ratio": -0.9720165999999999,
   "max_regression_ratio": 0.1,
   "passed": true
 }

@@ -69,6 +69,69 @@ TEST(CtpGatewayAdapterTest, QueryAndOffsetApplySrc) {
     EXPECT_EQ(adapter.GetOffsetApplySrc(), '2');
 }
 
+TEST(CtpGatewayAdapterTest, QuerySnapshotsInSimulatedMode) {
+    CtpGatewayAdapter adapter(10);
+
+    MarketDataConnectConfig cfg;
+    cfg.market_front_address = "tcp://sim-md";
+    cfg.trader_front_address = "tcp://sim-td";
+    cfg.broker_id = "9999";
+    cfg.user_id = "191202";
+    cfg.investor_id = "191202";
+    cfg.password = "p1";
+    cfg.is_production_mode = false;
+
+    ASSERT_TRUE(adapter.Connect(cfg));
+    ASSERT_TRUE(adapter.Subscribe({"SHFE.ag2406"}));
+
+    std::atomic<int> account_callbacks{0};
+    std::atomic<int> position_callbacks{0};
+    std::atomic<int> instrument_callbacks{0};
+    std::atomic<int> broker_param_callbacks{0};
+    adapter.RegisterTradingAccountSnapshotCallback(
+        [&](const TradingAccountSnapshot& snapshot) {
+            EXPECT_EQ(snapshot.investor_id, "191202");
+            account_callbacks.fetch_add(1);
+        });
+    adapter.RegisterInvestorPositionSnapshotCallback(
+        [&](const std::vector<InvestorPositionSnapshot>& snapshots) {
+            EXPECT_TRUE(snapshots.empty());
+            position_callbacks.fetch_add(1);
+        });
+    adapter.RegisterInstrumentMetaSnapshotCallback(
+        [&](const std::vector<InstrumentMetaSnapshot>& snapshots) {
+            EXPECT_FALSE(snapshots.empty());
+            instrument_callbacks.fetch_add(1);
+        });
+    adapter.RegisterBrokerTradingParamsSnapshotCallback(
+        [&](const BrokerTradingParamsSnapshot& snapshot) {
+            EXPECT_FALSE(snapshot.margin_price_type.empty());
+            broker_param_callbacks.fetch_add(1);
+        });
+
+    EXPECT_TRUE(adapter.EnqueueTradingAccountQuery(11));
+    EXPECT_TRUE(adapter.EnqueueInvestorPositionQuery(12));
+    EXPECT_TRUE(adapter.EnqueueInstrumentQuery(13));
+    EXPECT_TRUE(adapter.EnqueueBrokerTradingParamsQuery(14));
+    EXPECT_TRUE(adapter.EnqueueInstrumentMarginRateQuery(15, "SHFE.ag2406"));
+    EXPECT_TRUE(adapter.EnqueueInstrumentCommissionRateQuery(16, "SHFE.ag2406"));
+
+    const auto account = adapter.GetLastTradingAccountSnapshot();
+    EXPECT_EQ(account.investor_id, "191202");
+    const auto positions = adapter.GetLastInvestorPositionSnapshots();
+    EXPECT_TRUE(positions.empty());
+    const auto metas = adapter.GetLastInstrumentMetaSnapshots();
+    EXPECT_FALSE(metas.empty());
+    EXPECT_EQ(metas.front().instrument_id, "SHFE.ag2406");
+    const auto broker_params = adapter.GetLastBrokerTradingParamsSnapshot();
+    EXPECT_FALSE(broker_params.margin_price_type.empty());
+
+    EXPECT_EQ(account_callbacks.load(), 1);
+    EXPECT_EQ(position_callbacks.load(), 1);
+    EXPECT_EQ(instrument_callbacks.load(), 1);
+    EXPECT_EQ(broker_param_callbacks.load(), 1);
+}
+
 TEST(CtpGatewayAdapterTest, CallbackCanReenterCancelOrderWithoutLockContention) {
     using namespace std::chrono_literals;
 
@@ -168,6 +231,50 @@ TEST(CtpGatewayAdapterTest, SuccessfulConnectClearsDiagnostic) {
     valid_cfg.password = "p1";
     ASSERT_TRUE(adapter.Connect(valid_cfg));
     EXPECT_TRUE(adapter.GetLastConnectDiagnostic().empty());
+}
+
+TEST(CtpGatewayAdapterTest, NormalizeMarketSnapshotCleansInvalidValuesAndFallbacks) {
+    MarketSnapshot snapshot;
+    snapshot.instrument_id = "DCE.i2409";
+    snapshot.exchange_id = "";
+    snapshot.trading_day = "";
+    snapshot.action_day = "20260211";
+    snapshot.update_time = "21:15:08";
+    snapshot.update_millisec = -12;
+    snapshot.settlement_price = 1.7976931348623157e+308;
+    snapshot.average_price_raw = 1.7976931348623157e+308;
+
+    CtpGatewayAdapter::NormalizeMarketSnapshot(&snapshot);
+
+    EXPECT_EQ(snapshot.exchange_id, "DCE");
+    EXPECT_EQ(snapshot.trading_day, "20260211");
+    EXPECT_EQ(snapshot.action_day, "20260211");
+    EXPECT_EQ(snapshot.update_millisec, 0);
+    EXPECT_DOUBLE_EQ(snapshot.settlement_price, 0.0);
+    EXPECT_FALSE(snapshot.is_valid_settlement);
+    EXPECT_DOUBLE_EQ(snapshot.average_price_norm, 0.0);
+}
+
+TEST(CtpGatewayAdapterTest, NormalizeMarketSnapshotKeepsValidValues) {
+    MarketSnapshot snapshot;
+    snapshot.instrument_id = "SHFE.ag2406";
+    snapshot.exchange_id = "SHFE";
+    snapshot.trading_day = "20260211";
+    snapshot.action_day = "";
+    snapshot.update_time = "09:31:05";
+    snapshot.update_millisec = 500;
+    snapshot.settlement_price = 4890.5;
+    snapshot.average_price_raw = 4888.0;
+
+    CtpGatewayAdapter::NormalizeMarketSnapshot(&snapshot);
+
+    EXPECT_EQ(snapshot.exchange_id, "SHFE");
+    EXPECT_EQ(snapshot.trading_day, "20260211");
+    EXPECT_EQ(snapshot.action_day, "20260211");
+    EXPECT_EQ(snapshot.update_millisec, 500);
+    EXPECT_DOUBLE_EQ(snapshot.settlement_price, 4890.5);
+    EXPECT_TRUE(snapshot.is_valid_settlement);
+    EXPECT_DOUBLE_EQ(snapshot.average_price_norm, 4888.0);
 }
 
 }  // namespace quant_hft

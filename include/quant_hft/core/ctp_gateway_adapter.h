@@ -27,6 +27,15 @@ struct CtpUserSessionInfo {
 // Phase-1 adapter skeleton for CTP v6.7.11.
 class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
 public:
+    using TradingAccountSnapshotCallback =
+        std::function<void(const TradingAccountSnapshot&)>;
+    using InvestorPositionSnapshotCallback =
+        std::function<void(const std::vector<InvestorPositionSnapshot>&)>;
+    using InstrumentMetaSnapshotCallback =
+        std::function<void(const std::vector<InstrumentMetaSnapshot>&)>;
+    using BrokerTradingParamsSnapshotCallback =
+        std::function<void(const BrokerTradingParamsSnapshot&)>;
+
     explicit CtpGatewayAdapter(std::size_t query_qps_limit = 10);
     ~CtpGatewayAdapter() override;
 
@@ -44,11 +53,28 @@ public:
 
     // v6.7.11 query entry (ReqQryUserSession) through scheduler.
     bool EnqueueUserSessionQuery(int request_id);
+    bool EnqueueTradingAccountQuery(int request_id);
+    bool EnqueueInvestorPositionQuery(int request_id);
+    bool EnqueueInstrumentQuery(int request_id);
+    bool EnqueueInstrumentMarginRateQuery(int request_id, const std::string& instrument_id);
+    bool EnqueueInstrumentCommissionRateQuery(int request_id, const std::string& instrument_id);
+    bool EnqueueBrokerTradingParamsQuery(int request_id);
+
+    void RegisterTradingAccountSnapshotCallback(TradingAccountSnapshotCallback callback);
+    void RegisterInvestorPositionSnapshotCallback(InvestorPositionSnapshotCallback callback);
+    void RegisterInstrumentMetaSnapshotCallback(InstrumentMetaSnapshotCallback callback);
+    void RegisterBrokerTradingParamsSnapshotCallback(
+        BrokerTradingParamsSnapshotCallback callback);
 
     CtpUserSessionInfo GetLastUserSession() const;
+    TradingAccountSnapshot GetLastTradingAccountSnapshot() const;
+    std::vector<InvestorPositionSnapshot> GetLastInvestorPositionSnapshots() const;
+    std::vector<InstrumentMetaSnapshot> GetLastInstrumentMetaSnapshots() const;
+    BrokerTradingParamsSnapshot GetLastBrokerTradingParamsSnapshot() const;
     void UpdateOffsetApplySrc(char apply_src);
     char GetOffsetApplySrc() const;
     std::string GetLastConnectDiagnostic() const;
+    static void NormalizeMarketSnapshot(MarketSnapshot* snapshot);
 
 private:
     friend class CtpMdSpi;
@@ -77,6 +103,7 @@ private:
     void TryMarkHealthyFromState();
     bool ReplayMarketDataSubscriptions();
     void DisconnectRealApi();
+    bool ExecuteTdQueryWithRetry(const std::function<int()>& request_fn) const;
     int NextRequestIdLocked();
     std::string NextOrderRefLocked();
 
@@ -93,6 +120,16 @@ private:
 
     QueryScheduler query_scheduler_;
     CtpUserSessionInfo user_session_;
+    TradingAccountSnapshot trading_account_snapshot_;
+    std::vector<InvestorPositionSnapshot> investor_position_snapshots_;
+    std::vector<InstrumentMetaSnapshot> instrument_meta_snapshots_;
+    BrokerTradingParamsSnapshot broker_trading_params_snapshot_;
+
+    TradingAccountSnapshotCallback trading_account_snapshot_callback_;
+    InvestorPositionSnapshotCallback investor_position_snapshot_callback_;
+    InstrumentMetaSnapshotCallback instrument_meta_snapshot_callback_;
+    BrokerTradingParamsSnapshotCallback broker_trading_params_snapshot_callback_;
+
     char offset_apply_src_{'0'};
     int front_id_{0};
     int session_id_{0};

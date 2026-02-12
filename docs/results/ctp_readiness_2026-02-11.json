@@ -1,0 +1,111 @@
+{
+  "generated_ts_ns": 1770822587743622827,
+  "scope": "core_engine + strategy_bridge + storage",
+  "overall_healthy": true,
+  "metadata": {
+    "evidence_type": "ctp_readiness",
+    "environment": "prodlike",
+    "service": "core_engine"
+  },
+  "slis": [
+    {
+      "name": "quant_hft_core_process_alive",
+      "slo_name": "quant_hft_core_process_alive",
+      "environment": "prodlike",
+      "service": "core_engine",
+      "value": 1.0,
+      "target": 1.0,
+      "unit": "bool",
+      "healthy": true,
+      "detail": "probe process stayed alive during collection"
+    },
+    {
+      "name": "quant_hft_strategy_bridge_latency_p99_ms",
+      "slo_name": "quant_hft_strategy_bridge_latency_p99_ms",
+      "environment": "prodlike",
+      "service": "core_engine",
+      "value": 250.0,
+      "target": 1500.0,
+      "unit": "ms",
+      "healthy": true,
+      "detail": "derived from reconnect recovery samples"
+    },
+    {
+      "name": "quant_hft_strategy_bridge_chain_integrity",
+      "slo_name": "quant_hft_strategy_bridge_chain_integrity",
+      "environment": "prodlike",
+      "service": "core_engine",
+      "value": 1.0,
+      "target": 1.0,
+      "unit": "bool",
+      "healthy": true,
+      "detail": "input=healthy"
+    },
+    {
+      "name": "quant_hft_storage_redis_health",
+      "slo_name": "quant_hft_storage_redis_health",
+      "environment": "prodlike",
+      "service": "core_engine",
+      "value": 1.0,
+      "target": 1.0,
+      "unit": "bool",
+      "healthy": true,
+      "detail": "input=ok"
+    },
+    {
+      "name": "quant_hft_storage_timescale_health",
+      "slo_name": "quant_hft_storage_timescale_health",
+      "environment": "prodlike",
+      "service": "core_engine",
+      "value": 1.0,
+      "target": 1.0,
+      "unit": "bool",
+      "healthy": true,
+      "detail": "input=ok"
+    },
+    {
+      "name": "quant_hft_ctp_query_latency_p99_ms",
+      "slo_name": "quant_hft_ctp_query_latency_p99_ms",
+      "environment": "prodlike",
+      "service": "core_engine",
+      "value": 180.0,
+      "target": 2000.0,
+      "unit": "ms",
+      "healthy": true,
+      "detail": "CTP ReqQry* to callback p99 latency"
+    },
+    {
+      "name": "quant_hft_ctp_flow_control_hits",
+      "slo_name": "quant_hft_ctp_flow_control_hits",
+      "environment": "prodlike",
+      "service": "core_engine",
+      "value": 2.0,
+      "target": 10.0,
+      "unit": "count",
+      "healthy": true,
+      "detail": "CTP flow-control and query-not-ready hits"
+    },
+    {
+      "name": "quant_hft_ctp_disconnect_recovery_success_rate",
+      "slo_name": "quant_hft_ctp_disconnect_recovery_success_rate",
+      "environment": "prodlike",
+      "service": "core_engine",
+      "value": 1.0,
+      "target": 0.99,
+      "unit": "ratio",
+      "healthy": true,
+      "detail": "CTP disconnect to healthy reconnect success rate"
+    },
+    {
+      "name": "quant_hft_ctp_reject_classified_ratio",
+      "slo_name": "quant_hft_ctp_reject_classified_ratio",
+      "environment": "prodlike",
+      "service": "core_engine",
+      "value": 1.0,
+      "target": 0.95,
+      "unit": "ratio",
+      "healthy": true,
+      "detail": "ratio of rejected orders with structured classification"
+    }
+  ]
+}

@@ -10,6 +10,9 @@ namespace quant_hft {
 struct CtpFileConfig {
     CtpRuntimeConfig runtime;
     int query_rate_limit_qps{10};
+    int account_query_interval_ms{2000};
+    int position_query_interval_ms{2000};
+    int instrument_query_interval_ms{30000};
     std::vector<std::string> instruments;
     std::vector<std::string> strategy_ids;
     int strategy_poll_interval_ms{200};

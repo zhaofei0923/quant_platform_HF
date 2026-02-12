@@ -27,9 +27,13 @@
 #include "quant_hft/services/basic_risk_engine.h"
 #include "quant_hft/services/execution_planner.h"
 #include "quant_hft/services/execution_router.h"
+#include "quant_hft/services/ctp_account_ledger.h"
+#include "quant_hft/services/ctp_position_ledger.h"
 #include "quant_hft/services/in_memory_portfolio_ledger.h"
 #include "quant_hft/services/order_state_machine.h"
+#include "quant_hft/services/bar_aggregator.h"
 #include "quant_hft/services/risk_policy_engine.h"
+#include "quant_hft/services/self_trade_risk_engine.h"
 #include "quant_hft/services/rule_market_state_engine.h"
 
 namespace {
@@ -110,6 +114,14 @@ bool ParseArgs(int argc,
     return true;
 }
 
+std::string InferExchangeId(const std::string& instrument_id) {
+    const auto dot_pos = instrument_id.find('.');
+    if (dot_pos == std::string::npos || dot_pos == 0) {
+        return "";
+    }
+    return instrument_id.substr(0, dot_pos);
+}
+
 std::vector<std::string> ResolveInstruments(const quant_hft::CtpFileConfig& config) {
     if (!config.instruments.empty()) {
         return config.instruments;
@@ -146,6 +158,9 @@ std::vector<quant_hft::RiskPolicyRule> BuildRiskPolicyRules(
         rule.max_order_notional = rule_cfg.max_order_notional;
         rule.max_active_orders = rule_cfg.max_active_orders;
         rule.max_position_notional = rule_cfg.max_position_notional;
+        rule.exchange_id = rule_cfg.exchange_id;
+        rule.max_cancel_count = rule_cfg.max_cancel_count;
+        rule.max_cancel_ratio = rule_cfg.max_cancel_ratio;
         rules.push_back(std::move(rule));
     }
     return rules;
@@ -183,10 +198,12 @@ quant_hft::RiskContext BuildRiskContext(
     quant_hft::RiskContext context;
     context.account_id = intent.account_id;
     context.instrument_id = intent.instrument_id;
+    context.exchange_id = InferExchangeId(intent.instrument_id);
     context.active_order_count = static_cast<std::int32_t>(order_state_machine.ActiveOrderCount());
     context.account_position_notional = EstimatePositionNotional(ledger, intent);
     context.account_cross_gross_notional = context.account_position_notional;
     context.account_cross_net_notional = context.account_position_notional;
+    context.submit_count = context.active_order_count;
     context.session_hhmm = -1;
     return context;
 }
@@ -215,6 +232,29 @@ quant_hft::OrderEvent BuildRejectedEvent(const quant_hft::OrderIntent& intent,
     event.slippage_bps = metadata.slippage_bps;
     event.impact_cost = metadata.impact_cost;
     return event;
+}
+
+quant_hft::PositionDirection ResolveLedgerDirection(const quant_hft::OrderIntent& intent) {
+    const bool is_close = intent.offset == quant_hft::OffsetFlag::kClose ||
+                          intent.offset == quant_hft::OffsetFlag::kCloseToday ||
+                          intent.offset == quant_hft::OffsetFlag::kCloseYesterday;
+    if (is_close) {
+        return intent.side == quant_hft::Side::kBuy ? quant_hft::PositionDirection::kShort
+                                                    : quant_hft::PositionDirection::kLong;
+    }
+    return intent.side == quant_hft::Side::kBuy ? quant_hft::PositionDirection::kLong
+                                                : quant_hft::PositionDirection::kShort;
+}
+
+quant_hft::CtpOrderIntentForLedger BuildCtpLedgerIntent(const quant_hft::OrderIntent& intent) {
+    quant_hft::CtpOrderIntentForLedger ledger_intent;
+    ledger_intent.client_order_id = intent.client_order_id;
+    ledger_intent.account_id = intent.account_id;
+    ledger_intent.instrument_id = intent.instrument_id;
+    ledger_intent.direction = ResolveLedgerDirection(intent);
+    ledger_intent.offset = intent.offset;
+    ledger_intent.requested_volume = intent.volume;
+    return ledger_intent;
 }
 
 bool IsTerminalStatus(quant_hft::OrderStatus status) {
@@ -254,17 +294,28 @@ int main(int argc, char** argv) {
     risk_defaults.max_order_notional = file_config.risk.default_max_order_notional;
     risk_defaults.max_active_orders = file_config.risk.default_max_active_orders;
     risk_defaults.max_position_notional = file_config.risk.default_max_position_notional;
+    risk_defaults.max_cancel_count = file_config.risk.default_max_cancel_count;
+    risk_defaults.max_cancel_ratio = file_config.risk.default_max_cancel_ratio;
     risk_defaults.policy_id = file_config.risk.default_policy_id;
     risk_defaults.policy_scope = file_config.risk.default_policy_scope;
     risk_defaults.decision_tags = file_config.risk.default_decision_tags;
     risk_defaults.rule_group = file_config.risk.default_rule_group;
     risk_defaults.rule_version = file_config.risk.default_rule_version;
     RiskPolicyEngine risk(risk_defaults, BuildRiskPolicyRules(file_config.risk));
+    SelfTradeRiskConfig self_trade_config;
+    self_trade_config.enabled = true;
+    self_trade_config.strict_mode = false;
+    self_trade_config.strict_mode_trigger_hits = 2;
+    SelfTradeRiskEngine self_trade_risk(self_trade_config);
     ExecutionPlanner execution_planner;
     ExecutionRouter execution_router;
     CtpGatewayAdapter ctp_gateway(10);
     InMemoryPortfolioLedger ledger;
+    CtpPositionLedger ctp_position_ledger;
+    CtpAccountLedger ctp_account_ledger;
     OrderStateMachine order_state_machine;
+    BarAggregator bar_aggregator;
+    std::mutex ctp_ledger_mutex;
     std::mutex planner_mutex;
     std::mutex execution_metadata_mutex;
     std::mutex market_history_mutex;
@@ -312,6 +363,8 @@ int main(int argc, char** argv) {
     TimescaleBufferedEventStore timeseries_store(pooled_timescale,
                                                  storage_retry_policy,
                                                  buffered_opts);
+    TimescaleEventStoreClientAdapter ctp_query_snapshot_store(pooled_timescale,
+                                                              storage_retry_policy);
     RuleMarketStateEngine market_state(32);
     LocalWalRegulatorySink wal_sink("runtime_events.wal");
 
@@ -358,6 +411,7 @@ int main(int argc, char** argv) {
             std::cerr << "order event dropped for " << event.client_order_id << '\n';
             return;
         }
+        self_trade_risk.OnOrderEvent(event);
         if (IsTerminalStatus(event.status)) {
             std::lock_guard<std::mutex> lock(cancel_pending_mutex);
             cancel_pending_orders.erase(event.client_order_id);
@@ -369,6 +423,15 @@ int main(int argc, char** argv) {
             execution_planner.RecordOrderResult(event.status == OrderStatus::kRejected);
         }
         ledger.OnOrderEvent(event);
+        {
+            std::string ctp_ledger_error;
+            std::lock_guard<std::mutex> lock(ctp_ledger_mutex);
+            if (!ctp_position_ledger.ApplyOrderEvent(event, &ctp_ledger_error) &&
+                ctp_ledger_error != "order intent not registered") {
+                std::cerr << "ctp position ledger apply failed order=" << event.client_order_id
+                          << " error=" << ctp_ledger_error << '\n';
+            }
+        }
         wal_sink.AppendOrderEvent(event);
         realtime_cache.UpsertOrderEvent(event);
         timeseries_store.AppendOrderEvent(event);
@@ -379,7 +442,14 @@ int main(int argc, char** argv) {
             ledger.GetPositionSnapshot(event.account_id, event.instrument_id, PositionDirection::kShort));
     };
 
-    auto process_market_snapshot = [&](const MarketSnapshot& snapshot) {
+    auto process_market_snapshot = [&](const MarketSnapshot& raw_snapshot) {
+        MarketSnapshot snapshot = raw_snapshot;
+        CtpGatewayAdapter::NormalizeMarketSnapshot(&snapshot);
+        if (!bar_aggregator.ShouldProcessSnapshot(snapshot)) {
+            return;
+        }
+        const auto bars = bar_aggregator.OnMarketSnapshot(snapshot);
+        (void)bars;
         {
             std::lock_guard<std::mutex> lock(market_history_mutex);
             auto& history = recent_market_history[snapshot.instrument_id];
@@ -397,6 +467,47 @@ int main(int argc, char** argv) {
         [&](const OrderEvent& event) { process_order_event(event); });
     ctp_gateway.RegisterMarketDataCallback(
         [&](const MarketSnapshot& snapshot) { process_market_snapshot(snapshot); });
+    ctp_gateway.RegisterTradingAccountSnapshotCallback(
+        [&](const TradingAccountSnapshot& snapshot) {
+            {
+                std::lock_guard<std::mutex> lock(ctp_ledger_mutex);
+                ctp_account_ledger.ApplyTradingAccountSnapshot(snapshot);
+                if (!snapshot.trading_day.empty()) {
+                    ctp_account_ledger.RollTradingDay(snapshot.trading_day);
+                }
+            }
+            ctp_query_snapshot_store.AppendTradingAccountSnapshot(snapshot);
+        });
+    ctp_gateway.RegisterInvestorPositionSnapshotCallback(
+        [&](const std::vector<InvestorPositionSnapshot>& snapshots) {
+            std::string ctp_ledger_error;
+            for (const auto& snapshot : snapshots) {
+                {
+                    std::lock_guard<std::mutex> lock(ctp_ledger_mutex);
+                    if (!ctp_position_ledger.ApplyInvestorPositionSnapshot(snapshot,
+                                                                           &ctp_ledger_error)) {
+                        std::cerr << "ctp position snapshot apply failed instrument="
+                                  << snapshot.instrument_id
+                                  << " error=" << ctp_ledger_error << '\n';
+                    }
+                }
+                ctp_query_snapshot_store.AppendInvestorPositionSnapshot(snapshot);
+            }
+        });
+    ctp_gateway.RegisterInstrumentMetaSnapshotCallback(
+        [&](const std::vector<InstrumentMetaSnapshot>& snapshots) {
+            for (const auto& snapshot : snapshots) {
+                ctp_query_snapshot_store.AppendInstrumentMetaSnapshot(snapshot);
+            }
+        });
+    ctp_gateway.RegisterBrokerTradingParamsSnapshotCallback(
+        [&](const BrokerTradingParamsSnapshot& snapshot) {
+            if (!snapshot.margin_price_type.empty()) {
+                std::lock_guard<std::mutex> lock(ctp_ledger_mutex);
+                ctp_account_ledger.SetMarginPriceType(snapshot.margin_price_type.front());
+            }
+            ctp_query_snapshot_store.AppendBrokerTradingParamsSnapshot(snapshot);
+        });
     market_state.RegisterStateCallback(
         [&](const StateSnapshot7D& state) { realtime_cache.UpsertStateSnapshot7D(state); });
 
@@ -417,6 +528,7 @@ int main(int argc, char** argv) {
     connect_cfg.reconnect_max_attempts = config.reconnect_max_attempts;
     connect_cfg.reconnect_initial_backoff_ms = config.reconnect_initial_backoff_ms;
     connect_cfg.reconnect_max_backoff_ms = config.reconnect_max_backoff_ms;
+    connect_cfg.query_retry_backoff_ms = config.query_retry_backoff_ms;
 
     if (!ctp_gateway.Connect(connect_cfg)) {
         std::cerr << "CTP gateway connect failed" << '\n';
@@ -431,11 +543,74 @@ int main(int argc, char** argv) {
         return 2;
     }
 
+    std::atomic<int> query_request_id{1};
+    auto next_query_request_id = [&query_request_id]() {
+        return query_request_id.fetch_add(1);
+    };
+    if (!ctp_gateway.EnqueueUserSessionQuery(next_query_request_id())) {
+        std::cerr << "warning: initial user session query failed" << '\n';
+    }
+    if (!ctp_gateway.EnqueueTradingAccountQuery(next_query_request_id())) {
+        std::cerr << "warning: initial trading account query failed" << '\n';
+    }
+    if (!ctp_gateway.EnqueueInvestorPositionQuery(next_query_request_id())) {
+        std::cerr << "warning: initial investor position query failed" << '\n';
+    }
+    if (!ctp_gateway.EnqueueInstrumentQuery(next_query_request_id())) {
+        std::cerr << "warning: initial instrument query failed" << '\n';
+    }
+    if (!ctp_gateway.EnqueueBrokerTradingParamsQuery(next_query_request_id())) {
+        std::cerr << "warning: initial broker trading params query failed" << '\n';
+    }
+    for (const auto& instrument_id : instruments) {
+        if (!ctp_gateway.EnqueueInstrumentMarginRateQuery(next_query_request_id(), instrument_id)) {
+            std::cerr << "warning: initial margin rate query failed for " << instrument_id << '\n';
+        }
+        if (!ctp_gateway.EnqueueInstrumentCommissionRateQuery(next_query_request_id(),
+                                                              instrument_id)) {
+            std::cerr << "warning: initial commission rate query failed for "
+                      << instrument_id << '\n';
+        }
+    }
+
     std::signal(SIGINT, OnSignal);
     std::signal(SIGTERM, OnSignal);
     g_stop_requested.store(false);
 
     std::atomic<bool> strategy_loop_stop{false};
+    std::atomic<bool> query_loop_stop{false};
+    std::thread query_poll_thread([&]() {
+        auto next_account_query = std::chrono::steady_clock::now();
+        auto next_position_query = std::chrono::steady_clock::now();
+        auto next_instrument_query = std::chrono::steady_clock::now();
+        while (!query_loop_stop.load()) {
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= next_account_query) {
+                (void)ctp_gateway.EnqueueTradingAccountQuery(next_query_request_id());
+                next_account_query =
+                    now + std::chrono::milliseconds(std::max(1, file_config.account_query_interval_ms));
+            }
+            if (now >= next_position_query) {
+                (void)ctp_gateway.EnqueueInvestorPositionQuery(next_query_request_id());
+                next_position_query =
+                    now + std::chrono::milliseconds(std::max(1, file_config.position_query_interval_ms));
+            }
+            if (now >= next_instrument_query) {
+                (void)ctp_gateway.EnqueueInstrumentQuery(next_query_request_id());
+                (void)ctp_gateway.EnqueueBrokerTradingParamsQuery(next_query_request_id());
+                for (const auto& instrument_id : instruments) {
+                    (void)ctp_gateway.EnqueueInstrumentMarginRateQuery(next_query_request_id(),
+                                                                       instrument_id);
+                    (void)ctp_gateway.EnqueueInstrumentCommissionRateQuery(next_query_request_id(),
+                                                                           instrument_id);
+                }
+                next_instrument_query = now + std::chrono::milliseconds(
+                                                  std::max(1, file_config.instrument_query_interval_ms));
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    });
+
     std::thread strategy_poll_thread([&]() {
         auto next_cancel_scan = std::chrono::steady_clock::now();
         while (!strategy_loop_stop.load()) {
@@ -511,6 +686,19 @@ int main(int argc, char** argv) {
                             continue;
                         }
 
+                        const auto self_trade_decision = self_trade_risk.PreCheck(intent);
+                        if (self_trade_decision.reason != "self_trade_check_pass" &&
+                            self_trade_decision.reason != "self_trade_check_disabled") {
+                            timeseries_store.AppendRiskDecision(intent, self_trade_decision);
+                        }
+                        if (self_trade_decision.action == RiskAction::kReject) {
+                            process_order_event(BuildRejectedEvent(
+                                intent,
+                                "self_trade_reject:" + self_trade_decision.reason,
+                                metadata));
+                            continue;
+                        }
+
                         const auto context = BuildRiskContext(intent, ledger, order_state_machine);
                         const auto decision = risk.PreCheck(intent, context);
                         timeseries_store.AppendRiskDecision(intent, decision);
@@ -521,10 +709,26 @@ int main(int argc, char** argv) {
                         } else if (!order_state_machine.OnOrderIntent(intent)) {
                             process_order_event(BuildRejectedEvent(
                                 intent, "order_state_reject:duplicate_or_invalid", metadata));
-                        } else if (!ctp_gateway.PlaceOrder(intent)) {
-                            process_order_event(BuildRejectedEvent(
-                                intent, "gateway_reject:place_order_failed", metadata));
                         } else {
+                            std::string ctp_ledger_error;
+                            {
+                                const auto ledger_intent = BuildCtpLedgerIntent(intent);
+                                std::lock_guard<std::mutex> lock(ctp_ledger_mutex);
+                                if (!ctp_position_ledger.RegisterOrderIntent(ledger_intent,
+                                                                             &ctp_ledger_error)) {
+                                    process_order_event(BuildRejectedEvent(
+                                        intent,
+                                        "position_ledger_reject:" + ctp_ledger_error,
+                                        metadata));
+                                    continue;
+                                }
+                            }
+                            if (!ctp_gateway.PlaceOrder(intent)) {
+                                process_order_event(BuildRejectedEvent(
+                                    intent, "gateway_reject:place_order_failed", metadata));
+                                continue;
+                            }
+                            self_trade_risk.RecordAcceptedOrder(intent);
                             std::lock_guard<std::mutex> lock(planner_mutex);
                             execution_planner.RecordOrderResult(false);
                         }
@@ -603,6 +807,11 @@ int main(int argc, char** argv) {
                 snapshot.bid_volume_1 = 20 + static_cast<std::int64_t>(synthetic_tick % 5);
                 snapshot.ask_volume_1 = 15 + static_cast<std::int64_t>(synthetic_tick % 4);
                 snapshot.volume = 100 + static_cast<std::int64_t>(synthetic_tick);
+                snapshot.exchange_id = InferExchangeId(snapshot.instrument_id);
+                snapshot.trading_day = "19700101";
+                snapshot.action_day = "19700101";
+                snapshot.update_time = "09:30:00";
+                snapshot.update_millisec = static_cast<std::int32_t>(synthetic_tick % 1000);
                 snapshot.exchange_ts_ns = NowEpochNanos();
                 snapshot.recv_ts_ns = snapshot.exchange_ts_ns;
                 process_market_snapshot(snapshot);
@@ -617,8 +826,13 @@ int main(int argc, char** argv) {
     if (strategy_poll_thread.joinable()) {
         strategy_poll_thread.join();
     }
+    query_loop_stop.store(true);
+    if (query_poll_thread.joinable()) {
+        query_poll_thread.join();
+    }
 
     ctp_gateway.Disconnect();
+    (void)bar_aggregator.Flush();
     timeseries_store.Flush();
     wal_sink.Flush();
 

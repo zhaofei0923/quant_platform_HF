@@ -25,6 +25,7 @@ struct MarketDataConnectConfig {
     int reconnect_max_attempts{8};
     int reconnect_initial_backoff_ms{500};
     int reconnect_max_backoff_ms{8'000};
+    int query_retry_backoff_ms{200};
 };
 
 class IMarketDataGateway {

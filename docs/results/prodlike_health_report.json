@@ -1,5 +1,5 @@
 {
-  "generated_ts_ns": 1770805284529209293,
+  "generated_ts_ns": 1770813799914195382,
   "healthy": true,
   "severity": "info",
   "classification": "healthy",
@@ -13,6 +13,26 @@
   "missing_services": [],
   "unhealthy_services": [],
   "service_states": {
+    "alertmanager": {
+      "state": "running",
+      "health": ""
+    },
+    "grafana": {
+      "state": "running",
+      "health": ""
+    },
+    "loki": {
+      "state": "running",
+      "health": ""
+    },
+    "minio": {
+      "state": "running",
+      "health": ""
+    },
+    "prometheus": {
+      "state": "running",
+      "health": ""
+    },
     "redis-primary": {
       "state": "running",
       "health": "healthy"
@@ -21,39 +41,15 @@
       "state": "running",
       "health": "healthy"
     },
-    "redis-sentinel": {
+    "tempo": {
       "state": "running",
-      "health": "healthy"
+      "health": ""
     },
     "timescale-primary": {
       "state": "running",
       "health": "healthy"
     },
     "timescale-replica": {
-      "state": "running",
-      "health": "healthy"
-    },
-    "prometheus": {
-      "state": "running",
-      "health": "healthy"
-    },
-    "alertmanager": {
-      "state": "running",
-      "health": "healthy"
-    },
-    "loki": {
-      "state": "running",
-      "health": "healthy"
-    },
-    "tempo": {
-      "state": "running",
-      "health": "healthy"
-    },
-    "grafana": {
-      "state": "running",
-      "health": "healthy"
-    },
-    "minio": {
       "state": "running",
       "health": "healthy"
     }

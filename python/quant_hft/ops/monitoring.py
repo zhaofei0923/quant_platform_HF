@@ -262,6 +262,14 @@ def build_ops_health_report(
     core_process_alive: bool,
     redis_health: str = "unknown",
     timescale_health: str = "unknown",
+    ctp_query_latency_ms: float | None = None,
+    ctp_query_latency_target_ms: float = 2000.0,
+    ctp_flow_control_hits: float | None = None,
+    ctp_flow_control_hits_target: float = 10.0,
+    ctp_disconnect_recovery_success_rate: float | None = None,
+    ctp_disconnect_recovery_target: float = 0.99,
+    ctp_reject_classified_ratio: float | None = None,
+    ctp_reject_classified_target: float = 0.95,
     scope: str = "core_engine + strategy_bridge + storage",
     environment: str = "unknown",
     service: str = "core_engine",
@@ -274,6 +282,14 @@ def build_ops_health_report(
     )
     if effective_config.strategy_bridge_latency_target_ms <= 0:
         raise ValueError("strategy_bridge_target_ms must be > 0")
+    if ctp_query_latency_target_ms <= 0:
+        raise ValueError("ctp_query_latency_target_ms must be > 0")
+    if ctp_flow_control_hits_target < 0:
+        raise ValueError("ctp_flow_control_hits_target must be >= 0")
+    if ctp_disconnect_recovery_target < 0 or ctp_disconnect_recovery_target > 1:
+        raise ValueError("ctp_disconnect_recovery_target must be in [0, 1]")
+    if ctp_reject_classified_target < 0 or ctp_reject_classified_target > 1:
+        raise ValueError("ctp_reject_classified_target must be in [0, 1]")
     now_ns = int((now_ns_fn or time.time_ns)())
     slis: list[SliRecord] = []
     slis.append(
@@ -352,6 +368,70 @@ def build_ops_health_report(
             detail=f"input={timescale_health}",
         )
     )
+
+    if ctp_query_latency_ms is not None:
+        query_latency_healthy = ctp_query_latency_ms <= ctp_query_latency_target_ms
+        slis.append(
+            SliRecord(
+                name=with_prefix("ctp_query_latency_p99_ms"),
+                slo_name=with_prefix("ctp_query_latency_p99_ms"),
+                environment=environment,
+                service=service,
+                value=ctp_query_latency_ms,
+                target=ctp_query_latency_target_ms,
+                unit="ms",
+                healthy=query_latency_healthy,
+                detail="CTP ReqQry* to callback p99 latency",
+            )
+        )
+
+    if ctp_flow_control_hits is not None:
+        flow_control_healthy = ctp_flow_control_hits <= ctp_flow_control_hits_target
+        slis.append(
+            SliRecord(
+                name=with_prefix("ctp_flow_control_hits"),
+                slo_name=with_prefix("ctp_flow_control_hits"),
+                environment=environment,
+                service=service,
+                value=ctp_flow_control_hits,
+                target=ctp_flow_control_hits_target,
+                unit="count",
+                healthy=flow_control_healthy,
+                detail="CTP flow-control and query-not-ready hits",
+            )
+        )
+
+    if ctp_disconnect_recovery_success_rate is not None:
+        recovery_healthy = ctp_disconnect_recovery_success_rate >= ctp_disconnect_recovery_target
+        slis.append(
+            SliRecord(
+                name=with_prefix("ctp_disconnect_recovery_success_rate"),
+                slo_name=with_prefix("ctp_disconnect_recovery_success_rate"),
+                environment=environment,
+                service=service,
+                value=ctp_disconnect_recovery_success_rate,
+                target=ctp_disconnect_recovery_target,
+                unit="ratio",
+                healthy=recovery_healthy,
+                detail="CTP disconnect to healthy reconnect success rate",
+            )
+        )
+
+    if ctp_reject_classified_ratio is not None:
+        reject_classified_healthy = ctp_reject_classified_ratio >= ctp_reject_classified_target
+        slis.append(
+            SliRecord(
+                name=with_prefix("ctp_reject_classified_ratio"),
+                slo_name=with_prefix("ctp_reject_classified_ratio"),
+                environment=environment,
+                service=service,
+                value=ctp_reject_classified_ratio,
+                target=ctp_reject_classified_target,
+                unit="ratio",
+                healthy=reject_classified_healthy,
+                detail="ratio of rejected orders with structured classification",
+            )
+        )
 
     overall_healthy = all(item.healthy for item in slis)
     return OpsHealthReport(

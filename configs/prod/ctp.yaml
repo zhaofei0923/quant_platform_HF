@@ -10,16 +10,15 @@ ctp:
   # Auto-failover: runtime will automatically try
   #   group2 TD=30002, MD=30012
   #   group3 TD=30003, MD=30013
-  broker_id: "9999"
-  user_id: "191202"
-  investor_id: "191202"
-  market_front: "tcp://182.254.243.31:30011"
-  trader_front: "tcp://182.254.243.31:30001"
+  broker_id: "${CTP_PROD_BROKER_ID}"
+  user_id: "${CTP_PROD_USER_ID}"
+  investor_id: "${CTP_PROD_INVESTOR_ID}"
+  market_front: "${CTP_PROD_MARKET_FRONT}"
+  trader_front: "${CTP_PROD_TRADER_FRONT}"
 
-  password: "zhaoFEI202601*"
-  password_env: "CTP_PROD_PASSWORD"
-  auth_code: "0000000000000000"
-  app_id: "simnow_client_test"
+  password: "${CTP_PROD_PASSWORD}"
+  auth_code: "${CTP_PROD_AUTH_CODE}"
+  app_id: "${CTP_PROD_APP_ID}"
 
   query_rate_limit_qps: 10
   query_rate_per_sec: 5
@@ -47,9 +46,9 @@ ctp:
   breaker_account_enabled: true
   breaker_system_enabled: true
   recovery_quiet_period_ms: 3000
-  kafka_bootstrap_servers: "<kafka_bootstrap_servers>"
+  kafka_bootstrap_servers: "${KAFKA_BOOTSTRAP_SERVERS}"
   kafka_topic_ticks: "market.ticks.v1"
-  clickhouse_dsn: "<clickhouse_dsn>"
+  clickhouse_dsn: "${CLICKHOUSE_DSN}"
   audit_hot_days: 7
   audit_cold_days: 180
   connect_timeout_ms: 10000

@@ -5,11 +5,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=kevin0923
-Group=kevin0923
-WorkingDirectory=/home/kevin0923/workspace/quant_platform_HF
-EnvironmentFile=-/home/kevin0923/workspace/quant_platform_HF/deploy/systemd/quant-hft-core-engine.env
-ExecStart=/home/kevin0923/workspace/quant_platform_HF/build/core_engine /home/kevin0923/workspace/quant_platform_HF/configs/sim/ctp.yaml
+WorkingDirectory=/
+Environment=QUANT_ROOT=/opt/quant_platform_HF
+Environment=CTP_CONFIG_PATH=
+EnvironmentFile=-/etc/quant/platform.conf
+EnvironmentFile=-/etc/quant/quant-hft-core-engine.env
+ExecStart=/bin/bash -lc ': "${QUANT_ROOT:?QUANT_ROOT is required}"; CONFIG_PATH="${CTP_CONFIG_PATH:-${QUANT_ROOT}/configs/sim/ctp.yaml}"; "${QUANT_ROOT}/build/core_engine" "${CONFIG_PATH}"'
 Restart=always
 RestartSec=2
 LimitNOFILE=65535

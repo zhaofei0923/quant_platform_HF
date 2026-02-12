@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 QUANT_ROOT="${QUANT_ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
+export QUANT_ROOT
 
 TRADING_DAY="${TRADING_DAY:-}"
 CTP_CONFIG_PATH="${CTP_CONFIG_PATH:-${QUANT_ROOT}/configs/prod/ctp.yaml}"

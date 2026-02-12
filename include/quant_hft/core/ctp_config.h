@@ -1,9 +1,32 @@
 #pragma once
 
+#include <cstdlib>
+#include <regex>
 #include <string>
 #include <vector>
 
 namespace quant_hft {
+
+inline std::string GetEnvOrDefault(const char* var, const std::string& def) {
+    if (var == nullptr || std::string(var).empty()) {
+        return def;
+    }
+    const char* value = std::getenv(var);
+    return value == nullptr ? def : std::string(value);
+}
+
+inline std::string ResolveEnvVars(const std::string& input) {
+    std::string result = input;
+    static const std::regex env_pattern(R"(\$\{([^}]+)\})");
+    std::smatch match;
+    while (std::regex_search(result, match, env_pattern)) {
+        const auto var_name = match[1].str();
+        const char* env_val = std::getenv(var_name.c_str());
+        const std::string replacement = env_val == nullptr ? "" : std::string(env_val);
+        result.replace(match.position(0), match.length(0), replacement);
+    }
+    return result;
+}
 
 enum class CtpEnvironment {
     kSimNow,

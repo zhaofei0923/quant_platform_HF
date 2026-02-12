@@ -67,3 +67,40 @@ def test_check_prodlike_health_fails_on_missing_or_unhealthy(tmp_path: Path) -> 
     assert payload["healthy"] is False
     assert payload["profile"] == "single-host"
     assert payload["missing_services"]
+
+
+def test_check_prodlike_health_single_host_m2_defaults(tmp_path: Path) -> None:
+    ps_file = tmp_path / "ps.json"
+    ps_file.write_text(
+        json.dumps(
+            [
+                {"Service": "redis-primary", "State": "running", "Health": "healthy"},
+                {"Service": "timescale-primary", "State": "running", "Health": "healthy"},
+                {"Service": "prometheus", "State": "running", "Health": "healthy"},
+                {"Service": "grafana", "State": "running", "Health": "healthy"},
+                {"Service": "minio", "State": "running", "Health": "healthy"},
+                {"Service": "kafka", "State": "running", "Health": "healthy"},
+                {"Service": "kafka-connect", "State": "running", "Health": "healthy"},
+                {"Service": "clickhouse", "State": "running", "Health": "healthy"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    report_file = tmp_path / "health-m2.json"
+
+    command = [
+        sys.executable,
+        "scripts/infra/check_prodlike_health.py",
+        "--profile",
+        "single-host-m2",
+        "--ps-json-file",
+        str(ps_file),
+        "--report-json",
+        str(report_file),
+    ]
+    completed = subprocess.run(command, check=False, capture_output=True, text=True)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    payload = json.loads(report_file.read_text(encoding="utf-8"))
+    assert payload["healthy"] is True
+    assert payload["profile"] == "single-host-m2"
+    assert payload["compose_file"] == "infra/docker-compose.single-host.m2.yaml"

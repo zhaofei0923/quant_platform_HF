@@ -1,0 +1,29 @@
+{
+  "name": "quant_hft_trading_core_cdc",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "tasks.max": "1",
+    "database.hostname": "timescale-primary",
+    "database.port": "5432",
+    "database.user": "quant_hft",
+    "database.password": "quant_hft",
+    "database.dbname": "quant_hft",
+    "topic.prefix": "quant_hft",
+    "plugin.name": "pgoutput",
+    "slot.name": "quant_hft_trading_core_slot",
+    "publication.name": "quant_hft_trading_core_pub",
+    "publication.autocreate.mode": "filtered",
+    "schema.include.list": "trading_core",
+    "table.include.list": "trading_core.order_events,trading_core.trade_events,trading_core.account_snapshots,trading_core.position_snapshots",
+    "snapshot.mode": "initial",
+    "tombstones.on.delete": "false",
+    "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "key.converter.schemas.enable": "false",
+    "value.converter.schemas.enable": "false",
+    "transforms": "unwrap",
+    "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
+    "transforms.unwrap.drop.tombstones": "true",
+    "transforms.unwrap.delete.handling.mode": "rewrite"
+  }
+}

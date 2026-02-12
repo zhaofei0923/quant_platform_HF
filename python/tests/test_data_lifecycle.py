@@ -96,3 +96,68 @@ def test_run_lifecycle_script_execute_moves_warm_and_cold_files(tmp_path: Path) 
     assert not (source / "cold.log").exists()
     assert (warm_dir / "warm.log").exists()
     assert (cold_dir / "cold.log").exists()
+
+
+def test_run_lifecycle_script_object_store_mode_moves_and_deletes(tmp_path: Path) -> None:
+    now_seconds = 1_735_689_600.0  # 2025-01-01T00:00:00Z
+    archive_root = tmp_path / "archive" / "quant-archive"
+    hot_old = (
+        archive_root / "parquet" / "market_snapshots" / "hot" / "dt=2024-11-01" / "part.parquet"
+    )
+    warm_old = (
+        archive_root / "parquet" / "market_snapshots" / "warm" / "dt=2024-06-01" / "part.parquet"
+    )
+    cold_expired = (
+        archive_root / "parquet" / "market_snapshots" / "cold" / "dt=2023-01-01" / "part.parquet"
+    )
+    for path in (hot_old, warm_old, cold_expired):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("payload\n", encoding="utf-8")
+
+    policies = {
+        "market": {
+            "base_prefix": "parquet/market_snapshots",
+            "hot_retention_days": 7,
+            "warm_retention_days": 90,
+            "cold_retention_days": 365,
+            "delete_after_days": 365,
+        }
+    }
+    policies_file = tmp_path / "policies.yaml"
+    policies_file.write_text(json.dumps(policies), encoding="utf-8")
+    report_file = tmp_path / "object-lifecycle.json"
+
+    cmd = [
+        sys.executable,
+        "scripts/data_pipeline/run_lifecycle.py",
+        "--mode",
+        "object-store",
+        "--archive-bucket",
+        "quant-archive",
+        "--archive-local-dir",
+        str(tmp_path / "archive"),
+        "--policies-file",
+        str(policies_file),
+        "--report-json",
+        str(report_file),
+        "--execute",
+        "--now-epoch-seconds",
+        str(now_seconds),
+    ]
+    completed = subprocess.run(cmd, check=False, capture_output=True, text=True)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+    payload = json.loads(report_file.read_text(encoding="utf-8"))
+    assert payload["mode"] == "object-store"
+    assert payload["moved_objects"] >= 2
+    assert payload["deleted_objects"] >= 1
+
+    assert (
+        archive_root / "parquet" / "market_snapshots" / "warm" / "dt=2024-11-01" / "part.parquet"
+    ).exists()
+    assert (
+        archive_root / "parquet" / "market_snapshots" / "cold" / "dt=2024-06-01" / "part.parquet"
+    ).exists()
+    assert not (
+        archive_root / "parquet" / "market_snapshots" / "cold" / "dt=2023-01-01" / "part.parquet"
+    ).exists()

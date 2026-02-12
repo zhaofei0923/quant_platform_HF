@@ -271,6 +271,16 @@ def build_ops_health_report(
     ctp_disconnect_recovery_target: float = 0.99,
     ctp_reject_classified_ratio: float | None = None,
     ctp_reject_classified_target: float = 0.95,
+    kafka_publish_success_rate: float | None = None,
+    kafka_publish_success_target: float = 0.99,
+    kafka_spool_backlog: float | None = None,
+    kafka_spool_backlog_target: float = 1000.0,
+    cdc_lag_seconds: float | None = None,
+    cdc_lag_target_seconds: float = 5.0,
+    clickhouse_ingest_lag_seconds: float | None = None,
+    clickhouse_ingest_lag_target_seconds: float = 3.0,
+    parquet_lifecycle_success: float | None = None,
+    parquet_lifecycle_success_target: float = 1.0,
     scope: str = "core_engine + strategy_bridge + storage",
     environment: str = "unknown",
     service: str = "core_engine",
@@ -291,6 +301,16 @@ def build_ops_health_report(
         raise ValueError("ctp_disconnect_recovery_target must be in [0, 1]")
     if ctp_reject_classified_target < 0 or ctp_reject_classified_target > 1:
         raise ValueError("ctp_reject_classified_target must be in [0, 1]")
+    if kafka_publish_success_target < 0 or kafka_publish_success_target > 1:
+        raise ValueError("kafka_publish_success_target must be in [0, 1]")
+    if kafka_spool_backlog_target < 0:
+        raise ValueError("kafka_spool_backlog_target must be >= 0")
+    if cdc_lag_target_seconds < 0:
+        raise ValueError("cdc_lag_target_seconds must be >= 0")
+    if clickhouse_ingest_lag_target_seconds < 0:
+        raise ValueError("clickhouse_ingest_lag_target_seconds must be >= 0")
+    if parquet_lifecycle_success_target < 0 or parquet_lifecycle_success_target > 1:
+        raise ValueError("parquet_lifecycle_success_target must be in [0, 1]")
     now_ns = int((now_ns_fn or time.time_ns)())
     slis: list[SliRecord] = []
     slis.append(
@@ -447,6 +467,88 @@ def build_ops_health_report(
                 unit="ratio",
                 healthy=reject_classified_healthy,
                 detail="ratio of rejected orders with structured classification",
+            )
+        )
+
+    if kafka_publish_success_rate is not None:
+        kafka_publish_healthy = kafka_publish_success_rate >= kafka_publish_success_target
+        slis.append(
+            SliRecord(
+                name=with_prefix("kafka_publish_success_rate"),
+                slo_name=with_prefix("kafka_publish_success_rate"),
+                environment=environment,
+                service=service,
+                value=kafka_publish_success_rate,
+                target=kafka_publish_success_target,
+                unit="ratio",
+                healthy=kafka_publish_healthy,
+                detail="market snapshot publish success ratio to Kafka topic",
+            )
+        )
+
+    if kafka_spool_backlog is not None:
+        kafka_spool_healthy = kafka_spool_backlog <= kafka_spool_backlog_target
+        slis.append(
+            SliRecord(
+                name=with_prefix("kafka_spool_backlog"),
+                slo_name=with_prefix("kafka_spool_backlog"),
+                environment=environment,
+                service=service,
+                value=kafka_spool_backlog,
+                target=kafka_spool_backlog_target,
+                unit="count",
+                healthy=kafka_spool_healthy,
+                detail="local market bus spool backlog entries",
+            )
+        )
+
+    if cdc_lag_seconds is not None:
+        cdc_lag_healthy = cdc_lag_seconds <= cdc_lag_target_seconds
+        slis.append(
+            SliRecord(
+                name=with_prefix("cdc_lag_seconds"),
+                slo_name=with_prefix("cdc_lag_seconds"),
+                environment=environment,
+                service=service,
+                value=cdc_lag_seconds,
+                target=cdc_lag_target_seconds,
+                unit="seconds",
+                healthy=cdc_lag_healthy,
+                detail="trading_core CDC lag from PostgreSQL to ClickHouse",
+            )
+        )
+
+    if clickhouse_ingest_lag_seconds is not None:
+        clickhouse_lag_healthy = (
+            clickhouse_ingest_lag_seconds <= clickhouse_ingest_lag_target_seconds
+        )
+        slis.append(
+            SliRecord(
+                name=with_prefix("clickhouse_ingest_lag_seconds"),
+                slo_name=with_prefix("clickhouse_ingest_lag_seconds"),
+                environment=environment,
+                service=service,
+                value=clickhouse_ingest_lag_seconds,
+                target=clickhouse_ingest_lag_target_seconds,
+                unit="seconds",
+                healthy=clickhouse_lag_healthy,
+                detail="Kafka to ClickHouse ingestion lag",
+            )
+        )
+
+    if parquet_lifecycle_success is not None:
+        lifecycle_healthy = parquet_lifecycle_success >= parquet_lifecycle_success_target
+        slis.append(
+            SliRecord(
+                name=with_prefix("parquet_lifecycle_success"),
+                slo_name=with_prefix("parquet_lifecycle_success"),
+                environment=environment,
+                service=service,
+                value=parquet_lifecycle_success,
+                target=parquet_lifecycle_success_target,
+                unit="ratio",
+                healthy=lifecycle_healthy,
+                detail="daily parquet lifecycle task success ratio",
             )
         )
 

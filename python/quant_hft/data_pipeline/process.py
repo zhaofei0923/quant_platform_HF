@@ -3,11 +3,14 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from quant_hft.data_pipeline.adapters import DuckDbAnalyticsStore, MinioArchiveStore
+from quant_hft.data_pipeline.adapters import (
+    DuckDbAnalyticsStore,
+    MinioArchiveStore,
+)
 from quant_hft.data_pipeline.data_dictionary import DataDictionary
 from quant_hft.ops.monitoring import InMemoryObservability
 
@@ -31,6 +34,25 @@ class DataPipelineConfig:
     interval_seconds: float = 60.0
     archive_prefix: str = "etl"
     export_tables: tuple[str, ...] = ("market_snapshots", "order_events")
+    parquet_export_enabled: bool = False
+    parquet_tables: tuple[str, ...] = (
+        "market_snapshots",
+        "order_events",
+        "trade_events",
+        "account_snapshots",
+        "position_snapshots",
+    )
+    parquet_partition_keys: dict[str, tuple[str, ...]] = field(
+        default_factory=lambda: {
+            "market_snapshots": ("dt", "instrument_id"),
+            "order_events": ("trade_date", "instrument_id"),
+            "trade_events": ("trade_date", "instrument_id"),
+            "account_snapshots": ("trade_date", "account_id"),
+            "position_snapshots": ("trade_date", "account_id"),
+        }
+    )
+    parquet_compression: str = "zstd"
+    parquet_archive_prefix: str = "parquet"
     max_run_latency_ms: float = 2_000.0
     min_total_export_rows: int = 1
     min_archived_objects: int = 1
@@ -91,6 +113,7 @@ class DataPipelineProcess:
 
         exported_rows: dict[str, int] = {}
         exported_files: dict[str, Path] = {}
+        parquet_artifacts: dict[str, list[dict[str, object]]] = {}
         archived_names: list[str] = []
         run_latency_ms = 0.0
         alert_codes: tuple[str, ...] = ()
@@ -147,6 +170,40 @@ class DataPipelineProcess:
                         }
                     )
 
+            if self._config.parquet_export_enabled:
+                parquet_object_base = (
+                    f"{self._config.parquet_archive_prefix.strip('/')}/{run_id}".strip("/")
+                )
+                for table in self._config.parquet_tables:
+                    partition_keys = self._config.parquet_partition_keys.get(table, ())
+                    if not partition_keys:
+                        continue
+                    table_root = export_root / "parquet" / table
+                    artifacts = self._store.export_table_to_parquet_partitions(
+                        table,
+                        table_root,
+                        partition_keys=partition_keys,
+                        compression=self._config.parquet_compression,
+                    )
+                    parquet_artifacts[table] = [
+                        {
+                            "relative_path": artifact.relative_path,
+                            "row_count": artifact.row_count,
+                            "sha256": artifact.sha256,
+                            "min_ts_ns": artifact.min_ts_ns,
+                            "max_ts_ns": artifact.max_ts_ns,
+                            "format": artifact.format,
+                        }
+                        for artifact in artifacts
+                    ]
+                    for artifact in artifacts:
+                        local_path = table_root / artifact.relative_path
+                        object_name = (
+                            f"{parquet_object_base}/{table}/hot/{artifact.relative_path}".strip("/")
+                        )
+                        self._archive.put_file(object_name, local_path)
+                        archived_names.append(object_name)
+
             manifest_path = export_root / "manifest.json"
             run_latency_ms = (time.perf_counter_ns() - started_perf_ns) / 1_000_000.0
             data_dictionary_violations = self._validate_data_dictionary()
@@ -168,6 +225,13 @@ class DataPipelineProcess:
                 "archive_prefix": object_base,
                 "archive_bucket": self._config.archive.bucket,
                 "archive_mode": self._archive.mode,
+                "parquet_export_enabled": self._config.parquet_export_enabled,
+                "parquet_archive_prefix": (
+                    f"{self._config.parquet_archive_prefix.strip('/')}/{run_id}".strip("/")
+                    if self._config.parquet_export_enabled
+                    else ""
+                ),
+                "parquet_partitions": parquet_artifacts,
                 "archive_objects": archived_names + [f"{object_base}/manifest.json"],
             }
             manifest_path.write_text(

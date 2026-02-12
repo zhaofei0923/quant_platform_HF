@@ -236,6 +236,63 @@ cmake -S . -B build \
 cmake --build build -j
 ```
 
+## Single-Host M2 (Kafka + ClickHouse + Debezium + Parquet)
+
+M2 profile adds Kafka market bus, ClickHouse realtime/CDC analytics, and Parquet lifecycle governance:
+
+```bash
+bash scripts/infra/bootstrap_prodlike.sh \
+  --profile single-host-m2 \
+  --execute \
+  --output-file docs/results/prodlike_bootstrap_result.env
+
+python3 scripts/infra/check_prodlike_health.py \
+  --profile single-host-m2 \
+  --report-json docs/results/prodlike_health_report.json
+```
+
+Initialize Kafka topics and ClickHouse schema (standalone rerun):
+
+```bash
+bash scripts/infra/init_kafka_topics.sh --execute
+bash scripts/infra/init_clickhouse_schema.sh --execute
+```
+
+Register and check Debezium connector:
+
+```bash
+bash scripts/infra/register_debezium_connectors.sh \
+  --connector-file infra/debezium/connectors/trading_core.json \
+  --execute
+
+python3 scripts/infra/check_debezium_connectors.py \
+  --output-json docs/results/debezium_connectors_health_report.json
+```
+
+Replay market bus spool and run Parquet lifecycle:
+
+```bash
+python3 scripts/ops/replay_market_bus_spool.py --execute
+
+python3 scripts/data_pipeline/export_parquet_partitions.py \
+  --execute \
+  --report-json docs/results/parquet_partitions_report.json
+
+python3 scripts/data_pipeline/run_lifecycle.py \
+  --mode object-store \
+  --execute \
+  --report-json docs/results/data_lifecycle_report.json
+```
+
+Verify evidence chain:
+
+```bash
+python3 scripts/ops/verify_m2_dataflow_evidence.py \
+  --ops-health-json docs/results/ctp_readiness.json \
+  --reconcile-json docs/results/data_reconcile_report.json \
+  --lifecycle-json docs/results/data_lifecycle_report.json
+```
+
 ## Repository Multi-Host Failover Drill
 
 Run multi-host bootstrap + failover orchestration with machine-verifiable evidence:

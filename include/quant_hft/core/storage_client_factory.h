@@ -6,6 +6,7 @@
 #include "quant_hft/core/redis_hash_client.h"
 #include "quant_hft/core/storage_connection_config.h"
 #include "quant_hft/core/timescale_sql_client.h"
+#include "quant_hft/interfaces/market_bus_producer.h"
 
 namespace quant_hft {
 
@@ -16,6 +17,14 @@ public:
         std::string* error);
 
     static std::shared_ptr<ITimescaleSqlClient> CreateTimescaleClient(
+        const StorageConnectionConfig& config,
+        std::string* error);
+
+    static std::shared_ptr<IMarketBusProducer> CreateMarketBusProducer(
+        const StorageConnectionConfig& config,
+        std::string* error);
+
+    static bool CheckClickHouseHealth(
         const StorageConnectionConfig& config,
         std::string* error);
 };

@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-_DEFAULT_REQUIRED = (
+_SINGLE_HOST_REQUIRED = (
     "redis-primary",
     "timescale-primary",
     "kafka",
@@ -19,6 +19,25 @@ _DEFAULT_REQUIRED = (
     "minio",
 )
 
+_SINGLE_HOST_M2_REQUIRED = (
+    "redis-primary",
+    "timescale-primary",
+    "prometheus",
+    "grafana",
+    "minio",
+    "kafka",
+    "kafka-connect",
+    "clickhouse",
+)
+
+_PRODLIKE_REQUIRED = _SINGLE_HOST_REQUIRED
+
+_REQUIRED_BY_PROFILE = {
+    "single-host": _SINGLE_HOST_REQUIRED,
+    "single-host-m2": _SINGLE_HOST_M2_REQUIRED,
+    "prodlike": _PRODLIKE_REQUIRED,
+}
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -27,7 +46,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--profile",
         default="single-host",
-        choices=("single-host", "prodlike"),
+        choices=("single-host", "single-host-m2", "prodlike"),
         help="Deployment profile used to derive compose/project defaults",
     )
     parser.add_argument("--ps-json-file", default="")
@@ -37,7 +56,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--report-json", default="docs/results/prodlike_health_report.json")
     parser.add_argument(
         "--required-services",
-        default=",".join(_DEFAULT_REQUIRED),
+        default="",
         help="Comma-separated service names that must be present and healthy",
     )
     return parser.parse_args()
@@ -112,17 +131,24 @@ def _is_service_healthy(state: str, health: str) -> bool:
 def main() -> int:
     args = _parse_args()
     if not args.compose_file:
-        args.compose_file = (
-            "infra/docker-compose.single-host.yaml"
-            if args.profile == "single-host"
-            else "infra/docker-compose.prodlike.yaml"
-        )
+        if args.profile == "single-host":
+            args.compose_file = "infra/docker-compose.single-host.yaml"
+        elif args.profile == "single-host-m2":
+            args.compose_file = "infra/docker-compose.single-host.m2.yaml"
+        else:
+            args.compose_file = "infra/docker-compose.prodlike.yaml"
     if not args.project_name:
-        args.project_name = (
-            "quant-hft-single-host" if args.profile == "single-host" else "quant-hft-prodlike"
-        )
+        if args.profile == "single-host":
+            args.project_name = "quant-hft-single-host"
+        elif args.profile == "single-host-m2":
+            args.project_name = "quant-hft-single-host-m2"
+        else:
+            args.project_name = "quant-hft-prodlike"
 
-    required_services = _normalize_required_services(args.required_services)
+    if args.required_services:
+        required_services = _normalize_required_services(args.required_services)
+    else:
+        required_services = _REQUIRED_BY_PROFILE[args.profile]
 
     command_ok = True
     command_error = ""

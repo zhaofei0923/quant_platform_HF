@@ -180,3 +180,16 @@ python3 scripts/ops/verify_failover_evidence.py \
   --max-failover-seconds 300 \
   --max-data-lag-events 0
 ```
+
+## M2 Data Plane Dependencies (Single-Host Baseline)
+
+Current Kubernetes runbook still deploys non-hotpath pipeline only. For M2 Kafka/ClickHouse/CDC flows,
+bootstrap the repository single-host M2 stack first, then connect k8s pipeline jobs to the same object-storage
+and evidence chain outputs.
+
+```bash
+bash scripts/infra/bootstrap_prodlike.sh --profile single-host-m2 --execute
+python3 scripts/infra/check_debezium_connectors.py --output-json docs/results/debezium_connectors_health_report.json
+python3 scripts/data_pipeline/export_parquet_partitions.py --execute --report-json docs/results/parquet_partitions_report.json
+python3 scripts/data_pipeline/run_lifecycle.py --mode object-store --execute --report-json docs/results/data_lifecycle_report.json
+```

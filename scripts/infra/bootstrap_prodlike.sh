@@ -2,8 +2,9 @@
 set -euo pipefail
 
 ACTION="up"
-COMPOSE_FILE="infra/docker-compose.prodlike.yaml"
-PROJECT_NAME="quant-hft-prodlike"
+PROFILE="single-host"
+COMPOSE_FILE=""
+PROJECT_NAME=""
 ENV_FILE="infra/env/prodlike.env"
 OUTPUT_FILE="docs/results/prodlike_bootstrap_result.env"
 HEALTH_REPORT="docs/results/prodlike_health_report.json"
@@ -24,9 +25,10 @@ usage() {
 Usage: $0 [options]
 
 Options:
+  --profile <single-host|prodlike>  Deployment profile (default: single-host)
   --action <up|down|ps|health>   Action to perform (default: up)
-  --compose-file <path>          Docker compose file path
-  --project-name <name>          Compose project name
+  --compose-file <path>          Docker compose file path (default by profile)
+  --project-name <name>          Compose project name (default by profile)
   --env-file <path>              Environment file passed to compose
   --output-file <path>           Evidence env output path
   --health-report <path>         Health report JSON output path
@@ -48,6 +50,10 @@ USAGE
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --profile)
+      PROFILE="${2:-}"
+      shift 2
+      ;;
     --action)
       ACTION="${2:-}"
       shift 2
@@ -139,6 +145,30 @@ case "$ACTION" in
     exit 2
     ;;
 esac
+
+case "$PROFILE" in
+  single-host|prodlike) ;;
+  *)
+    echo "error: --profile must be one of single-host|prodlike" >&2
+    exit 2
+    ;;
+esac
+
+if [[ -z "$COMPOSE_FILE" ]]; then
+  if [[ "$PROFILE" == "single-host" ]]; then
+    COMPOSE_FILE="infra/docker-compose.single-host.yaml"
+  else
+    COMPOSE_FILE="infra/docker-compose.prodlike.yaml"
+  fi
+fi
+
+if [[ -z "$PROJECT_NAME" ]]; then
+  if [[ "$PROFILE" == "single-host" ]]; then
+    PROJECT_NAME="quant-hft-single-host"
+  else
+    PROJECT_NAME="quant-hft-prodlike"
+  fi
+fi
 
 if [[ ! -f "$COMPOSE_FILE" ]]; then
   echo "error: compose file not found: $COMPOSE_FILE" >&2
@@ -253,6 +283,7 @@ fi
 
 mkdir -p "$(dirname "$OUTPUT_FILE")"
 {
+  echo "PRODLIKE_PROFILE=$PROFILE"
   echo "PRODLIKE_ACTION=$ACTION"
   echo "PRODLIKE_DRY_RUN=$([[ "$DRY_RUN" -eq 1 ]] && echo 1 || echo 0)"
   echo "PRODLIKE_SUCCESS=$success"

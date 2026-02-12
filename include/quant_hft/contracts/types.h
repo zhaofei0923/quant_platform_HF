@@ -140,6 +140,8 @@ struct OrderEvent {
     std::int32_t session_id{0};
     std::string trade_id;
     std::string event_source;
+    EpochNanos exchange_ts_ns{0};
+    EpochNanos recv_ts_ns{0};
     EpochNanos ts_ns{0};
     std::string trace_id;
     std::string execution_algo_id;

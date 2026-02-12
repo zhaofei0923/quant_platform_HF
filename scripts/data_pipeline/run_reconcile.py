@@ -5,6 +5,7 @@ import argparse
 import csv
 import json
 import sys
+from itertools import combinations
 from pathlib import Path
 from typing import Any
 
@@ -36,10 +37,12 @@ _RECONCILE_FIELDS = (
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Reconcile Redis order snapshot against Timescale order events"
+        description="Reconcile Redis/analytics_ts/trading_core order snapshots"
     )
     parser.add_argument("--redis-json-file", required=True)
-    parser.add_argument("--timescale-csv-file", required=True)
+    parser.add_argument("--analytics-csv-file", default="")
+    parser.add_argument("--timescale-csv-file", default="")
+    parser.add_argument("--trading-core-csv-file", default="")
     parser.add_argument("--report-json", default="docs/results/data_reconcile_report.json")
     parser.add_argument("--max-mismatches", type=int, default=50)
     return parser
@@ -101,7 +104,7 @@ def _load_redis(path: Path) -> list[dict[str, object]]:
     return []
 
 
-def _load_timescale_csv(path: Path) -> list[dict[str, object]]:
+def _load_csv(path: Path) -> list[dict[str, object]]:
     with path.open("r", encoding="utf-8", newline="") as fp:
         reader = csv.DictReader(fp)
         return [dict(row) for row in reader]
@@ -120,53 +123,103 @@ def _latest_by_order(records: list[dict[str, object]]) -> dict[str, dict[str, ob
     return out
 
 
+def _build_field_mismatch(
+    *,
+    order_id: str,
+    field_name: str,
+    values: dict[str, object],
+) -> dict[str, object]:
+    item: dict[str, object] = {
+        "client_order_id": order_id,
+        "field": field_name,
+        "values": dict(values),
+    }
+    for source_name, value in values.items():
+        alias = "timescale" if source_name == "analytics_ts" else source_name
+        item[alias] = value
+    return item
+
+
 def main() -> int:
     args = _build_parser().parse_args()
 
+    analytics_path_raw = args.analytics_csv_file.strip() or args.timescale_csv_file.strip()
+    if not analytics_path_raw:
+        print(
+            "error: one of --analytics-csv-file or --timescale-csv-file is required",
+            file=sys.stderr,
+        )
+        return 2
+
     dictionary = DataDictionary()
     redis_rows = [_normalize(item) for item in _load_redis(Path(args.redis_json_file))]
-    timescale_rows = [
-        _normalize(item) for item in _load_timescale_csv(Path(args.timescale_csv_file))
-    ]
+    analytics_rows = [_normalize(item) for item in _load_csv(Path(analytics_path_raw))]
+    include_trading_core = bool(args.trading_core_csv_file.strip())
+    trading_rows: list[dict[str, object]] = []
+    if include_trading_core:
+        trading_rows = [_normalize(item) for item in _load_csv(Path(args.trading_core_csv_file))]
 
     dictionary_errors: list[str] = []
     for idx, row in enumerate(redis_rows):
         for issue in dictionary.validate("redis_order_event", row):
             dictionary_errors.append(f"redis[{idx}]: {issue}")
-    for idx, row in enumerate(timescale_rows):
+    for idx, row in enumerate(analytics_rows):
         for issue in dictionary.validate("timescale_order_event", row):
-            dictionary_errors.append(f"timescale[{idx}]: {issue}")
+            dictionary_errors.append(f"analytics_ts[{idx}]: {issue}")
+    for idx, row in enumerate(trading_rows):
+        for issue in dictionary.validate("timescale_order_event", row):
+            dictionary_errors.append(f"trading_core[{idx}]: {issue}")
 
     redis_latest = _latest_by_order(redis_rows)
-    timescale_latest = _latest_by_order(timescale_rows)
+    analytics_latest = _latest_by_order(analytics_rows)
+    source_latest: dict[str, dict[str, dict[str, object]]] = {
+        "redis": redis_latest,
+        "analytics_ts": analytics_latest,
+    }
+    if include_trading_core:
+        source_latest["trading_core"] = _latest_by_order(trading_rows)
 
-    missing_in_redis = sorted(set(timescale_latest) - set(redis_latest))
-    missing_in_timescale = sorted(set(redis_latest) - set(timescale_latest))
+    all_order_ids: set[str] = set()
+    for latest_rows in source_latest.values():
+        all_order_ids.update(latest_rows)
+
+    missing_by_source = {
+        source_name: sorted(all_order_ids - set(latest_rows))
+        for source_name, latest_rows in source_latest.items()
+    }
+    missing_in_redis = sorted(set(analytics_latest) - set(redis_latest))
+    missing_in_timescale = sorted(set(redis_latest) - set(analytics_latest))
+    missing_in_trading_core = missing_by_source.get("trading_core", [])
 
     field_mismatches: list[dict[str, Any]] = []
-    for order_id in sorted(set(redis_latest) & set(timescale_latest)):
-        left = redis_latest[order_id]
-        right = timescale_latest[order_id]
+    for order_id in sorted(all_order_ids):
+        rows_by_source = {
+            source_name: latest_rows[order_id]
+            for source_name, latest_rows in source_latest.items()
+            if order_id in latest_rows
+        }
+        if len(rows_by_source) < 2:
+            continue
         for field_name in _RECONCILE_FIELDS:
-            if field_name not in left and field_name not in right:
+            if all(field_name not in row for row in rows_by_source.values()):
                 continue
-            left_value = left.get(field_name)
-            right_value = right.get(field_name)
-            if left_value != right_value:
+            values = {
+                source_name: row.get(field_name) for source_name, row in rows_by_source.items()
+            }
+            has_mismatch = any(
+                values[left] != values[right] for left, right in combinations(sorted(values), 2)
+            )
+            if has_mismatch:
                 field_mismatches.append(
-                    {
-                        "client_order_id": order_id,
-                        "field": field_name,
-                        "redis": left_value,
-                        "timescale": right_value,
-                    }
+                    _build_field_mismatch(order_id=order_id, field_name=field_name, values=values)
                 )
                 if len(field_mismatches) >= max(1, args.max_mismatches):
                     break
         if len(field_mismatches) >= max(1, args.max_mismatches):
             break
 
-    mismatch_count = len(missing_in_redis) + len(missing_in_timescale) + len(field_mismatches)
+    presence_mismatch_count = sum(len(items) for items in missing_by_source.values())
+    mismatch_count = presence_mismatch_count + len(field_mismatches)
     consistent = mismatch_count == 0 and not dictionary_errors
     classification = "consistent"
     severity = "info"
@@ -174,19 +227,47 @@ def main() -> int:
     if dictionary_errors:
         classification = "schema_violation"
         severity = "critical"
-    elif missing_in_redis or missing_in_timescale:
+    elif presence_mismatch_count > 0:
         classification = "record_presence_mismatch"
         severity = "critical"
     elif field_mismatches:
         classification = "field_mismatch"
         severity = "warn"
 
+    schema_versions = {
+        "redis_order_event": dictionary.schema_version("redis_order_event"),
+        "timescale_order_event": dictionary.schema_version("timescale_order_event"),
+        "analytics_ts_order_event": dictionary.schema_version("timescale_order_event"),
+    }
+    migration_strategies = {
+        "redis_order_event": dictionary.migration_strategy("redis_order_event"),
+        "timescale_order_event": dictionary.migration_strategy("timescale_order_event"),
+        "analytics_ts_order_event": dictionary.migration_strategy("timescale_order_event"),
+    }
+    source_records: dict[str, int] = {
+        "redis": len(redis_rows),
+        "analytics_ts": len(analytics_rows),
+    }
+    if include_trading_core:
+        schema_versions["trading_core_order_event"] = dictionary.schema_version(
+            "timescale_order_event"
+        )
+        migration_strategies["trading_core_order_event"] = dictionary.migration_strategy(
+            "timescale_order_event"
+        )
+        source_records["trading_core"] = len(trading_rows)
+
     report = {
+        "source_records": source_records,
+        "compared_sources": list(source_latest.keys()),
         "redis_records": len(redis_rows),
-        "timescale_records": len(timescale_rows),
-        "checked_order_count": len(set(redis_latest) | set(timescale_latest)),
+        "timescale_records": len(analytics_rows),
+        "trading_core_records": len(trading_rows),
+        "checked_order_count": len(all_order_ids),
+        "missing_by_source": missing_by_source,
         "missing_in_redis": missing_in_redis,
         "missing_in_timescale": missing_in_timescale,
+        "missing_in_trading_core": missing_in_trading_core,
         "field_mismatches": field_mismatches,
         "dictionary_errors": dictionary_errors,
         "mismatch_count": mismatch_count,
@@ -194,14 +275,8 @@ def main() -> int:
         "severity": severity,
         "classification": classification,
         "auto_fixable": auto_fixable,
-        "schema_versions": {
-            "redis_order_event": dictionary.schema_version("redis_order_event"),
-            "timescale_order_event": dictionary.schema_version("timescale_order_event"),
-        },
-        "migration_strategies": {
-            "redis_order_event": dictionary.migration_strategy("redis_order_event"),
-            "timescale_order_event": dictionary.migration_strategy("timescale_order_event"),
-        },
+        "schema_versions": schema_versions,
+        "migration_strategies": migration_strategies,
     }
 
     output = Path(args.report_json)

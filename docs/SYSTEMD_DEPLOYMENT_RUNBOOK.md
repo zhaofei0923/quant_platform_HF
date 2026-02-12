@@ -157,8 +157,9 @@ Use the repository-local prodlike stack bootstrap before host-level rollout dril
 
 ```bash
 bash scripts/infra/bootstrap_prodlike.sh \
-  --compose-file infra/docker-compose.prodlike.yaml \
-  --project-name quant-hft-prodlike \
+  --profile single-host \
+  --compose-file infra/docker-compose.single-host.yaml \
+  --project-name quant-hft-single-host \
   --dry-run \
   --output-file docs/results/prodlike_bootstrap_result.env
 
@@ -169,6 +170,25 @@ python3 scripts/infra/check_prodlike_health.py \
 
 For real execution, replace `--dry-run` with `--execute`.
 
+## Single-Host Production Minimum Loop (Ubuntu)
+
+Single-host is now the default profile for production baseline rollout.
+
+```bash
+bash scripts/infra/bootstrap_prodlike.sh \
+  --profile single-host \
+  --dry-run \
+  --output-file docs/results/prodlike_bootstrap_result.env
+
+python3 scripts/infra/check_prodlike_health.py \
+  --profile single-host \
+  --report-json docs/results/prodlike_health_report.json
+```
+
+If `--compose-file/--project-name` are not passed, defaults are:
+- compose: `infra/docker-compose.single-host.yaml`
+- project: `quant-hft-single-host`
+
 When running `--execute`, bootstrap now includes Timescale schema initialization:
 - SQL asset: `infra/timescale/init/001_quant_hft_schema.sql`
 - Evidence: `docs/results/timescale_schema_init_result.env`
@@ -177,8 +197,8 @@ Standalone schema initialization command:
 
 ```bash
 bash scripts/infra/init_timescale_schema.sh \
-  --compose-file infra/docker-compose.prodlike.yaml \
-  --project-name quant-hft-prodlike \
+  --compose-file infra/docker-compose.single-host.yaml \
+  --project-name quant-hft-single-host \
   --env-file infra/env/prodlike.env \
   --schema-file infra/timescale/init/001_quant_hft_schema.sql \
   --output-file docs/results/timescale_schema_init_result.env \

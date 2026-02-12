@@ -34,6 +34,7 @@ def test_check_prodlike_health_passes_on_healthy_services(tmp_path: Path) -> Non
     assert completed.returncode == 0, completed.stdout + completed.stderr
     payload = json.loads(report_file.read_text(encoding="utf-8"))
     assert payload["healthy"] is True
+    assert payload["profile"] == "single-host"
 
 
 def test_check_prodlike_health_fails_on_missing_or_unhealthy(tmp_path: Path) -> None:
@@ -61,4 +62,5 @@ def test_check_prodlike_health_fails_on_missing_or_unhealthy(tmp_path: Path) -> 
     assert completed.returncode != 0
     payload = json.loads(report_file.read_text(encoding="utf-8"))
     assert payload["healthy"] is False
+    assert payload["profile"] == "single-host"
     assert payload["missing_services"]

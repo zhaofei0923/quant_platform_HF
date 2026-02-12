@@ -80,11 +80,12 @@ def test_ops_health_report_build_and_render() -> None:
     assert payload["overall_healthy"] is True
     assert payload["generated_ts_ns"] == 12345
     assert isinstance(payload["slis"], list)
-    assert len(payload["slis"]) == 5
+    assert len(payload["slis"]) == 6
     assert payload["metadata"]["environment"] == "sim"
     assert payload["metadata"]["service"] == "core_engine"
     sli_names = [item["name"] for item in payload["slis"]]
     assert "quant_hft_strategy_bridge_chain_integrity" in sli_names
+    assert "quant_hft_storage_postgres_health" in sli_names
     assert all(item["slo_name"] for item in payload["slis"])
     assert all(item["environment"] == "sim" for item in payload["slis"])
     assert all(item["service"] == "core_engine" for item in payload["slis"])
@@ -123,4 +124,4 @@ def test_ops_health_report_includes_ctp_specific_slis() -> None:
     assert "quant_hft_ctp_flow_control_hits" in sli_names
     assert "quant_hft_ctp_disconnect_recovery_success_rate" in sli_names
     assert "quant_hft_ctp_reject_classified_ratio" in sli_names
-    assert len(payload["slis"]) == 9
+    assert len(payload["slis"]) == 10

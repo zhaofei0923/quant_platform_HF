@@ -34,6 +34,7 @@ public:
 private:
     bool WriteWithRetry(const std::string& key,
                         const std::unordered_map<std::string, std::string>& fields) const;
+    bool ExpireWithRetry(const std::string& key, int ttl_seconds) const;
 
     bool ReadHash(const std::string& key,
                   std::unordered_map<std::string, std::string>* out) const;

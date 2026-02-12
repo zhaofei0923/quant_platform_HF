@@ -144,6 +144,8 @@ def main() -> int:
             "session_id",
             "trade_id",
             "event_source",
+            "exchange_ts_ns",
+            "recv_ts_ns",
             "ts_ns",
             "trace_id",
             "execution_algo_id",

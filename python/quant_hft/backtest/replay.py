@@ -13,6 +13,7 @@ from typing import Any, TextIO, cast
 from quant_hft.contracts import OrderEvent, Side, SignalIntent, StateSnapshot7D
 from quant_hft.research.metric_dictionary import metric_keys
 from quant_hft.runtime.engine import StrategyRuntime
+from quant_hft.runtime.trade_recorder import InMemoryTradeRecorder, TradeRecorder
 from quant_hft.strategy.base import ensure_backtest_ctx
 
 
@@ -376,11 +377,15 @@ def _emit_wal_line(
     record = {
         "seq": seq,
         "kind": kind,
+        "exchange_ts_ns": event.exchange_ts_ns,
+        "recv_ts_ns": event.recv_ts_ns,
         "ts_ns": event.ts_ns,
         "account_id": event.account_id,
         "client_order_id": event.client_order_id,
-        "exchange_order_id": "",
+        "exchange_order_id": event.exchange_order_id,
         "instrument_id": event.instrument_id,
+        "trade_id": event.trade_id,
+        "event_source": event.event_source,
         "status": _status_to_code(event.status),
         "total_volume": event.total_volume,
         "filled_volume": event.filled_volume,
@@ -527,6 +532,7 @@ def run_backtest_spec(
     runtime: StrategyRuntime,
     *,
     ctx: dict[str, object] | None = None,
+    trade_recorder: TradeRecorder | None = None,
 ) -> BacktestRunResult:
     run_ctx: dict[str, object] = {} if ctx is None else ctx
     mode = "deterministic" if spec.deterministic_fills else "bar_replay"
@@ -542,6 +548,7 @@ def run_backtest_spec(
             wal_path=spec.wal_path,
             account_id=spec.account_id,
             emit_state_snapshots=spec.emit_state_snapshots,
+            trade_recorder=trade_recorder,
         )
         replay = deterministic.replay
     else:
@@ -681,6 +688,7 @@ def replay_csv_with_deterministic_fills(
     wal_path: Path | str | None = None,
     account_id: str = "sim-account",
     emit_state_snapshots: bool = False,
+    trade_recorder: TradeRecorder | None = None,
 ) -> DeterministicReplayReport:
     ticks_read = 0
     bars_emitted = 0
@@ -703,6 +711,8 @@ def replay_csv_with_deterministic_fills(
     bucket: list[CsvTick] = []
     current_key = ""
     wal_fp = None
+    recorder = trade_recorder or InMemoryTradeRecorder()
+    ctx["trade_recorder"] = recorder
     if wal_path is not None:
         wal_fp = Path(wal_path).open("w", encoding="utf-8")
 
@@ -757,6 +767,9 @@ def replay_csv_with_deterministic_fills(
                     reason="deterministic_accept",
                     ts_ns=int(intent.ts_ns),
                     trace_id=intent.trace_id,
+                    event_source="deterministic_accept",
+                    exchange_ts_ns=int(intent.ts_ns),
+                    recv_ts_ns=int(intent.ts_ns),
                 )
                 filled = OrderEvent(
                     account_id=account_id,
@@ -769,10 +782,16 @@ def replay_csv_with_deterministic_fills(
                     reason="deterministic_fill",
                     ts_ns=int(intent.ts_ns),
                     trace_id=intent.trace_id,
+                    trade_id=f"{client_order_id}-fill",
+                    event_source="deterministic_fill",
+                    exchange_ts_ns=int(intent.ts_ns),
+                    recv_ts_ns=int(intent.ts_ns),
                 )
 
                 runtime.on_order_event(ctx, accepted)
                 runtime.on_order_event(ctx, filled)
+                recorder.record_order_event(accepted)
+                recorder.record_order_event(filled)
                 order_events_emitted += 2
                 order_status_counts[accepted.status] += 1
                 order_status_counts[filled.status] += 1
@@ -822,6 +841,9 @@ def replay_csv_with_deterministic_fills(
                     reason="deterministic_accept",
                     ts_ns=int(intent.ts_ns),
                     trace_id=intent.trace_id,
+                    event_source="deterministic_accept",
+                    exchange_ts_ns=int(intent.ts_ns),
+                    recv_ts_ns=int(intent.ts_ns),
                 )
                 filled = OrderEvent(
                     account_id=account_id,
@@ -834,10 +856,16 @@ def replay_csv_with_deterministic_fills(
                     reason="deterministic_fill",
                     ts_ns=int(intent.ts_ns),
                     trace_id=intent.trace_id,
+                    trade_id=f"{client_order_id}-fill",
+                    event_source="deterministic_fill",
+                    exchange_ts_ns=int(intent.ts_ns),
+                    recv_ts_ns=int(intent.ts_ns),
                 )
 
                 runtime.on_order_event(ctx, accepted)
                 runtime.on_order_event(ctx, filled)
+                recorder.record_order_event(accepted)
+                recorder.record_order_event(filled)
                 order_events_emitted += 2
                 order_status_counts[accepted.status] += 1
                 order_status_counts[filled.status] += 1

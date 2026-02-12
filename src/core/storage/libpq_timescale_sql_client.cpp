@@ -166,9 +166,9 @@ const LibpqTimescaleSqlClient::LibpqApi& LibpqTimescaleSqlClient::Api() {
     return api;
 }
 
-bool LibpqTimescaleSqlClient::ValidateIdentifier(const std::string& identifier,
-                                                 const std::string& field_name,
-                                                 std::string* error) const {
+bool LibpqTimescaleSqlClient::ValidateSimpleIdentifier(const std::string& identifier,
+                                                       const std::string& field_name,
+                                                       std::string* error) const {
     if (identifier.empty()) {
         if (error != nullptr) {
             *error = "empty " + field_name + " identifier";
@@ -190,6 +190,68 @@ bool LibpqTimescaleSqlClient::ValidateIdentifier(const std::string& identifier,
             }
             return false;
         }
+    }
+    return true;
+}
+
+std::string LibpqTimescaleSqlClient::QuoteIdentifier(const std::string& identifier) {
+    return "\"" + identifier + "\"";
+}
+
+bool LibpqTimescaleSqlClient::ValidateQualifiedTableIdentifier(
+    const std::string& table_identifier,
+    std::string* quoted_identifier,
+    std::string* error) const {
+    if (quoted_identifier == nullptr) {
+        if (error != nullptr) {
+            *error = "quoted_identifier is null";
+        }
+        return false;
+    }
+    quoted_identifier->clear();
+
+    if (table_identifier.empty()) {
+        if (error != nullptr) {
+            *error = "empty table identifier";
+        }
+        return false;
+    }
+
+    std::vector<std::string> segments;
+    std::size_t start = 0;
+    while (start < table_identifier.size()) {
+        const auto dot = table_identifier.find('.', start);
+        const auto end = dot == std::string::npos ? table_identifier.size() : dot;
+        if (end == start) {
+            if (error != nullptr) {
+                *error = "invalid table identifier: " + table_identifier;
+            }
+            return false;
+        }
+        segments.push_back(table_identifier.substr(start, end - start));
+        if (dot == std::string::npos) {
+            break;
+        }
+        start = dot + 1;
+    }
+
+    if (segments.empty() || segments.size() > 2) {
+        if (error != nullptr) {
+            *error = "invalid table identifier: " + table_identifier;
+        }
+        return false;
+    }
+
+    for (const auto& segment : segments) {
+        if (!ValidateSimpleIdentifier(segment, "table", error)) {
+            return false;
+        }
+    }
+
+    if (segments.size() == 1) {
+        *quoted_identifier = QuoteIdentifier(segments[0]);
+    } else {
+        *quoted_identifier = QuoteIdentifier(segments[0]) + "." + QuoteIdentifier(segments[1]);
     }
     return true;
 }
@@ -392,7 +454,8 @@ bool LibpqTimescaleSqlClient::InsertRow(
         }
         return false;
     }
-    if (!ValidateIdentifier(table, "table", error)) {
+    std::string sql_table;
+    if (!ValidateQualifiedTableIdentifier(table, &sql_table, error)) {
         return false;
     }
 
@@ -402,18 +465,18 @@ bool LibpqTimescaleSqlClient::InsertRow(
               [](const auto& lhs, const auto& rhs) { return lhs.first < rhs.first; });
     for (const auto& [column, value] : ordered) {
         (void)value;
-        if (!ValidateIdentifier(column, "column", error)) {
+        if (!ValidateSimpleIdentifier(column, "column", error)) {
             return false;
         }
     }
 
     std::ostringstream sql;
-    sql << "INSERT INTO " << table << " (";
+    sql << "INSERT INTO " << sql_table << " (";
     for (std::size_t i = 0; i < ordered.size(); ++i) {
         if (i > 0) {
             sql << ",";
         }
-        sql << ordered[i].first;
+        sql << QuoteIdentifier(ordered[i].first);
     }
     sql << ") VALUES (";
     for (std::size_t i = 0; i < ordered.size(); ++i) {
@@ -438,13 +501,15 @@ LibpqTimescaleSqlClient::QueryRows(const std::string& table,
                                    const std::string& key,
                                    const std::string& value,
                                    std::string* error) const {
-    if (!ValidateIdentifier(table, "table", error) ||
-        !ValidateIdentifier(key, "column", error)) {
+    std::string sql_table;
+    if (!ValidateQualifiedTableIdentifier(table, &sql_table, error) ||
+        !ValidateSimpleIdentifier(key, "column", error)) {
         return {};
     }
 
     std::vector<std::unordered_map<std::string, std::string>> rows;
-    const std::string sql = "SELECT * FROM " + table + " WHERE " + key + " = $1";
+    const std::string sql =
+        "SELECT * FROM " + sql_table + " WHERE " + QuoteIdentifier(key) + " = $1";
     if (!ExecuteStatement(sql, {value}, true, &rows, error)) {
         return {};
     }
@@ -453,12 +518,13 @@ LibpqTimescaleSqlClient::QueryRows(const std::string& table,
 
 std::vector<std::unordered_map<std::string, std::string>>
 LibpqTimescaleSqlClient::QueryAllRows(const std::string& table, std::string* error) const {
-    if (!ValidateIdentifier(table, "table", error)) {
+    std::string sql_table;
+    if (!ValidateQualifiedTableIdentifier(table, &sql_table, error)) {
         return {};
     }
 
     std::vector<std::unordered_map<std::string, std::string>> rows;
-    const std::string sql = "SELECT * FROM " + table;
+    const std::string sql = "SELECT * FROM " + sql_table;
     if (!ExecuteStatement(sql, {}, true, &rows, error)) {
         return {};
     }

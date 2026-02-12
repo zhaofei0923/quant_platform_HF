@@ -7,16 +7,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from quant_hft.contracts import SignalIntent
+from quant_hft.runtime.datafeed import DataFeed, RedisLiveDataFeed
 from quant_hft.runtime.engine import StrategyRuntime
 from quant_hft.runtime.redis_hash import RedisHashClient
-from quant_hft.runtime.redis_schema import (
-    build_intent_batch_fields,
-    order_event_key,
-    parse_order_event,
-    parse_state_snapshot,
-    state_snapshot_key,
-    strategy_intent_key,
-)
 
 
 @dataclass(frozen=True)
@@ -106,14 +99,20 @@ class StrategyRunner:
     def __init__(
         self,
         runtime: StrategyRuntime,
-        redis_client: RedisHashClient,
         strategy_id: str,
         instruments: list[str],
+        datafeed: DataFeed | None = None,
+        redis_client: RedisHashClient | None = None,
         poll_interval_ms: int = 200,
         ctx: dict[str, object] | None = None,
     ) -> None:
         self._runtime = runtime
-        self._redis = redis_client
+        if datafeed is None:
+            if redis_client is None:
+                raise ValueError("datafeed or redis_client is required")
+            self._datafeed = RedisLiveDataFeed(redis_client)
+        else:
+            self._datafeed = datafeed
         self._strategy_id = strategy_id
         self._instruments = instruments
         self._poll_interval_ms = max(1, poll_interval_ms)
@@ -131,8 +130,7 @@ class StrategyRunner:
         intents = self._collect_signal_intents()
         if intents:
             self._seq += 1
-            fields = build_intent_batch_fields(self._seq, intents, time.time_ns())
-            self._redis.hset(strategy_intent_key(self._strategy_id), fields)
+            self._datafeed.publish_intent_batch(self._strategy_id, self._seq, intents)
             for intent in intents:
                 self._active_trace_ids.add(intent.trace_id)
         self._poll_order_events()
@@ -151,10 +149,7 @@ class StrategyRunner:
     def _collect_signal_intents(self) -> list[SignalIntent]:
         intents: list[SignalIntent] = []
         for instrument_id in self._instruments:
-            fields = self._redis.hgetall(state_snapshot_key(instrument_id))
-            if not fields:
-                continue
-            snapshot = parse_state_snapshot(fields)
+            snapshot = self._datafeed.get_latest_state_snapshot(instrument_id)
             if snapshot is None:
                 continue
 
@@ -185,10 +180,7 @@ class StrategyRunner:
     def _poll_order_events(self) -> None:
         terminal = {"FILLED", "CANCELED", "REJECTED"}
         for trace_id in list(self._active_trace_ids):
-            fields = self._redis.hgetall(order_event_key(trace_id))
-            if not fields:
-                continue
-            event = parse_order_event(fields)
+            event = self._datafeed.get_order_event(trace_id)
             if event is None:
                 continue
             fingerprint = (event.status, event.filled_volume, event.ts_ns)

@@ -46,6 +46,7 @@ public:
     bool HGetAll(const std::string& key,
                  std::unordered_map<std::string, std::string>* out,
                  std::string* error) const override;
+    bool Expire(const std::string& key, int ttl_seconds, std::string* error) override;
     bool Ping(std::string* error) const override;
 
 private:

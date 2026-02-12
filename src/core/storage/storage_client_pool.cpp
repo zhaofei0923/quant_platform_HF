@@ -129,6 +129,38 @@ bool PooledRedisHashClient::HGetAll(
     return false;
 }
 
+bool PooledRedisHashClient::Expire(const std::string& key,
+                                   int ttl_seconds,
+                                   std::string* error) {
+    const auto total = pool_.Size();
+    if (total == 0 || key.empty() || ttl_seconds <= 0) {
+        if (error != nullptr) {
+            *error = "redis pool empty or invalid input";
+        }
+        return false;
+    }
+
+    const std::size_t start = std::hash<std::string>{}(key) % total;
+    for (std::size_t i = 0; i < total; ++i) {
+        const auto client = pool_.ClientAt(start + i);
+        if (client == nullptr) {
+            continue;
+        }
+
+        std::string ping_error;
+        if (!client->Ping(&ping_error)) {
+            continue;
+        }
+        if (client->Expire(key, ttl_seconds, error)) {
+            return true;
+        }
+    }
+    if (error != nullptr && error->empty()) {
+        *error = "all redis clients failed";
+    }
+    return false;
+}
+
 bool PooledRedisHashClient::Ping(std::string* error) const {
     if (pool_.HealthyClientCount() > 0) {
         return true;

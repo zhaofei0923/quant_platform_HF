@@ -71,6 +71,8 @@ class OrderEvent:
     session_id: int = 0
     trade_id: str = ""
     event_source: str = ""
+    exchange_ts_ns: int = 0
+    recv_ts_ns: int = 0
     execution_algo_id: str = ""
     slice_index: int = 0
     slice_total: int = 0

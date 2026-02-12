@@ -39,6 +39,15 @@ public:
         return false;
     }
 
+    bool Expire(const std::string& key, int ttl_seconds, std::string* error) override {
+        (void)key;
+        (void)ttl_seconds;
+        if (error != nullptr) {
+            *error = reason_;
+        }
+        return false;
+    }
+
     bool Ping(std::string* error) const override {
         if (error != nullptr) {
             *error = reason_;

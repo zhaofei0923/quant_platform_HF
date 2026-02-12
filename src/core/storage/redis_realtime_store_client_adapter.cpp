@@ -6,6 +6,13 @@
 
 namespace quant_hft {
 
+namespace {
+
+constexpr int kTtlMarketStateSeconds = 3 * 24 * 60 * 60;
+constexpr int kTtlOrderSeconds = 7 * 24 * 60 * 60;
+
+}  // namespace
+
 RedisRealtimeStoreClientAdapter::RedisRealtimeStoreClientAdapter(
     std::shared_ptr<IRedisHashClient> client,
     StorageRetryPolicy retry_policy)
@@ -29,7 +36,9 @@ void RedisRealtimeStoreClientAdapter::UpsertMarketSnapshot(
         {"exchange_ts_ns", ToString(snapshot.exchange_ts_ns)},
         {"recv_ts_ns", ToString(snapshot.recv_ts_ns)},
     };
-    (void)WriteWithRetry(key, fields);
+    if (WriteWithRetry(key, fields)) {
+        (void)ExpireWithRetry(key, kTtlMarketStateSeconds);
+    }
 }
 
 void RedisRealtimeStoreClientAdapter::UpsertOrderEvent(const OrderEvent& event) {
@@ -56,6 +65,8 @@ void RedisRealtimeStoreClientAdapter::UpsertOrderEvent(const OrderEvent& event) 
         {"session_id", ToString(event.session_id)},
         {"trade_id", event.trade_id},
         {"event_source", event.event_source},
+        {"exchange_ts_ns", ToString(event.exchange_ts_ns)},
+        {"recv_ts_ns", ToString(event.recv_ts_ns)},
         {"ts_ns", ToString(event.ts_ns)},
         {"trace_id", event.trace_id},
         {"execution_algo_id", event.execution_algo_id},
@@ -67,7 +78,9 @@ void RedisRealtimeStoreClientAdapter::UpsertOrderEvent(const OrderEvent& event) 
         {"slippage_bps", ToString(event.slippage_bps)},
         {"impact_cost", ToString(event.impact_cost)},
     };
-    (void)WriteWithRetry(key, fields);
+    if (WriteWithRetry(key, fields)) {
+        (void)ExpireWithRetry(key, kTtlOrderSeconds);
+    }
 }
 
 void RedisRealtimeStoreClientAdapter::UpsertPositionSnapshot(
@@ -117,7 +130,9 @@ void RedisRealtimeStoreClientAdapter::UpsertStateSnapshot7D(
         {"event_drive_confidence", ToString(snapshot.event_drive.confidence)},
         {"ts_ns", ToString(snapshot.ts_ns)},
     };
-    (void)WriteWithRetry(key, fields);
+    if (WriteWithRetry(key, fields)) {
+        (void)ExpireWithRetry(key, kTtlMarketStateSeconds);
+    }
 }
 
 bool RedisRealtimeStoreClientAdapter::GetMarketSnapshot(const std::string& instrument_id,
@@ -184,6 +199,8 @@ bool RedisRealtimeStoreClientAdapter::GetOrderEvent(const std::string& client_or
     (void)ParseInt32(row, "session_id", &event.session_id);
     event.trade_id = GetOrEmpty(row, "trade_id");
     event.event_source = GetOrEmpty(row, "event_source");
+    (void)ParseInt64(row, "exchange_ts_ns", &event.exchange_ts_ns);
+    (void)ParseInt64(row, "recv_ts_ns", &event.recv_ts_ns);
     if (!ParseInt64(row, "ts_ns", &event.ts_ns)) {
         return false;
     }
@@ -329,6 +346,29 @@ bool RedisRealtimeStoreClientAdapter::WriteWithRetry(
     for (int attempt = 1; attempt <= attempts; ++attempt) {
         std::string error;
         if (client_->HSet(key, fields, &error)) {
+            return true;
+        }
+        if (attempt < attempts && backoff_ms > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(backoff_ms));
+            backoff_ms = std::min(max_backoff_ms, backoff_ms * 2);
+        }
+    }
+    return false;
+}
+
+bool RedisRealtimeStoreClientAdapter::ExpireWithRetry(const std::string& key,
+                                                      int ttl_seconds) const {
+    if (client_ == nullptr || key.empty() || ttl_seconds <= 0) {
+        return false;
+    }
+
+    int attempts = std::max(1, retry_policy_.max_attempts);
+    int backoff_ms = std::max(0, retry_policy_.initial_backoff_ms);
+    const int max_backoff_ms = std::max(backoff_ms, retry_policy_.max_backoff_ms);
+
+    for (int attempt = 1; attempt <= attempts; ++attempt) {
+        std::string error;
+        if (client_->Expire(key, ttl_seconds, &error)) {
             return true;
         }
         if (attempt < attempts && backoff_ms > 0) {

@@ -14,7 +14,8 @@ namespace quant_hft {
 class TimescaleEventStoreClientAdapter : public ITimeseriesStore {
 public:
     TimescaleEventStoreClientAdapter(std::shared_ptr<ITimescaleSqlClient> client,
-                                     StorageRetryPolicy retry_policy);
+                                     StorageRetryPolicy retry_policy,
+                                     std::string schema = "public");
 
     void AppendMarketSnapshot(const MarketSnapshot& snapshot) override;
     void AppendOrderEvent(const OrderEvent& event) override;
@@ -43,6 +44,7 @@ public:
 private:
     bool InsertWithRetry(const std::string& table,
                          const std::unordered_map<std::string, std::string>& row) const;
+    std::string TableName(const std::string& table) const;
 
     static std::string ToString(std::int32_t value);
     static std::string ToString(std::int64_t value);
@@ -69,6 +71,7 @@ private:
 
     std::shared_ptr<ITimescaleSqlClient> client_;
     StorageRetryPolicy retry_policy_;
+    std::string schema_;
 };
 
 }  // namespace quant_hft

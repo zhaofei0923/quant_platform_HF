@@ -221,6 +221,8 @@ bool ParseWalLine(const std::string& line, OrderEvent* event) {
     (void)ParseStringField(line, "account_id", &event->account_id);
     (void)ParseStringField(line, "exchange_order_id", &event->exchange_order_id);
     (void)ParseStringField(line, "instrument_id", &event->instrument_id);
+    (void)ParseStringField(line, "trade_id", &event->trade_id);
+    (void)ParseStringField(line, "event_source", &event->event_source);
     (void)ParseStringField(line, "reason", &event->reason);
     (void)ParseStringField(line, "trace_id", &event->trace_id);
 
@@ -229,6 +231,19 @@ bool ParseWalLine(const std::string& line, OrderEvent* event) {
         return false;
     }
     event->ts_ns = ts_ns;
+
+    std::int64_t exchange_ts_ns = 0;
+    if (ParseInt64Field(line, "exchange_ts_ns", &exchange_ts_ns)) {
+        event->exchange_ts_ns = exchange_ts_ns;
+    } else {
+        event->exchange_ts_ns = ts_ns;
+    }
+    std::int64_t recv_ts_ns = 0;
+    if (ParseInt64Field(line, "recv_ts_ns", &recv_ts_ns)) {
+        event->recv_ts_ns = recv_ts_ns;
+    } else {
+        event->recv_ts_ns = ts_ns;
+    }
 
     int filled_volume = 0;
     if (!ParseIntField(line, "filled_volume", &filled_volume)) {

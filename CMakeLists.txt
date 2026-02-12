@@ -29,6 +29,7 @@ add_library(quant_hft_core STATIC
     src/core/storage/storage_client_factory.cpp
     src/core/storage/storage_connection_config.cpp
     src/core/storage/tcp_redis_hash_client.cpp
+    src/core/storage/trading_ledger_store_client_adapter.cpp
     src/core/storage/timescale_buffered_event_store.cpp
     src/core/storage/timescale_event_store.cpp
     src/core/storage/timescale_event_store_client_adapter.cpp
@@ -164,6 +165,9 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(libpq_timescale_sql_client_test tests/unit/core/libpq_timescale_sql_client_test.cpp)
     target_link_libraries(libpq_timescale_sql_client_test PRIVATE quant_hft_core GTest::gtest_main)
 
+    add_executable(trading_ledger_store_client_adapter_test tests/unit/core/trading_ledger_store_client_adapter_test.cpp)
+    target_link_libraries(trading_ledger_store_client_adapter_test PRIVATE quant_hft_core GTest::gtest_main)
+
     add_executable(object_pool_test tests/unit/core/object_pool_test.cpp)
     target_link_libraries(object_pool_test PRIVATE quant_hft_core GTest::gtest_main)
 
@@ -216,6 +220,7 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(tcp_redis_hash_client_test)
     gtest_discover_tests(strategy_intent_inbox_test)
     gtest_discover_tests(libpq_timescale_sql_client_test)
+    gtest_discover_tests(trading_ledger_store_client_adapter_test)
     gtest_discover_tests(object_pool_test)
     gtest_discover_tests(basic_risk_engine_test)
     gtest_discover_tests(risk_policy_engine_test)

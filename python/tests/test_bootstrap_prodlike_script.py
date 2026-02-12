@@ -26,6 +26,7 @@ def test_bootstrap_prodlike_dry_run_writes_evidence(tmp_path: Path) -> None:
     completed = subprocess.run(command, check=False, capture_output=True, text=True)
     assert completed.returncode == 0, completed.stdout + completed.stderr
     payload = evidence_file.read_text(encoding="utf-8")
+    assert "PRODLIKE_PROFILE=single-host" in payload
     assert "PRODLIKE_ACTION=up" in payload
     assert "PRODLIKE_DRY_RUN=1" in payload
     assert "PRODLIKE_SUCCESS=true" in payload
@@ -56,5 +57,6 @@ def test_bootstrap_prodlike_execute_records_failure(tmp_path: Path) -> None:
     completed = subprocess.run(command, check=False, capture_output=True, text=True)
     assert completed.returncode != 0
     payload = evidence_file.read_text(encoding="utf-8")
+    assert "PRODLIKE_PROFILE=single-host" in payload
     assert "PRODLIKE_SUCCESS=false" in payload
     assert "PRODLIKE_FAILED_STEP=compose_up" in payload

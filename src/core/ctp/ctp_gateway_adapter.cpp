@@ -158,6 +158,21 @@ std::string InferExchangeIdFromInstrument(const std::string& instrument_id) {
     return instrument_id.substr(0, dot_pos);
 }
 
+void StampOrderEventTimestamps(OrderEvent* event) {
+    if (event == nullptr) {
+        return;
+    }
+    if (event->recv_ts_ns <= 0) {
+        event->recv_ts_ns = NowEpochNanos();
+    }
+    if (event->exchange_ts_ns <= 0) {
+        event->exchange_ts_ns = event->recv_ts_ns;
+    }
+    if (event->ts_ns <= 0) {
+        event->ts_ns = event->recv_ts_ns;
+    }
+}
+
 }  // namespace
 
 #if QUANT_HFT_HAS_REAL_CTP
@@ -759,6 +774,7 @@ public:
         }
 
         if (callback) {
+            StampOrderEventTimestamps(&event);
             callback(event);
         }
     }
@@ -794,6 +810,7 @@ public:
         }
 
         if (callback) {
+            StampOrderEventTimestamps(&event);
             callback(event);
         }
     }
@@ -862,6 +879,7 @@ private:
             callback = owner_->order_event_callback_;
         }
         if (callback) {
+            StampOrderEventTimestamps(&event);
             callback(event);
         }
     }
@@ -1538,6 +1556,7 @@ bool CtpGatewayAdapter::PlaceOrder(const OrderIntent& intent) {
     }
 
     if (emit_simulated_event && callback) {
+        StampOrderEventTimestamps(&simulated_event);
         callback(simulated_event);
     }
 
@@ -1618,6 +1637,7 @@ bool CtpGatewayAdapter::CancelOrder(const std::string& client_order_id,
     }
 
     if (emit_simulated_event && callback) {
+        StampOrderEventTimestamps(&simulated_event);
         callback(simulated_event);
     }
 

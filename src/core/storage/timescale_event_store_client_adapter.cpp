@@ -20,8 +20,11 @@ constexpr const char* kTableInstrumentMeta = "ctp_instrument_meta";
 
 TimescaleEventStoreClientAdapter::TimescaleEventStoreClientAdapter(
     std::shared_ptr<ITimescaleSqlClient> client,
-    StorageRetryPolicy retry_policy)
-    : client_(std::move(client)), retry_policy_(retry_policy) {}
+    StorageRetryPolicy retry_policy,
+    std::string schema)
+    : client_(std::move(client)),
+      retry_policy_(retry_policy),
+      schema_(schema.empty() ? "public" : std::move(schema)) {}
 
 void TimescaleEventStoreClientAdapter::AppendMarketSnapshot(
     const MarketSnapshot& snapshot) {
@@ -75,6 +78,8 @@ void TimescaleEventStoreClientAdapter::AppendOrderEvent(const OrderEvent& event)
         {"session_id", ToString(event.session_id)},
         {"trade_id", event.trade_id},
         {"event_source", event.event_source},
+        {"exchange_ts_ns", ToString(event.exchange_ts_ns)},
+        {"recv_ts_ns", ToString(event.recv_ts_ns)},
         {"ts_ns", ToString(event.ts_ns)},
         {"trace_id", event.trace_id},
         {"execution_algo_id", event.execution_algo_id},
@@ -222,7 +227,7 @@ std::vector<MarketSnapshot> TimescaleEventStoreClientAdapter::GetMarketSnapshots
 
     std::string error;
     const auto rows =
-        client_->QueryRows(kTableMarketSnapshots, "instrument_id", instrument_id, &error);
+        client_->QueryRows(TableName(kTableMarketSnapshots), "instrument_id", instrument_id, &error);
     std::vector<MarketSnapshot> out;
     out.reserve(rows.size());
     for (const auto& row : rows) {
@@ -263,7 +268,7 @@ std::vector<OrderEvent> TimescaleEventStoreClientAdapter::GetOrderEvents(
 
     std::string error;
     const auto rows =
-        client_->QueryRows(kTableOrderEvents, "client_order_id", client_order_id, &error);
+        client_->QueryRows(TableName(kTableOrderEvents), "client_order_id", client_order_id, &error);
     std::vector<OrderEvent> out;
     out.reserve(rows.size());
     for (const auto& row : rows) {
@@ -293,6 +298,8 @@ std::vector<OrderEvent> TimescaleEventStoreClientAdapter::GetOrderEvents(
         (void)ParseInt32(row, "session_id", &event.session_id);
         event.trade_id = GetOrEmpty(row, "trade_id");
         event.event_source = GetOrEmpty(row, "event_source");
+        (void)ParseInt64(row, "exchange_ts_ns", &event.exchange_ts_ns);
+        (void)ParseInt64(row, "recv_ts_ns", &event.recv_ts_ns);
         if (!ParseInt64(row, "ts_ns", &event.ts_ns)) {
             continue;
         }
@@ -332,7 +339,7 @@ std::vector<RiskDecisionRow> TimescaleEventStoreClientAdapter::GetRiskDecisionRo
     }
 
     std::string error;
-    const auto rows = client_->QueryAllRows(kTableRiskDecisions, &error);
+    const auto rows = client_->QueryAllRows(TableName(kTableRiskDecisions), &error);
     std::vector<RiskDecisionRow> out;
     out.reserve(rows.size());
     for (const auto& row : rows) {
@@ -395,7 +402,7 @@ std::vector<TradingAccountSnapshot> TimescaleEventStoreClientAdapter::GetTrading
 
     std::string error;
     const auto rows =
-        client_->QueryRows(kTableTradingAccounts, "account_id", account_id, &error);
+        client_->QueryRows(TableName(kTableTradingAccounts), "account_id", account_id, &error);
     std::vector<TradingAccountSnapshot> out;
     out.reserve(rows.size());
     for (const auto& row : rows) {
@@ -431,7 +438,7 @@ TimescaleEventStoreClientAdapter::GetInvestorPositionSnapshots(
 
     std::string error;
     const auto rows =
-        client_->QueryRows(kTableInvestorPositions, "account_id", account_id, &error);
+        client_->QueryRows(TableName(kTableInvestorPositions), "account_id", account_id, &error);
     std::vector<InvestorPositionSnapshot> out;
     out.reserve(rows.size());
     for (const auto& row : rows) {
@@ -478,7 +485,7 @@ TimescaleEventStoreClientAdapter::GetBrokerTradingParamsSnapshots(
 
     std::string error;
     const auto rows =
-        client_->QueryRows(kTableBrokerTradingParams, "account_id", account_id, &error);
+        client_->QueryRows(TableName(kTableBrokerTradingParams), "account_id", account_id, &error);
     std::vector<BrokerTradingParamsSnapshot> out;
     out.reserve(rows.size());
     for (const auto& row : rows) {
@@ -502,7 +509,7 @@ std::vector<InstrumentMetaSnapshot> TimescaleEventStoreClientAdapter::GetInstrum
 
     std::string error;
     const auto rows =
-        client_->QueryRows(kTableInstrumentMeta, "instrument_id", instrument_id, &error);
+        client_->QueryRows(TableName(kTableInstrumentMeta), "instrument_id", instrument_id, &error);
     std::vector<InstrumentMetaSnapshot> out;
     out.reserve(rows.size());
     for (const auto& row : rows) {
@@ -538,7 +545,7 @@ bool TimescaleEventStoreClientAdapter::InsertWithRetry(
 
     for (int attempt = 1; attempt <= attempts; ++attempt) {
         std::string error;
-        if (client_->InsertRow(table, row, &error)) {
+        if (client_->InsertRow(TableName(table), row, &error)) {
             return true;
         }
         if (attempt < attempts && backoff_ms > 0) {
@@ -547,6 +554,13 @@ bool TimescaleEventStoreClientAdapter::InsertWithRetry(
         }
     }
     return false;
+}
+
+std::string TimescaleEventStoreClientAdapter::TableName(const std::string& table) const {
+    if (schema_.empty()) {
+        return table;
+    }
+    return schema_ + "." + table;
 }
 
 std::string TimescaleEventStoreClientAdapter::ToString(std::int32_t value) {

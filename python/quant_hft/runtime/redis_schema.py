@@ -119,12 +119,16 @@ def parse_order_event(fields: Mapping[str, str]) -> OrderEvent | None:
     raw_throttle_applied = fields.get("throttle_applied", "0")
     raw_slippage_bps = fields.get("slippage_bps", "0")
     raw_impact_cost = fields.get("impact_cost", "0")
+    raw_exchange_ts_ns = fields.get("exchange_ts_ns", "0")
+    raw_recv_ts_ns = fields.get("recv_ts_ns", "0")
     try:
         slice_index = int(raw_slice_index)
         slice_total = int(raw_slice_total)
         throttle_applied = raw_throttle_applied.strip().lower() in {"1", "true", "yes"}
         slippage_bps = float(raw_slippage_bps)
         impact_cost = float(raw_impact_cost)
+        exchange_ts_ns = int(raw_exchange_ts_ns)
+        recv_ts_ns = int(raw_recv_ts_ns)
         return OrderEvent(
             account_id=fields["account_id"],
             client_order_id=fields["client_order_id"],
@@ -137,6 +141,16 @@ def parse_order_event(fields: Mapping[str, str]) -> OrderEvent | None:
             ts_ns=int(fields["ts_ns"]),
             trace_id=trace_id,
             exchange_order_id=fields.get("exchange_order_id", ""),
+            exchange_id=fields.get("exchange_id", ""),
+            status_msg=fields.get("status_msg", ""),
+            order_submit_status=fields.get("order_submit_status", ""),
+            order_ref=fields.get("order_ref", ""),
+            front_id=int(fields.get("front_id", "0")),
+            session_id=int(fields.get("session_id", "0")),
+            trade_id=fields.get("trade_id", ""),
+            event_source=fields.get("event_source", ""),
+            exchange_ts_ns=exchange_ts_ns,
+            recv_ts_ns=recv_ts_ns,
             execution_algo_id=execution_algo_id,
             slice_index=slice_index,
             slice_total=slice_total,

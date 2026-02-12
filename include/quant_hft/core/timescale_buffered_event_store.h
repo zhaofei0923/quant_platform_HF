@@ -5,6 +5,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -17,6 +18,7 @@ namespace quant_hft {
 struct TimescaleBufferedStoreOptions {
     std::size_t batch_size{128};
     int flush_interval_ms{50};
+    std::string schema{"public"};
 };
 
 class TimescaleBufferedEventStore : public ITimeseriesStore {

@@ -47,6 +47,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--core-process-alive", default="true")
     parser.add_argument("--redis-health", default="unknown")
     parser.add_argument("--timescale-health", default="unknown")
+    parser.add_argument("--postgres-health", default="")
     parser.add_argument("--environment", default="prodlike")
     parser.add_argument("--service", default="core_engine")
     return parser
@@ -69,6 +70,7 @@ def main() -> int:
         core_process_alive=core_process_alive,
         redis_health=args.redis_health,
         timescale_health=args.timescale_health,
+        postgres_health=args.postgres_health if args.postgres_health else args.timescale_health,
         ctp_query_latency_ms=args.query_latency_ms,
         ctp_query_latency_target_ms=args.query_latency_target_ms,
         ctp_flow_control_hits=args.flow_control_hits,

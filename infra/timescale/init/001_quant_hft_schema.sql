@@ -64,6 +64,8 @@ CREATE TABLE IF NOT EXISTS order_events (
     session_id INTEGER NOT NULL DEFAULT 0,
     trade_id TEXT NOT NULL DEFAULT '',
     event_source TEXT NOT NULL DEFAULT '',
+    exchange_ts_ns BIGINT NOT NULL DEFAULT 0,
+    recv_ts_ns BIGINT NOT NULL DEFAULT 0,
     ts_ns BIGINT NOT NULL,
     trace_id TEXT NOT NULL,
     execution_algo_id TEXT NOT NULL DEFAULT '',
@@ -84,6 +86,8 @@ ALTER TABLE order_events ADD COLUMN IF NOT EXISTS front_id INTEGER NOT NULL DEFA
 ALTER TABLE order_events ADD COLUMN IF NOT EXISTS session_id INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE order_events ADD COLUMN IF NOT EXISTS trade_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE order_events ADD COLUMN IF NOT EXISTS event_source TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_events ADD COLUMN IF NOT EXISTS exchange_ts_ns BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE order_events ADD COLUMN IF NOT EXISTS recv_ts_ns BIGINT NOT NULL DEFAULT 0;
 
 SELECT create_hypertable('order_events', by_range('ts_ns'), if_not_exists => TRUE);
 

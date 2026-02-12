@@ -106,6 +106,8 @@ message OrderEvent {
   int32 session_id = 25;
   string trade_id = 26;
   string event_source = 27;
+  int64 exchange_ts_ns = 28;
+  int64 recv_ts_ns = 29;
 }
 
 message PositionSnapshot {

@@ -62,6 +62,8 @@ TEST(StorageClientFactoryTest, LoadsConnectionConfigFromEnvironment) {
     setenv("QUANT_HFT_REDIS_PORT", "6380", 1);
     setenv("QUANT_HFT_TIMESCALE_MODE", "external", 1);
     setenv("QUANT_HFT_TIMESCALE_DSN", "postgres://user:pwd@localhost:5432/quant", 1);
+    setenv("QUANT_HFT_TRADING_SCHEMA", "trading_core", 1);
+    setenv("QUANT_HFT_ANALYTICS_SCHEMA", "analytics_ts", 1);
     setenv("QUANT_HFT_STORAGE_ALLOW_FALLBACK", "false", 1);
 
     const auto config = StorageConnectionConfig::FromEnvironment();
@@ -70,6 +72,8 @@ TEST(StorageClientFactoryTest, LoadsConnectionConfigFromEnvironment) {
     EXPECT_EQ(config.redis.port, 6380);
     EXPECT_EQ(config.timescale.mode, StorageBackendMode::kExternal);
     EXPECT_EQ(config.timescale.dsn, "postgres://user:pwd@localhost:5432/quant");
+    EXPECT_EQ(config.timescale.trading_schema, "trading_core");
+    EXPECT_EQ(config.timescale.analytics_schema, "analytics_ts");
     EXPECT_FALSE(config.allow_inmemory_fallback);
 }
 

@@ -22,6 +22,7 @@
 #include "quant_hft/core/storage_connection_config.h"
 #include "quant_hft/core/storage_retry_policy.h"
 #include "quant_hft/core/strategy_intent_inbox.h"
+#include "quant_hft/core/trading_ledger_store_client_adapter.h"
 #include "quant_hft/core/timescale_buffered_event_store.h"
 #include "quant_hft/core/wal_replay_loader.h"
 #include "quant_hft/services/basic_risk_engine.h"
@@ -221,7 +222,9 @@ quant_hft::OrderEvent BuildRejectedEvent(const quant_hft::OrderIntent& intent,
     event.filled_volume = 0;
     event.avg_fill_price = 0.0;
     event.reason = reason;
-    event.ts_ns = quant_hft::NowEpochNanos();
+    event.recv_ts_ns = quant_hft::NowEpochNanos();
+    event.exchange_ts_ns = event.recv_ts_ns;
+    event.ts_ns = event.recv_ts_ns;
     event.trace_id = intent.trace_id;
     event.execution_algo_id = metadata.execution_algo_id;
     event.slice_index = metadata.slice_index;
@@ -360,13 +363,20 @@ int main(int argc, char** argv) {
     TimescaleBufferedStoreOptions buffered_opts;
     buffered_opts.batch_size = 16;
     buffered_opts.flush_interval_ms = 10;
+    buffered_opts.schema = storage_config.timescale.analytics_schema;
     TimescaleBufferedEventStore timeseries_store(pooled_timescale,
                                                  storage_retry_policy,
                                                  buffered_opts);
     TimescaleEventStoreClientAdapter ctp_query_snapshot_store(pooled_timescale,
-                                                              storage_retry_policy);
+                                                              storage_retry_policy,
+                                                              storage_config.timescale.analytics_schema);
+    TradingLedgerStoreClientAdapter trading_ledger_store(pooled_timescale,
+                                                         storage_retry_policy,
+                                                         storage_config.timescale.trading_schema);
     RuleMarketStateEngine market_state(32);
     LocalWalRegulatorySink wal_sink("runtime_events.wal");
+    std::atomic<std::uint64_t> wal_write_failures{0};
+    std::atomic<std::uint64_t> trading_write_failures{0};
 
     const auto replay_stats =
         replay_loader.Replay("runtime_events.wal", &order_state_machine, &ledger);
@@ -380,6 +390,15 @@ int main(int argc, char** argv) {
 
     auto process_order_event = [&](const OrderEvent& raw_event) {
         OrderEvent event = raw_event;
+        if (event.recv_ts_ns <= 0) {
+            event.recv_ts_ns = event.ts_ns > 0 ? event.ts_ns : NowEpochNanos();
+        }
+        if (event.exchange_ts_ns <= 0) {
+            event.exchange_ts_ns = event.recv_ts_ns;
+        }
+        if (event.ts_ns <= 0) {
+            event.ts_ns = event.recv_ts_ns;
+        }
         {
             std::lock_guard<std::mutex> lock(execution_metadata_mutex);
             const auto it = execution_metadata_by_order.find(event.client_order_id);
@@ -432,14 +451,44 @@ int main(int argc, char** argv) {
                           << " error=" << ctp_ledger_error << '\n';
             }
         }
-        wal_sink.AppendOrderEvent(event);
+        if (!wal_sink.AppendOrderEvent(event)) {
+            const auto failure_count = wal_write_failures.fetch_add(1) + 1;
+            std::cerr << "{\"component\":\"storage\","
+                      << "\"stage\":\"wal_append_order_event\","
+                      << "\"client_order_id\":\"" << event.client_order_id << "\","
+                      << "\"failure_count\":" << failure_count << "}" << '\n';
+        }
+
+        std::string trading_error;
+        if (!trading_ledger_store.AppendOrderEvent(event, &trading_error)) {
+            const auto failure_count = trading_write_failures.fetch_add(1) + 1;
+            std::cerr << "{\"component\":\"storage\","
+                      << "\"stage\":\"trading_core_append_order_event\","
+                      << "\"client_order_id\":\"" << event.client_order_id << "\","
+                      << "\"error\":\"" << trading_error << "\","
+                      << "\"failure_count\":" << failure_count << "}" << '\n';
+        }
+        if ((event.status == OrderStatus::kPartiallyFilled || event.status == OrderStatus::kFilled) &&
+            event.filled_volume > 0) {
+            if (!trading_ledger_store.AppendTradeEvent(event, &trading_error)) {
+                const auto failure_count = trading_write_failures.fetch_add(1) + 1;
+                std::cerr << "{\"component\":\"storage\","
+                          << "\"stage\":\"trading_core_append_trade_event\","
+                          << "\"client_order_id\":\"" << event.client_order_id << "\","
+                          << "\"trade_id\":\"" << event.trade_id << "\","
+                          << "\"error\":\"" << trading_error << "\","
+                          << "\"failure_count\":" << failure_count << "}" << '\n';
+            }
+        }
+
         realtime_cache.UpsertOrderEvent(event);
-        timeseries_store.AppendOrderEvent(event);
 
         realtime_cache.UpsertPositionSnapshot(
             ledger.GetPositionSnapshot(event.account_id, event.instrument_id, PositionDirection::kLong));
         realtime_cache.UpsertPositionSnapshot(
             ledger.GetPositionSnapshot(event.account_id, event.instrument_id, PositionDirection::kShort));
+
+        timeseries_store.AppendOrderEvent(event);
     };
 
     auto process_market_snapshot = [&](const MarketSnapshot& raw_snapshot) {
@@ -476,6 +525,15 @@ int main(int argc, char** argv) {
                     ctp_account_ledger.RollTradingDay(snapshot.trading_day);
                 }
             }
+            std::string trading_error;
+            if (!trading_ledger_store.AppendAccountSnapshot(snapshot, &trading_error)) {
+                const auto failure_count = trading_write_failures.fetch_add(1) + 1;
+                std::cerr << "{\"component\":\"storage\","
+                          << "\"stage\":\"trading_core_append_account_snapshot\","
+                          << "\"account_id\":\"" << snapshot.account_id << "\","
+                          << "\"error\":\"" << trading_error << "\","
+                          << "\"failure_count\":" << failure_count << "}" << '\n';
+            }
             ctp_query_snapshot_store.AppendTradingAccountSnapshot(snapshot);
         });
     ctp_gateway.RegisterInvestorPositionSnapshotCallback(
@@ -490,6 +548,16 @@ int main(int argc, char** argv) {
                                   << snapshot.instrument_id
                                   << " error=" << ctp_ledger_error << '\n';
                     }
+                }
+                std::string trading_error;
+                if (!trading_ledger_store.AppendPositionSnapshot(snapshot, &trading_error)) {
+                    const auto failure_count = trading_write_failures.fetch_add(1) + 1;
+                    std::cerr << "{\"component\":\"storage\","
+                              << "\"stage\":\"trading_core_append_position_snapshot\","
+                              << "\"account_id\":\"" << snapshot.account_id << "\","
+                              << "\"instrument_id\":\"" << snapshot.instrument_id << "\","
+                              << "\"error\":\"" << trading_error << "\","
+                              << "\"failure_count\":" << failure_count << "}" << '\n';
                 }
                 ctp_query_snapshot_store.AppendInvestorPositionSnapshot(snapshot);
             }

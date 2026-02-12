@@ -10,12 +10,17 @@ TimescaleBufferedEventStore::TimescaleBufferedEventStore(
     std::shared_ptr<ITimescaleSqlClient> client,
     StorageRetryPolicy retry_policy,
     TimescaleBufferedStoreOptions options)
-    : options_(options.batch_size == 0 ? TimescaleBufferedStoreOptions{1, options.flush_interval_ms}
-                                       : options),
-      adapter_(std::move(client), retry_policy),
+    : options_(std::move(options)),
+      adapter_(std::move(client), retry_policy, options_.schema),
       worker_(&TimescaleBufferedEventStore::RunWorker, this) {
+    if (options_.batch_size == 0) {
+        options_.batch_size = 1;
+    }
     if (options_.flush_interval_ms <= 0) {
         options_.flush_interval_ms = 1;
+    }
+    if (options_.schema.empty()) {
+        options_.schema = "public";
     }
 }
 

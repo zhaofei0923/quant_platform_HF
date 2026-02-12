@@ -33,6 +33,24 @@ TEST(LibpqTimescaleSqlClientTest, RejectsInvalidTableNameBeforeNetworkAccess) {
     EXPECT_NE(error.find("invalid table"), std::string::npos);
 }
 
+TEST(LibpqTimescaleSqlClientTest, AllowsSchemaQualifiedTableName) {
+    LibpqTimescaleSqlClient client(BuildConfig());
+    std::string error;
+    EXPECT_FALSE(client.InsertRow("analytics_ts.order_events",
+                                  std::unordered_map<std::string, std::string>{{"k", "v"}},
+                                  &error));
+    EXPECT_EQ(error.find("invalid table"), std::string::npos);
+}
+
+TEST(LibpqTimescaleSqlClientTest, RejectsInjectedSchemaQualifiedTableName) {
+    LibpqTimescaleSqlClient client(BuildConfig());
+    std::string error;
+    EXPECT_FALSE(client.InsertRow("analytics_ts.order_events;drop_table",
+                                  std::unordered_map<std::string, std::string>{{"k", "v"}},
+                                  &error));
+    EXPECT_NE(error.find("invalid table"), std::string::npos);
+}
+
 TEST(LibpqTimescaleSqlClientTest, PingReturnsFalseWhenServerUnavailable) {
     LibpqTimescaleSqlClient client(BuildConfig());
     std::string error;

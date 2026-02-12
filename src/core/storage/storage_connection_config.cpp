@@ -90,6 +90,10 @@ StorageConnectionConfig StorageConnectionConfig::FromEnvironment() {
         GetEnvOrDefault("QUANT_HFT_TIMESCALE_SSLMODE", config.timescale.ssl_mode);
     config.timescale.connect_timeout_ms = GetEnvOrDefaultInt(
         "QUANT_HFT_TIMESCALE_CONNECT_TIMEOUT_MS", config.timescale.connect_timeout_ms);
+    config.timescale.trading_schema =
+        GetEnvOrDefault("QUANT_HFT_TRADING_SCHEMA", config.timescale.trading_schema);
+    config.timescale.analytics_schema =
+        GetEnvOrDefault("QUANT_HFT_ANALYTICS_SCHEMA", config.timescale.analytics_schema);
 
     config.allow_inmemory_fallback =
         ParseBoolWithDefault(GetEnvOrDefault("QUANT_HFT_STORAGE_ALLOW_FALLBACK", "true"),

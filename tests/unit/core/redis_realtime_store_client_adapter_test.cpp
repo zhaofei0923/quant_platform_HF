@@ -50,16 +50,42 @@ public:
         return true;
     }
 
+    bool Expire(const std::string& key, int ttl_seconds, std::string* error) override {
+        if (ttl_seconds <= 0) {
+            if (error != nullptr) {
+                *error = "invalid ttl";
+            }
+            return false;
+        }
+        const auto it = storage_.find(key);
+        if (it == storage_.end()) {
+            if (error != nullptr) {
+                *error = "missing";
+            }
+            return false;
+        }
+        ++expire_calls_[key];
+        return true;
+    }
+
     bool Ping(std::string* error) const override {
         (void)error;
         return true;
     }
 
     int hset_calls() const { return hset_calls_; }
+    int expire_calls_for(const std::string& key) const {
+        const auto it = expire_calls_.find(key);
+        if (it == expire_calls_.end()) {
+            return 0;
+        }
+        return it->second;
+    }
 
 private:
     int fail_times_{0};
     int hset_calls_{0};
+    std::unordered_map<std::string, int> expire_calls_;
     std::unordered_map<std::string,
                        std::unordered_map<std::string, std::string>>
         storage_;
@@ -179,6 +205,59 @@ TEST(RedisRealtimeStoreClientAdapterTest, StopsAtMaxAttempts) {
     store.UpsertMarketSnapshot(market);
 
     EXPECT_EQ(client->hset_calls(), 2);
+}
+
+TEST(RedisRealtimeStoreClientAdapterTest, AppliesTtlByKeyType) {
+    auto client = std::make_shared<FlakyRedisClient>(0);
+    StorageRetryPolicy policy;
+    policy.max_attempts = 2;
+    policy.initial_backoff_ms = 0;
+    policy.max_backoff_ms = 0;
+    RedisRealtimeStoreClientAdapter store(client, policy);
+
+    MarketSnapshot market;
+    market.instrument_id = "SHFE.ag2406";
+    market.last_price = 4520.5;
+    market.recv_ts_ns = 100;
+    store.UpsertMarketSnapshot(market);
+
+    OrderEvent order;
+    order.account_id = "acc-1";
+    order.client_order_id = "ord-ttl";
+    order.instrument_id = "SHFE.ag2406";
+    order.status = OrderStatus::kAccepted;
+    order.total_volume = 2;
+    order.filled_volume = 0;
+    order.ts_ns = 101;
+    store.UpsertOrderEvent(order);
+
+    PositionSnapshot position;
+    position.account_id = "acc-1";
+    position.instrument_id = "SHFE.ag2406";
+    position.direction = PositionDirection::kLong;
+    position.volume = 1;
+    position.ts_ns = 102;
+    store.UpsertPositionSnapshot(position);
+
+    StateSnapshot7D state;
+    state.instrument_id = "SHFE.ag2406";
+    state.trend = {0.1, 0.9};
+    state.volatility = {0.2, 0.8};
+    state.liquidity = {0.3, 0.7};
+    state.sentiment = {0.1, 0.2};
+    state.seasonality = {0.1, 0.2};
+    state.pattern = {0.1, 0.2};
+    state.event_drive = {0.1, 0.2};
+    state.ts_ns = 103;
+    store.UpsertStateSnapshot7D(state);
+
+    EXPECT_EQ(client->expire_calls_for(RedisKeyBuilder::MarketTickLatest("SHFE.ag2406")), 1);
+    EXPECT_EQ(client->expire_calls_for(RedisKeyBuilder::OrderInfo("ord-ttl")), 1);
+    EXPECT_EQ(client->expire_calls_for(RedisKeyBuilder::StateSnapshot7DLatest("SHFE.ag2406")), 1);
+    EXPECT_EQ(client->expire_calls_for(RedisKeyBuilder::Position("acc-1",
+                                                                 "SHFE.ag2406",
+                                                                 PositionDirection::kLong)),
+              0);
 }
 
 }  // namespace quant_hft

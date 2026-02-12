@@ -262,6 +262,7 @@ def build_ops_health_report(
     core_process_alive: bool,
     redis_health: str = "unknown",
     timescale_health: str = "unknown",
+    postgres_health: str = "",
     ctp_query_latency_ms: float | None = None,
     ctp_query_latency_target_ms: float = 2000.0,
     ctp_flow_control_hits: float | None = None,
@@ -366,6 +367,22 @@ def build_ops_health_report(
             unit="bool",
             healthy=timescale_ok is True,
             detail=f"input={timescale_health}",
+        )
+    )
+
+    effective_postgres_health = postgres_health.strip() if postgres_health else timescale_health
+    postgres_ok = _normalize_health_flag(effective_postgres_health)
+    slis.append(
+        SliRecord(
+            name=with_prefix("storage_postgres_health"),
+            slo_name=with_prefix("storage_postgres_health"),
+            environment=environment,
+            service=service,
+            value=1.0 if postgres_ok else 0.0 if postgres_ok is False else None,
+            target=1.0,
+            unit="bool",
+            healthy=postgres_ok is True,
+            detail=f"input={effective_postgres_health}",
         )
     )
 

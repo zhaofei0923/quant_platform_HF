@@ -30,6 +30,8 @@ struct TimescaleConnectionConfig {
     std::string password;
     std::string ssl_mode{"disable"};
     int connect_timeout_ms{2000};
+    std::string trading_schema{"trading_core"};
+    std::string analytics_schema{"analytics_ts"};
 };
 
 struct StorageConnectionConfig {

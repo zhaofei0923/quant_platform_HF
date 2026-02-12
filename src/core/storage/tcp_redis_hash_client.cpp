@@ -575,6 +575,41 @@ bool TcpRedisHashClient::HGetAll(const std::string& key,
     return true;
 }
 
+bool TcpRedisHashClient::Expire(const std::string& key,
+                                int ttl_seconds,
+                                std::string* error) {
+    if (key.empty()) {
+        if (error != nullptr) {
+            *error = "empty key";
+        }
+        return false;
+    }
+    if (ttl_seconds <= 0) {
+        if (error != nullptr) {
+            *error = "ttl_seconds must be positive";
+        }
+        return false;
+    }
+
+    RespValue reply;
+    if (!ExecuteCommand({"EXPIRE", key, std::to_string(ttl_seconds)}, &reply, error)) {
+        return false;
+    }
+    if (reply.type != RespValue::Type::kInteger) {
+        if (error != nullptr) {
+            *error = "unexpected EXPIRE reply";
+        }
+        return false;
+    }
+    if (reply.integer <= 0) {
+        if (error != nullptr) {
+            *error = "not found";
+        }
+        return false;
+    }
+    return true;
+}
+
 bool TcpRedisHashClient::Ping(std::string* error) const {
     RespValue reply;
     if (!ExecuteCommand({"PING"}, &reply, error)) {

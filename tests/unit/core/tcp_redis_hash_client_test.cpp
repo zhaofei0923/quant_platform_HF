@@ -291,4 +291,20 @@ TEST(TcpRedisHashClientTest, SupportsHSetAndHGetAll) {
     EXPECT_TRUE(server.passed()) << server.error();
 }
 
+TEST(TcpRedisHashClientTest, SupportsExpire) {
+    FakeRedisServer server({
+        Expectation{{"HSET", "market:tick:SHFE.ag2406:latest", "last_price", "4501.5"}, ":1\r\n"},
+        Expectation{{"EXPIRE", "market:tick:SHFE.ag2406:latest", "259200"}, ":1\r\n"},
+    });
+
+    TcpRedisHashClient client(BuildConfig(server.port()));
+    std::string error;
+    EXPECT_TRUE(client.HSet("market:tick:SHFE.ag2406:latest",
+                            std::unordered_map<std::string, std::string>{{"last_price", "4501.5"}},
+                            &error))
+        << error;
+    EXPECT_TRUE(client.Expire("market:tick:SHFE.ag2406:latest", 259200, &error)) << error;
+    EXPECT_TRUE(server.passed()) << server.error();
+}
+
 }  // namespace quant_hft

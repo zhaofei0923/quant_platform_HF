@@ -33,9 +33,13 @@ public:
 
 private:
     static const LibpqApi& Api();
-    bool ValidateIdentifier(const std::string& identifier,
-                            const std::string& field_name,
-                            std::string* error) const;
+    bool ValidateSimpleIdentifier(const std::string& identifier,
+                                  const std::string& field_name,
+                                  std::string* error) const;
+    bool ValidateQualifiedTableIdentifier(const std::string& table_identifier,
+                                          std::string* quoted_identifier,
+                                          std::string* error) const;
+    static std::string QuoteIdentifier(const std::string& identifier);
     std::string BuildConnInfo() const;
     static std::string EscapeConnInfoValue(const std::string& value);
     static std::vector<std::unordered_map<std::string, std::string>> ParseRows(

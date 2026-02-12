@@ -50,6 +50,24 @@ public:
         return true;
     }
 
+    bool Expire(const std::string& key, int ttl_seconds, std::string* error) override {
+        ++expire_calls_;
+        if (ttl_seconds <= 0) {
+            if (error != nullptr) {
+                *error = "invalid ttl";
+            }
+            return false;
+        }
+        const auto it = store_.find(key);
+        if (it == store_.end()) {
+            if (error != nullptr) {
+                *error = "not found";
+            }
+            return false;
+        }
+        return true;
+    }
+
     bool Ping(std::string* error) const override {
         if (!healthy_ && error != nullptr) {
             *error = "unhealthy";
@@ -59,12 +77,14 @@ public:
 
     int hset_calls() const { return hset_calls_; }
     int hget_calls() const { return hget_calls_; }
+    int expire_calls() const { return expire_calls_; }
 
 private:
     bool healthy_{true};
     bool write_ok_{true};
     mutable int hset_calls_{0};
     mutable int hget_calls_{0};
+    mutable int expire_calls_{0};
     std::unordered_map<std::string,
                        std::unordered_map<std::string, std::string>>
         store_;

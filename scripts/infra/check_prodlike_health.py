@@ -21,9 +21,15 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Check prodlike docker compose service health and emit a JSON report"
     )
+    parser.add_argument(
+        "--profile",
+        default="single-host",
+        choices=("single-host", "prodlike"),
+        help="Deployment profile used to derive compose/project defaults",
+    )
     parser.add_argument("--ps-json-file", default="")
-    parser.add_argument("--compose-file", default="infra/docker-compose.prodlike.yaml")
-    parser.add_argument("--project-name", default="quant-hft-prodlike")
+    parser.add_argument("--compose-file", default="")
+    parser.add_argument("--project-name", default="")
     parser.add_argument("--docker-bin", default="docker")
     parser.add_argument("--report-json", default="docs/results/prodlike_health_report.json")
     parser.add_argument(
@@ -102,6 +108,17 @@ def _is_service_healthy(state: str, health: str) -> bool:
 
 def main() -> int:
     args = _parse_args()
+    if not args.compose_file:
+        args.compose_file = (
+            "infra/docker-compose.single-host.yaml"
+            if args.profile == "single-host"
+            else "infra/docker-compose.prodlike.yaml"
+        )
+    if not args.project_name:
+        args.project_name = (
+            "quant-hft-single-host" if args.profile == "single-host" else "quant-hft-prodlike"
+        )
+
     required_services = _normalize_required_services(args.required_services)
 
     command_ok = True
@@ -174,6 +191,7 @@ def main() -> int:
         },
         "compose_file": args.compose_file,
         "project_name": args.project_name,
+        "profile": args.profile,
         "command_error": command_error,
     }
 

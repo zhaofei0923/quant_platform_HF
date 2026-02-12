@@ -6,6 +6,8 @@
 #include <thread>
 #include <utility>
 
+#include "quant_hft/monitoring/metric_registry.h"
+
 namespace quant_hft {
 
 namespace {
@@ -13,6 +15,20 @@ namespace {
 bool IsTerminalStatus(OrderStatus status) {
     return status == OrderStatus::kCanceled || status == OrderStatus::kFilled ||
            status == OrderStatus::kRejected;
+}
+
+std::shared_ptr<MonitoringCounter> RiskRejectCounter() {
+    static auto metric = MetricRegistry::Instance().BuildCounter(
+        "quant_hft_risk_reject_total", "Total risk rejection count");
+    return metric;
+}
+
+std::shared_ptr<MonitoringHistogram> OrderLatencyHistogram() {
+    static auto metric = MetricRegistry::Instance().BuildHistogram(
+        "quant_hft_order_latency_seconds",
+        "Order handling latency in seconds",
+        {0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0});
+    return metric;
 }
 
 }  // namespace
@@ -42,6 +58,7 @@ ExecutionEngine::ExecutionEngine(std::shared_ptr<CTPTraderAdapter> adapter,
 
 std::future<OrderResult> ExecutionEngine::PlaceOrderAsync(const OrderIntent& intent) {
     return std::async(std::launch::async, [this, intent]() {
+        const auto start = std::chrono::steady_clock::now();
         OrderResult result;
         result.client_order_id = intent.client_order_id;
         if (adapter_ == nullptr || flow_controller_ == nullptr || breaker_manager_ == nullptr) {
@@ -56,6 +73,7 @@ std::future<OrderResult> ExecutionEngine::PlaceOrderAsync(const OrderIntent& int
             const auto context = BuildOrderContext(intent);
             const auto risk_result = risk_manager_->CheckOrder(intent, context);
             if (!risk_result.allowed) {
+                RiskRejectCounter()->Increment();
                 result.message = "risk reject: " + risk_result.reason;
                 return result;
             }
@@ -92,6 +110,10 @@ std::future<OrderResult> ExecutionEngine::PlaceOrderAsync(const OrderIntent& int
         result.success = true;
         result.client_order_id = order_ref;
         result.message = "submitted";
+        const auto end = std::chrono::steady_clock::now();
+        const auto elapsed =
+            std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+        OrderLatencyHistogram()->Observe(static_cast<double>(elapsed) / 1'000'000.0);
         return result;
     });
 }
@@ -108,6 +130,7 @@ std::future<bool> ExecutionEngine::CancelOrderAsync(const std::string& client_or
             const auto context = BuildCancelContext(client_order_id);
             const auto risk_result = risk_manager_->CheckCancel(client_order_id, context);
             if (!risk_result.allowed) {
+                RiskRejectCounter()->Increment();
                 return false;
             }
         }

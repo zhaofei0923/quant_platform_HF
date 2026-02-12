@@ -26,6 +26,8 @@ ctp:
   cancel_retry_max_delay_ms: 5000
   cancel_wait_ack_timeout_ms: 1200
   settlement_confirm_required: true
+  metrics_enabled: false
+  metrics_port: 8080
   breaker_failure_threshold: 5
   breaker_timeout_ms: 1000
   breaker_half_open_timeout_ms: 5000

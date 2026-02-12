@@ -11,6 +11,8 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "quant_hft/monitoring/metric_registry.h"
+
 namespace quant_hft {
 namespace {
 
@@ -60,6 +62,35 @@ std::string JsonNumber(double value) {
     return stream.str();
 }
 
+std::shared_ptr<MonitoringCounter> SettlementReconcileDiffCounter() {
+    static auto metric = MetricRegistry::Instance().BuildCounter(
+        "quant_hft_settlement_reconcile_diff_total",
+        "Total settlement reconcile diff count");
+    return metric;
+}
+
+std::shared_ptr<MonitoringHistogram> SettlementDurationHistogram() {
+    static auto metric = MetricRegistry::Instance().BuildHistogram(
+        "quant_hft_settlement_duration_seconds",
+        "Daily settlement run duration in seconds",
+        {0.1, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600});
+    return metric;
+}
+
+struct ScopeDurationObserve {
+    explicit ScopeDurationObserve(std::chrono::steady_clock::time_point started)
+        : started_(started) {}
+
+    ~ScopeDurationObserve() {
+        const auto now = std::chrono::steady_clock::now();
+        const auto elapsed_ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - started_).count();
+        SettlementDurationHistogram()->Observe(static_cast<double>(elapsed_ms) / 1000.0);
+    }
+
+    std::chrono::steady_clock::time_point started_;
+};
+
 }  // namespace
 
 DailySettlementService::DailySettlementService(std::shared_ptr<SettlementPriceProvider> price_provider,
@@ -74,6 +105,7 @@ DailySettlementService::DailySettlementService(std::shared_ptr<SettlementPricePr
 bool DailySettlementService::Run(const DailySettlementConfig& config,
                                  DailySettlementResult* result,
                                  std::string* error) {
+    ScopeDurationObserve duration_observer(std::chrono::steady_clock::now());
     if (result == nullptr) {
         if (error != nullptr) {
             *error = "daily settlement result pointer is null";
@@ -318,6 +350,7 @@ bool DailySettlementService::Run(const DailySettlementConfig& config,
 
     if (reconcile.blocked) {
         for (const auto& diff : reconcile.diffs) {
+            SettlementReconcileDiffCounter()->Increment();
             std::string diff_error;
             if (!store_->AppendReconcileDiff(diff, &diff_error)) {
                 if (error != nullptr) {

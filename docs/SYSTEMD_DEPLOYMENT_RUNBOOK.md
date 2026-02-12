@@ -151,6 +151,27 @@ python3 scripts/ops/verify_rollout_evidence.py \
 
 For real command execution, append `--execute` explicitly.
 
+## One-Click Deploy Entry
+
+Use a single command to orchestrate rollout/failover + evidence verification:
+
+```bash
+python3 scripts/ops/one_click_deploy.py \
+  --env-config configs/deploy/environments/sim.yaml \
+  --output-dir docs/results \
+  --inject-fault
+```
+
+For prodlike multi-host failover workflow:
+
+```bash
+python3 scripts/ops/one_click_deploy.py \
+  --env-config configs/deploy/environments/prodlike_multi_host.yaml \
+  --output-dir docs/results
+```
+
+Append `--execute` for real command execution.
+
 ## Repository Prodlike Infra Bootstrap
 
 Use the repository-local prodlike stack bootstrap before host-level rollout drills:

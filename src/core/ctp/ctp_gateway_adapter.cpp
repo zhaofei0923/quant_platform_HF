@@ -14,6 +14,8 @@
 #include <utility>
 #include <vector>
 
+#include "quant_hft/monitoring/metric_registry.h"
+
 #if defined(QUANT_HFT_ENABLE_CTP_REAL_API) && QUANT_HFT_ENABLE_CTP_REAL_API
 #define QUANT_HFT_HAS_REAL_CTP 1
 #include "ThostFtdcMdApi.h"
@@ -29,6 +31,14 @@ namespace quant_hft {
 namespace {
 
 constexpr int kDefaultConnectTimeoutMs = 10000;
+
+#if QUANT_HFT_HAS_REAL_CTP
+std::shared_ptr<MonitoringCounter> CtpReconnectCounter() {
+    static auto metric = MetricRegistry::Instance().BuildCounter(
+        "quant_hft_ctp_reconnect_total", "CTP reconnect attempt counter");
+    return metric;
+}
+#endif
 
 #if QUANT_HFT_HAS_REAL_CTP
 std::string SafeCtpString(const char* raw) {
@@ -1486,6 +1496,7 @@ void CtpGatewayAdapter::ReconnectWorkerLoop() {
             }
 
             ++attempt;
+            CtpReconnectCounter()->Increment();
             if (ConnectRealApi()) {
                 recovered = true;
                 break;

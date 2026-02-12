@@ -292,6 +292,31 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         }
     }
 
+    loaded.runtime.metrics_enabled = false;
+    if (const auto metrics_enabled_it = kv.find("metrics_enabled");
+        metrics_enabled_it != kv.end()) {
+        if (!ParseBoolValue(metrics_enabled_it->second, &loaded.runtime.metrics_enabled)) {
+            if (error != nullptr) {
+                *error = "invalid bool value for metrics_enabled";
+            }
+            return false;
+        }
+    }
+
+    SetOptionalInt(kv, "metrics_port", &loaded.runtime.metrics_port, &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.runtime.metrics_port <= 0) {
+        if (error != nullptr) {
+            *error = "metrics_port must be > 0";
+        }
+        return false;
+    }
+
     auto get_value = [&](const std::string& key) -> std::string {
         const auto it = kv.find(key);
         if (it == kv.end()) {

@@ -505,6 +505,8 @@ TEST(CtpConfigLoaderTest, LoadsFlowBreakerAndAuditSettings) {
         "  trader_front: \"tcp://127.0.0.1:40001\"\n"
         "  password: \"plain-secret\"\n"
         "  settlement_confirm_required: true\n"
+        "  metrics_enabled: true\n"
+        "  metrics_port: 18080\n"
         "  order_insert_rate_per_sec: 60\n"
         "  order_cancel_rate_per_sec: 55\n"
         "  query_rate_per_sec: 6\n"
@@ -530,6 +532,8 @@ TEST(CtpConfigLoaderTest, LoadsFlowBreakerAndAuditSettings) {
         << error;
 
     EXPECT_TRUE(config.runtime.settlement_confirm_required);
+    EXPECT_TRUE(config.runtime.metrics_enabled);
+    EXPECT_EQ(config.runtime.metrics_port, 18080);
     EXPECT_EQ(config.runtime.order_insert_rate_per_sec, 60);
     EXPECT_EQ(config.runtime.order_cancel_rate_per_sec, 55);
     EXPECT_EQ(config.runtime.query_rate_per_sec, 6);

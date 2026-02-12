@@ -20,6 +20,7 @@
 #include "quant_hft/core/flow_controller.h"
 #include "quant_hft/core/local_wal_regulatory_sink.h"
 #include "quant_hft/core/market_bus_producer.h"
+#include "quant_hft/monitoring/exporter.h"
 #include "quant_hft/core/redis_realtime_store_client_adapter.h"
 #include "quant_hft/core/storage_client_factory.h"
 #include "quant_hft/core/storage_client_pool.h"
@@ -241,6 +242,13 @@ int main(int argc, char** argv) {
     const std::string account_id = file_config.account_id.empty() ? config.user_id
                                                                    : file_config.account_id;
     const ExecutionConfig execution_config = file_config.execution;
+    MetricsExporter metrics_exporter;
+    if (config.metrics_enabled) {
+        std::string metrics_error;
+        if (!metrics_exporter.Start(config.metrics_port, &metrics_error)) {
+            std::cerr << "warning: metrics exporter start failed: " << metrics_error << '\n';
+        }
+    }
     ExecutionPlanner execution_planner;
     ExecutionRouter execution_router;
     auto ctp_trader = std::make_shared<CTPTraderAdapter>(
@@ -905,6 +913,7 @@ int main(int argc, char** argv) {
 
     ctp_md->Disconnect();
     ctp_trader->Disconnect();
+    metrics_exporter.Stop();
     (void)bar_aggregator.Flush();
     timeseries_store.Flush();
     wal_sink.Flush();

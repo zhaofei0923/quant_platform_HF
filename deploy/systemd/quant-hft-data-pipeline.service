@@ -1,0 +1,22 @@
+[Unit]
+Description=Quant HFT Data Pipeline
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kevin0923
+Group=kevin0923
+WorkingDirectory=/home/kevin0923/workspace/quant_platform_HF
+EnvironmentFile=-/home/kevin0923/workspace/quant_platform_HF/deploy/systemd/quant-hft-data-pipeline.env
+ExecStart=/usr/bin/python3.12 /home/kevin0923/workspace/quant_platform_HF/scripts/data_pipeline/run_pipeline.py --analytics-db /home/kevin0923/workspace/quant_platform_HF/runtime/analytics.duckdb --export-dir /home/kevin0923/workspace/quant_platform_HF/runtime/exports --archive-endpoint localhost:9000 --archive-bucket quant-archive --archive-prefix etl --archive-local-dir /home/kevin0923/workspace/quant_platform_HF/runtime/archive --iterations 0 --interval-seconds 60
+Restart=always
+RestartSec=5
+LimitNOFILE=65535
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

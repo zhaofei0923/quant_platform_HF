@@ -35,6 +35,24 @@ def test_check_prodlike_multi_host_health_passes_on_healthy_services(tmp_path: P
                     "Health": "healthy",
                     "Labels": "quant_hft.host=host-b,quant_hft.role=standby",
                 },
+                {
+                    "Service": "kafka",
+                    "State": "running",
+                    "Health": "healthy",
+                    "Labels": "quant_hft.host=host-a,quant_hft.role=primary",
+                },
+                {
+                    "Service": "kafka-connect",
+                    "State": "running",
+                    "Health": "healthy",
+                    "Labels": "quant_hft.host=host-a,quant_hft.role=primary",
+                },
+                {
+                    "Service": "clickhouse",
+                    "State": "running",
+                    "Health": "healthy",
+                    "Labels": "quant_hft.host=host-a,quant_hft.role=primary",
+                },
             ]
         ),
         encoding="utf-8",

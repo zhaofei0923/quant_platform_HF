@@ -1,0 +1,22 @@
+[Unit]
+Description=Quant HFT Core Engine (bootstrap)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kevin0923
+Group=kevin0923
+WorkingDirectory=/home/kevin0923/workspace/quant_platform_HF
+EnvironmentFile=-/home/kevin0923/workspace/quant_platform_HF/deploy/systemd/quant-hft-core-engine.env
+ExecStart=/home/kevin0923/workspace/quant_platform_HF/build/core_engine /home/kevin0923/workspace/quant_platform_HF/configs/sim/ctp.yaml
+Restart=always
+RestartSec=2
+LimitNOFILE=65535
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

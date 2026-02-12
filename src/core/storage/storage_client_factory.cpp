@@ -74,6 +74,21 @@ public:
         return false;
     }
 
+    bool UpsertRow(const std::string& table,
+                   const std::unordered_map<std::string, std::string>& row,
+                   const std::vector<std::string>& conflict_keys,
+                   const std::vector<std::string>& update_keys,
+                   std::string* error) override {
+        (void)table;
+        (void)row;
+        (void)conflict_keys;
+        (void)update_keys;
+        if (error != nullptr) {
+            *error = reason_;
+        }
+        return false;
+    }
+
     std::vector<std::unordered_map<std::string, std::string>> QueryRows(
         const std::string& table,
         const std::string& key,

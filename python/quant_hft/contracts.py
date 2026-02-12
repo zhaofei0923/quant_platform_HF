@@ -16,6 +16,79 @@ class OffsetFlag(str, Enum):
     CLOSE_YESTERDAY = "CLOSE_YESTERDAY"
 
 
+class HedgeFlag(str, Enum):
+    SPECULATION = "SPECULATION"
+    HEDGE = "HEDGE"
+    ARBITRAGE = "ARBITRAGE"
+
+
+class OrderType(str, Enum):
+    LIMIT = "LIMIT"
+    MARKET = "MARKET"
+
+
+class TimeCondition(str, Enum):
+    GFD = "GFD"
+    IOC = "IOC"
+    GTC = "GTC"
+
+
+class VolumeCondition(str, Enum):
+    AV = "AV"
+    MV = "MV"
+
+
+@dataclass(frozen=True)
+class Exchange:
+    id: str
+    name: str
+
+
+@dataclass(frozen=True)
+class Instrument:
+    symbol: str
+    exchange_id: str
+    product_id: str
+    contract_multiplier: int = 0
+    price_tick: float = 0.0
+    margin_rate: float = 0.0
+    commission_rate: float = 0.0
+    commission_type: str = ""
+    close_today_commission_rate: float = 0.0
+
+
+@dataclass(frozen=True)
+class Tick:
+    symbol: str
+    exchange: str
+    ts_ns: int
+    exchange_ts_ns: int = 0
+    last_price: float = 0.0
+    last_volume: int = 0
+    ask_price1: float = 0.0
+    ask_volume1: int = 0
+    bid_price1: float = 0.0
+    bid_volume1: int = 0
+    volume: int = 0
+    turnover: float = 0.0
+    open_interest: int = 0
+
+
+@dataclass(frozen=True)
+class Bar:
+    symbol: str
+    exchange: str
+    timeframe: str
+    ts_ns: int
+    open: float = 0.0
+    high: float = 0.0
+    low: float = 0.0
+    close: float = 0.0
+    volume: int = 0
+    turnover: float = 0.0
+    open_interest: int = 0
+
+
 @dataclass(frozen=True)
 class SignalIntent:
     strategy_id: str
@@ -26,6 +99,94 @@ class SignalIntent:
     limit_price: float
     ts_ns: int
     trace_id: str
+
+
+@dataclass(frozen=True)
+class OrderIntent:
+    account_id: str
+    client_order_id: str
+    strategy_id: str
+    instrument_id: str
+    side: Side
+    offset: OffsetFlag
+    order_type: OrderType = OrderType.LIMIT
+    volume: int = 0
+    price: float = 0.0
+    ts_ns: int = 0
+    trace_id: str = ""
+    hedge_flag: HedgeFlag = HedgeFlag.SPECULATION
+    time_condition: TimeCondition = TimeCondition.GFD
+    volume_condition: VolumeCondition = VolumeCondition.AV
+
+
+@dataclass(frozen=True)
+class Order:
+    order_id: str
+    account_id: str
+    strategy_id: str
+    symbol: str
+    exchange: str
+    side: Side
+    offset: OffsetFlag
+    order_type: OrderType = OrderType.LIMIT
+    price: float = 0.0
+    quantity: int = 0
+    filled_quantity: int = 0
+    avg_fill_price: float = 0.0
+    status: str = "NEW"
+    created_at_ns: int = 0
+    updated_at_ns: int = 0
+    commission: float = 0.0
+    message: str = ""
+
+
+@dataclass(frozen=True)
+class Trade:
+    trade_id: str
+    order_id: str
+    account_id: str
+    strategy_id: str
+    symbol: str
+    exchange: str
+    side: Side
+    offset: OffsetFlag
+    price: float
+    quantity: int
+    trade_ts_ns: int = 0
+    commission: float = 0.0
+    profit: float = 0.0
+
+
+@dataclass(frozen=True)
+class Position:
+    symbol: str
+    exchange: str
+    strategy_id: str
+    account_id: str
+    long_qty: int = 0
+    short_qty: int = 0
+    long_today_qty: int = 0
+    short_today_qty: int = 0
+    long_yd_qty: int = 0
+    short_yd_qty: int = 0
+    avg_long_price: float = 0.0
+    avg_short_price: float = 0.0
+    position_profit: float = 0.0
+    margin: float = 0.0
+    update_time_ns: int = 0
+
+
+@dataclass(frozen=True)
+class Account:
+    account_id: str
+    balance: float = 0.0
+    available: float = 0.0
+    margin: float = 0.0
+    commission: float = 0.0
+    position_profit: float = 0.0
+    close_profit: float = 0.0
+    risk_degree: float = 0.0
+    update_time_ns: int = 0
 
 
 @dataclass(frozen=True)
@@ -64,6 +225,8 @@ class OrderEvent:
     trace_id: str
     exchange_order_id: str = ""
     exchange_id: str = ""
+    side: str = "BUY"
+    offset: str = "OPEN"
     status_msg: str = ""
     order_submit_status: str = ""
     order_ref: str = ""

@@ -13,6 +13,9 @@ def test_check_prodlike_health_passes_on_healthy_services(tmp_path: Path) -> Non
             [
                 {"Service": "redis-primary", "State": "running", "Health": "healthy"},
                 {"Service": "timescale-primary", "State": "running", "Health": "healthy"},
+                {"Service": "kafka", "State": "running", "Health": "healthy"},
+                {"Service": "kafka-connect", "State": "running", "Health": "healthy"},
+                {"Service": "clickhouse", "State": "running", "Health": "healthy"},
                 {"Service": "prometheus", "State": "running", "Health": "healthy"},
                 {"Service": "grafana", "State": "running", "Health": "healthy"},
                 {"Service": "minio", "State": "running", "Health": "healthy"},

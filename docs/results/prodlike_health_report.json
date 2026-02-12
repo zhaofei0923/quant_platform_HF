@@ -1,11 +1,14 @@
 {
-  "generated_ts_ns": 1770813799914195382,
+  "generated_ts_ns": 1770880663329199224,
   "healthy": true,
   "severity": "info",
   "classification": "healthy",
   "required_services": [
     "redis-primary",
     "timescale-primary",
+    "kafka",
+    "kafka-connect",
+    "clickhouse",
     "prometheus",
     "grafana",
     "minio"
@@ -17,9 +20,21 @@
       "state": "running",
       "health": ""
     },
+    "clickhouse": {
+      "state": "running",
+      "health": "healthy"
+    },
     "grafana": {
       "state": "running",
       "health": ""
+    },
+    "kafka": {
+      "state": "running",
+      "health": "healthy"
+    },
+    "kafka-connect": {
+      "state": "running",
+      "health": "healthy"
     },
     "loki": {
       "state": "running",
@@ -37,10 +52,6 @@
       "state": "running",
       "health": "healthy"
     },
-    "redis-replica": {
-      "state": "running",
-      "health": "healthy"
-    },
     "tempo": {
       "state": "running",
       "health": ""
@@ -48,13 +59,10 @@
     "timescale-primary": {
       "state": "running",
       "health": "healthy"
-    },
-    "timescale-replica": {
-      "state": "running",
-      "health": "healthy"
     }
   },
-  "compose_file": "infra/docker-compose.prodlike.yaml",
-  "project_name": "quant-hft-prodlike",
+  "compose_file": "infra/docker-compose.single-host.yaml",
+  "project_name": "quant-hft-single-host",
+  "profile": "single-host",
   "command_error": ""
 }

@@ -48,7 +48,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--redis-health", default="unknown")
     parser.add_argument("--timescale-health", default="unknown")
     parser.add_argument("--postgres-health", default="")
-    parser.add_argument("--environment", default="prodlike")
+    parser.add_argument("--environment", default="single-host-ubuntu")
     parser.add_argument("--service", default="core_engine")
     return parser
 

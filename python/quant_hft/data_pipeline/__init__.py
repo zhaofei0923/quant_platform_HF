@@ -1,4 +1,9 @@
 from .adapters import DuckDbAnalyticsStore, MarketSnapshotRecord, MinioArchiveStore
+from .clickhouse_parquet_archive import (
+    ClickHouseParquetArchiveConfig,
+    ClickHouseParquetArchiveReport,
+    archive_ticks_to_parquet,
+)
 from .data_dictionary import DataDictionary, FieldRule, SchemaDiff
 from .lifecycle_policy import (
     LifecycleDecision,
@@ -16,6 +21,9 @@ from .process import (
 
 __all__ = [
     "ArchiveConfig",
+    "archive_ticks_to_parquet",
+    "ClickHouseParquetArchiveConfig",
+    "ClickHouseParquetArchiveReport",
     "DataPipelineConfig",
     "DataPipelineProcess",
     "DataDictionary",

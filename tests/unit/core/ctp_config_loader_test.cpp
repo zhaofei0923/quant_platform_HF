@@ -449,5 +449,62 @@ TEST(CtpConfigLoaderTest, LoadsAndValidatesCtpQueryIntervals) {
     std::filesystem::remove(invalid);
 }
 
+TEST(CtpConfigLoaderTest, LoadsFlowBreakerAndAuditSettings) {
+    const auto config_path = WriteTempConfig(
+        "ctp:\n"
+        "  environment: sim\n"
+        "  is_production_mode: false\n"
+        "  broker_id: \"9999\"\n"
+        "  user_id: \"191202\"\n"
+        "  investor_id: \"191202\"\n"
+        "  market_front: \"tcp://127.0.0.1:40011\"\n"
+        "  trader_front: \"tcp://127.0.0.1:40001\"\n"
+        "  password: \"plain-secret\"\n"
+        "  settlement_confirm_required: true\n"
+        "  order_insert_rate_per_sec: 60\n"
+        "  order_cancel_rate_per_sec: 55\n"
+        "  query_rate_per_sec: 6\n"
+        "  order_bucket_capacity: 30\n"
+        "  cancel_bucket_capacity: 25\n"
+        "  query_bucket_capacity: 7\n"
+        "  breaker_failure_threshold: 9\n"
+        "  breaker_timeout_ms: 1200\n"
+        "  breaker_half_open_timeout_ms: 6000\n"
+        "  breaker_strategy_enabled: true\n"
+        "  breaker_account_enabled: true\n"
+        "  breaker_system_enabled: true\n"
+        "  recovery_quiet_period_ms: 3500\n"
+        "  kafka_bootstrap_servers: \"127.0.0.1:9092\"\n"
+        "  kafka_topic_ticks: \"market.ticks.v1\"\n"
+        "  clickhouse_dsn: \"clickhouse://localhost:9000/default\"\n"
+        "  audit_hot_days: 7\n"
+        "  audit_cold_days: 180\n");
+
+    CtpFileConfig config;
+    std::string error;
+    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error))
+        << error;
+
+    EXPECT_TRUE(config.runtime.settlement_confirm_required);
+    EXPECT_EQ(config.runtime.order_insert_rate_per_sec, 60);
+    EXPECT_EQ(config.runtime.order_cancel_rate_per_sec, 55);
+    EXPECT_EQ(config.runtime.query_rate_per_sec, 6);
+    EXPECT_EQ(config.query_rate_limit_qps, 6);
+    EXPECT_EQ(config.runtime.order_bucket_capacity, 30);
+    EXPECT_EQ(config.runtime.cancel_bucket_capacity, 25);
+    EXPECT_EQ(config.runtime.query_bucket_capacity, 7);
+    EXPECT_EQ(config.runtime.breaker_failure_threshold, 9);
+    EXPECT_EQ(config.runtime.breaker_timeout_ms, 1200);
+    EXPECT_EQ(config.runtime.breaker_half_open_timeout_ms, 6000);
+    EXPECT_EQ(config.runtime.recovery_quiet_period_ms, 3500);
+    EXPECT_EQ(config.runtime.kafka_bootstrap_servers, "127.0.0.1:9092");
+    EXPECT_EQ(config.runtime.kafka_topic_ticks, "market.ticks.v1");
+    EXPECT_EQ(config.runtime.clickhouse_dsn, "clickhouse://localhost:9000/default");
+    EXPECT_EQ(config.runtime.audit_hot_days, 7);
+    EXPECT_EQ(config.runtime.audit_cold_days, 180);
+
+    std::filesystem::remove(config_path);
+}
+
 }  // namespace
 }  // namespace quant_hft

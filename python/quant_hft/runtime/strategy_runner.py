@@ -107,6 +107,7 @@ class StrategyRunner:
         ctx: dict[str, object] | None = None,
     ) -> None:
         self._runtime = runtime
+        self._datafeed: DataFeed
         if datafeed is None:
             if redis_client is None:
                 raise ValueError("datafeed or redis_client is required")

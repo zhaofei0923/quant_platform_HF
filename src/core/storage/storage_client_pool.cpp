@@ -207,6 +207,40 @@ bool PooledTimescaleSqlClient::InsertRow(
     return false;
 }
 
+bool PooledTimescaleSqlClient::UpsertRow(
+    const std::string& table,
+    const std::unordered_map<std::string, std::string>& row,
+    const std::vector<std::string>& conflict_keys,
+    const std::vector<std::string>& update_keys,
+    std::string* error) {
+    const auto total = pool_.Size();
+    if (total == 0 || table.empty()) {
+        if (error != nullptr) {
+            *error = "timescale pool empty or table empty";
+        }
+        return false;
+    }
+
+    const auto start = next_index_.fetch_add(1) % total;
+    for (std::size_t i = 0; i < total; ++i) {
+        const auto client = pool_.ClientAt(start + i);
+        if (client == nullptr) {
+            continue;
+        }
+        std::string ping_error;
+        if (!client->Ping(&ping_error)) {
+            continue;
+        }
+        if (client->UpsertRow(table, row, conflict_keys, update_keys, error)) {
+            return true;
+        }
+    }
+    if (error != nullptr && error->empty()) {
+        *error = "all timescale clients failed";
+    }
+    return false;
+}
+
 std::vector<std::unordered_map<std::string, std::string>>
 PooledTimescaleSqlClient::QueryRows(const std::string& table,
                                     const std::string& key,

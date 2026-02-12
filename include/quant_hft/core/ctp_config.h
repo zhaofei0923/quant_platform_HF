@@ -15,11 +15,34 @@ struct CtpRuntimeConfig {
     bool is_production_mode{false};
     bool enable_real_api{false};
     bool enable_terminal_auth{true};
+    bool settlement_confirm_required{true};
     int connect_timeout_ms{10'000};
     int reconnect_max_attempts{8};
     int reconnect_initial_backoff_ms{500};
     int reconnect_max_backoff_ms{8'000};
+    int recovery_quiet_period_ms{3'000};
     int query_retry_backoff_ms{200};
+    int order_insert_rate_per_sec{50};
+    int order_cancel_rate_per_sec{50};
+    int query_rate_per_sec{5};
+    int settlement_query_rate_per_sec{2};
+    int order_bucket_capacity{20};
+    int cancel_bucket_capacity{20};
+    int query_bucket_capacity{5};
+    int settlement_query_bucket_capacity{2};
+    int settlement_retry_max{3};
+    int settlement_retry_backoff_initial_ms{1'000};
+    int settlement_retry_backoff_max_ms{5'000};
+    int settlement_running_stale_timeout_ms{300'000};
+    bool settlement_shadow_enabled{false};
+    int breaker_failure_threshold{5};
+    int breaker_timeout_ms{1'000};
+    int breaker_half_open_timeout_ms{5'000};
+    bool breaker_strategy_enabled{true};
+    bool breaker_account_enabled{true};
+    bool breaker_system_enabled{true};
+    int audit_hot_days{7};
+    int audit_cold_days{180};
 
     std::string md_front;
     std::string td_front;
@@ -31,6 +54,9 @@ struct CtpRuntimeConfig {
     std::string password;
     std::string app_id;
     std::string auth_code;
+    std::string kafka_bootstrap_servers;
+    std::string kafka_topic_ticks{"market.ticks.v1"};
+    std::string clickhouse_dsn;
 
     // v6.7.11 field support.
     std::string last_login_time;

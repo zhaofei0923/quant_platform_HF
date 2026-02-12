@@ -21,9 +21,26 @@ enum class OffsetFlag {
     kCloseYesterday,
 };
 
+enum class HedgeFlag {
+    kSpeculation,
+    kHedge,
+    kArbitrage,
+};
+
 enum class OrderType {
     kLimit,
     kMarket,
+};
+
+enum class TimeCondition {
+    kGFD,
+    kIOC,
+    kGTC,
+};
+
+enum class VolumeCondition {
+    kAV,
+    kMV,
 };
 
 enum class OrderStatus {
@@ -49,6 +66,119 @@ enum class RiskAction {
 struct StateDimension {
     double score{0.0};
     double confidence{0.0};
+};
+
+struct Exchange {
+    std::string id;
+    std::string name;
+};
+
+struct Instrument {
+    std::string symbol;
+    std::string exchange_id;
+    std::string product_id;
+    std::int32_t contract_multiplier{0};
+    double price_tick{0.0};
+    double margin_rate{0.0};
+    double commission_rate{0.0};
+    std::string commission_type;
+    double close_today_commission_rate{0.0};
+};
+
+struct Tick {
+    std::string symbol;
+    std::string exchange;
+    EpochNanos ts_ns{0};
+    EpochNanos exchange_ts_ns{0};
+    double last_price{0.0};
+    std::int32_t last_volume{0};
+    double ask_price1{0.0};
+    std::int32_t ask_volume1{0};
+    double bid_price1{0.0};
+    std::int32_t bid_volume1{0};
+    std::int64_t volume{0};
+    double turnover{0.0};
+    std::int64_t open_interest{0};
+};
+
+struct Bar {
+    std::string symbol;
+    std::string exchange;
+    std::string timeframe;
+    EpochNanos ts_ns{0};
+    double open{0.0};
+    double high{0.0};
+    double low{0.0};
+    double close{0.0};
+    std::int64_t volume{0};
+    double turnover{0.0};
+    std::int64_t open_interest{0};
+};
+
+struct Order {
+    std::string order_id;
+    std::string account_id;
+    std::string strategy_id;
+    std::string symbol;
+    std::string exchange;
+    Side side{Side::kBuy};
+    OffsetFlag offset{OffsetFlag::kOpen};
+    OrderType order_type{OrderType::kLimit};
+    double price{0.0};
+    std::int32_t quantity{0};
+    std::int32_t filled_quantity{0};
+    double avg_fill_price{0.0};
+    OrderStatus status{OrderStatus::kNew};
+    EpochNanos created_at_ns{0};
+    EpochNanos updated_at_ns{0};
+    double commission{0.0};
+    std::string message;
+};
+
+struct Trade {
+    std::string trade_id;
+    std::string order_id;
+    std::string account_id;
+    std::string strategy_id;
+    std::string symbol;
+    std::string exchange;
+    Side side{Side::kBuy};
+    OffsetFlag offset{OffsetFlag::kOpen};
+    double price{0.0};
+    std::int32_t quantity{0};
+    EpochNanos trade_ts_ns{0};
+    double commission{0.0};
+    double profit{0.0};
+};
+
+struct Position {
+    std::string symbol;
+    std::string exchange;
+    std::string strategy_id;
+    std::string account_id;
+    std::int32_t long_qty{0};
+    std::int32_t short_qty{0};
+    std::int32_t long_today_qty{0};
+    std::int32_t short_today_qty{0};
+    std::int32_t long_yd_qty{0};
+    std::int32_t short_yd_qty{0};
+    double avg_long_price{0.0};
+    double avg_short_price{0.0};
+    double position_profit{0.0};
+    double margin{0.0};
+    EpochNanos update_time_ns{0};
+};
+
+struct Account {
+    std::string account_id;
+    double balance{0.0};
+    double available{0.0};
+    double margin{0.0};
+    double commission{0.0};
+    double position_profit{0.0};
+    double close_profit{0.0};
+    double risk_degree{0.0};
+    EpochNanos update_time_ns{0};
 };
 
 struct MarketSnapshot {
@@ -98,10 +228,14 @@ struct SignalIntent {
 struct OrderIntent {
     std::string account_id;
     std::string client_order_id;
+    std::string strategy_id;
     std::string instrument_id;
     Side side{Side::kBuy};
     OffsetFlag offset{OffsetFlag::kOpen};
+    HedgeFlag hedge_flag{HedgeFlag::kSpeculation};
     OrderType type{OrderType::kLimit};
+    TimeCondition time_condition{TimeCondition::kGFD};
+    VolumeCondition volume_condition{VolumeCondition::kAV};
     std::int32_t volume{0};
     double price{0.0};
     EpochNanos ts_ns{0};
@@ -128,6 +262,8 @@ struct OrderEvent {
     std::string exchange_order_id;
     std::string instrument_id;
     std::string exchange_id;
+    Side side{Side::kBuy};
+    OffsetFlag offset{OffsetFlag::kOpen};
     OrderStatus status{OrderStatus::kNew};
     std::int32_t total_volume{0};
     std::int32_t filled_volume{0};

@@ -1,0 +1,29 @@
+{
+  "name": "ops-audit-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "database.hostname": "timescale-primary",
+    "database.port": "5432",
+    "database.user": "quant_hft",
+    "database.password": "quant_hft",
+    "database.dbname": "quant_hft",
+    "plugin.name": "pgoutput",
+    "slot.name": "quant_hft_ops_audit_slot",
+    "publication.name": "quant_hft_ops_audit_pub",
+    "publication.autocreate.mode": "filtered",
+    "schema.include.list": "ops",
+    "table.include.list": "ops.system_logs,ops.archive_manifest",
+    "snapshot.mode": "initial",
+    "tombstones.on.delete": "false",
+    "decimal.handling.mode": "string",
+    "time.precision.mode": "adaptive_time_microseconds",
+    "include.schema.changes": "false",
+    "topic.prefix": "quant_hft_pg",
+    "transforms": "unwrap",
+    "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
+    "transforms.unwrap.drop.tombstones": "true",
+    "transforms.unwrap.delete.handling.mode": "rewrite",
+    "transforms.unwrap.add.fields": "op,table,source.ts_ms"
+  }
+}
+

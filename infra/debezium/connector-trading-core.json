@@ -1,0 +1,28 @@
+{
+  "name": "trading-core-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "database.hostname": "timescale-primary",
+    "database.port": "5432",
+    "database.user": "quant_hft",
+    "database.password": "quant_hft",
+    "database.dbname": "quant_hft",
+    "plugin.name": "pgoutput",
+    "slot.name": "quant_hft_trading_core_slot",
+    "publication.name": "quant_hft_trading_core_pub",
+    "publication.autocreate.mode": "filtered",
+    "schema.include.list": "trading_core",
+    "table.include.list": "trading_core.orders,trading_core.trades,trading_core.position_detail,trading_core.account_funds,trading_core.risk_events,trading_core.settlement_summary,trading_core.settlement_detail,trading_core.settlement_prices",
+    "snapshot.mode": "initial",
+    "tombstones.on.delete": "false",
+    "decimal.handling.mode": "string",
+    "time.precision.mode": "adaptive_time_microseconds",
+    "include.schema.changes": "false",
+    "topic.prefix": "quant_hft_pg",
+    "transforms": "unwrap",
+    "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
+    "transforms.unwrap.drop.tombstones": "true",
+    "transforms.unwrap.delete.handling.mode": "rewrite",
+    "transforms.unwrap.add.fields": "op,table,source.ts_ms"
+  }
+}

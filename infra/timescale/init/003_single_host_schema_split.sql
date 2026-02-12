@@ -15,6 +15,15 @@ $$;
 CREATE SCHEMA IF NOT EXISTS analytics_ts;
 CREATE SCHEMA IF NOT EXISTS trading_core;
 
+-- Integer-time hypertable helper for nanosecond-based ts columns.
+CREATE OR REPLACE FUNCTION analytics_ts.integer_now_ns()
+RETURNS BIGINT
+LANGUAGE SQL
+STABLE
+AS $$
+    SELECT (EXTRACT(EPOCH FROM clock_timestamp()) * 1000000000)::BIGINT;
+$$;
+
 CREATE TABLE IF NOT EXISTS analytics_ts.market_snapshots (
     instrument_id TEXT NOT NULL,
     exchange_id TEXT NOT NULL DEFAULT '',
@@ -205,6 +214,16 @@ SELECT create_hypertable('analytics_ts.ctp_instrument_meta',
 CREATE INDEX IF NOT EXISTS idx_analytics_ctp_instrument_meta_inst_ts
     ON analytics_ts.ctp_instrument_meta (instrument_id, ts_ns DESC);
 
+SELECT set_integer_now_func('analytics_ts.market_snapshots',
+                            'analytics_ts.integer_now_ns',
+                            replace_if_exists => TRUE);
+SELECT set_integer_now_func('analytics_ts.order_events',
+                            'analytics_ts.integer_now_ns',
+                            replace_if_exists => TRUE);
+SELECT set_integer_now_func('analytics_ts.risk_decisions',
+                            'analytics_ts.integer_now_ns',
+                            replace_if_exists => TRUE);
+
 -- Enable compression + retention for analytics tier.
 ALTER TABLE analytics_ts.market_snapshots SET (
     timescaledb.compress,
@@ -212,10 +231,10 @@ ALTER TABLE analytics_ts.market_snapshots SET (
     timescaledb.compress_orderby = 'recv_ts_ns DESC'
 );
 SELECT add_compression_policy('analytics_ts.market_snapshots',
-                              INTERVAL '3 days',
+                              259200000000000::BIGINT,
                               if_not_exists => TRUE);
 SELECT add_retention_policy('analytics_ts.market_snapshots',
-                            INTERVAL '30 days',
+                            2592000000000000::BIGINT,
                             if_not_exists => TRUE);
 
 ALTER TABLE analytics_ts.order_events SET (
@@ -224,10 +243,10 @@ ALTER TABLE analytics_ts.order_events SET (
     timescaledb.compress_orderby = 'ts_ns DESC'
 );
 SELECT add_compression_policy('analytics_ts.order_events',
-                              INTERVAL '3 days',
+                              259200000000000::BIGINT,
                               if_not_exists => TRUE);
 SELECT add_retention_policy('analytics_ts.order_events',
-                            INTERVAL '180 days',
+                            15552000000000000::BIGINT,
                             if_not_exists => TRUE);
 
 ALTER TABLE analytics_ts.risk_decisions SET (
@@ -236,10 +255,10 @@ ALTER TABLE analytics_ts.risk_decisions SET (
     timescaledb.compress_orderby = 'decision_ts_ns DESC'
 );
 SELECT add_compression_policy('analytics_ts.risk_decisions',
-                              INTERVAL '3 days',
+                              259200000000000::BIGINT,
                               if_not_exists => TRUE);
 SELECT add_retention_policy('analytics_ts.risk_decisions',
-                            INTERVAL '180 days',
+                            15552000000000000::BIGINT,
                             if_not_exists => TRUE);
 
 -- Transaction source-of-truth tier.

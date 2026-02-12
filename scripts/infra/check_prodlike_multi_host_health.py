@@ -13,6 +13,9 @@ _DEFAULT_REQUIRED = (
     "timescale-primary",
     "redis-replica",
     "timescale-replica",
+    "kafka",
+    "kafka-connect",
+    "clickhouse",
 )
 
 

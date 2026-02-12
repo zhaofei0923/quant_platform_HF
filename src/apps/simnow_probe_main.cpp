@@ -6,7 +6,8 @@
 #include <thread>
 
 #include "quant_hft/core/ctp_config_loader.h"
-#include "quant_hft/core/ctp_gateway_adapter.h"
+#include "quant_hft/core/ctp_md_adapter.h"
+#include "quant_hft/core/ctp_trader_adapter.h"
 
 int main(int argc, char** argv) {
     using namespace quant_hft;
@@ -61,40 +62,56 @@ int main(int argc, char** argv) {
     cfg.reconnect_initial_backoff_ms = runtime.reconnect_initial_backoff_ms;
     cfg.reconnect_max_backoff_ms = runtime.reconnect_max_backoff_ms;
     cfg.password = runtime.password;
+    cfg.recovery_quiet_period_ms = runtime.recovery_quiet_period_ms;
+    cfg.settlement_confirm_required = runtime.settlement_confirm_required;
 
-    CtpGatewayAdapter gateway(10);
+    CTPTraderAdapter trader(10, 1);
+    CTPMdAdapter md(10, 1);
 
-    gateway.RegisterMarketDataCallback([](const MarketSnapshot& snapshot) {
+    md.RegisterTickCallback([](const MarketSnapshot& snapshot) {
         std::cout << "[md] " << snapshot.instrument_id << " last=" << snapshot.last_price
                   << " bid1=" << snapshot.bid_price_1 << " ask1=" << snapshot.ask_price_1
                   << std::endl;
     });
 
-    gateway.RegisterOrderEventCallback([](const OrderEvent& event) {
+    trader.RegisterOrderEventCallback([](const OrderEvent& event) {
         std::cout << "[order] " << event.client_order_id << " status=" << static_cast<int>(event.status)
                   << " filled=" << event.filled_volume << std::endl;
     });
 
-    if (!gateway.Connect(cfg)) {
+    if (!trader.Connect(cfg)) {
         std::cerr << "Connect failed. fronts: md=" << cfg.market_front_address
                   << " td=" << cfg.trader_front_address << '\n';
-        const auto diagnostic = gateway.GetLastConnectDiagnostic();
+        const auto diagnostic = trader.GetLastConnectDiagnostic();
         if (!diagnostic.empty()) {
             std::cerr << "Connect diagnostic: " << diagnostic << '\n';
         }
+        return 4;
+    }
+    if (!md.Connect(cfg)) {
+        std::cerr << "Connect failed. fronts: md=" << cfg.market_front_address
+                  << " td=" << cfg.trader_front_address << '\n';
+        const auto diagnostic = md.GetLastConnectDiagnostic();
+        if (!diagnostic.empty()) {
+            std::cerr << "Connect diagnostic: " << diagnostic << '\n';
+        }
+        return 4;
+    }
+    if (!trader.ConfirmSettlement()) {
+        std::cerr << "Settlement confirm failed\n";
         return 4;
     }
 
     const std::string instrument = std::getenv("CTP_SIM_INSTRUMENT") != nullptr
                                        ? std::string(std::getenv("CTP_SIM_INSTRUMENT"))
                                        : "SHFE.ag2406";
-    if (!gateway.Subscribe({instrument})) {
+    if (!md.Subscribe({instrument})) {
         std::cerr << "Subscribe failed for " << instrument << '\n';
         return 5;
     }
 
-    gateway.EnqueueUserSessionQuery(1);
-    const auto session = gateway.GetLastUserSession();
+    trader.EnqueueUserSessionQuery(1);
+    const auto session = trader.GetLastUserSession();
     std::cout << "[session] investor=" << session.investor_id
               << " login=" << session.login_time
               << " last_login=" << session.last_login_time << std::endl;
@@ -104,13 +121,14 @@ int main(int argc, char** argv) {
            std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() -
                                                             started_at)
                    .count() < monitor_seconds) {
-        const bool healthy = gateway.IsHealthy();
+        const bool healthy = trader.IsReady() && md.IsReady();
         std::cout << "[health] ts_ns=" << NowEpochNanos()
                   << " state=" << (healthy ? "healthy" : "unhealthy") << std::endl;
         std::this_thread::sleep_for(
             std::chrono::milliseconds(std::max(100, health_interval_ms)));
     }
-    gateway.Disconnect();
+    md.Disconnect();
+    trader.Disconnect();
     std::cout << "Probe completed" << std::endl;
     return 0;
 }

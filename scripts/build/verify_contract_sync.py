@@ -87,12 +87,128 @@ def _assert_equal(actual: list[str], expected: list[str], contract_name: str, so
         )
 
 
+def _normalize_fields(contract_name: str, source: str, fields: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for field in fields:
+        value = field
+        if contract_name == "OrderIntent" and source in {"proto", "Python"}:
+            if field == "order_type":
+                value = "type"
+        normalized.append(value)
+    return normalized
+
+
 def main() -> int:
     cpp_path = Path("include/quant_hft/contracts/types.h")
     proto_path = Path("proto/quant_hft/v1/contracts.proto")
     py_path = Path("python/quant_hft/contracts.py")
 
     expected_fields = {
+        "Exchange": [
+            "id",
+            "name",
+        ],
+        "Instrument": [
+            "symbol",
+            "exchange_id",
+            "product_id",
+            "contract_multiplier",
+            "price_tick",
+            "margin_rate",
+            "commission_rate",
+            "commission_type",
+            "close_today_commission_rate",
+        ],
+        "Tick": [
+            "symbol",
+            "exchange",
+            "ts_ns",
+            "exchange_ts_ns",
+            "last_price",
+            "last_volume",
+            "ask_price1",
+            "ask_volume1",
+            "bid_price1",
+            "bid_volume1",
+            "volume",
+            "turnover",
+            "open_interest",
+        ],
+        "Bar": [
+            "symbol",
+            "exchange",
+            "timeframe",
+            "ts_ns",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "turnover",
+            "open_interest",
+        ],
+        "Order": [
+            "order_id",
+            "account_id",
+            "strategy_id",
+            "symbol",
+            "exchange",
+            "side",
+            "offset",
+            "order_type",
+            "price",
+            "quantity",
+            "filled_quantity",
+            "avg_fill_price",
+            "status",
+            "created_at_ns",
+            "updated_at_ns",
+            "commission",
+            "message",
+        ],
+        "Trade": [
+            "trade_id",
+            "order_id",
+            "account_id",
+            "strategy_id",
+            "symbol",
+            "exchange",
+            "side",
+            "offset",
+            "price",
+            "quantity",
+            "trade_ts_ns",
+            "commission",
+            "profit",
+        ],
+        "Position": [
+            "symbol",
+            "exchange",
+            "strategy_id",
+            "account_id",
+            "long_qty",
+            "short_qty",
+            "long_today_qty",
+            "short_today_qty",
+            "long_yd_qty",
+            "short_yd_qty",
+            "avg_long_price",
+            "avg_short_price",
+            "position_profit",
+            "margin",
+            "update_time_ns",
+        ],
+        "Account": [
+            "account_id",
+            "balance",
+            "available",
+            "margin",
+            "commission",
+            "position_profit",
+            "close_profit",
+            "risk_degree",
+            "update_time_ns",
+        ],
         "MarketSnapshot": [
             "instrument_id",
             "exchange_id",
@@ -132,6 +248,8 @@ def main() -> int:
             "exchange_order_id",
             "instrument_id",
             "exchange_id",
+            "side",
+            "offset",
             "status",
             "total_volume",
             "filled_volume",
@@ -156,6 +274,22 @@ def main() -> int:
             "route_id",
             "slippage_bps",
             "impact_cost",
+        ],
+        "OrderIntent": [
+            "account_id",
+            "client_order_id",
+            "strategy_id",
+            "instrument_id",
+            "side",
+            "offset",
+            "hedge_flag",
+            "type",
+            "time_condition",
+            "volume_condition",
+            "volume",
+            "price",
+            "ts_ns",
+            "trace_id",
         ],
         "TradingAccountSnapshot": [
             "account_id",
@@ -219,9 +353,21 @@ def main() -> int:
     }
 
     for contract_name, expected in expected_fields.items():
-        cpp_fields = _parse_cpp_struct_fields(cpp_path, contract_name)
-        proto_fields = _parse_proto_message_fields(proto_path, contract_name)
-        py_fields = _parse_python_dataclass_fields(py_path, contract_name)
+        cpp_fields = _normalize_fields(
+            contract_name,
+            "C++",
+            _parse_cpp_struct_fields(cpp_path, contract_name),
+        )
+        proto_fields = _normalize_fields(
+            contract_name,
+            "proto",
+            _parse_proto_message_fields(proto_path, contract_name),
+        )
+        py_fields = _normalize_fields(
+            contract_name,
+            "Python",
+            _parse_python_dataclass_fields(py_path, contract_name),
+        )
         _assert_equal(cpp_fields, expected, contract_name, "C++")
         _assert_equal(proto_fields, expected, contract_name, "proto")
         _assert_equal(py_fields, expected, contract_name, "Python")

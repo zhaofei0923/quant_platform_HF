@@ -89,6 +89,7 @@ std::vector<PlannedOrder> ExecutionPlanner::BuildPlan(
         PlannedOrder planned;
         planned.intent.account_id = account_id;
         planned.intent.instrument_id = signal.instrument_id;
+        planned.intent.strategy_id = signal.strategy_id;
         planned.intent.side = signal.side;
         planned.intent.offset = signal.offset;
         planned.intent.type = OrderType::kLimit;

@@ -11,11 +11,27 @@ HEALTH_REPORT="docs/results/prodlike_health_report.json"
 DOCKER_BIN="docker"
 HEALTH_CHECK_SCRIPT="scripts/infra/check_prodlike_health.py"
 SCHEMA_INIT_SCRIPT="scripts/infra/init_timescale_schema.sh"
-SCHEMA_FILE="infra/timescale/init/001_quant_hft_schema.sql"
+KAFKA_INIT_SCRIPT="scripts/infra/init_kafka_topics.sh"
+DEBEZIUM_INIT_SCRIPT="scripts/infra/init_debezium_connectors.sh"
+CLICKHOUSE_INIT_SCRIPT="scripts/infra/init_clickhouse_schema.sh"
+SCHEMA_DIR="infra/timescale/init"
+SCHEMA_FILE=""
 SCHEMA_EVIDENCE="docs/results/timescale_schema_init_result.env"
+KAFKA_EVIDENCE="docs/results/kafka_topic_init_result.env"
+DEBEZIUM_EVIDENCE="docs/results/debezium_connector_init_result.env"
+CLICKHOUSE_EVIDENCE="docs/results/clickhouse_schema_init_result.env"
 TIMESCALE_SERVICE="timescale-primary"
 TIMESCALE_DB="quant_hft"
 TIMESCALE_USER="quant_hft"
+KAFKA_SERVICE="kafka"
+KAFKA_BOOTSTRAP_SERVER="kafka:9092"
+KAFKA_TOPICS="market.ticks.v1,quant_hft_pg.trading_core.orders,quant_hft_pg.trading_core.trades,quant_hft_pg.trading_core.position_detail,quant_hft_pg.trading_core.account_funds,quant_hft_pg.trading_core.risk_events"
+KAFKA_PARTITIONS=6
+KAFKA_REPLICATION_FACTOR=1
+DEBEZIUM_CONNECT_URL="http://localhost:8083"
+CLICKHOUSE_SERVICE="clickhouse"
+CLICKHOUSE_DB="quant_hft"
+CLICKHOUSE_SCHEMA_DIR="infra/clickhouse/init"
 HEALTH_WAIT_TIMEOUT_SEC=120
 HEALTH_WAIT_POLL_INTERVAL_SEC=3
 DRY_RUN=1
@@ -35,11 +51,28 @@ Options:
   --docker-bin <path>            Docker binary (default: docker)
   --health-check-script <path>   Health checker script path
   --schema-init-script <path>    Timescale schema initializer script path
-  --schema-file <path>           Timescale SQL schema file path
+  --kafka-init-script <path>     Kafka topic initializer script path
+  --debezium-init-script <path>  Debezium connector initializer script path
+  --clickhouse-init-script <path> ClickHouse schema initializer script path
+  --schema-dir <path>            Timescale SQL schema directory path
+  --schema-file <path>           Timescale SQL schema file path (overrides --schema-dir)
   --schema-evidence <path>       Timescale schema initializer evidence output path
+  --kafka-evidence <path>        Kafka topic initializer evidence output path
+  --debezium-evidence <path>     Debezium initializer evidence output path
+  --clickhouse-evidence <path>   ClickHouse schema initializer evidence output path
   --timescale-service <name>     Timescale service name (default: timescale-primary)
   --timescale-db <name>          Timescale database name (default: quant_hft)
   --timescale-user <name>        Timescale database user (default: quant_hft)
+  --kafka-service <name>         Kafka service name (default: kafka)
+  --kafka-bootstrap-server <addr> Kafka bootstrap server (default: kafka:9092)
+  --kafka-topics <csv>           Kafka topic csv list
+  --kafka-topic <name>           Kafka topic (compat option, overrides --kafka-topics)
+  --kafka-partitions <n>         Kafka partitions (default: 6)
+  --kafka-replication-factor <n> Kafka replication factor (default: 1)
+  --debezium-connect-url <url>   Debezium Kafka Connect URL (default: http://localhost:8083)
+  --clickhouse-service <name>    ClickHouse service name (default: clickhouse)
+  --clickhouse-db <name>         ClickHouse database name (default: quant_hft)
+  --clickhouse-schema-dir <path> ClickHouse schema directory path
   --health-wait-timeout-sec <sec> Wait timeout for health check (default: 120)
   --health-wait-poll-interval-sec <sec> Poll interval for health check (default: 3)
   --dry-run                      Print/record commands without executing (default)
@@ -90,12 +123,40 @@ while [[ $# -gt 0 ]]; do
       SCHEMA_INIT_SCRIPT="${2:-}"
       shift 2
       ;;
+    --kafka-init-script)
+      KAFKA_INIT_SCRIPT="${2:-}"
+      shift 2
+      ;;
+    --debezium-init-script)
+      DEBEZIUM_INIT_SCRIPT="${2:-}"
+      shift 2
+      ;;
+    --clickhouse-init-script)
+      CLICKHOUSE_INIT_SCRIPT="${2:-}"
+      shift 2
+      ;;
+    --schema-dir)
+      SCHEMA_DIR="${2:-}"
+      shift 2
+      ;;
     --schema-file)
       SCHEMA_FILE="${2:-}"
       shift 2
       ;;
     --schema-evidence)
       SCHEMA_EVIDENCE="${2:-}"
+      shift 2
+      ;;
+    --kafka-evidence)
+      KAFKA_EVIDENCE="${2:-}"
+      shift 2
+      ;;
+    --debezium-evidence)
+      DEBEZIUM_EVIDENCE="${2:-}"
+      shift 2
+      ;;
+    --clickhouse-evidence)
+      CLICKHOUSE_EVIDENCE="${2:-}"
       shift 2
       ;;
     --timescale-service)
@@ -108,6 +169,46 @@ while [[ $# -gt 0 ]]; do
       ;;
     --timescale-user)
       TIMESCALE_USER="${2:-}"
+      shift 2
+      ;;
+    --kafka-service)
+      KAFKA_SERVICE="${2:-}"
+      shift 2
+      ;;
+    --kafka-bootstrap-server)
+      KAFKA_BOOTSTRAP_SERVER="${2:-}"
+      shift 2
+      ;;
+    --kafka-topic)
+      KAFKA_TOPICS="${2:-}"
+      shift 2
+      ;;
+    --kafka-topics)
+      KAFKA_TOPICS="${2:-}"
+      shift 2
+      ;;
+    --kafka-partitions)
+      KAFKA_PARTITIONS="${2:-}"
+      shift 2
+      ;;
+    --kafka-replication-factor)
+      KAFKA_REPLICATION_FACTOR="${2:-}"
+      shift 2
+      ;;
+    --debezium-connect-url)
+      DEBEZIUM_CONNECT_URL="${2:-}"
+      shift 2
+      ;;
+    --clickhouse-service)
+      CLICKHOUSE_SERVICE="${2:-}"
+      shift 2
+      ;;
+    --clickhouse-db)
+      CLICKHOUSE_DB="${2:-}"
+      shift 2
+      ;;
+    --clickhouse-schema-dir)
+      CLICKHOUSE_SCHEMA_DIR="${2:-}"
       shift 2
       ;;
     --health-wait-timeout-sec)
@@ -179,8 +280,29 @@ if [[ "$ACTION" == "up" ]]; then
     echo "error: schema init script not found: $SCHEMA_INIT_SCRIPT" >&2
     exit 2
   fi
-  if [[ ! -f "$SCHEMA_FILE" ]]; then
-    echo "error: schema file not found: $SCHEMA_FILE" >&2
+  if [[ ! -f "$KAFKA_INIT_SCRIPT" ]]; then
+    echo "error: kafka init script not found: $KAFKA_INIT_SCRIPT" >&2
+    exit 2
+  fi
+  if [[ ! -f "$DEBEZIUM_INIT_SCRIPT" ]]; then
+    echo "error: debezium init script not found: $DEBEZIUM_INIT_SCRIPT" >&2
+    exit 2
+  fi
+  if [[ ! -f "$CLICKHOUSE_INIT_SCRIPT" ]]; then
+    echo "error: clickhouse init script not found: $CLICKHOUSE_INIT_SCRIPT" >&2
+    exit 2
+  fi
+  if [[ -n "$SCHEMA_FILE" ]]; then
+    if [[ ! -f "$SCHEMA_FILE" ]]; then
+      echo "error: schema file not found: $SCHEMA_FILE" >&2
+      exit 2
+    fi
+  elif [[ ! -d "$SCHEMA_DIR" ]]; then
+    echo "error: schema dir not found: $SCHEMA_DIR" >&2
+    exit 2
+  fi
+  if [[ ! -d "$CLICKHOUSE_SCHEMA_DIR" ]]; then
+    echo "error: clickhouse schema dir not found: $CLICKHOUSE_SCHEMA_DIR" >&2
     exit 2
   fi
 fi
@@ -195,14 +317,37 @@ if [[ -f "$ENV_FILE" ]]; then
   compose_base+=("--env-file" "$ENV_FILE")
 fi
 
+schema_selector_arg="--schema-dir $SCHEMA_DIR"
+if [[ -n "$SCHEMA_FILE" ]]; then
+  schema_selector_arg="--schema-file $SCHEMA_FILE"
+fi
+
 if [[ "$ACTION" == "up" ]]; then
   steps_name+=("compose_up")
   steps_cmd+=("${compose_base[*]} up -d")
   steps_name+=("timescale_schema_init")
   if [[ "$DRY_RUN" -eq 1 ]]; then
-    steps_cmd+=("bash $SCHEMA_INIT_SCRIPT --compose-file $COMPOSE_FILE --project-name $PROJECT_NAME --env-file $ENV_FILE --schema-file $SCHEMA_FILE --timescale-service $TIMESCALE_SERVICE --timescale-db $TIMESCALE_DB --timescale-user $TIMESCALE_USER --docker-bin $DOCKER_BIN --output-file $SCHEMA_EVIDENCE --dry-run")
+    steps_cmd+=("bash $SCHEMA_INIT_SCRIPT --compose-file $COMPOSE_FILE --project-name $PROJECT_NAME --env-file $ENV_FILE $schema_selector_arg --timescale-service $TIMESCALE_SERVICE --timescale-db $TIMESCALE_DB --timescale-user $TIMESCALE_USER --docker-bin $DOCKER_BIN --output-file $SCHEMA_EVIDENCE --dry-run")
   else
-    steps_cmd+=("bash $SCHEMA_INIT_SCRIPT --compose-file $COMPOSE_FILE --project-name $PROJECT_NAME --env-file $ENV_FILE --schema-file $SCHEMA_FILE --timescale-service $TIMESCALE_SERVICE --timescale-db $TIMESCALE_DB --timescale-user $TIMESCALE_USER --docker-bin $DOCKER_BIN --output-file $SCHEMA_EVIDENCE --execute")
+    steps_cmd+=("bash $SCHEMA_INIT_SCRIPT --compose-file $COMPOSE_FILE --project-name $PROJECT_NAME --env-file $ENV_FILE $schema_selector_arg --timescale-service $TIMESCALE_SERVICE --timescale-db $TIMESCALE_DB --timescale-user $TIMESCALE_USER --docker-bin $DOCKER_BIN --output-file $SCHEMA_EVIDENCE --execute")
+  fi
+  steps_name+=("kafka_topic_init")
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    steps_cmd+=("bash $KAFKA_INIT_SCRIPT --compose-file $COMPOSE_FILE --project-name $PROJECT_NAME --env-file $ENV_FILE --kafka-service $KAFKA_SERVICE --kafka-bootstrap-server $KAFKA_BOOTSTRAP_SERVER --kafka-topics $KAFKA_TOPICS --kafka-partitions $KAFKA_PARTITIONS --kafka-replication-factor $KAFKA_REPLICATION_FACTOR --docker-bin $DOCKER_BIN --output-file $KAFKA_EVIDENCE --dry-run")
+  else
+    steps_cmd+=("bash $KAFKA_INIT_SCRIPT --compose-file $COMPOSE_FILE --project-name $PROJECT_NAME --env-file $ENV_FILE --kafka-service $KAFKA_SERVICE --kafka-bootstrap-server $KAFKA_BOOTSTRAP_SERVER --kafka-topics $KAFKA_TOPICS --kafka-partitions $KAFKA_PARTITIONS --kafka-replication-factor $KAFKA_REPLICATION_FACTOR --docker-bin $DOCKER_BIN --output-file $KAFKA_EVIDENCE --execute")
+  fi
+  steps_name+=("debezium_connector_init")
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    steps_cmd+=("bash $DEBEZIUM_INIT_SCRIPT --connect-url $DEBEZIUM_CONNECT_URL --output-file $DEBEZIUM_EVIDENCE --dry-run")
+  else
+    steps_cmd+=("bash $DEBEZIUM_INIT_SCRIPT --connect-url $DEBEZIUM_CONNECT_URL --output-file $DEBEZIUM_EVIDENCE --execute")
+  fi
+  steps_name+=("clickhouse_schema_init")
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    steps_cmd+=("bash $CLICKHOUSE_INIT_SCRIPT --compose-file $COMPOSE_FILE --project-name $PROJECT_NAME --env-file $ENV_FILE --schema-dir $CLICKHOUSE_SCHEMA_DIR --clickhouse-service $CLICKHOUSE_SERVICE --clickhouse-db $CLICKHOUSE_DB --docker-bin $DOCKER_BIN --output-file $CLICKHOUSE_EVIDENCE --dry-run")
+  else
+    steps_cmd+=("bash $CLICKHOUSE_INIT_SCRIPT --compose-file $COMPOSE_FILE --project-name $PROJECT_NAME --env-file $ENV_FILE --schema-dir $CLICKHOUSE_SCHEMA_DIR --clickhouse-service $CLICKHOUSE_SERVICE --clickhouse-db $CLICKHOUSE_DB --docker-bin $DOCKER_BIN --output-file $CLICKHOUSE_EVIDENCE --execute")
   fi
   steps_name+=("health_check")
   steps_cmd+=("python3 $HEALTH_CHECK_SCRIPT --compose-file $COMPOSE_FILE --project-name $PROJECT_NAME --docker-bin $DOCKER_BIN --report-json $HEALTH_REPORT (timeout=${HEALTH_WAIT_TIMEOUT_SEC}s interval=${HEALTH_WAIT_POLL_INTERVAL_SEC}s)")
@@ -294,6 +439,9 @@ mkdir -p "$(dirname "$OUTPUT_FILE")"
   echo "PRODLIKE_ENV_FILE=$ENV_FILE"
   echo "PRODLIKE_HEALTH_REPORT=$HEALTH_REPORT"
   echo "PRODLIKE_TIMESCALE_SCHEMA_EVIDENCE=$SCHEMA_EVIDENCE"
+  echo "PRODLIKE_KAFKA_TOPIC_EVIDENCE=$KAFKA_EVIDENCE"
+  echo "PRODLIKE_DEBEZIUM_EVIDENCE=$DEBEZIUM_EVIDENCE"
+  echo "PRODLIKE_CLICKHOUSE_SCHEMA_EVIDENCE=$CLICKHOUSE_EVIDENCE"
   echo "PRODLIKE_HEALTH_WAIT_TIMEOUT_SEC=$HEALTH_WAIT_TIMEOUT_SEC"
   echo "PRODLIKE_HEALTH_WAIT_POLL_INTERVAL_SEC=$HEALTH_WAIT_POLL_INTERVAL_SEC"
   for idx in "${!steps_status[@]}"; do

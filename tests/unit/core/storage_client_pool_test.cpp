@@ -109,6 +109,16 @@ public:
         return true;
     }
 
+    bool UpsertRow(const std::string& table,
+                   const std::unordered_map<std::string, std::string>& row,
+                   const std::vector<std::string>& conflict_keys,
+                   const std::vector<std::string>& update_keys,
+                   std::string* error) override {
+        (void)conflict_keys;
+        (void)update_keys;
+        return InsertRow(table, row, error);
+    }
+
     std::vector<std::unordered_map<std::string, std::string>> QueryRows(
         const std::string& table,
         const std::string& key,
@@ -207,6 +217,57 @@ TEST(StorageClientPoolTest, PoolHealthCountReflectsAvailableClients) {
     RedisHashClientPool pool({c1, c2});
     EXPECT_EQ(pool.Size(), 2U);
     EXPECT_EQ(pool.HealthyClientCount(), 1U);
+}
+
+TEST(StorageClientPoolTest, InMemoryTimescaleClientUpsertUpdatesExistingRow) {
+    InMemoryTimescaleSqlClient client;
+    std::unordered_map<std::string, std::string> first{
+        {"trading_day", "2026-02-12"},
+        {"status", "RUNNING"},
+    };
+    std::string error;
+    ASSERT_TRUE(client.UpsertRow("ops.settlement_runs",
+                                 first,
+                                 {"trading_day"},
+                                 {"status"},
+                                 &error))
+        << error;
+
+    std::unordered_map<std::string, std::string> second{
+        {"trading_day", "2026-02-12"},
+        {"status", "COMPLETED"},
+    };
+    ASSERT_TRUE(client.UpsertRow("ops.settlement_runs",
+                                 second,
+                                 {"trading_day"},
+                                 {"status"},
+                                 &error))
+        << error;
+
+    const auto rows = client.QueryRows("ops.settlement_runs", "trading_day", "2026-02-12", &error);
+    ASSERT_EQ(rows.size(), 1U);
+    ASSERT_TRUE(rows.front().find("status") != rows.front().end());
+    EXPECT_EQ(rows.front().at("status"), "COMPLETED");
+}
+
+TEST(StorageClientPoolTest, TimescalePoolUpsertFallsBackToHealthyReplica) {
+    auto bad = std::make_shared<RecordingTimescaleClient>(true, false);
+    auto ok = std::make_shared<RecordingTimescaleClient>(true, true);
+    PooledTimescaleSqlClient pooled({bad, ok});
+
+    std::unordered_map<std::string, std::string> row{
+        {"trading_day", "2026-02-12"},
+        {"status", "RUNNING"},
+    };
+    std::string error;
+    ASSERT_TRUE(pooled.UpsertRow("ops.settlement_runs",
+                                 row,
+                                 {"trading_day"},
+                                 {"status"},
+                                 &error))
+        << error;
+    EXPECT_GE(bad->insert_calls(), 1);
+    EXPECT_EQ(ok->insert_calls(), 1);
 }
 
 }  // namespace quant_hft

@@ -280,6 +280,17 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
             return false;
         }
     }
+    loaded.runtime.settlement_confirm_required = true;
+    if (const auto settlement_confirm_it = kv.find("settlement_confirm_required");
+        settlement_confirm_it != kv.end()) {
+        if (!ParseBoolValue(settlement_confirm_it->second,
+                            &loaded.runtime.settlement_confirm_required)) {
+            if (error != nullptr) {
+                *error = "invalid bool value for settlement_confirm_required";
+            }
+            return false;
+        }
+    }
 
     auto get_value = [&](const std::string& key) -> std::string {
         const auto it = kv.find(key);
@@ -350,6 +361,16 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         }
         return false;
     }
+    SetOptionalInt(kv,
+                   "recovery_quiet_period_ms",
+                   &loaded.runtime.recovery_quiet_period_ms,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
 
     loaded.query_rate_limit_qps = 10;
     SetOptionalInt(kv, "query_rate_limit_qps", &loaded.query_rate_limit_qps, &load_error);
@@ -359,6 +380,318 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         }
         return false;
     }
+    loaded.runtime.query_rate_per_sec = loaded.query_rate_limit_qps;
+    SetOptionalInt(kv,
+                   "query_rate_per_sec",
+                   &loaded.runtime.query_rate_per_sec,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.runtime.query_rate_per_sec <= 0) {
+        if (error != nullptr) {
+            *error = "query_rate_per_sec must be > 0";
+        }
+        return false;
+    }
+    loaded.query_rate_limit_qps = loaded.runtime.query_rate_per_sec;
+
+    loaded.runtime.settlement_query_rate_per_sec = 2;
+    SetOptionalInt(kv,
+                   "settlement_query_rate_per_sec",
+                   &loaded.runtime.settlement_query_rate_per_sec,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.runtime.settlement_query_rate_per_sec <= 0) {
+        if (error != nullptr) {
+            *error = "settlement_query_rate_per_sec must be > 0";
+        }
+        return false;
+    }
+
+    loaded.runtime.order_insert_rate_per_sec = 50;
+    SetOptionalInt(kv,
+                   "order_insert_rate_per_sec",
+                   &loaded.runtime.order_insert_rate_per_sec,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.runtime.order_insert_rate_per_sec <= 0) {
+        if (error != nullptr) {
+            *error = "order_insert_rate_per_sec must be > 0";
+        }
+        return false;
+    }
+
+    loaded.runtime.order_cancel_rate_per_sec = 50;
+    SetOptionalInt(kv,
+                   "order_cancel_rate_per_sec",
+                   &loaded.runtime.order_cancel_rate_per_sec,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.runtime.order_cancel_rate_per_sec <= 0) {
+        if (error != nullptr) {
+            *error = "order_cancel_rate_per_sec must be > 0";
+        }
+        return false;
+    }
+
+    loaded.runtime.order_bucket_capacity = 20;
+    SetOptionalInt(kv,
+                   "order_bucket_capacity",
+                   &loaded.runtime.order_bucket_capacity,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.runtime.order_bucket_capacity <= 0) {
+        if (error != nullptr) {
+            *error = "order_bucket_capacity must be > 0";
+        }
+        return false;
+    }
+
+    loaded.runtime.cancel_bucket_capacity = 20;
+    SetOptionalInt(kv,
+                   "cancel_bucket_capacity",
+                   &loaded.runtime.cancel_bucket_capacity,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.runtime.cancel_bucket_capacity <= 0) {
+        if (error != nullptr) {
+            *error = "cancel_bucket_capacity must be > 0";
+        }
+        return false;
+    }
+
+    loaded.runtime.query_bucket_capacity = 5;
+    SetOptionalInt(kv,
+                   "query_bucket_capacity",
+                   &loaded.runtime.query_bucket_capacity,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.runtime.query_bucket_capacity <= 0) {
+        if (error != nullptr) {
+            *error = "query_bucket_capacity must be > 0";
+        }
+        return false;
+    }
+
+    loaded.runtime.settlement_query_bucket_capacity = 2;
+    SetOptionalInt(kv,
+                   "settlement_query_bucket_capacity",
+                   &loaded.runtime.settlement_query_bucket_capacity,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.runtime.settlement_query_bucket_capacity <= 0) {
+        if (error != nullptr) {
+            *error = "settlement_query_bucket_capacity must be > 0";
+        }
+        return false;
+    }
+
+    loaded.runtime.settlement_retry_max = 3;
+    SetOptionalInt(kv,
+                   "settlement_retry_max",
+                   &loaded.runtime.settlement_retry_max,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.runtime.settlement_retry_max <= 0) {
+        if (error != nullptr) {
+            *error = "settlement_retry_max must be > 0";
+        }
+        return false;
+    }
+
+    loaded.runtime.settlement_retry_backoff_initial_ms = 1000;
+    SetOptionalInt(kv,
+                   "settlement_retry_backoff_initial_ms",
+                   &loaded.runtime.settlement_retry_backoff_initial_ms,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.runtime.settlement_retry_backoff_initial_ms <= 0) {
+        if (error != nullptr) {
+            *error = "settlement_retry_backoff_initial_ms must be > 0";
+        }
+        return false;
+    }
+
+    loaded.runtime.settlement_retry_backoff_max_ms = 5000;
+    SetOptionalInt(kv,
+                   "settlement_retry_backoff_max_ms",
+                   &loaded.runtime.settlement_retry_backoff_max_ms,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.runtime.settlement_retry_backoff_max_ms <
+        loaded.runtime.settlement_retry_backoff_initial_ms) {
+        if (error != nullptr) {
+            *error = "settlement_retry_backoff_max_ms must be >= settlement_retry_backoff_initial_ms";
+        }
+        return false;
+    }
+
+    loaded.runtime.settlement_running_stale_timeout_ms = 300000;
+    SetOptionalInt(kv,
+                   "settlement_running_stale_timeout_ms",
+                   &loaded.runtime.settlement_running_stale_timeout_ms,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.runtime.settlement_running_stale_timeout_ms <= 0) {
+        if (error != nullptr) {
+            *error = "settlement_running_stale_timeout_ms must be > 0";
+        }
+        return false;
+    }
+
+    loaded.runtime.settlement_shadow_enabled = false;
+    if (const auto settlement_shadow_it = kv.find("settlement_shadow_enabled");
+        settlement_shadow_it != kv.end()) {
+        if (!ParseBoolValue(settlement_shadow_it->second,
+                            &loaded.runtime.settlement_shadow_enabled)) {
+            if (error != nullptr) {
+                *error = "invalid bool value for settlement_shadow_enabled";
+            }
+            return false;
+        }
+    }
+
+    loaded.runtime.breaker_failure_threshold = 5;
+    SetOptionalInt(kv,
+                   "breaker_failure_threshold",
+                   &loaded.runtime.breaker_failure_threshold,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    loaded.runtime.breaker_timeout_ms = 1000;
+    SetOptionalInt(kv, "breaker_timeout_ms", &loaded.runtime.breaker_timeout_ms, &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    loaded.runtime.breaker_half_open_timeout_ms = 5000;
+    SetOptionalInt(kv,
+                   "breaker_half_open_timeout_ms",
+                   &loaded.runtime.breaker_half_open_timeout_ms,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+
+    if (const auto strategy_breaker_it = kv.find("breaker_strategy_enabled");
+        strategy_breaker_it != kv.end()) {
+        if (!ParseBoolValue(strategy_breaker_it->second, &loaded.runtime.breaker_strategy_enabled)) {
+            if (error != nullptr) {
+                *error = "invalid bool value for breaker_strategy_enabled";
+            }
+            return false;
+        }
+    }
+    if (const auto account_breaker_it = kv.find("breaker_account_enabled");
+        account_breaker_it != kv.end()) {
+        if (!ParseBoolValue(account_breaker_it->second, &loaded.runtime.breaker_account_enabled)) {
+            if (error != nullptr) {
+                *error = "invalid bool value for breaker_account_enabled";
+            }
+            return false;
+        }
+    }
+    if (const auto system_breaker_it = kv.find("breaker_system_enabled");
+        system_breaker_it != kv.end()) {
+        if (!ParseBoolValue(system_breaker_it->second, &loaded.runtime.breaker_system_enabled)) {
+            if (error != nullptr) {
+                *error = "invalid bool value for breaker_system_enabled";
+            }
+            return false;
+        }
+    }
+
+    loaded.runtime.audit_hot_days = 7;
+    SetOptionalInt(kv, "audit_hot_days", &loaded.runtime.audit_hot_days, &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    loaded.runtime.audit_cold_days = 180;
+    SetOptionalInt(kv, "audit_cold_days", &loaded.runtime.audit_cold_days, &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+
+    loaded.runtime.kafka_bootstrap_servers = get_value("kafka_bootstrap_servers");
+    loaded.runtime.kafka_topic_ticks = get_value("kafka_topic_ticks");
+    if (loaded.runtime.kafka_topic_ticks.empty()) {
+        loaded.runtime.kafka_topic_ticks = "market.ticks.v1";
+    }
+    loaded.runtime.clickhouse_dsn = get_value("clickhouse_dsn");
     if (loaded.query_rate_limit_qps <= 0) {
         if (error != nullptr) {
             *error = "query_rate_limit_qps must be > 0";

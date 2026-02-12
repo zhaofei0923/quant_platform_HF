@@ -59,6 +59,8 @@ public:
     bool EnqueueInstrumentMarginRateQuery(int request_id, const std::string& instrument_id);
     bool EnqueueInstrumentCommissionRateQuery(int request_id, const std::string& instrument_id);
     bool EnqueueBrokerTradingParamsQuery(int request_id);
+    bool EnqueueOrderQuery(int request_id);
+    bool EnqueueTradeQuery(int request_id);
 
     void RegisterTradingAccountSnapshotCallback(TradingAccountSnapshotCallback callback);
     void RegisterInvestorPositionSnapshotCallback(InvestorPositionSnapshotCallback callback);
@@ -83,6 +85,8 @@ private:
     struct OrderMeta {
         std::string order_ref;
         std::string instrument_id;
+        Side side{Side::kBuy};
+        OffsetFlag offset{OffsetFlag::kOpen};
         int front_id{0};
         int session_id{0};
     };

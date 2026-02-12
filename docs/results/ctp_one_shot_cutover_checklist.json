@@ -1,0 +1,7 @@
+{
+  "cutover_template": "configs/ops/ctp_cutover.template.env",
+  "rollback_template": "configs/ops/ctp_rollback_drill.template.env",
+  "output_md": "docs/results/ctp_one_shot_cutover_checklist.md",
+  "cutover_env": "single-host-ubuntu",
+  "rollback_env": "single-host-ubuntu"
+}

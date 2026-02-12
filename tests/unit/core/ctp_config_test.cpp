@@ -192,4 +192,41 @@ TEST(CtpConfigTest, RejectsProductionWhenAuthenticateFieldsMissing) {
     EXPECT_NE(error.find("ReqAuthenticate"), std::string::npos);
 }
 
+TEST(CtpConfigTest, RejectsWhenAllBreakerScopesDisabled) {
+    CtpRuntimeConfig cfg;
+    cfg.environment = CtpEnvironment::kSimNow;
+    cfg.is_production_mode = false;
+    cfg.md_front = "tcp://sim-md";
+    cfg.td_front = "tcp://sim-td";
+    cfg.broker_id = "9999";
+    cfg.user_id = "191202";
+    cfg.investor_id = "191202";
+    cfg.password = "pwd";
+    cfg.breaker_strategy_enabled = false;
+    cfg.breaker_account_enabled = false;
+    cfg.breaker_system_enabled = false;
+
+    std::string error;
+    EXPECT_FALSE(CtpConfigValidator::Validate(cfg, &error));
+    EXPECT_NE(error.find("breaker scope"), std::string::npos);
+}
+
+TEST(CtpConfigTest, RejectsInvalidAuditRetentionDays) {
+    CtpRuntimeConfig cfg;
+    cfg.environment = CtpEnvironment::kSimNow;
+    cfg.is_production_mode = false;
+    cfg.md_front = "tcp://sim-md";
+    cfg.td_front = "tcp://sim-td";
+    cfg.broker_id = "9999";
+    cfg.user_id = "191202";
+    cfg.investor_id = "191202";
+    cfg.password = "pwd";
+    cfg.audit_hot_days = 30;
+    cfg.audit_cold_days = 7;
+
+    std::string error;
+    EXPECT_FALSE(CtpConfigValidator::Validate(cfg, &error));
+    EXPECT_NE(error.find("audit retention"), std::string::npos);
+}
+
 }  // namespace quant_hft

@@ -10,6 +10,7 @@
 #include <functional>
 #include <string_view>
 #include <thread>
+#include <ctime>
 #include <utility>
 #include <vector>
 
@@ -46,6 +47,52 @@ void CopyCtpField(char (&target)[N], const std::string& value) {
 bool IsInvalidMarketPrice(double value) {
     return !std::isfinite(value) || std::fabs(value) >= 1e100;
 }
+
+#if QUANT_HFT_HAS_REAL_CTP
+std::string DigitsOnly(const std::string& raw) {
+    std::string out;
+    out.reserve(raw.size());
+    for (const char ch : raw) {
+        if (ch >= '0' && ch <= '9') {
+            out.push_back(ch);
+        }
+    }
+    return out;
+}
+
+std::time_t PortableTimegm(std::tm* utc_tm) {
+    if (utc_tm == nullptr) {
+        return static_cast<std::time_t>(0);
+    }
+#if defined(_WIN32)
+    return _mkgmtime(utc_tm);
+#else
+    return timegm(utc_tm);
+#endif
+}
+
+EpochNanos ParseCtpDateTimeToEpochNanos(const std::string& ctp_date, const std::string& ctp_time) {
+    const std::string digits_date = DigitsOnly(ctp_date);
+    const std::string digits_time = DigitsOnly(ctp_time);
+    if (digits_date.size() < 8 || digits_time.size() < 6) {
+        return 0;
+    }
+    std::tm utc_tm{};
+    utc_tm.tm_year = std::stoi(digits_date.substr(0, 4)) - 1900;
+    utc_tm.tm_mon = std::stoi(digits_date.substr(4, 2)) - 1;
+    utc_tm.tm_mday = std::stoi(digits_date.substr(6, 2));
+    utc_tm.tm_hour = std::stoi(digits_time.substr(0, 2));
+    utc_tm.tm_min = std::stoi(digits_time.substr(2, 2));
+    utc_tm.tm_sec = std::stoi(digits_time.substr(4, 2));
+    const auto utc_seconds = static_cast<std::int64_t>(PortableTimegm(&utc_tm));
+    if (utc_seconds <= 0) {
+        return 0;
+    }
+    // CTP timestamps are exchange local time (Asia/Shanghai, UTC+8).
+    constexpr std::int64_t kUtcOffsetSeconds = 8LL * 3600LL;
+    return (utc_seconds - kUtcOffsetSeconds) * 1'000'000'000LL;
+}
+#endif
 
 #if QUANT_HFT_HAS_REAL_CTP
 bool IsRspSuccess(CThostFtdcRspInfoField* rsp_info) {
@@ -131,6 +178,10 @@ char ToCtpDirection(Side side) {
     return side == Side::kBuy ? THOST_FTDC_D_Buy : THOST_FTDC_D_Sell;
 }
 
+Side FromCtpDirection(char direction) {
+    return direction == THOST_FTDC_D_Sell ? Side::kSell : Side::kBuy;
+}
+
 char ToCtpOffset(OffsetFlag offset) {
     switch (offset) {
         case OffsetFlag::kClose:
@@ -142,6 +193,20 @@ char ToCtpOffset(OffsetFlag offset) {
         case OffsetFlag::kOpen:
         default:
             return THOST_FTDC_OF_Open;
+    }
+}
+
+OffsetFlag FromCtpOffset(char offset) {
+    switch (offset) {
+        case THOST_FTDC_OF_Close:
+            return OffsetFlag::kClose;
+        case THOST_FTDC_OF_CloseToday:
+            return OffsetFlag::kCloseToday;
+        case THOST_FTDC_OF_CloseYesterday:
+            return OffsetFlag::kCloseYesterday;
+        case THOST_FTDC_OF_Open:
+        default:
+            return OffsetFlag::kOpen;
     }
 }
 
@@ -620,6 +685,98 @@ public:
         }
     }
 
+    void OnRspQryOrder(CThostFtdcOrderField* p_order,
+                       CThostFtdcRspInfoField* p_rsp_info,
+                       int,
+                       bool) override {
+        if (!IsRspSuccess(p_rsp_info) || p_order == nullptr) {
+            return;
+        }
+
+        OrderEvent event;
+        event.account_id = SafeCtpString(p_order->InvestorID);
+        event.exchange_order_id = SafeCtpString(p_order->OrderSysID);
+        event.instrument_id = SafeCtpString(p_order->InstrumentID);
+        event.exchange_id = SafeCtpString(p_order->ExchangeID);
+        event.side = FromCtpDirection(p_order->Direction);
+        event.offset = FromCtpOffset(p_order->CombOffsetFlag[0]);
+        event.status = FromCtpOrderStatus(p_order->OrderStatus);
+        event.total_volume = p_order->VolumeTotalOriginal;
+        event.filled_volume = p_order->VolumeTraded;
+        event.avg_fill_price = p_order->LimitPrice;
+        event.reason = SafeCtpString(p_order->StatusMsg);
+        event.status_msg = SafeCtpString(p_order->StatusMsg);
+        event.order_submit_status = std::string(1, p_order->OrderSubmitStatus);
+        event.order_ref = SafeCtpString(p_order->OrderRef);
+        event.front_id = p_order->FrontID;
+        event.session_id = p_order->SessionID;
+        event.event_source = "OnRspQryOrder";
+        event.ts_ns = NowEpochNanos();
+        event.exchange_ts_ns =
+            ParseCtpDateTimeToEpochNanos(SafeCtpString(p_order->InsertDate),
+                                         SafeCtpString(p_order->InsertTime));
+
+        std::function<void(const OrderEvent&)> callback;
+        {
+            std::lock_guard<std::mutex> lock(owner_->mutex_);
+            const auto order_ref = SafeCtpString(p_order->OrderRef);
+            const auto it = owner_->order_ref_to_client_id_.find(order_ref);
+            if (it != owner_->order_ref_to_client_id_.end()) {
+                event.client_order_id = it->second;
+            } else {
+                event.client_order_id = order_ref;
+            }
+            callback = owner_->order_event_callback_;
+        }
+        if (callback) {
+            StampOrderEventTimestamps(&event);
+            callback(event);
+        }
+    }
+
+    void OnRspQryTrade(CThostFtdcTradeField* p_trade,
+                       CThostFtdcRspInfoField* p_rsp_info,
+                       int,
+                       bool) override {
+        if (!IsRspSuccess(p_rsp_info) || p_trade == nullptr) {
+            return;
+        }
+
+        OrderEvent event;
+        event.account_id = SafeCtpString(p_trade->InvestorID);
+        event.exchange_order_id = SafeCtpString(p_trade->OrderSysID);
+        event.instrument_id = SafeCtpString(p_trade->InstrumentID);
+        event.exchange_id = SafeCtpString(p_trade->ExchangeID);
+        event.side = FromCtpDirection(p_trade->Direction);
+        event.offset = FromCtpOffset(p_trade->OffsetFlag);
+        event.status = OrderStatus::kFilled;
+        event.total_volume = p_trade->Volume;
+        event.filled_volume = p_trade->Volume;
+        event.avg_fill_price = p_trade->Price;
+        event.reason = "trade_query";
+        event.order_ref = SafeCtpString(p_trade->OrderRef);
+        event.trade_id = SafeCtpString(p_trade->TradeID);
+        event.event_source = "OnRspQryTrade";
+        event.ts_ns = NowEpochNanos();
+        event.exchange_ts_ns =
+            ParseCtpDateTimeToEpochNanos(SafeCtpString(p_trade->TradeDate),
+                                         SafeCtpString(p_trade->TradeTime));
+
+        std::function<void(const OrderEvent&)> callback;
+        {
+            std::lock_guard<std::mutex> lock(owner_->mutex_);
+            const auto order_ref = SafeCtpString(p_trade->OrderRef);
+            const auto it = owner_->order_ref_to_client_id_.find(order_ref);
+            event.client_order_id =
+                it == owner_->order_ref_to_client_id_.end() ? order_ref : it->second;
+            callback = owner_->order_event_callback_;
+        }
+        if (callback) {
+            StampOrderEventTimestamps(&event);
+            callback(event);
+        }
+    }
+
     void OnRspOrderInsert(CThostFtdcInputOrderField* p_input_order,
                           CThostFtdcRspInfoField* p_rsp_info,
                           int,
@@ -634,6 +791,11 @@ public:
         event.instrument_id =
             p_input_order == nullptr ? "" : SafeCtpString(p_input_order->InstrumentID);
         event.exchange_id = p_input_order == nullptr ? "" : SafeCtpString(p_input_order->ExchangeID);
+        event.side =
+            p_input_order == nullptr ? Side::kBuy : FromCtpDirection(p_input_order->Direction);
+        event.offset =
+            p_input_order == nullptr ? OffsetFlag::kOpen
+                                     : FromCtpOffset(p_input_order->CombOffsetFlag[0]);
         event.status = OrderStatus::kRejected;
         event.total_volume =
             p_input_order == nullptr ? 0 : p_input_order->VolumeTotalOriginal;
@@ -661,6 +823,11 @@ public:
         event.instrument_id =
             p_input_order == nullptr ? "" : SafeCtpString(p_input_order->InstrumentID);
         event.exchange_id = p_input_order == nullptr ? "" : SafeCtpString(p_input_order->ExchangeID);
+        event.side =
+            p_input_order == nullptr ? Side::kBuy : FromCtpDirection(p_input_order->Direction);
+        event.offset =
+            p_input_order == nullptr ? OffsetFlag::kOpen
+                                     : FromCtpOffset(p_input_order->CombOffsetFlag[0]);
         event.status = OrderStatus::kRejected;
         event.total_volume =
             p_input_order == nullptr ? 0 : p_input_order->VolumeTotalOriginal;
@@ -743,6 +910,8 @@ public:
         event.exchange_order_id = SafeCtpString(p_order->OrderSysID);
         event.instrument_id = SafeCtpString(p_order->InstrumentID);
         event.exchange_id = SafeCtpString(p_order->ExchangeID);
+        event.side = FromCtpDirection(p_order->Direction);
+        event.offset = FromCtpOffset(p_order->CombOffsetFlag[0]);
         event.status = FromCtpOrderStatus(p_order->OrderStatus);
         event.total_volume = p_order->VolumeTotalOriginal;
         event.filled_volume = p_order->VolumeTraded;
@@ -789,6 +958,8 @@ public:
         event.exchange_order_id = SafeCtpString(p_trade->OrderSysID);
         event.instrument_id = SafeCtpString(p_trade->InstrumentID);
         event.exchange_id = SafeCtpString(p_trade->ExchangeID);
+        event.side = FromCtpDirection(p_trade->Direction);
+        event.offset = FromCtpOffset(p_trade->OffsetFlag);
         event.status = OrderStatus::kFilled;
         event.total_volume = p_trade->Volume;
         event.filled_volume = p_trade->Volume;
@@ -942,6 +1113,8 @@ bool CtpGatewayAdapter::Connect(const MarketDataConnectConfig& config) {
     runtime.reconnect_initial_backoff_ms = config.reconnect_initial_backoff_ms;
     runtime.reconnect_max_backoff_ms = config.reconnect_max_backoff_ms;
     runtime.query_retry_backoff_ms = config.query_retry_backoff_ms;
+    runtime.recovery_quiet_period_ms = config.recovery_quiet_period_ms;
+    runtime.settlement_confirm_required = config.settlement_confirm_required;
     runtime.md_front = config.market_front_address;
     runtime.td_front = config.trader_front_address;
     runtime.flow_path = config.flow_path;
@@ -1525,6 +1698,8 @@ bool CtpGatewayAdapter::PlaceOrder(const OrderIntent& intent) {
             OrderMeta meta;
             meta.order_ref = order_ref;
             meta.instrument_id = intent.instrument_id;
+            meta.side = intent.side;
+            meta.offset = intent.offset;
             meta.front_id = front_id_;
             meta.session_id = session_id_;
             client_order_meta_[intent.client_order_id] = meta;
@@ -1546,12 +1721,24 @@ bool CtpGatewayAdapter::PlaceOrder(const OrderIntent& intent) {
         simulated_event.client_order_id = intent.client_order_id;
         simulated_event.exchange_order_id = "ctp-sim-" + intent.client_order_id;
         simulated_event.instrument_id = intent.instrument_id;
+        simulated_event.side = intent.side;
+        simulated_event.offset = intent.offset;
         simulated_event.status = OrderStatus::kAccepted;
         simulated_event.order_ref = intent.client_order_id;
         simulated_event.event_source = "simulated_place_order";
         simulated_event.total_volume = intent.volume;
         simulated_event.ts_ns = NowEpochNanos();
         simulated_event.trace_id = intent.trace_id;
+
+        OrderMeta meta;
+        meta.order_ref = intent.client_order_id;
+        meta.instrument_id = intent.instrument_id;
+        meta.side = intent.side;
+        meta.offset = intent.offset;
+        meta.front_id = front_id_;
+        meta.session_id = session_id_;
+        client_order_meta_[intent.client_order_id] = meta;
+        order_ref_to_client_id_[meta.order_ref] = intent.client_order_id;
         emit_simulated_event = true;
     }
 
@@ -1633,6 +1820,15 @@ bool CtpGatewayAdapter::CancelOrder(const std::string& client_order_id,
         simulated_event.event_source = "simulated_cancel_order";
         simulated_event.ts_ns = NowEpochNanos();
         simulated_event.trace_id = trace_id;
+        const auto it = client_order_meta_.find(client_order_id);
+        if (it != client_order_meta_.end()) {
+            simulated_event.instrument_id = it->second.instrument_id;
+            simulated_event.side = it->second.side;
+            simulated_event.offset = it->second.offset;
+            simulated_event.order_ref = it->second.order_ref;
+            order_ref_to_client_id_.erase(it->second.order_ref);
+            client_order_meta_.erase(it);
+        }
         emit_simulated_event = true;
     }
 
@@ -2084,6 +2280,104 @@ bool CtpGatewayAdapter::EnqueueBrokerTradingParamsQuery(int request_id) {
         callback(snapshot);
     }
     return true;
+}
+
+bool CtpGatewayAdapter::EnqueueOrderQuery(int request_id) {
+    bool query_ok = true;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!connected_) {
+            return false;
+        }
+    }
+
+    QueryScheduler::QueryTask task;
+    task.request_id = request_id;
+    task.priority = QueryScheduler::Priority::kHigh;
+    task.execute = [this, request_id, &query_ok]() {
+        CtpRuntimeConfig runtime;
+#if QUANT_HFT_HAS_REAL_CTP
+        CThostFtdcTraderApi* td_api = nullptr;
+#endif
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            runtime = runtime_config_;
+            if (!runtime_config_.enable_real_api) {
+                return;
+            }
+#if QUANT_HFT_HAS_REAL_CTP
+            if (!healthy_ || !real_api_ || !real_api_->td_api) {
+                query_ok = false;
+                return;
+            }
+            td_api = real_api_->td_api;
+#else
+            query_ok = false;
+            return;
+#endif
+        }
+#if QUANT_HFT_HAS_REAL_CTP
+        CThostFtdcQryOrderField req{};
+        CopyCtpField(req.BrokerID, runtime.broker_id);
+        CopyCtpField(req.InvestorID, runtime.investor_id);
+        query_ok =
+            ExecuteTdQueryWithRetry([&]() { return td_api->ReqQryOrder(&req, request_id); });
+#endif
+    };
+
+    if (!query_scheduler_.TrySchedule(std::move(task))) {
+        return false;
+    }
+    return query_scheduler_.DrainOnce() > 0 && query_ok;
+}
+
+bool CtpGatewayAdapter::EnqueueTradeQuery(int request_id) {
+    bool query_ok = true;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!connected_) {
+            return false;
+        }
+    }
+
+    QueryScheduler::QueryTask task;
+    task.request_id = request_id;
+    task.priority = QueryScheduler::Priority::kHigh;
+    task.execute = [this, request_id, &query_ok]() {
+        CtpRuntimeConfig runtime;
+#if QUANT_HFT_HAS_REAL_CTP
+        CThostFtdcTraderApi* td_api = nullptr;
+#endif
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            runtime = runtime_config_;
+            if (!runtime_config_.enable_real_api) {
+                return;
+            }
+#if QUANT_HFT_HAS_REAL_CTP
+            if (!healthy_ || !real_api_ || !real_api_->td_api) {
+                query_ok = false;
+                return;
+            }
+            td_api = real_api_->td_api;
+#else
+            query_ok = false;
+            return;
+#endif
+        }
+#if QUANT_HFT_HAS_REAL_CTP
+        CThostFtdcQryTradeField req{};
+        CopyCtpField(req.BrokerID, runtime.broker_id);
+        CopyCtpField(req.InvestorID, runtime.investor_id);
+        query_ok =
+            ExecuteTdQueryWithRetry([&]() { return td_api->ReqQryTrade(&req, request_id); });
+#endif
+    };
+
+    if (!query_scheduler_.TrySchedule(std::move(task))) {
+        return false;
+    }
+    return query_scheduler_.DrainOnce() > 0 && query_ok;
 }
 
 void CtpGatewayAdapter::RegisterTradingAccountSnapshotCallback(

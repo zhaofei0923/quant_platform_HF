@@ -496,6 +496,123 @@ bool LibpqTimescaleSqlClient::InsertRow(
     return ExecuteStatement(sql.str(), params, false, nullptr, error);
 }
 
+bool LibpqTimescaleSqlClient::UpsertRow(
+    const std::string& table,
+    const std::unordered_map<std::string, std::string>& row,
+    const std::vector<std::string>& conflict_keys,
+    const std::vector<std::string>& update_keys,
+    std::string* error) {
+    if (row.empty()) {
+        if (error != nullptr) {
+            *error = "empty row";
+        }
+        return false;
+    }
+    if (conflict_keys.empty()) {
+        if (error != nullptr) {
+            *error = "empty conflict_keys";
+        }
+        return false;
+    }
+
+    std::string sql_table;
+    if (!ValidateQualifiedTableIdentifier(table, &sql_table, error)) {
+        return false;
+    }
+
+    std::vector<std::pair<std::string, std::string>> ordered(row.begin(), row.end());
+    std::sort(ordered.begin(),
+              ordered.end(),
+              [](const auto& lhs, const auto& rhs) { return lhs.first < rhs.first; });
+    for (const auto& [column, value] : ordered) {
+        (void)value;
+        if (!ValidateSimpleIdentifier(column, "column", error)) {
+            return false;
+        }
+    }
+
+    for (const auto& key : conflict_keys) {
+        if (!ValidateSimpleIdentifier(key, "conflict key", error)) {
+            return false;
+        }
+        if (row.find(key) == row.end()) {
+            if (error != nullptr) {
+                *error = "missing conflict key in row: " + key;
+            }
+            return false;
+        }
+    }
+
+    std::vector<std::string> effective_update_keys;
+    if (!update_keys.empty()) {
+        effective_update_keys = update_keys;
+    } else {
+        effective_update_keys.reserve(ordered.size());
+        for (const auto& [column, value] : ordered) {
+            (void)value;
+            if (std::find(conflict_keys.begin(), conflict_keys.end(), column) ==
+                conflict_keys.end()) {
+                effective_update_keys.push_back(column);
+            }
+        }
+    }
+    for (const auto& key : effective_update_keys) {
+        if (!ValidateSimpleIdentifier(key, "update key", error)) {
+            return false;
+        }
+        if (row.find(key) == row.end()) {
+            if (error != nullptr) {
+                *error = "missing update key in row: " + key;
+            }
+            return false;
+        }
+    }
+
+    std::ostringstream sql;
+    sql << "INSERT INTO " << sql_table << " (";
+    for (std::size_t i = 0; i < ordered.size(); ++i) {
+        if (i > 0) {
+            sql << ",";
+        }
+        sql << QuoteIdentifier(ordered[i].first);
+    }
+    sql << ") VALUES (";
+    for (std::size_t i = 0; i < ordered.size(); ++i) {
+        if (i > 0) {
+            sql << ",";
+        }
+        sql << "$" << (i + 1);
+    }
+    sql << ") ON CONFLICT (";
+    for (std::size_t i = 0; i < conflict_keys.size(); ++i) {
+        if (i > 0) {
+            sql << ",";
+        }
+        sql << QuoteIdentifier(conflict_keys[i]);
+    }
+    sql << ") ";
+    if (effective_update_keys.empty()) {
+        sql << "DO NOTHING";
+    } else {
+        sql << "DO UPDATE SET ";
+        for (std::size_t i = 0; i < effective_update_keys.size(); ++i) {
+            if (i > 0) {
+                sql << ",";
+            }
+            sql << QuoteIdentifier(effective_update_keys[i]) << " = EXCLUDED."
+                << QuoteIdentifier(effective_update_keys[i]);
+        }
+    }
+
+    std::vector<std::string> params;
+    params.reserve(ordered.size());
+    for (const auto& [column, value] : ordered) {
+        (void)column;
+        params.push_back(value);
+    }
+    return ExecuteStatement(sql.str(), params, false, nullptr, error);
+}
+
 std::vector<std::unordered_map<std::string, std::string>>
 LibpqTimescaleSqlClient::QueryRows(const std::string& table,
                                    const std::string& key,

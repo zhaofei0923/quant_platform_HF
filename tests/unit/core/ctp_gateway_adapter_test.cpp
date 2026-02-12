@@ -28,23 +28,42 @@ TEST(CtpGatewayAdapterTest, ConnectSubscribeAndOrderFlow) {
     ASSERT_TRUE(adapter.Subscribe({"SHFE.ag2406"}));
 
     std::atomic<int> order_events{0};
-    adapter.RegisterOrderEventCallback([&order_events](const OrderEvent&) {
-        order_events.fetch_add(1);
-    });
+    std::atomic<int> accepted_events{0};
+    std::atomic<int> canceled_events{0};
+    adapter.RegisterOrderEventCallback(
+        [&](const OrderEvent& event) {
+            order_events.fetch_add(1);
+            if (event.status == OrderStatus::kAccepted) {
+                accepted_events.fetch_add(1);
+                EXPECT_EQ(event.side, Side::kSell);
+                EXPECT_EQ(event.offset, OffsetFlag::kCloseToday);
+                EXPECT_EQ(event.instrument_id, "SHFE.ag2406");
+            }
+            if (event.status == OrderStatus::kCanceled) {
+                canceled_events.fetch_add(1);
+                EXPECT_EQ(event.side, Side::kSell);
+                EXPECT_EQ(event.offset, OffsetFlag::kCloseToday);
+                EXPECT_EQ(event.instrument_id, "SHFE.ag2406");
+            }
+        });
 
     OrderIntent intent;
     intent.account_id = "a1";
     intent.client_order_id = "ord1";
     intent.instrument_id = "SHFE.ag2406";
+    intent.side = Side::kSell;
+    intent.offset = OffsetFlag::kCloseToday;
     intent.volume = 1;
     intent.price = 1.0;
     intent.trace_id = "t1";
 
     ASSERT_TRUE(adapter.PlaceOrder(intent));
     EXPECT_EQ(order_events.load(), 1);
+    EXPECT_EQ(accepted_events.load(), 1);
 
     ASSERT_TRUE(adapter.CancelOrder("ord1", "t2"));
     EXPECT_EQ(order_events.load(), 2);
+    EXPECT_EQ(canceled_events.load(), 1);
 }
 
 TEST(CtpGatewayAdapterTest, QueryAndOffsetApplySrc) {

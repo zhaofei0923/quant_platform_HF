@@ -204,6 +204,61 @@ bool CtpConfigValidator::Validate(const CtpRuntimeConfig& config, std::string* e
         }
         return false;
     }
+    if (config.recovery_quiet_period_ms < 0) {
+        if (error != nullptr) {
+            *error = "recovery_quiet_period_ms must be >= 0";
+        }
+        return false;
+    }
+    if (config.order_insert_rate_per_sec <= 0 || config.order_cancel_rate_per_sec <= 0 ||
+        config.query_rate_per_sec <= 0 || config.settlement_query_rate_per_sec <= 0) {
+        if (error != nullptr) {
+            *error = "order/query rate limit must be > 0";
+        }
+        return false;
+    }
+    if (config.order_bucket_capacity <= 0 || config.cancel_bucket_capacity <= 0 ||
+        config.query_bucket_capacity <= 0 || config.settlement_query_bucket_capacity <= 0) {
+        if (error != nullptr) {
+            *error = "bucket capacities must be > 0";
+        }
+        return false;
+    }
+    if (config.settlement_retry_max <= 0 || config.settlement_retry_backoff_initial_ms <= 0 ||
+        config.settlement_retry_backoff_max_ms < config.settlement_retry_backoff_initial_ms ||
+        config.settlement_running_stale_timeout_ms <= 0) {
+        if (error != nullptr) {
+            *error = "settlement retry/backoff/stale timeout configuration is invalid";
+        }
+        return false;
+    }
+    if (config.breaker_failure_threshold <= 0 || config.breaker_timeout_ms <= 0 ||
+        config.breaker_half_open_timeout_ms <= 0) {
+        if (error != nullptr) {
+            *error = "breaker thresholds/timeouts must be > 0";
+        }
+        return false;
+    }
+    if (!config.breaker_strategy_enabled && !config.breaker_account_enabled &&
+        !config.breaker_system_enabled) {
+        if (error != nullptr) {
+            *error = "at least one breaker scope must be enabled";
+        }
+        return false;
+    }
+    if (config.kafka_topic_ticks.empty()) {
+        if (error != nullptr) {
+            *error = "kafka_topic_ticks must not be empty";
+        }
+        return false;
+    }
+    if (config.audit_hot_days <= 0 || config.audit_cold_days <= 0 ||
+        config.audit_cold_days < config.audit_hot_days) {
+        if (error != nullptr) {
+            *error = "audit retention days must be > 0 and cold >= hot";
+        }
+        return false;
+    }
     return true;
 }
 

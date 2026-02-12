@@ -19,6 +19,25 @@ ctp:
   app_id: "simnow_client_test"
 
   query_rate_limit_qps: 10
+  query_rate_per_sec: 5
+  order_insert_rate_per_sec: 50
+  order_cancel_rate_per_sec: 50
+  order_bucket_capacity: 20
+  cancel_bucket_capacity: 20
+  query_bucket_capacity: 5
+  settlement_confirm_required: true
+  breaker_failure_threshold: 5
+  breaker_timeout_ms: 1000
+  breaker_half_open_timeout_ms: 5000
+  breaker_strategy_enabled: true
+  breaker_account_enabled: true
+  breaker_system_enabled: true
+  recovery_quiet_period_ms: 3000
+  kafka_bootstrap_servers: "127.0.0.1:9092"
+  kafka_topic_ticks: "market.ticks.v1"
+  clickhouse_dsn: "clickhouse://127.0.0.1:9000/default"
+  audit_hot_days: 7
+  audit_cold_days: 180
   instruments: "SHFE.ag2406,SHFE.rb2405"
   strategy_ids: "demo"
   strategy_poll_interval_ms: 200

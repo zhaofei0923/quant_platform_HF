@@ -11,6 +11,9 @@ from typing import Any
 _DEFAULT_REQUIRED = (
     "redis-primary",
     "timescale-primary",
+    "kafka",
+    "kafka-connect",
+    "clickhouse",
     "prometheus",
     "grafana",
     "minio",

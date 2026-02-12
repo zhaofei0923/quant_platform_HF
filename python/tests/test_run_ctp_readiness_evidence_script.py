@@ -38,3 +38,4 @@ def test_run_ctp_readiness_evidence_script_outputs_json(tmp_path: Path) -> None:
     sli_names = [item["name"] for item in payload["slis"]]
     assert "quant_hft_ctp_query_latency_p99_ms" in sli_names
     assert "quant_hft_ctp_flow_control_hits" in sli_names
+    assert {item["environment"] for item in payload["slis"]} == {"single-host-ubuntu"}

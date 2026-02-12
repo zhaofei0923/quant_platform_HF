@@ -14,8 +14,12 @@
 
 #include "quant_hft/contracts/types.h"
 #include "quant_hft/core/ctp_config_loader.h"
-#include "quant_hft/core/ctp_gateway_adapter.h"
+#include "quant_hft/core/circuit_breaker.h"
+#include "quant_hft/core/ctp_md_adapter.h"
+#include "quant_hft/core/ctp_trader_adapter.h"
+#include "quant_hft/core/flow_controller.h"
 #include "quant_hft/core/local_wal_regulatory_sink.h"
+#include "quant_hft/core/market_bus_producer.h"
 #include "quant_hft/core/redis_realtime_store_client_adapter.h"
 #include "quant_hft/core/storage_client_factory.h"
 #include "quant_hft/core/storage_client_pool.h"
@@ -28,6 +32,7 @@
 #include "quant_hft/services/basic_risk_engine.h"
 #include "quant_hft/services/execution_planner.h"
 #include "quant_hft/services/execution_router.h"
+#include "quant_hft/services/execution_engine.h"
 #include "quant_hft/services/ctp_account_ledger.h"
 #include "quant_hft/services/ctp_position_ledger.h"
 #include "quant_hft/services/in_memory_portfolio_ledger.h"
@@ -312,7 +317,46 @@ int main(int argc, char** argv) {
     SelfTradeRiskEngine self_trade_risk(self_trade_config);
     ExecutionPlanner execution_planner;
     ExecutionRouter execution_router;
-    CtpGatewayAdapter ctp_gateway(10);
+    auto ctp_trader = std::make_shared<CTPTraderAdapter>(
+        static_cast<std::size_t>(std::max(1, config.query_rate_per_sec)),
+        2);
+    auto ctp_md = std::make_shared<CTPMdAdapter>(
+        static_cast<std::size_t>(std::max(1, config.query_rate_per_sec)),
+        2);
+    auto flow_controller = std::make_shared<FlowController>();
+    auto breaker_manager = std::make_shared<CircuitBreakerManager>();
+    {
+        FlowRule rule;
+        rule.account_id = account_id;
+        rule.type = OperationType::kOrderInsert;
+        rule.rate_per_second = static_cast<double>(config.order_insert_rate_per_sec);
+        rule.capacity = config.order_bucket_capacity;
+        flow_controller->AddRule(rule);
+    }
+    {
+        FlowRule rule;
+        rule.account_id = account_id;
+        rule.type = OperationType::kOrderCancel;
+        rule.rate_per_second = static_cast<double>(config.order_cancel_rate_per_sec);
+        rule.capacity = config.cancel_bucket_capacity;
+        flow_controller->AddRule(rule);
+    }
+    {
+        FlowRule rule;
+        rule.account_id = account_id;
+        rule.type = OperationType::kQuery;
+        rule.rate_per_second = static_cast<double>(config.query_rate_per_sec);
+        rule.capacity = config.query_bucket_capacity;
+        flow_controller->AddRule(rule);
+    }
+    CircuitBreakerConfig breaker_cfg;
+    breaker_cfg.failure_threshold = config.breaker_failure_threshold;
+    breaker_cfg.timeout_ms = config.breaker_timeout_ms;
+    breaker_cfg.half_open_timeout_ms = config.breaker_half_open_timeout_ms;
+    breaker_manager->Configure(BreakerScope::kStrategy, breaker_cfg, config.breaker_strategy_enabled);
+    breaker_manager->Configure(BreakerScope::kAccount, breaker_cfg, config.breaker_account_enabled);
+    breaker_manager->Configure(BreakerScope::kSystem, breaker_cfg, config.breaker_system_enabled);
+    ExecutionEngine execution_engine(ctp_trader, flow_controller, breaker_manager, 1000);
     InMemoryPortfolioLedger ledger;
     CtpPositionLedger ctp_position_ledger;
     CtpAccountLedger ctp_account_ledger;
@@ -374,6 +418,8 @@ int main(int argc, char** argv) {
                                                          storage_retry_policy,
                                                          storage_config.timescale.trading_schema);
     RuleMarketStateEngine market_state(32);
+    MarketBusProducer market_bus_producer(config.kafka_bootstrap_servers,
+                                          config.kafka_topic_ticks);
     LocalWalRegulatorySink wal_sink("runtime_events.wal");
     std::atomic<std::uint64_t> wal_write_failures{0};
     std::atomic<std::uint64_t> trading_write_failures{0};
@@ -493,7 +539,6 @@ int main(int argc, char** argv) {
 
     auto process_market_snapshot = [&](const MarketSnapshot& raw_snapshot) {
         MarketSnapshot snapshot = raw_snapshot;
-        CtpGatewayAdapter::NormalizeMarketSnapshot(&snapshot);
         if (!bar_aggregator.ShouldProcessSnapshot(snapshot)) {
             return;
         }
@@ -510,13 +555,19 @@ int main(int argc, char** argv) {
         realtime_cache.UpsertMarketSnapshot(snapshot);
         timeseries_store.AppendMarketSnapshot(snapshot);
         market_state.OnMarketSnapshot(snapshot);
+        const auto publish_result = market_bus_producer.PublishTick(snapshot);
+        if (!publish_result.ok) {
+            std::cerr << "{\"component\":\"market_bus\","
+                      << "\"topic\":\"" << config.kafka_topic_ticks << "\","
+                      << "\"reason\":\"" << publish_result.reason << "\"}" << '\n';
+        }
     };
 
-    ctp_gateway.RegisterOrderEventCallback(
+    ctp_trader->RegisterOrderEventCallback(
         [&](const OrderEvent& event) { process_order_event(event); });
-    ctp_gateway.RegisterMarketDataCallback(
+    ctp_md->RegisterTickCallback(
         [&](const MarketSnapshot& snapshot) { process_market_snapshot(snapshot); });
-    ctp_gateway.RegisterTradingAccountSnapshotCallback(
+    ctp_trader->RegisterTradingAccountSnapshotCallback(
         [&](const TradingAccountSnapshot& snapshot) {
             {
                 std::lock_guard<std::mutex> lock(ctp_ledger_mutex);
@@ -536,7 +587,7 @@ int main(int argc, char** argv) {
             }
             ctp_query_snapshot_store.AppendTradingAccountSnapshot(snapshot);
         });
-    ctp_gateway.RegisterInvestorPositionSnapshotCallback(
+    ctp_trader->RegisterInvestorPositionSnapshotCallback(
         [&](const std::vector<InvestorPositionSnapshot>& snapshots) {
             std::string ctp_ledger_error;
             for (const auto& snapshot : snapshots) {
@@ -562,13 +613,13 @@ int main(int argc, char** argv) {
                 ctp_query_snapshot_store.AppendInvestorPositionSnapshot(snapshot);
             }
         });
-    ctp_gateway.RegisterInstrumentMetaSnapshotCallback(
+    ctp_trader->RegisterInstrumentMetaSnapshotCallback(
         [&](const std::vector<InstrumentMetaSnapshot>& snapshots) {
             for (const auto& snapshot : snapshots) {
                 ctp_query_snapshot_store.AppendInstrumentMetaSnapshot(snapshot);
             }
         });
-    ctp_gateway.RegisterBrokerTradingParamsSnapshotCallback(
+    ctp_trader->RegisterBrokerTradingParamsSnapshotCallback(
         [&](const BrokerTradingParamsSnapshot& snapshot) {
             if (!snapshot.margin_price_type.empty()) {
                 std::lock_guard<std::mutex> lock(ctp_ledger_mutex);
@@ -597,16 +648,30 @@ int main(int argc, char** argv) {
     connect_cfg.reconnect_initial_backoff_ms = config.reconnect_initial_backoff_ms;
     connect_cfg.reconnect_max_backoff_ms = config.reconnect_max_backoff_ms;
     connect_cfg.query_retry_backoff_ms = config.query_retry_backoff_ms;
+    connect_cfg.recovery_quiet_period_ms = config.recovery_quiet_period_ms;
+    connect_cfg.settlement_confirm_required = config.settlement_confirm_required;
 
-    if (!ctp_gateway.Connect(connect_cfg)) {
-        std::cerr << "CTP gateway connect failed" << '\n';
-        const auto diagnostic = ctp_gateway.GetLastConnectDiagnostic();
+    if (!ctp_trader->Connect(connect_cfg)) {
+        std::cerr << "CTP trader adapter connect failed" << '\n';
+        const auto diagnostic = ctp_trader->GetLastConnectDiagnostic();
         if (!diagnostic.empty()) {
             std::cerr << "CTP connect diagnostic: " << diagnostic << '\n';
         }
         return 2;
     }
-    if (!ctp_gateway.Subscribe(instruments)) {
+    if (!ctp_md->Connect(connect_cfg)) {
+        std::cerr << "CTP md adapter connect failed" << '\n';
+        const auto diagnostic = ctp_md->GetLastConnectDiagnostic();
+        if (!diagnostic.empty()) {
+            std::cerr << "CTP connect diagnostic: " << diagnostic << '\n';
+        }
+        return 2;
+    }
+    if (!ctp_trader->ConfirmSettlement()) {
+        std::cerr << "CTP settlement confirm failed" << '\n';
+        return 2;
+    }
+    if (!ctp_md->Subscribe(instruments)) {
         std::cerr << "CTP subscribe failed" << '\n';
         return 2;
     }
@@ -615,26 +680,26 @@ int main(int argc, char** argv) {
     auto next_query_request_id = [&query_request_id]() {
         return query_request_id.fetch_add(1);
     };
-    if (!ctp_gateway.EnqueueUserSessionQuery(next_query_request_id())) {
+    if (!ctp_trader->EnqueueUserSessionQuery(next_query_request_id())) {
         std::cerr << "warning: initial user session query failed" << '\n';
     }
-    if (!ctp_gateway.EnqueueTradingAccountQuery(next_query_request_id())) {
+    if (!execution_engine.QueryTradingAccount(next_query_request_id(), account_id)) {
         std::cerr << "warning: initial trading account query failed" << '\n';
     }
-    if (!ctp_gateway.EnqueueInvestorPositionQuery(next_query_request_id())) {
+    if (!execution_engine.QueryInvestorPosition(next_query_request_id(), account_id)) {
         std::cerr << "warning: initial investor position query failed" << '\n';
     }
-    if (!ctp_gateway.EnqueueInstrumentQuery(next_query_request_id())) {
+    if (!execution_engine.QueryInstrument(next_query_request_id(), account_id)) {
         std::cerr << "warning: initial instrument query failed" << '\n';
     }
-    if (!ctp_gateway.EnqueueBrokerTradingParamsQuery(next_query_request_id())) {
+    if (!execution_engine.QueryBrokerTradingParams(next_query_request_id(), account_id)) {
         std::cerr << "warning: initial broker trading params query failed" << '\n';
     }
     for (const auto& instrument_id : instruments) {
-        if (!ctp_gateway.EnqueueInstrumentMarginRateQuery(next_query_request_id(), instrument_id)) {
+        if (!ctp_trader->EnqueueInstrumentMarginRateQuery(next_query_request_id(), instrument_id)) {
             std::cerr << "warning: initial margin rate query failed for " << instrument_id << '\n';
         }
-        if (!ctp_gateway.EnqueueInstrumentCommissionRateQuery(next_query_request_id(),
+        if (!ctp_trader->EnqueueInstrumentCommissionRateQuery(next_query_request_id(),
                                                               instrument_id)) {
             std::cerr << "warning: initial commission rate query failed for "
                       << instrument_id << '\n';
@@ -654,22 +719,22 @@ int main(int argc, char** argv) {
         while (!query_loop_stop.load()) {
             const auto now = std::chrono::steady_clock::now();
             if (now >= next_account_query) {
-                (void)ctp_gateway.EnqueueTradingAccountQuery(next_query_request_id());
+                (void)execution_engine.QueryTradingAccount(next_query_request_id(), account_id);
                 next_account_query =
                     now + std::chrono::milliseconds(std::max(1, file_config.account_query_interval_ms));
             }
             if (now >= next_position_query) {
-                (void)ctp_gateway.EnqueueInvestorPositionQuery(next_query_request_id());
+                (void)execution_engine.QueryInvestorPosition(next_query_request_id(), account_id);
                 next_position_query =
                     now + std::chrono::milliseconds(std::max(1, file_config.position_query_interval_ms));
             }
             if (now >= next_instrument_query) {
-                (void)ctp_gateway.EnqueueInstrumentQuery(next_query_request_id());
-                (void)ctp_gateway.EnqueueBrokerTradingParamsQuery(next_query_request_id());
+                (void)execution_engine.QueryInstrument(next_query_request_id(), account_id);
+                (void)execution_engine.QueryBrokerTradingParams(next_query_request_id(), account_id);
                 for (const auto& instrument_id : instruments) {
-                    (void)ctp_gateway.EnqueueInstrumentMarginRateQuery(next_query_request_id(),
+                    (void)ctp_trader->EnqueueInstrumentMarginRateQuery(next_query_request_id(),
                                                                        instrument_id);
-                    (void)ctp_gateway.EnqueueInstrumentCommissionRateQuery(next_query_request_id(),
+                    (void)ctp_trader->EnqueueInstrumentCommissionRateQuery(next_query_request_id(),
                                                                            instrument_id);
                 }
                 next_instrument_query = now + std::chrono::milliseconds(
@@ -791,7 +856,7 @@ int main(int argc, char** argv) {
                                     continue;
                                 }
                             }
-                            if (!ctp_gateway.PlaceOrder(intent)) {
+                            if (!execution_engine.PlaceOrder(intent)) {
                                 process_order_event(BuildRejectedEvent(
                                     intent, "gateway_reject:place_order_failed", metadata));
                                 continue;
@@ -837,8 +902,11 @@ int main(int argc, char** argv) {
                             continue;
                         }
 
-                        if (!ctp_gateway.CancelOrder(order.client_order_id,
-                                                     order.client_order_id)) {
+                        if (!execution_engine.CancelOrder(order.account_id,
+                                                          "cancel_scanner",
+                                                          order.client_order_id,
+                                                          order.client_order_id,
+                                                          order.instrument_id)) {
                             std::lock_guard<std::mutex> lock(cancel_pending_mutex);
                             cancel_pending_orders.erase(order.client_order_id);
                         }
@@ -899,7 +967,8 @@ int main(int argc, char** argv) {
         query_poll_thread.join();
     }
 
-    ctp_gateway.Disconnect();
+    ctp_md->Disconnect();
+    ctp_trader->Disconnect();
     (void)bar_aggregator.Flush();
     timeseries_store.Flush();
     wal_sink.Flush();

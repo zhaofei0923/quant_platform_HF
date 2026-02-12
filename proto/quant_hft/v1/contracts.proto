@@ -28,6 +28,119 @@ message StateDimension {
   double confidence = 2;
 }
 
+message Exchange {
+  string id = 1;
+  string name = 2;
+}
+
+message Instrument {
+  string symbol = 1;
+  string exchange_id = 2;
+  string product_id = 3;
+  int32 contract_multiplier = 4;
+  double price_tick = 5;
+  double margin_rate = 6;
+  double commission_rate = 7;
+  string commission_type = 8;
+  double close_today_commission_rate = 9;
+}
+
+message Tick {
+  string symbol = 1;
+  string exchange = 2;
+  int64 ts_ns = 3;
+  int64 exchange_ts_ns = 4;
+  double last_price = 5;
+  int32 last_volume = 6;
+  double ask_price1 = 7;
+  int32 ask_volume1 = 8;
+  double bid_price1 = 9;
+  int32 bid_volume1 = 10;
+  int64 volume = 11;
+  double turnover = 12;
+  int64 open_interest = 13;
+}
+
+message Bar {
+  string symbol = 1;
+  string exchange = 2;
+  string timeframe = 3;
+  int64 ts_ns = 4;
+  double open = 5;
+  double high = 6;
+  double low = 7;
+  double close = 8;
+  int64 volume = 9;
+  double turnover = 10;
+  int64 open_interest = 11;
+}
+
+message Order {
+  string order_id = 1;
+  string strategy_id = 2;
+  string symbol = 3;
+  string exchange = 4;
+  string side = 5;
+  string offset = 6;
+  string order_type = 7;
+  double price = 8;
+  int32 quantity = 9;
+  int32 filled_quantity = 10;
+  double avg_fill_price = 11;
+  string status = 12;
+  int64 created_at_ns = 13;
+  int64 updated_at_ns = 14;
+  double commission = 15;
+  string message = 16;
+  string account_id = 17;
+}
+
+message Trade {
+  string trade_id = 1;
+  string order_id = 2;
+  string strategy_id = 3;
+  string symbol = 4;
+  string exchange = 5;
+  string side = 6;
+  string offset = 7;
+  double price = 8;
+  int32 quantity = 9;
+  int64 trade_ts_ns = 10;
+  double commission = 11;
+  double profit = 12;
+  string account_id = 13;
+}
+
+message Position {
+  string symbol = 1;
+  string exchange = 2;
+  string strategy_id = 3;
+  string account_id = 4;
+  int32 long_qty = 5;
+  int32 short_qty = 6;
+  int32 long_today_qty = 7;
+  int32 short_today_qty = 8;
+  int32 long_yd_qty = 9;
+  int32 short_yd_qty = 10;
+  double avg_long_price = 11;
+  double avg_short_price = 12;
+  double position_profit = 13;
+  double margin = 14;
+  int64 update_time_ns = 15;
+}
+
+message Account {
+  string account_id = 1;
+  double balance = 2;
+  double available = 3;
+  double margin = 4;
+  double commission = 5;
+  double position_profit = 6;
+  double close_profit = 7;
+  double risk_degree = 8;
+  int64 update_time_ns = 9;
+}
+
 message StateSnapshot7D {
   string instrument_id = 1;
   StateDimension trend = 2;
@@ -62,6 +175,10 @@ message OrderIntent {
   double price = 8;
   int64 ts_ns = 9;
   string trace_id = 10;
+  string strategy_id = 11;
+  string hedge_flag = 12;
+  string time_condition = 13;
+  string volume_condition = 14;
 }
 
 message RiskDecision {
@@ -83,6 +200,8 @@ message OrderEvent {
   string client_order_id = 2;
   string exchange_order_id = 3;
   string instrument_id = 4;
+  string side = 30;
+  string offset = 31;
   string status = 5;
   int32 total_volume = 6;
   int32 filled_volume = 7;

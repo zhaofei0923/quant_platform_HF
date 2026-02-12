@@ -74,6 +74,8 @@ struct CtpRuntimeConfig {
     int metrics_port{8080};
 
     std::string md_front;
+    std::string log_level{"info"};
+    std::string log_sink{"stderr"};
     std::string td_front;
     std::string flow_path;
 

@@ -41,6 +41,8 @@ ctp:
   settlement_confirm_required: true
   metrics_enabled: true
   metrics_port: 8080
+  log_level: "info"
+  log_sink: "stderr"
   breaker_failure_threshold: 5
   breaker_timeout_ms: 1000
   breaker_half_open_timeout_ms: 5000

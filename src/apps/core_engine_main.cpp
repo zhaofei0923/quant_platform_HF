@@ -76,7 +76,10 @@ bool ParseArgs(int argc,
         return false;
     }
 
-    *config_path = "configs/sim/ctp.yaml";
+    const auto quant_root = quant_hft::GetEnvOrDefault("QUANT_ROOT", "");
+    const auto default_config =
+        quant_root.empty() ? "configs/sim/ctp.yaml" : (quant_root + "/configs/sim/ctp.yaml");
+    *config_path = quant_hft::GetEnvOrDefault("CTP_CONFIG_PATH", default_config);
     *run_seconds = 0;
 
     for (int i = 1; i < argc; ++i) {
@@ -360,7 +363,8 @@ int main(int argc, char** argv) {
     risk_manager_config.default_max_order_volume = file_config.risk.default_max_order_volume;
     risk_manager_config.default_max_order_rate = config.order_insert_rate_per_sec;
     risk_manager_config.default_max_cancel_rate = config.order_cancel_rate_per_sec;
-    risk_manager_config.rule_file_path = "configs/risk_rules.yaml";
+    risk_manager_config.rule_file_path =
+        quant_hft::GetEnvOrDefault("RISK_RULE_FILE_PATH", "configs/risk_rules.yaml");
     risk_manager_config.enable_dynamic_reload = true;
     (void)risk_manager->Initialize(risk_manager_config);
     execution_engine.SetRiskManager(risk_manager);

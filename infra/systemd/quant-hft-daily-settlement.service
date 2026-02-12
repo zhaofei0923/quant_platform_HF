@@ -5,10 +5,11 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=%h/workspace/quant_platform_HF
+WorkingDirectory=/
 Environment=QUANT_HFT_ENV=prod
 Environment=QUANT_ROOT=%h/workspace/quant_platform_HF
-ExecStart=/bin/bash -lc 'TRADING_DAY=$(date +%F) "${QUANT_ROOT}/scripts/ops/run_daily_settlement.sh" --trading-day "${TRADING_DAY}" --execute'
+EnvironmentFile=-/etc/quant/platform.conf
+ExecStart=/bin/bash -lc ': "${QUANT_ROOT:?QUANT_ROOT is required}"; TRADING_DAY=$(date +%F); "${QUANT_ROOT}/scripts/ops/run_daily_settlement.sh" --trading-day "${TRADING_DAY}" --execute'
 StandardOutput=journal
 StandardError=journal
 

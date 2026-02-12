@@ -1,0 +1,15 @@
+global:
+  max_loss_per_order: 5000
+  max_order_volume: 100
+  max_order_rate: 50
+  max_cancel_rate: 20
+  self_trade_prevention: true
+
+strategies:
+  - id: "trend_001"
+    max_position_per_instrument: 200
+    max_total_position: 500
+    self_trade_prevention: true
+
+  - id: "arb_002"
+    self_trade_prevention: false

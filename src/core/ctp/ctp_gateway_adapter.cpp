@@ -434,12 +434,23 @@ public:
 
     void OnRspUserLogin(CThostFtdcRspUserLoginField* p_rsp_user_login,
                         CThostFtdcRspInfoField* p_rsp_info,
-                        int,
+                        int n_request_id,
                         bool b_is_last) override {
         if (!b_is_last) {
             return;
         }
         if (!IsRspSuccess(p_rsp_info) || p_rsp_user_login == nullptr) {
+            CtpGatewayAdapter::LoginResponseCallback callback;
+            {
+                std::lock_guard<std::mutex> lock(owner_->mutex_);
+                callback = owner_->login_response_callback_;
+            }
+            if (callback) {
+                callback(n_request_id,
+                         p_rsp_info == nullptr ? -1 : p_rsp_info->ErrorID,
+                         p_rsp_info == nullptr ? "Td login failed"
+                                              : SafeCtpString(p_rsp_info->ErrorMsg));
+            }
             SetError("Td login failed", p_rsp_info);
             return;
         }
@@ -461,6 +472,14 @@ public:
             state_->td_logged_in = true;
         }
         state_->event_cv.notify_all();
+        CtpGatewayAdapter::LoginResponseCallback callback;
+        {
+            std::lock_guard<std::mutex> lock(owner_->mutex_);
+            callback = owner_->login_response_callback_;
+        }
+        if (callback) {
+            callback(n_request_id, 0, "");
+        }
         owner_->TryMarkHealthyFromState();
     }
 
@@ -478,6 +497,25 @@ public:
         std::lock_guard<std::mutex> lock(owner_->mutex_);
         owner_->user_session_.investor_id = owner_->runtime_config_.investor_id;
         owner_->user_session_.login_time = SafeCtpString(p_user_session->LoginTime);
+    }
+
+    void OnRspSettlementInfoConfirm(CThostFtdcSettlementInfoConfirmField*,
+                                    CThostFtdcRspInfoField* p_rsp_info,
+                                    int n_request_id,
+                                    bool b_is_last) override {
+        if (!b_is_last) {
+            return;
+        }
+        CtpGatewayAdapter::SettlementConfirmCallback callback;
+        {
+            std::lock_guard<std::mutex> lock(owner_->mutex_);
+            callback = owner_->settlement_confirm_callback_;
+        }
+        if (callback) {
+            callback(n_request_id,
+                     p_rsp_info == nullptr ? 0 : p_rsp_info->ErrorID,
+                     p_rsp_info == nullptr ? "" : SafeCtpString(p_rsp_info->ErrorMsg));
+        }
     }
 
     void OnRtnOffsetSetting(CThostFtdcOffsetSettingField* p_offset_setting) override {
@@ -687,9 +725,20 @@ public:
 
     void OnRspQryOrder(CThostFtdcOrderField* p_order,
                        CThostFtdcRspInfoField* p_rsp_info,
-                       int,
-                       bool) override {
-        if (!IsRspSuccess(p_rsp_info) || p_order == nullptr) {
+                       int n_request_id,
+                       bool b_is_last) override {
+        const bool success = IsRspSuccess(p_rsp_info);
+        if (b_is_last) {
+            CtpGatewayAdapter::QueryCompleteCallback query_callback;
+            {
+                std::lock_guard<std::mutex> lock(owner_->mutex_);
+                query_callback = owner_->query_complete_callback_;
+            }
+            if (query_callback) {
+                query_callback(n_request_id, "order", success);
+            }
+        }
+        if (!success || p_order == nullptr) {
             return;
         }
 
@@ -736,9 +785,20 @@ public:
 
     void OnRspQryTrade(CThostFtdcTradeField* p_trade,
                        CThostFtdcRspInfoField* p_rsp_info,
-                       int,
-                       bool) override {
-        if (!IsRspSuccess(p_rsp_info) || p_trade == nullptr) {
+                       int n_request_id,
+                       bool b_is_last) override {
+        const bool success = IsRspSuccess(p_rsp_info);
+        if (b_is_last) {
+            CtpGatewayAdapter::QueryCompleteCallback query_callback;
+            {
+                std::lock_guard<std::mutex> lock(owner_->mutex_);
+                query_callback = owner_->query_complete_callback_;
+            }
+            if (query_callback) {
+                query_callback(n_request_id, "trade", success);
+            }
+        }
+        if (!success || p_trade == nullptr) {
             return;
         }
 
@@ -1160,10 +1220,17 @@ bool CtpGatewayAdapter::Connect(const MarketDataConnectConfig& config) {
 
 bool CtpGatewayAdapter::ConnectSimulated() {
     DisconnectRealApi();
-    std::lock_guard<std::mutex> lock(mutex_);
-    connected_ = true;
-    healthy_ = true;
-    last_connect_diagnostic_.clear();
+    ConnectionStateCallback callback;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        connected_ = true;
+        healthy_ = true;
+        last_connect_diagnostic_.clear();
+        callback = connection_state_callback_;
+    }
+    if (callback) {
+        callback(true);
+    }
     return true;
 }
 
@@ -1369,12 +1436,17 @@ void CtpGatewayAdapter::RequestReconnect() {
 }
 
 void CtpGatewayAdapter::HandleConnectionLoss() {
+    ConnectionStateCallback callback;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!connected_) {
             return;
         }
         healthy_ = false;
+        callback = connection_state_callback_;
+    }
+    if (callback) {
+        callback(false);
     }
     RequestReconnect();
 }
@@ -1443,6 +1515,7 @@ void CtpGatewayAdapter::TryMarkHealthyFromState() {
     return;
 #else
     bool healthy = false;
+    ConnectionStateCallback callback;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!real_api_) {
@@ -1454,7 +1527,11 @@ void CtpGatewayAdapter::TryMarkHealthyFromState() {
         if (healthy) {
             healthy_ = true;
             connected_ = true;
+            callback = connection_state_callback_;
         }
+    }
+    if (healthy && callback) {
+        callback(true);
     }
 #endif
 }
@@ -1524,19 +1601,26 @@ void CtpGatewayAdapter::Disconnect() {
     StopReconnectWorker();
     DisconnectRealApi();
 
-    std::lock_guard<std::mutex> lock(mutex_);
-    connected_ = false;
-    healthy_ = false;
-    subscriptions_.clear();
-    client_order_meta_.clear();
-    order_ref_to_client_id_.clear();
-    user_session_ = {};
-    trading_account_snapshot_ = {};
-    investor_position_snapshots_.clear();
-    instrument_meta_snapshots_.clear();
-    broker_trading_params_snapshot_ = {};
-    reconnect_requested_ = false;
-    reconnect_in_progress_ = false;
+    ConnectionStateCallback callback;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        connected_ = false;
+        healthy_ = false;
+        subscriptions_.clear();
+        client_order_meta_.clear();
+        order_ref_to_client_id_.clear();
+        user_session_ = {};
+        trading_account_snapshot_ = {};
+        investor_position_snapshots_.clear();
+        instrument_meta_snapshots_.clear();
+        broker_trading_params_snapshot_ = {};
+        reconnect_requested_ = false;
+        reconnect_in_progress_ = false;
+        callback = connection_state_callback_;
+    }
+    if (callback) {
+        callback(false);
+    }
 }
 
 bool CtpGatewayAdapter::Subscribe(const std::vector<std::string>& instrument_ids) {
@@ -1843,6 +1927,123 @@ bool CtpGatewayAdapter::CancelOrder(const std::string& client_order_id,
 void CtpGatewayAdapter::RegisterOrderEventCallback(OrderEventCallback callback) {
     std::lock_guard<std::mutex> lock(mutex_);
     order_event_callback_ = std::move(callback);
+}
+
+void CtpGatewayAdapter::RegisterConnectionStateCallback(ConnectionStateCallback callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    connection_state_callback_ = std::move(callback);
+}
+
+void CtpGatewayAdapter::RegisterLoginResponseCallback(LoginResponseCallback callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    login_response_callback_ = std::move(callback);
+}
+
+void CtpGatewayAdapter::RegisterQueryCompleteCallback(QueryCompleteCallback callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    query_complete_callback_ = std::move(callback);
+}
+
+void CtpGatewayAdapter::RegisterSettlementConfirmCallback(SettlementConfirmCallback callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    settlement_confirm_callback_ = std::move(callback);
+}
+
+bool CtpGatewayAdapter::RequestUserLogin(int request_id,
+                                         const std::string& broker_id,
+                                         const std::string& user_id,
+                                         const std::string& password) {
+    (void)broker_id;
+    (void)password;
+    LoginResponseCallback callback;
+    CtpRuntimeConfig runtime;
+    bool use_real = false;
+#if QUANT_HFT_HAS_REAL_CTP
+    CThostFtdcTraderApi* td_api = nullptr;
+#endif
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!connected_) {
+            return false;
+        }
+        runtime = runtime_config_;
+        callback = login_response_callback_;
+        use_real = runtime_config_.enable_real_api;
+#if QUANT_HFT_HAS_REAL_CTP
+        if (use_real && real_api_) {
+            td_api = real_api_->td_api;
+        }
+#endif
+    }
+
+    if (!use_real) {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            user_session_.investor_id = runtime.investor_id.empty() ? user_id : runtime.investor_id;
+            user_session_.login_time = "09:00:00";
+            user_session_.last_login_time = runtime.last_login_time;
+            user_session_.reserve_info = runtime.reserve_info;
+        }
+        if (callback) {
+            callback(request_id, 0, "");
+        }
+        return true;
+    }
+
+#if QUANT_HFT_HAS_REAL_CTP
+    if (td_api == nullptr) {
+        return false;
+    }
+    CThostFtdcReqUserLoginField login_req{};
+    CopyCtpField(login_req.BrokerID, broker_id.empty() ? runtime.broker_id : broker_id);
+    CopyCtpField(login_req.UserID, user_id.empty() ? runtime.user_id : user_id);
+    CopyCtpField(login_req.Password, password.empty() ? runtime.password : password);
+    return td_api->ReqUserLogin(&login_req, request_id) == 0;
+#else
+    return false;
+#endif
+}
+
+bool CtpGatewayAdapter::RequestSettlementInfoConfirm(int request_id) {
+    SettlementConfirmCallback callback;
+    CtpRuntimeConfig runtime;
+    bool use_real = false;
+#if QUANT_HFT_HAS_REAL_CTP
+    CThostFtdcTraderApi* td_api = nullptr;
+#endif
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!connected_) {
+            return false;
+        }
+        runtime = runtime_config_;
+        callback = settlement_confirm_callback_;
+        use_real = runtime_config_.enable_real_api;
+#if QUANT_HFT_HAS_REAL_CTP
+        if (use_real && real_api_) {
+            td_api = real_api_->td_api;
+        }
+#endif
+    }
+
+    if (!use_real) {
+        if (callback) {
+            callback(request_id, 0, "");
+        }
+        return true;
+    }
+
+#if QUANT_HFT_HAS_REAL_CTP
+    if (td_api == nullptr) {
+        return false;
+    }
+    CThostFtdcSettlementInfoConfirmField req{};
+    CopyCtpField(req.BrokerID, runtime.broker_id);
+    CopyCtpField(req.InvestorID, runtime.investor_id);
+    return td_api->ReqSettlementInfoConfirm(&req, request_id) == 0;
+#else
+    return false;
+#endif
 }
 
 bool CtpGatewayAdapter::EnqueueUserSessionQuery(int request_id) {
@@ -2284,6 +2485,8 @@ bool CtpGatewayAdapter::EnqueueBrokerTradingParamsQuery(int request_id) {
 
 bool CtpGatewayAdapter::EnqueueOrderQuery(int request_id) {
     bool query_ok = true;
+    QueryCompleteCallback completion_callback;
+    bool completion_notified = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!connected_) {
@@ -2294,7 +2497,7 @@ bool CtpGatewayAdapter::EnqueueOrderQuery(int request_id) {
     QueryScheduler::QueryTask task;
     task.request_id = request_id;
     task.priority = QueryScheduler::Priority::kHigh;
-    task.execute = [this, request_id, &query_ok]() {
+    task.execute = [this, request_id, &query_ok, &completion_callback, &completion_notified]() {
         CtpRuntimeConfig runtime;
 #if QUANT_HFT_HAS_REAL_CTP
         CThostFtdcTraderApi* td_api = nullptr;
@@ -2303,6 +2506,8 @@ bool CtpGatewayAdapter::EnqueueOrderQuery(int request_id) {
             std::lock_guard<std::mutex> lock(mutex_);
             runtime = runtime_config_;
             if (!runtime_config_.enable_real_api) {
+                completion_callback = query_complete_callback_;
+                completion_notified = true;
                 return;
             }
 #if QUANT_HFT_HAS_REAL_CTP
@@ -2328,11 +2533,17 @@ bool CtpGatewayAdapter::EnqueueOrderQuery(int request_id) {
     if (!query_scheduler_.TrySchedule(std::move(task))) {
         return false;
     }
-    return query_scheduler_.DrainOnce() > 0 && query_ok;
+    const bool ok = query_scheduler_.DrainOnce() > 0 && query_ok;
+    if (completion_notified && completion_callback) {
+        completion_callback(request_id, "order", ok);
+    }
+    return ok;
 }
 
 bool CtpGatewayAdapter::EnqueueTradeQuery(int request_id) {
     bool query_ok = true;
+    QueryCompleteCallback completion_callback;
+    bool completion_notified = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!connected_) {
@@ -2343,7 +2554,7 @@ bool CtpGatewayAdapter::EnqueueTradeQuery(int request_id) {
     QueryScheduler::QueryTask task;
     task.request_id = request_id;
     task.priority = QueryScheduler::Priority::kHigh;
-    task.execute = [this, request_id, &query_ok]() {
+    task.execute = [this, request_id, &query_ok, &completion_callback, &completion_notified]() {
         CtpRuntimeConfig runtime;
 #if QUANT_HFT_HAS_REAL_CTP
         CThostFtdcTraderApi* td_api = nullptr;
@@ -2352,6 +2563,8 @@ bool CtpGatewayAdapter::EnqueueTradeQuery(int request_id) {
             std::lock_guard<std::mutex> lock(mutex_);
             runtime = runtime_config_;
             if (!runtime_config_.enable_real_api) {
+                completion_callback = query_complete_callback_;
+                completion_notified = true;
                 return;
             }
 #if QUANT_HFT_HAS_REAL_CTP
@@ -2377,7 +2590,11 @@ bool CtpGatewayAdapter::EnqueueTradeQuery(int request_id) {
     if (!query_scheduler_.TrySchedule(std::move(task))) {
         return false;
     }
-    return query_scheduler_.DrainOnce() > 0 && query_ok;
+    const bool ok = query_scheduler_.DrainOnce() > 0 && query_ok;
+    if (completion_notified && completion_callback) {
+        completion_callback(request_id, "trade", ok);
+    }
+    return ok;
 }
 
 void CtpGatewayAdapter::RegisterTradingAccountSnapshotCallback(

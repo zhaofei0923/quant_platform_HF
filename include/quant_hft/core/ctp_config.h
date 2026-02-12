@@ -35,6 +35,10 @@ struct CtpRuntimeConfig {
     int settlement_retry_backoff_max_ms{5'000};
     int settlement_running_stale_timeout_ms{300'000};
     bool settlement_shadow_enabled{false};
+    int cancel_retry_max{3};
+    int cancel_retry_base_ms{1'000};
+    int cancel_retry_max_delay_ms{5'000};
+    int cancel_wait_ack_timeout_ms{1'200};
     int breaker_failure_threshold{5};
     int breaker_timeout_ms{1'000};
     int breaker_half_open_timeout_ms{5'000};

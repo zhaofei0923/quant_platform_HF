@@ -118,9 +118,12 @@ BEGIN
                                                  p_months_before, p_months_after);
     PERFORM ops.ensure_future_monthly_partitions('trading_core', 'settlement_prices',
                                                  p_months_before, p_months_after);
+    -- settlement_prices keeps nullable settlement_price rows for PENDING_PRICE missing quotes.
     PERFORM ops.ensure_future_monthly_partitions('ops', 'system_logs',
                                                  p_months_before, p_months_after);
     PERFORM ops.ensure_future_monthly_partitions('ops', 'settlement_reconcile_diff',
+                                                 p_months_before, p_months_after);
+    PERFORM ops.ensure_future_monthly_partitions('ops', 'processed_order_events',
                                                  p_months_before, p_months_after);
 
     -- Logs keep short hot window; risk/trade records align with cold retention baseline.
@@ -134,6 +137,7 @@ BEGIN
     PERFORM ops.drop_old_monthly_partitions('trading_core', 'account_funds', cold_keep_months);
     PERFORM ops.drop_old_monthly_partitions('trading_core', 'position_detail', cold_keep_months);
     PERFORM ops.drop_old_monthly_partitions('ops', 'settlement_reconcile_diff', cold_keep_months);
+    PERFORM ops.drop_old_monthly_partitions('ops', 'processed_order_events', cold_keep_months);
 END;
 $$;
 

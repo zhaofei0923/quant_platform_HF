@@ -575,6 +575,30 @@ bool TcpRedisHashClient::HGetAll(const std::string& key,
     return true;
 }
 
+bool TcpRedisHashClient::HIncrBy(const std::string& key,
+                                 const std::string& field,
+                                 std::int64_t delta,
+                                 std::string* error) {
+    if (key.empty() || field.empty()) {
+        if (error != nullptr) {
+            *error = "key and field must be non-empty";
+        }
+        return false;
+    }
+
+    RespValue reply;
+    if (!ExecuteCommand({"HINCRBY", key, field, std::to_string(delta)}, &reply, error)) {
+        return false;
+    }
+    if (reply.type != RespValue::Type::kInteger) {
+        if (error != nullptr) {
+            *error = "unexpected HINCRBY reply";
+        }
+        return false;
+    }
+    return true;
+}
+
 bool TcpRedisHashClient::Expire(const std::string& key,
                                 int ttl_seconds,
                                 std::string* error) {

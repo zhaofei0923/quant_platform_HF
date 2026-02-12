@@ -50,6 +50,21 @@ public:
         return true;
     }
 
+    bool HIncrBy(const std::string& key,
+                 const std::string& field,
+                 std::int64_t delta,
+                 std::string* error) override {
+        auto& hash = storage_[key];
+        std::int64_t current = 0;
+        const auto it = hash.find(field);
+        if (it != hash.end() && !it->second.empty()) {
+            current = std::stoll(it->second);
+        }
+        hash[field] = std::to_string(current + delta);
+        (void)error;
+        return true;
+    }
+
     bool Expire(const std::string& key, int ttl_seconds, std::string* error) override {
         if (ttl_seconds <= 0) {
             if (error != nullptr) {

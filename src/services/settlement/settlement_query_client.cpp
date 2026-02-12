@@ -114,6 +114,49 @@ bool SettlementQueryClient::QueryOrderTradeBackfill(std::vector<OrderEvent>* out
     return true;
 }
 
+bool SettlementQueryClient::GetLastTradingAccountSnapshot(TradingAccountSnapshot* out_snapshot,
+                                                          std::string* error) {
+    if (out_snapshot == nullptr) {
+        if (error != nullptr) {
+            *error = "output trading account snapshot is null";
+        }
+        return false;
+    }
+    if (!QueryTradingAccountWithRetry(1, error)) {
+        return false;
+    }
+    if (trader_ == nullptr) {
+        if (error != nullptr) {
+            *error = "trader adapter is null";
+        }
+        return false;
+    }
+    *out_snapshot = trader_->GetLastTradingAccountSnapshot();
+    return true;
+}
+
+bool SettlementQueryClient::GetLastInvestorPositionSnapshots(
+    std::vector<InvestorPositionSnapshot>* out_snapshots,
+    std::string* error) {
+    if (out_snapshots == nullptr) {
+        if (error != nullptr) {
+            *error = "output investor position snapshots is null";
+        }
+        return false;
+    }
+    if (!QueryInvestorPositionWithRetry(10, error)) {
+        return false;
+    }
+    if (trader_ == nullptr) {
+        if (error != nullptr) {
+            *error = "trader adapter is null";
+        }
+        return false;
+    }
+    *out_snapshots = trader_->GetLastInvestorPositionSnapshots();
+    return true;
+}
+
 bool SettlementQueryClient::QueryWithRetry(const std::string& name,
                                            int request_id_seed,
                                            const std::function<bool(int)>& sender,

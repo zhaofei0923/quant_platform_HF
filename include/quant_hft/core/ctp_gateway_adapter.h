@@ -27,6 +27,13 @@ struct CtpUserSessionInfo {
 // Phase-1 adapter skeleton for CTP v6.7.11.
 class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
 public:
+    using ConnectionStateCallback = std::function<void(bool healthy)>;
+    using LoginResponseCallback =
+        std::function<void(int request_id, int error_code, const std::string& error_msg)>;
+    using QueryCompleteCallback =
+        std::function<void(int request_id, const std::string& query_name, bool success)>;
+    using SettlementConfirmCallback =
+        std::function<void(int request_id, int error_code, const std::string& error_msg)>;
     using TradingAccountSnapshotCallback =
         std::function<void(const TradingAccountSnapshot&)>;
     using InvestorPositionSnapshotCallback =
@@ -52,15 +59,26 @@ public:
     void RegisterOrderEventCallback(OrderEventCallback callback) override;
 
     // v6.7.11 query entry (ReqQryUserSession) through scheduler.
-    bool EnqueueUserSessionQuery(int request_id);
-    bool EnqueueTradingAccountQuery(int request_id);
-    bool EnqueueInvestorPositionQuery(int request_id);
-    bool EnqueueInstrumentQuery(int request_id);
-    bool EnqueueInstrumentMarginRateQuery(int request_id, const std::string& instrument_id);
-    bool EnqueueInstrumentCommissionRateQuery(int request_id, const std::string& instrument_id);
-    bool EnqueueBrokerTradingParamsQuery(int request_id);
-    bool EnqueueOrderQuery(int request_id);
-    bool EnqueueTradeQuery(int request_id);
+    virtual bool EnqueueUserSessionQuery(int request_id);
+    virtual bool EnqueueTradingAccountQuery(int request_id);
+    virtual bool EnqueueInvestorPositionQuery(int request_id);
+    virtual bool EnqueueInstrumentQuery(int request_id);
+    virtual bool EnqueueInstrumentMarginRateQuery(int request_id, const std::string& instrument_id);
+    virtual bool EnqueueInstrumentCommissionRateQuery(int request_id, const std::string& instrument_id);
+    virtual bool EnqueueBrokerTradingParamsQuery(int request_id);
+    virtual bool EnqueueOrderQuery(int request_id);
+    virtual bool EnqueueTradeQuery(int request_id);
+
+    virtual bool RequestUserLogin(int request_id,
+                                  const std::string& broker_id,
+                                  const std::string& user_id,
+                                  const std::string& password);
+    virtual bool RequestSettlementInfoConfirm(int request_id);
+
+    virtual void RegisterConnectionStateCallback(ConnectionStateCallback callback);
+    virtual void RegisterLoginResponseCallback(LoginResponseCallback callback);
+    virtual void RegisterQueryCompleteCallback(QueryCompleteCallback callback);
+    virtual void RegisterSettlementConfirmCallback(SettlementConfirmCallback callback);
 
     void RegisterTradingAccountSnapshotCallback(TradingAccountSnapshotCallback callback);
     void RegisterInvestorPositionSnapshotCallback(InvestorPositionSnapshotCallback callback);
@@ -133,6 +151,10 @@ private:
     InvestorPositionSnapshotCallback investor_position_snapshot_callback_;
     InstrumentMetaSnapshotCallback instrument_meta_snapshot_callback_;
     BrokerTradingParamsSnapshotCallback broker_trading_params_snapshot_callback_;
+    ConnectionStateCallback connection_state_callback_;
+    LoginResponseCallback login_response_callback_;
+    QueryCompleteCallback query_complete_callback_;
+    SettlementConfirmCallback settlement_confirm_callback_;
 
     char offset_apply_src_{'0'};
     int front_id_{0};

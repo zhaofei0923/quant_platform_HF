@@ -1,0 +1,11 @@
+[Unit]
+Description=Run quant-hft daily settlement at 03:00 (user timer)
+Requires=quant-hft-daily-settlement.service
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+Unit=quant-hft-daily-settlement.service
+
+[Install]
+WantedBy=timers.target

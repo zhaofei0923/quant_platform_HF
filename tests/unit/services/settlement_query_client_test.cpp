@@ -152,4 +152,54 @@ TEST(SettlementQueryClientTest, QueryRetriesWhenFlowRejectedAndFailsClosed) {
     trader->Disconnect();
 }
 
+TEST(SettlementQueryClientTest, GetLastTradingAccountSnapshotReturnsLatestSnapshot) {
+    auto trader = BuildConnectedAdapter();
+    auto flow = std::make_shared<FlowController>();
+    FlowRule query_rule;
+    query_rule.account_id = "acc1";
+    query_rule.type = OperationType::kSettlementQuery;
+    query_rule.rate_per_second = 10.0;
+    query_rule.capacity = 5;
+    flow->AddRule(query_rule);
+
+    SettlementQueryClientConfig cfg;
+    cfg.account_id = "acc1";
+    cfg.retry_max = 1;
+    cfg.backoff_initial_ms = 1;
+    cfg.backoff_max_ms = 2;
+    cfg.acquire_timeout_ms = 10;
+    SettlementQueryClient client(trader, flow, cfg);
+
+    TradingAccountSnapshot snapshot;
+    std::string error;
+    ASSERT_TRUE(client.GetLastTradingAccountSnapshot(&snapshot, &error)) << error;
+    EXPECT_FALSE(snapshot.account_id.empty());
+    trader->Disconnect();
+}
+
+TEST(SettlementQueryClientTest, GetLastInvestorPositionSnapshotsReturnsLatestSnapshot) {
+    auto trader = BuildConnectedAdapter();
+    auto flow = std::make_shared<FlowController>();
+    FlowRule query_rule;
+    query_rule.account_id = "acc1";
+    query_rule.type = OperationType::kSettlementQuery;
+    query_rule.rate_per_second = 10.0;
+    query_rule.capacity = 5;
+    flow->AddRule(query_rule);
+
+    SettlementQueryClientConfig cfg;
+    cfg.account_id = "acc1";
+    cfg.retry_max = 1;
+    cfg.backoff_initial_ms = 1;
+    cfg.backoff_max_ms = 2;
+    cfg.acquire_timeout_ms = 10;
+    SettlementQueryClient client(trader, flow, cfg);
+
+    std::vector<InvestorPositionSnapshot> snapshots;
+    std::string error;
+    ASSERT_TRUE(client.GetLastInvestorPositionSnapshots(&snapshots, &error)) << error;
+    EXPECT_GE(snapshots.size(), 0U);
+    trader->Disconnect();
+}
+
 }  // namespace quant_hft

@@ -29,6 +29,9 @@ public:
     bool QueryInvestorPositionWithRetry(int request_id_seed, std::string* error);
     bool QueryInstrumentWithRetry(int request_id_seed, std::string* error);
     bool QueryOrderTradeBackfill(std::vector<OrderEvent>* out_events, std::string* error);
+    bool GetLastTradingAccountSnapshot(TradingAccountSnapshot* out_snapshot, std::string* error);
+    bool GetLastInvestorPositionSnapshots(std::vector<InvestorPositionSnapshot>* out_snapshots,
+                                          std::string* error);
 
 private:
     bool QueryWithRetry(const std::string& name,

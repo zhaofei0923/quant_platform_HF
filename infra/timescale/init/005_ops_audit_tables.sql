@@ -84,8 +84,7 @@ CREATE TABLE IF NOT EXISTS ops.settlement_runs (
             'RECONCILING',
             'COMPLETED',
             'BLOCKED',
-            'FAILED',
-            'RUNNING'
+            'FAILED'
         )
     )
 );
@@ -110,3 +109,18 @@ CREATE TABLE IF NOT EXISTS ops.settlement_reconcile_diff (
 
 CREATE INDEX IF NOT EXISTS idx_ops_settlement_reconcile_diff_day
     ON ops.settlement_reconcile_diff (trading_day, diff_type, created_at);
+
+CREATE TABLE IF NOT EXISTS ops.processed_order_events (
+    event_key VARCHAR(256) NOT NULL,
+    order_ref VARCHAR(50) NOT NULL,
+    front_id INT NOT NULL,
+    session_id INT NOT NULL,
+    event_type SMALLINT NOT NULL,
+    trade_id VARCHAR(64) NOT NULL DEFAULT '',
+    event_source VARCHAR(32) NOT NULL DEFAULT '',
+    processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (event_key, processed_at)
+) PARTITION BY RANGE (processed_at);
+
+CREATE INDEX IF NOT EXISTS idx_ops_processed_order_events_lookup
+    ON ops.processed_order_events (order_ref, front_id, session_id, event_type, processed_at);

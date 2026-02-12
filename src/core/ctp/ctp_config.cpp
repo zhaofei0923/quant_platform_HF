@@ -232,6 +232,14 @@ bool CtpConfigValidator::Validate(const CtpRuntimeConfig& config, std::string* e
         }
         return false;
     }
+    if (config.cancel_retry_max <= 0 || config.cancel_retry_base_ms <= 0 ||
+        config.cancel_retry_max_delay_ms < config.cancel_retry_base_ms ||
+        config.cancel_wait_ack_timeout_ms <= 0) {
+        if (error != nullptr) {
+            *error = "cancel retry configuration is invalid";
+        }
+        return false;
+    }
     if (config.breaker_failure_threshold <= 0 || config.breaker_timeout_ms <= 0 ||
         config.breaker_half_open_timeout_ms <= 0) {
         if (error != nullptr) {

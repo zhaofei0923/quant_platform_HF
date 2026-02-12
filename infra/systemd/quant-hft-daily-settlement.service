@@ -1,0 +1,16 @@
+[Unit]
+Description=Quant HFT Daily Settlement (user unit)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/workspace/quant_platform_HF
+Environment=QUANT_HFT_ENV=prod
+Environment=QUANT_ROOT=%h/workspace/quant_platform_HF
+ExecStart=/bin/bash -lc 'TRADING_DAY=$(date +%F) "${QUANT_ROOT}/scripts/ops/run_daily_settlement.sh" --trading-day "${TRADING_DAY}" --execute'
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

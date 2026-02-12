@@ -610,6 +610,72 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         }
     }
 
+    loaded.runtime.cancel_retry_max = 3;
+    SetOptionalInt(kv, "cancel_retry_max", &loaded.runtime.cancel_retry_max, &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.runtime.cancel_retry_max <= 0) {
+        if (error != nullptr) {
+            *error = "cancel_retry_max must be > 0";
+        }
+        return false;
+    }
+
+    loaded.runtime.cancel_retry_base_ms = 1000;
+    SetOptionalInt(kv, "cancel_retry_base_ms", &loaded.runtime.cancel_retry_base_ms, &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.runtime.cancel_retry_base_ms <= 0) {
+        if (error != nullptr) {
+            *error = "cancel_retry_base_ms must be > 0";
+        }
+        return false;
+    }
+
+    loaded.runtime.cancel_retry_max_delay_ms = 5000;
+    SetOptionalInt(kv,
+                   "cancel_retry_max_delay_ms",
+                   &loaded.runtime.cancel_retry_max_delay_ms,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.runtime.cancel_retry_max_delay_ms < loaded.runtime.cancel_retry_base_ms) {
+        if (error != nullptr) {
+            *error = "cancel_retry_max_delay_ms must be >= cancel_retry_base_ms";
+        }
+        return false;
+    }
+
+    loaded.runtime.cancel_wait_ack_timeout_ms = 1200;
+    SetOptionalInt(kv,
+                   "cancel_wait_ack_timeout_ms",
+                   &loaded.runtime.cancel_wait_ack_timeout_ms,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.runtime.cancel_wait_ack_timeout_ms <= 0) {
+        if (error != nullptr) {
+            *error = "cancel_wait_ack_timeout_ms must be > 0";
+        }
+        return false;
+    }
+
     loaded.runtime.breaker_failure_threshold = 5;
     SetOptionalInt(kv,
                    "breaker_failure_threshold",

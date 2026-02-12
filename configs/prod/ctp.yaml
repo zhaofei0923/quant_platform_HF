@@ -35,6 +35,10 @@ ctp:
   settlement_retry_backoff_max_ms: 5000
   settlement_running_stale_timeout_ms: 300000
   settlement_shadow_enabled: false
+  cancel_retry_max: 3
+  cancel_retry_base_ms: 1000
+  cancel_retry_max_delay_ms: 5000
+  cancel_wait_ack_timeout_ms: 1200
   settlement_confirm_required: true
   breaker_failure_threshold: 5
   breaker_timeout_ms: 1000

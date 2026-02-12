@@ -39,6 +39,19 @@ public:
         return false;
     }
 
+    bool HIncrBy(const std::string& key,
+                 const std::string& field,
+                 std::int64_t delta,
+                 std::string* error) override {
+        (void)key;
+        (void)field;
+        (void)delta;
+        if (error != nullptr) {
+            *error = reason_;
+        }
+        return false;
+    }
+
     bool Expire(const std::string& key, int ttl_seconds, std::string* error) override {
         (void)key;
         (void)ttl_seconds;

@@ -37,6 +37,8 @@ def test_daily_settlement_orchestrator_dry_run_writes_evidence(tmp_path: Path) -
     payload = json.loads(evidence_file.read_text(encoding="utf-8"))
     assert payload["dry_run"] is True
     assert payload["status"] == "DRY_RUN"
+    assert "settlement_price_json" in payload
+    assert "diff_report_path" in payload
 
 
 def test_daily_settlement_orchestrator_execute_writes_success_payload(tmp_path: Path) -> None:
@@ -49,6 +51,7 @@ def test_daily_settlement_orchestrator_execute_writes_success_payload(tmp_path: 
             "blocked": False,
             "status": "COMPLETED",
             "message": "ok",
+            "diff_report_path": "docs/results/settlement_diff_2026-02-12.json",
         },
         exit_code=0,
     )
@@ -70,6 +73,7 @@ def test_daily_settlement_orchestrator_execute_writes_success_payload(tmp_path: 
     assert payload["dry_run"] is False
     assert payload["success"] is True
     assert payload["status"] == "COMPLETED"
+    assert payload["diff_report_path"] == "docs/results/settlement_diff_2026-02-12.json"
 
 
 def test_daily_settlement_orchestrator_execute_propagates_failure(tmp_path: Path) -> None:
@@ -102,3 +106,4 @@ def test_daily_settlement_orchestrator_execute_propagates_failure(tmp_path: Path
     payload = json.loads(evidence_file.read_text(encoding="utf-8"))
     assert payload["success"] is False
     assert payload["blocked"] is True
+    assert payload["blocked_reason"] == "query failed"

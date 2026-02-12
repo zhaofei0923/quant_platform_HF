@@ -14,6 +14,7 @@
 #include "quant_hft/core/storage_retry_policy.h"
 #include "quant_hft/core/trading_domain_store_client_adapter.h"
 #include "quant_hft/services/daily_settlement_service.h"
+#include "quant_hft/services/settlement_price_provider.h"
 #include "quant_hft/services/settlement_query_client.h"
 
 namespace {
@@ -26,9 +27,14 @@ bool ParseArgs(int argc,
                bool* shadow_mode,
                bool* strict_backfill,
                std::string* evidence_path,
+               std::string* settlement_price_json_path,
+               std::string* price_cache_db_path,
+               std::string* diff_report_path,
                std::string* error) {
     if (config_path == nullptr || trading_day == nullptr || force_run == nullptr ||
-        shadow_mode == nullptr || strict_backfill == nullptr || evidence_path == nullptr) {
+        shadow_mode == nullptr || strict_backfill == nullptr || evidence_path == nullptr ||
+        settlement_price_json_path == nullptr || price_cache_db_path == nullptr ||
+        diff_report_path == nullptr) {
         if (error != nullptr) {
             *error = "output argument pointer is null";
         }
@@ -39,6 +45,9 @@ bool ParseArgs(int argc,
     *shadow_mode = false;
     *strict_backfill = false;
     *evidence_path = "";
+    *settlement_price_json_path = "";
+    *price_cache_db_path = "runtime/settlement_price_cache.sqlite";
+    *diff_report_path = "";
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -84,6 +93,36 @@ bool ParseArgs(int argc,
             *evidence_path = argv[++i];
             continue;
         }
+        if (arg == "--settlement-price-json") {
+            if (i + 1 >= argc) {
+                if (error != nullptr) {
+                    *error = "--settlement-price-json requires a value";
+                }
+                return false;
+            }
+            *settlement_price_json_path = argv[++i];
+            continue;
+        }
+        if (arg == "--price-cache-db") {
+            if (i + 1 >= argc) {
+                if (error != nullptr) {
+                    *error = "--price-cache-db requires a value";
+                }
+                return false;
+            }
+            *price_cache_db_path = argv[++i];
+            continue;
+        }
+        if (arg == "--diff-report-path") {
+            if (i + 1 >= argc) {
+                if (error != nullptr) {
+                    *error = "--diff-report-path requires a value";
+                }
+                return false;
+            }
+            *diff_report_path = argv[++i];
+            continue;
+        }
         if (error != nullptr) {
             *error = "unknown option: " + arg;
         }
@@ -110,6 +149,9 @@ int main(int argc, char** argv) {
     bool shadow_mode = false;
     bool strict_backfill = false;
     std::string evidence_path;
+    std::string settlement_price_json_path;
+    std::string price_cache_db_path;
+    std::string diff_report_path;
     std::string parse_error;
     if (!ParseArgs(argc,
                    argv,
@@ -119,6 +161,9 @@ int main(int argc, char** argv) {
                    &shadow_mode,
                    &strict_backfill,
                    &evidence_path,
+                   &settlement_price_json_path,
+                   &price_cache_db_path,
+                   &diff_report_path,
                    &parse_error)) {
         std::cerr << "invalid arguments: " << parse_error << '\n';
         return 1;
@@ -204,6 +249,8 @@ int main(int argc, char** argv) {
     query_cfg.backoff_max_ms = runtime.settlement_retry_backoff_max_ms;
     query_cfg.acquire_timeout_ms = std::min(runtime.settlement_retry_backoff_initial_ms, 1000);
     auto query_client = std::make_shared<SettlementQueryClient>(trader, flow_controller, query_cfg);
+    auto settlement_price_provider = std::make_shared<ProdSettlementPriceProvider>(
+        price_cache_db_path, settlement_price_json_path);
 
     DailySettlementConfig settlement_cfg;
     settlement_cfg.account_id = settlement_query_rule.account_id;
@@ -213,8 +260,10 @@ int main(int argc, char** argv) {
     settlement_cfg.strict_order_trade_backfill = strict_backfill;
     settlement_cfg.running_stale_timeout_ms = runtime.settlement_running_stale_timeout_ms;
     settlement_cfg.evidence_path = evidence_path;
+    settlement_cfg.diff_report_path = diff_report_path;
 
-    DailySettlementService service(settlement_store, query_client, domain_store);
+    DailySettlementService service(
+        settlement_price_provider, settlement_store, query_client, domain_store);
     DailySettlementResult result;
     std::string run_error;
     const bool run_ok = service.Run(settlement_cfg, &result, &run_error);
@@ -233,7 +282,10 @@ int main(int argc, char** argv) {
               << "\"noop\":" << (result.noop ? "true" : "false") << ","
               << "\"blocked\":" << (result.blocked ? "true" : "false") << ","
               << "\"status\":\"" << result.status << "\","
-              << "\"message\":\"" << result.message << "\""
+              << "\"message\":\"" << result.message << "\","
+              << "\"diff_report_path\":\""
+              << (!result.diff_report_path.empty() ? result.diff_report_path : diff_report_path)
+              << "\""
               << "}" << '\n';
     return result.success ? 0 : 2;
 }

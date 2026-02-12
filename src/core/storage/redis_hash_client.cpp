@@ -59,6 +59,39 @@ bool InMemoryRedisHashClient::HGetAll(
     return true;
 }
 
+bool InMemoryRedisHashClient::HIncrBy(const std::string& key,
+                                      const std::string& field,
+                                      std::int64_t delta,
+                                      std::string* error) {
+    if (key.empty() || field.empty()) {
+        if (error != nullptr) {
+            *error = "key and field must be non-empty";
+        }
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (IsExpiredLocked(key)) {
+        storage_.erase(key);
+        expiry_epoch_seconds_.erase(key);
+    }
+    auto& hash = storage_[key];
+    std::int64_t current = 0;
+    const auto it = hash.find(field);
+    if (it != hash.end() && !it->second.empty()) {
+        try {
+            current = std::stoll(it->second);
+        } catch (...) {
+            if (error != nullptr) {
+                *error = "field value is not integer";
+            }
+            return false;
+        }
+    }
+    hash[field] = std::to_string(current + delta);
+    return true;
+}
+
 bool InMemoryRedisHashClient::Expire(const std::string& key,
                                      int ttl_seconds,
                                      std::string* error) {

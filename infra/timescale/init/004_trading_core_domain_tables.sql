@@ -115,6 +115,11 @@ CREATE TABLE IF NOT EXISTS trading_core.orders (
     PRIMARY KEY (order_id, insert_time)
 ) PARTITION BY RANGE (insert_time);
 
+ALTER TABLE trading_core.orders
+    ADD COLUMN IF NOT EXISTS cancel_retry_count SMALLINT NOT NULL DEFAULT 0;
+ALTER TABLE trading_core.orders
+    ADD COLUMN IF NOT EXISTS last_cancel_time TIMESTAMPTZ;
+
 CREATE INDEX IF NOT EXISTS idx_trading_core_orders_account
     ON trading_core.orders (account_id, insert_time);
 CREATE INDEX IF NOT EXISTS idx_trading_core_orders_ref
@@ -207,11 +212,15 @@ CREATE TABLE IF NOT EXISTS trading_core.risk_events (
     event_id BIGINT GENERATED ALWAYS AS IDENTITY,
     account_id VARCHAR(32) NOT NULL,
     strategy_id VARCHAR(32),
+    instrument_id VARCHAR(30),
+    rule_id VARCHAR(64),
     event_type SMALLINT NOT NULL,
     event_level SMALLINT NOT NULL,
-    instrument_id VARCHAR(30),
+    severity SMALLINT,
     order_ref VARCHAR(50),
     event_desc VARCHAR(255),
+    tags JSONB,
+    details JSONB,
     event_time TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (event_id, event_time)
 ) PARTITION BY RANGE (event_time);
@@ -295,11 +304,14 @@ CREATE TABLE IF NOT EXISTS trading_core.settlement_prices (
     instrument_id VARCHAR(30) NOT NULL,
     exchange_id VARCHAR(10) NOT NULL DEFAULT '',
     source VARCHAR(32) NOT NULL,
-    settlement_price DECIMAL(16, 4) NOT NULL,
+    settlement_price DECIMAL(16, 4),
     is_final BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (price_id, trading_day)
 ) PARTITION BY RANGE (trading_day);
+
+ALTER TABLE trading_core.settlement_prices
+    ALTER COLUMN settlement_price DROP NOT NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_trading_core_settlement_prices_day_inst_source
     ON trading_core.settlement_prices (trading_day, instrument_id, source);

@@ -26,20 +26,22 @@
 #include "quant_hft/core/storage_connection_config.h"
 #include "quant_hft/core/storage_retry_policy.h"
 #include "quant_hft/core/strategy_intent_inbox.h"
+#include "quant_hft/core/trading_domain_store_client_adapter.h"
 #include "quant_hft/core/trading_ledger_store_client_adapter.h"
 #include "quant_hft/core/timescale_buffered_event_store.h"
 #include "quant_hft/core/wal_replay_loader.h"
+#include "quant_hft/risk/risk_manager.h"
 #include "quant_hft/services/basic_risk_engine.h"
 #include "quant_hft/services/execution_planner.h"
 #include "quant_hft/services/execution_router.h"
 #include "quant_hft/services/execution_engine.h"
+#include "quant_hft/services/order_manager.h"
+#include "quant_hft/services/position_manager.h"
 #include "quant_hft/services/ctp_account_ledger.h"
 #include "quant_hft/services/ctp_position_ledger.h"
 #include "quant_hft/services/in_memory_portfolio_ledger.h"
 #include "quant_hft/services/order_state_machine.h"
 #include "quant_hft/services/bar_aggregator.h"
-#include "quant_hft/services/risk_policy_engine.h"
-#include "quant_hft/services/self_trade_risk_engine.h"
 #include "quant_hft/services/rule_market_state_engine.h"
 
 namespace {
@@ -142,36 +144,6 @@ std::vector<std::string> ResolveStrategyIds(const quant_hft::CtpFileConfig& conf
     return {"demo"};
 }
 
-std::vector<quant_hft::RiskPolicyRule> BuildRiskPolicyRules(
-    const quant_hft::RiskConfig& risk_config) {
-    std::vector<quant_hft::RiskPolicyRule> rules;
-    rules.reserve(risk_config.rules.size());
-    for (const auto& rule_cfg : risk_config.rules) {
-        quant_hft::RiskPolicyRule rule;
-        rule.policy_id = rule_cfg.policy_id.empty()
-                             ? (rule_cfg.rule_id.empty() ? "policy." + rule_cfg.rule_group
-                                                         : rule_cfg.rule_id)
-                             : rule_cfg.policy_id;
-        rule.policy_scope = rule_cfg.policy_scope.empty() ? "global" : rule_cfg.policy_scope;
-        rule.decision_tags = rule_cfg.decision_tags;
-        rule.rule_group = rule_cfg.rule_group.empty() ? "default" : rule_cfg.rule_group;
-        rule.rule_version = rule_cfg.rule_version.empty() ? "v1" : rule_cfg.rule_version;
-        rule.account_id = rule_cfg.account_id;
-        rule.instrument_id = rule_cfg.instrument_id;
-        rule.window_start_hhmm = rule_cfg.window_start_hhmm;
-        rule.window_end_hhmm = rule_cfg.window_end_hhmm;
-        rule.max_order_volume = rule_cfg.max_order_volume;
-        rule.max_order_notional = rule_cfg.max_order_notional;
-        rule.max_active_orders = rule_cfg.max_active_orders;
-        rule.max_position_notional = rule_cfg.max_position_notional;
-        rule.exchange_id = rule_cfg.exchange_id;
-        rule.max_cancel_count = rule_cfg.max_cancel_count;
-        rule.max_cancel_ratio = rule_cfg.max_cancel_ratio;
-        rules.push_back(std::move(rule));
-    }
-    return rules;
-}
-
 struct ExecutionMetadata {
     std::string execution_algo_id;
     std::int32_t slice_index{0};
@@ -182,37 +154,6 @@ struct ExecutionMetadata {
     double slippage_bps{0.0};
     double impact_cost{0.0};
 };
-
-double EstimatePositionNotional(const quant_hft::InMemoryPortfolioLedger& ledger,
-                                const quant_hft::OrderIntent& intent) {
-    const auto long_pos =
-        ledger.GetPositionSnapshot(intent.account_id,
-                                   intent.instrument_id,
-                                   quant_hft::PositionDirection::kLong);
-    const auto short_pos =
-        ledger.GetPositionSnapshot(intent.account_id,
-                                   intent.instrument_id,
-                                   quant_hft::PositionDirection::kShort);
-    return std::fabs(static_cast<double>(long_pos.volume) * long_pos.avg_price) +
-           std::fabs(static_cast<double>(short_pos.volume) * short_pos.avg_price);
-}
-
-quant_hft::RiskContext BuildRiskContext(
-    const quant_hft::OrderIntent& intent,
-    const quant_hft::InMemoryPortfolioLedger& ledger,
-    const quant_hft::OrderStateMachine& order_state_machine) {
-    quant_hft::RiskContext context;
-    context.account_id = intent.account_id;
-    context.instrument_id = intent.instrument_id;
-    context.exchange_id = InferExchangeId(intent.instrument_id);
-    context.active_order_count = static_cast<std::int32_t>(order_state_machine.ActiveOrderCount());
-    context.account_position_notional = EstimatePositionNotional(ledger, intent);
-    context.account_cross_gross_notional = context.account_position_notional;
-    context.account_cross_net_notional = context.account_position_notional;
-    context.submit_count = context.active_order_count;
-    context.session_hhmm = -1;
-    return context;
-}
 
 quant_hft::OrderEvent BuildRejectedEvent(const quant_hft::OrderIntent& intent,
                                          const std::string& reason,
@@ -297,24 +238,6 @@ int main(int argc, char** argv) {
     const std::string account_id = file_config.account_id.empty() ? config.user_id
                                                                    : file_config.account_id;
     const ExecutionConfig execution_config = file_config.execution;
-    RiskPolicyDefaults risk_defaults;
-    risk_defaults.max_order_volume = file_config.risk.default_max_order_volume;
-    risk_defaults.max_order_notional = file_config.risk.default_max_order_notional;
-    risk_defaults.max_active_orders = file_config.risk.default_max_active_orders;
-    risk_defaults.max_position_notional = file_config.risk.default_max_position_notional;
-    risk_defaults.max_cancel_count = file_config.risk.default_max_cancel_count;
-    risk_defaults.max_cancel_ratio = file_config.risk.default_max_cancel_ratio;
-    risk_defaults.policy_id = file_config.risk.default_policy_id;
-    risk_defaults.policy_scope = file_config.risk.default_policy_scope;
-    risk_defaults.decision_tags = file_config.risk.default_decision_tags;
-    risk_defaults.rule_group = file_config.risk.default_rule_group;
-    risk_defaults.rule_version = file_config.risk.default_rule_version;
-    RiskPolicyEngine risk(risk_defaults, BuildRiskPolicyRules(file_config.risk));
-    SelfTradeRiskConfig self_trade_config;
-    self_trade_config.enabled = true;
-    self_trade_config.strict_mode = false;
-    self_trade_config.strict_mode_trigger_hits = 2;
-    SelfTradeRiskEngine self_trade_risk(self_trade_config);
     ExecutionPlanner execution_planner;
     ExecutionRouter execution_router;
     auto ctp_trader = std::make_shared<CTPTraderAdapter>(
@@ -356,7 +279,6 @@ int main(int argc, char** argv) {
     breaker_manager->Configure(BreakerScope::kStrategy, breaker_cfg, config.breaker_strategy_enabled);
     breaker_manager->Configure(BreakerScope::kAccount, breaker_cfg, config.breaker_account_enabled);
     breaker_manager->Configure(BreakerScope::kSystem, breaker_cfg, config.breaker_system_enabled);
-    ExecutionEngine execution_engine(ctp_trader, flow_controller, breaker_manager, 1000);
     InMemoryPortfolioLedger ledger;
     CtpPositionLedger ctp_position_ledger;
     CtpAccountLedger ctp_account_ledger;
@@ -417,6 +339,31 @@ int main(int argc, char** argv) {
     TradingLedgerStoreClientAdapter trading_ledger_store(pooled_timescale,
                                                          storage_retry_policy,
                                                          storage_config.timescale.trading_schema);
+    auto trading_domain_store = std::make_shared<TradingDomainStoreClientAdapter>(
+        pooled_timescale, storage_retry_policy, storage_config.timescale.trading_schema);
+    auto order_manager = std::make_shared<OrderManager>(trading_domain_store);
+    auto position_manager =
+        std::make_shared<PositionManager>(trading_domain_store, pooled_redis);
+    ExecutionEngine execution_engine(ctp_trader,
+                                     flow_controller,
+                                     breaker_manager,
+                                     order_manager,
+                                     position_manager,
+                                     trading_domain_store,
+                                     1000,
+                                     config.cancel_retry_max,
+                                     config.cancel_retry_base_ms,
+                                     config.cancel_retry_max_delay_ms,
+                                     config.cancel_wait_ack_timeout_ms);
+    auto risk_manager = CreateRiskManager(order_manager, trading_domain_store);
+    RiskManagerConfig risk_manager_config;
+    risk_manager_config.default_max_order_volume = file_config.risk.default_max_order_volume;
+    risk_manager_config.default_max_order_rate = config.order_insert_rate_per_sec;
+    risk_manager_config.default_max_cancel_rate = config.order_cancel_rate_per_sec;
+    risk_manager_config.rule_file_path = "configs/risk_rules.yaml";
+    risk_manager_config.enable_dynamic_reload = true;
+    (void)risk_manager->Initialize(risk_manager_config);
+    execution_engine.SetRiskManager(risk_manager);
     RuleMarketStateEngine market_state(32);
     MarketBusProducer market_bus_producer(config.kafka_bootstrap_servers,
                                           config.kafka_topic_ticks);
@@ -473,10 +420,11 @@ int main(int argc, char** argv) {
             state_applied = order_state_machine.RecoverFromOrderEvent(event);
         }
         if (!state_applied) {
-            std::cerr << "order event dropped for " << event.client_order_id << '\n';
-            return;
+            std::cerr << "legacy order_state_machine rejected event for "
+                      << event.client_order_id
+                      << ", continue with execution engine manager path\n";
         }
-        self_trade_risk.OnOrderEvent(event);
+        execution_engine.HandleOrderEvent(event);
         if (IsTerminalStatus(event.status)) {
             std::lock_guard<std::mutex> lock(cancel_pending_mutex);
             cancel_pending_orders.erase(event.client_order_id);
@@ -683,16 +631,20 @@ int main(int argc, char** argv) {
     if (!ctp_trader->EnqueueUserSessionQuery(next_query_request_id())) {
         std::cerr << "warning: initial user session query failed" << '\n';
     }
-    if (!execution_engine.QueryTradingAccount(next_query_request_id(), account_id)) {
+    try {
+        (void)execution_engine.QueryTradingAccountAsync().get();
+    } catch (...) {
         std::cerr << "warning: initial trading account query failed" << '\n';
     }
-    if (!execution_engine.QueryInvestorPosition(next_query_request_id(), account_id)) {
+    try {
+        (void)execution_engine.QueryInvestorPositionAsync().get();
+    } catch (...) {
         std::cerr << "warning: initial investor position query failed" << '\n';
     }
-    if (!execution_engine.QueryInstrument(next_query_request_id(), account_id)) {
+    if (!ctp_trader->EnqueueInstrumentQuery(next_query_request_id())) {
         std::cerr << "warning: initial instrument query failed" << '\n';
     }
-    if (!execution_engine.QueryBrokerTradingParams(next_query_request_id(), account_id)) {
+    if (!ctp_trader->EnqueueBrokerTradingParamsQuery(next_query_request_id())) {
         std::cerr << "warning: initial broker trading params query failed" << '\n';
     }
     for (const auto& instrument_id : instruments) {
@@ -719,18 +671,24 @@ int main(int argc, char** argv) {
         while (!query_loop_stop.load()) {
             const auto now = std::chrono::steady_clock::now();
             if (now >= next_account_query) {
-                (void)execution_engine.QueryTradingAccount(next_query_request_id(), account_id);
+                try {
+                    (void)execution_engine.QueryTradingAccountAsync().get();
+                } catch (...) {
+                }
                 next_account_query =
                     now + std::chrono::milliseconds(std::max(1, file_config.account_query_interval_ms));
             }
             if (now >= next_position_query) {
-                (void)execution_engine.QueryInvestorPosition(next_query_request_id(), account_id);
+                try {
+                    (void)execution_engine.QueryInvestorPositionAsync().get();
+                } catch (...) {
+                }
                 next_position_query =
                     now + std::chrono::milliseconds(std::max(1, file_config.position_query_interval_ms));
             }
             if (now >= next_instrument_query) {
-                (void)execution_engine.QueryInstrument(next_query_request_id(), account_id);
-                (void)execution_engine.QueryBrokerTradingParams(next_query_request_id(), account_id);
+                (void)ctp_trader->EnqueueInstrumentQuery(next_query_request_id());
+                (void)ctp_trader->EnqueueBrokerTradingParamsQuery(next_query_request_id());
                 for (const auto& instrument_id : instruments) {
                     (void)ctp_trader->EnqueueInstrumentMarginRateQuery(next_query_request_id(),
                                                                        instrument_id);
@@ -819,27 +777,7 @@ int main(int argc, char** argv) {
                             continue;
                         }
 
-                        const auto self_trade_decision = self_trade_risk.PreCheck(intent);
-                        if (self_trade_decision.reason != "self_trade_check_pass" &&
-                            self_trade_decision.reason != "self_trade_check_disabled") {
-                            timeseries_store.AppendRiskDecision(intent, self_trade_decision);
-                        }
-                        if (self_trade_decision.action == RiskAction::kReject) {
-                            process_order_event(BuildRejectedEvent(
-                                intent,
-                                "self_trade_reject:" + self_trade_decision.reason,
-                                metadata));
-                            continue;
-                        }
-
-                        const auto context = BuildRiskContext(intent, ledger, order_state_machine);
-                        const auto decision = risk.PreCheck(intent, context);
-                        timeseries_store.AppendRiskDecision(intent, decision);
-
-                        if (decision.action != RiskAction::kAllow) {
-                            process_order_event(BuildRejectedEvent(
-                                intent, "risk_reject:" + decision.reason, metadata));
-                        } else if (!order_state_machine.OnOrderIntent(intent)) {
+                        if (!order_state_machine.OnOrderIntent(intent)) {
                             process_order_event(BuildRejectedEvent(
                                 intent, "order_state_reject:duplicate_or_invalid", metadata));
                         } else {
@@ -856,12 +794,11 @@ int main(int argc, char** argv) {
                                     continue;
                                 }
                             }
-                            if (!execution_engine.PlaceOrder(intent)) {
+                            if (!execution_engine.PlaceOrderAsync(intent).get().success) {
                                 process_order_event(BuildRejectedEvent(
                                     intent, "gateway_reject:place_order_failed", metadata));
                                 continue;
                             }
-                            self_trade_risk.RecordAcceptedOrder(intent);
                             std::lock_guard<std::mutex> lock(planner_mutex);
                             execution_planner.RecordOrderResult(false);
                         }
@@ -885,9 +822,8 @@ int main(int argc, char** argv) {
                     const auto cancel_after_ns =
                         static_cast<EpochNanos>(execution_config.cancel_after_ms) * 1'000'000;
                     const auto cutoff_ns = now_ns - cancel_after_ns;
-                    for (const auto& order : order_state_machine.GetActiveOrders()) {
-                        if (order.last_update_ts_ns == 0 ||
-                            order.last_update_ts_ns > cutoff_ns) {
+                    for (const auto& order : execution_engine.GetActiveOrders()) {
+                        if (order.updated_at_ns == 0 || order.updated_at_ns > cutoff_ns) {
                             continue;
                         }
 
@@ -895,20 +831,16 @@ int main(int argc, char** argv) {
                         {
                             std::lock_guard<std::mutex> lock(cancel_pending_mutex);
                             first_request = cancel_pending_orders
-                                                .insert(order.client_order_id)
+                                                .insert(order.order_id)
                                                 .second;
                         }
                         if (!first_request) {
                             continue;
                         }
 
-                        if (!execution_engine.CancelOrder(order.account_id,
-                                                          "cancel_scanner",
-                                                          order.client_order_id,
-                                                          order.client_order_id,
-                                                          order.instrument_id)) {
+                        if (!execution_engine.CancelOrderAsync(order.order_id).get()) {
                             std::lock_guard<std::mutex> lock(cancel_pending_mutex);
-                            cancel_pending_orders.erase(order.client_order_id);
+                            cancel_pending_orders.erase(order.order_id);
                         }
                     }
 

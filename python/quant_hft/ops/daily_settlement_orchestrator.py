@@ -4,6 +4,7 @@ import argparse
 import json
 import subprocess
 import time
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,6 +18,10 @@ class DailySettlementOrchestratorConfig:
     trading_day: str
     evidence_json: str
     diff_json: str
+    settlement_price_json: str
+    price_cache_db: str
+    prefetch_settlement_prices: bool
+    settlement_price_api_url: str
     execute: bool
     force: bool
     shadow: bool
@@ -45,6 +50,12 @@ def _build_command(config: DailySettlementOrchestratorConfig) -> list[str]:
         config.trading_day,
         "--evidence-path",
         config.evidence_json,
+        "--settlement-price-json",
+        config.settlement_price_json,
+        "--price-cache-db",
+        config.price_cache_db,
+        "--diff-report-path",
+        config.diff_json,
     ]
     if config.force:
         command.append("--force")
@@ -66,11 +77,31 @@ def _safe_json_parse(raw: str) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _prefetch_settlement_prices(config: DailySettlementOrchestratorConfig) -> str:
+    if not config.prefetch_settlement_prices:
+        return ""
+    if not config.settlement_price_api_url:
+        return "prefetch requested but settlement_price_api_url is empty"
+
+    try:
+        with urllib.request.urlopen(config.settlement_price_api_url, timeout=8) as response:
+            payload = response.read().decode("utf-8")
+        parsed = json.loads(payload)
+    except Exception as exc:  # pragma: no cover
+        return f"prefetch settlement prices failed: {exc}"
+
+    output = Path(config.settlement_price_json)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(parsed, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
+    return ""
+
+
 def run_daily_settlement_orchestrator(
     config: DailySettlementOrchestratorConfig,
 ) -> tuple[int, dict[str, Any]]:
     started_utc = _utc_now()
     started = time.monotonic()
+    prefetch_error = _prefetch_settlement_prices(config)
     command = _build_command(config)
 
     if not config.execute:
@@ -91,6 +122,8 @@ def run_daily_settlement_orchestrator(
             "stdout": "",
             "stderr": "",
             "diff_report_path": config.diff_json,
+            "settlement_price_json": config.settlement_price_json,
+            "blocked_reason": prefetch_error,
         }
         return 0, payload
 
@@ -113,8 +146,14 @@ def run_daily_settlement_orchestrator(
         "duration_seconds": duration_seconds,
         "stdout": completed.stdout.strip(),
         "stderr": completed.stderr.strip(),
-        "diff_report_path": config.diff_json,
+        "diff_report_path": str(result_obj.get("diff_report_path", config.diff_json)),
+        "settlement_price_json": config.settlement_price_json,
+        "blocked_reason": (
+            str(result_obj.get("message", "")) if bool(result_obj.get("blocked", False)) else ""
+        ),
     }
+    if prefetch_error and not payload["blocked_reason"]:
+        payload["blocked_reason"] = prefetch_error
     return completed.returncode, payload
 
 
@@ -133,6 +172,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "--diff-json",
         default="docs/results/settlement_diff.json",
     )
+    parser.add_argument(
+        "--settlement-price-json",
+        default="docs/results/settlement_price_input.json",
+    )
+    parser.add_argument(
+        "--price-cache-db",
+        default="runtime/settlement_price_cache.sqlite",
+    )
+    parser.add_argument("--prefetch-settlement-prices", action="store_true")
+    parser.add_argument("--settlement-price-api-url", default="")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--shadow", action="store_true")
     parser.add_argument("--strict-order-trade-backfill", action="store_true")
@@ -154,6 +203,10 @@ def main() -> int:
         trading_day=trading_day,
         evidence_json=args.evidence_json,
         diff_json=args.diff_json,
+        settlement_price_json=args.settlement_price_json,
+        price_cache_db=args.price_cache_db,
+        prefetch_settlement_prices=bool(args.prefetch_settlement_prices),
+        settlement_price_api_url=args.settlement_price_api_url,
         execute=bool(args.execute),
         force=bool(args.force),
         shadow=bool(args.shadow),

@@ -21,6 +21,10 @@ ctp:
   order_bucket_capacity: 20
   cancel_bucket_capacity: 20
   query_bucket_capacity: 5
+  cancel_retry_max: 3
+  cancel_retry_base_ms: 1000
+  cancel_retry_max_delay_ms: 5000
+  cancel_wait_ack_timeout_ms: 1200
   settlement_confirm_required: true
   breaker_failure_threshold: 5
   breaker_timeout_ms: 1000

@@ -49,15 +49,21 @@ add_library(quant_hft_core STATIC
     src/services/risk/basic_risk_engine.cpp
     src/services/risk/risk_policy_engine.cpp
     src/services/risk/self_trade_risk_engine.cpp
+    src/risk/risk_rule_executor.cpp
+    src/risk/risk_rule_registry.cpp
+    src/risk/risk_manager.cpp
     src/services/order/execution_planner.cpp
     src/services/order/execution_engine.cpp
+    src/services/order/order_manager.cpp
     src/services/order/execution_router.cpp
     src/services/order/in_memory_order_gateway.cpp
     src/services/order/order_state_machine.cpp
+    src/services/settlement/settlement_price_provider.cpp
     src/services/settlement/settlement_query_client.cpp
     src/services/settlement/daily_settlement_service.cpp
     src/services/portfolio/ctp_account_ledger.cpp
     src/services/portfolio/ctp_position_ledger.cpp
+    src/services/portfolio/position_manager.cpp
     src/services/portfolio/in_memory_portfolio_ledger.cpp
     src/services/market_state/bar_aggregator.cpp
     src/services/market_state/rule_market_state_engine.cpp
@@ -244,6 +250,15 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(self_trade_risk_engine_test tests/unit/services/self_trade_risk_engine_test.cpp)
     target_link_libraries(self_trade_risk_engine_test PRIVATE quant_hft_core GTest::gtest_main)
 
+    add_executable(risk_rule_executor_test tests/unit/risk/risk_rule_executor_test.cpp)
+    target_link_libraries(risk_rule_executor_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(rate_limiter_test tests/unit/risk/rate_limiter_test.cpp)
+    target_link_libraries(rate_limiter_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(risk_manager_test tests/unit/risk/risk_manager_test.cpp)
+    target_link_libraries(risk_manager_test PRIVATE quant_hft_core GTest::gtest_main)
+
     add_executable(bar_aggregator_test tests/unit/services/bar_aggregator_test.cpp)
     target_link_libraries(bar_aggregator_test PRIVATE quant_hft_core GTest::gtest_main)
 
@@ -259,8 +274,17 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(execution_engine_test tests/unit/services/execution_engine_test.cpp)
     target_link_libraries(execution_engine_test PRIVATE quant_hft_core GTest::gtest_main)
 
+    add_executable(order_manager_test tests/unit/services/order_manager_test.cpp)
+    target_link_libraries(order_manager_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(position_manager_test tests/unit/services/position_manager_test.cpp)
+    target_link_libraries(position_manager_test PRIVATE quant_hft_core GTest::gtest_main)
+
     add_executable(settlement_query_client_test tests/unit/services/settlement_query_client_test.cpp)
     target_link_libraries(settlement_query_client_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(settlement_price_provider_test tests/unit/services/settlement_price_provider_test.cpp)
+    target_link_libraries(settlement_price_provider_test PRIVATE quant_hft_core GTest::gtest_main)
 
     add_executable(daily_settlement_service_test tests/unit/services/daily_settlement_service_test.cpp)
     target_link_libraries(daily_settlement_service_test PRIVATE quant_hft_core GTest::gtest_main)
@@ -301,12 +325,18 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(ctp_position_ledger_test)
     gtest_discover_tests(ctp_account_ledger_test)
     gtest_discover_tests(self_trade_risk_engine_test)
+    gtest_discover_tests(risk_rule_executor_test)
+    gtest_discover_tests(rate_limiter_test)
+    gtest_discover_tests(risk_manager_test)
     gtest_discover_tests(bar_aggregator_test)
     gtest_discover_tests(order_state_machine_test)
     gtest_discover_tests(execution_planner_test)
     gtest_discover_tests(execution_router_test)
     gtest_discover_tests(execution_engine_test)
+    gtest_discover_tests(order_manager_test)
+    gtest_discover_tests(position_manager_test)
     gtest_discover_tests(settlement_query_client_test)
+    gtest_discover_tests(settlement_price_provider_test)
     gtest_discover_tests(daily_settlement_service_test)
     gtest_discover_tests(rule_market_state_engine_test)
 endif()

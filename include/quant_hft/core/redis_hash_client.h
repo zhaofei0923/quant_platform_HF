@@ -17,6 +17,10 @@ public:
     virtual bool HGetAll(const std::string& key,
                          std::unordered_map<std::string, std::string>* out,
                          std::string* error) const = 0;
+    virtual bool HIncrBy(const std::string& key,
+                         const std::string& field,
+                         std::int64_t delta,
+                         std::string* error) = 0;
     virtual bool Expire(const std::string& key,
                         int ttl_seconds,
                         std::string* error) = 0;
@@ -31,6 +35,10 @@ public:
     bool HGetAll(const std::string& key,
                  std::unordered_map<std::string, std::string>* out,
                  std::string* error) const override;
+    bool HIncrBy(const std::string& key,
+                 const std::string& field,
+                 std::int64_t delta,
+                 std::string* error) override;
     bool Expire(const std::string& key, int ttl_seconds, std::string* error) override;
     bool Ping(std::string* error) const override;
 

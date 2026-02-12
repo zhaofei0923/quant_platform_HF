@@ -50,6 +50,27 @@ public:
         return true;
     }
 
+    bool HIncrBy(const std::string& key,
+                 const std::string& field,
+                 std::int64_t delta,
+                 std::string* error) override {
+        ++hincrby_calls_;
+        if (!write_ok_) {
+            if (error != nullptr) {
+                *error = "write fail";
+            }
+            return false;
+        }
+        auto& hash = store_[key];
+        std::int64_t current = 0;
+        const auto it = hash.find(field);
+        if (it != hash.end() && !it->second.empty()) {
+            current = std::stoll(it->second);
+        }
+        hash[field] = std::to_string(current + delta);
+        return true;
+    }
+
     bool Expire(const std::string& key, int ttl_seconds, std::string* error) override {
         ++expire_calls_;
         if (ttl_seconds <= 0) {
@@ -77,6 +98,7 @@ public:
 
     int hset_calls() const { return hset_calls_; }
     int hget_calls() const { return hget_calls_; }
+    int hincrby_calls() const { return hincrby_calls_; }
     int expire_calls() const { return expire_calls_; }
 
 private:
@@ -84,6 +106,7 @@ private:
     bool write_ok_{true};
     mutable int hset_calls_{0};
     mutable int hget_calls_{0};
+    mutable int hincrby_calls_{0};
     mutable int expire_calls_{0};
     std::unordered_map<std::string,
                        std::unordered_map<std::string, std::string>>

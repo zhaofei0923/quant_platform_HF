@@ -46,6 +46,8 @@ def test_run_daily_settlement_script_default_path_calls_orchestrator_only(tmp_pa
     assert "--trading-day" in argv
     assert "20260212" in argv
     assert "--execute" not in argv
+    assert "--settlement-price-json" in argv
+    assert "--price-cache-db" in argv
 
 
 def test_run_daily_settlement_script_runs_readiness_gates(tmp_path: Path) -> None:

@@ -70,6 +70,8 @@ struct CtpRuntimeConfig {
     bool breaker_system_enabled{true};
     int audit_hot_days{7};
     int audit_cold_days{180};
+    bool metrics_enabled{false};
+    int metrics_port{8080};
 
     std::string md_front;
     std::string td_front;

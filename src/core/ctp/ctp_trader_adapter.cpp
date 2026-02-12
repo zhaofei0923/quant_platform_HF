@@ -6,6 +6,8 @@
 #include <thread>
 #include <utility>
 
+#include "quant_hft/monitoring/metric_registry.h"
+
 namespace quant_hft {
 
 namespace {
@@ -15,6 +17,12 @@ constexpr std::int64_t kNanosPerMilli = 1'000'000;
 std::string BuildOrderRefString(const std::string& strategy_id, std::uint64_t seq) {
     const auto unix_ms = NowEpochNanos() / kNanosPerMilli;
     return strategy_id + "_" + std::to_string(unix_ms) + "_" + std::to_string(seq);
+}
+
+std::shared_ptr<MonitoringGauge> CtpConnectedGauge() {
+    static auto metric = MetricRegistry::Instance().BuildGauge(
+        "quant_hft_ctp_connected", "CTP connected state gauge");
+    return metric;
 }
 
 }  // namespace
@@ -114,6 +122,7 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
         });
 
     gateway_->RegisterConnectionStateCallback([this](bool healthy) {
+        CtpConnectedGauge()->Set(healthy ? 1.0 : 0.0);
         if (!healthy) {
             bool should_reconnect = false;
             {
@@ -209,6 +218,7 @@ bool CTPTraderAdapter::Connect(const MarketDataConnectConfig& config) {
         std::lock_guard<std::mutex> lock(mutex_);
         state_ = TraderSessionState::kDisconnected;
         dispatcher_.Stop();
+        CtpConnectedGauge()->Set(0.0);
         return false;
     }
     {
@@ -221,6 +231,7 @@ bool CTPTraderAdapter::Connect(const MarketDataConnectConfig& config) {
             state_ = TraderSessionState::kReady;
         }
     }
+    CtpConnectedGauge()->Set(1.0);
     return true;
 }
 
@@ -233,6 +244,7 @@ void CTPTraderAdapter::Disconnect() {
         state_ = TraderSessionState::kDisconnected;
     }
     gateway_->Disconnect();
+    CtpConnectedGauge()->Set(0.0);
     dispatcher_.Stop();
     {
         std::lock_guard<std::mutex> lock(promise_map_mutex_);

@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(quant_platform_hf VERSION 0.1.0 LANGUAGES CXX)
 
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -10,6 +12,7 @@ option(QUANT_HFT_ENABLE_CTP_REAL_API "Enable CTP v6.7.11 real API integration" O
 option(QUANT_HFT_ENABLE_REDIS_EXTERNAL "Enable external Redis driver path" OFF)
 option(QUANT_HFT_ENABLE_TIMESCALE_EXTERNAL "Enable external TimescaleDB driver path" OFF)
 option(QUANT_HFT_ENABLE_PYBIND "Build pybind11 CTP wrapper module" OFF)
+option(QUANT_HFT_WITH_METRICS "Enable Prometheus metrics exporter" OFF)
 set(CTP_V6711_DIR "${CMAKE_SOURCE_DIR}/ctp_api/v6.7.11_20250617_api_traderapi_se_linux64"
     CACHE PATH "Path to CTP v6.7.11 API directory")
 
@@ -46,6 +49,8 @@ add_library(quant_hft_core STATIC
     src/core/market/kafka_market_bus_producer.cpp
     src/core/perf/object_pool.cpp
     src/core/perf/event_object_pool.cpp
+    src/core/monitoring/metric_registry.cpp
+    src/core/monitoring/exporter.cpp
     src/services/risk/basic_risk_engine.cpp
     src/services/risk/risk_policy_engine.cpp
     src/services/risk/self_trade_risk_engine.cpp
@@ -72,6 +77,21 @@ add_library(quant_hft_core STATIC
 target_include_directories(quant_hft_core PUBLIC include)
 target_compile_options(quant_hft_core PRIVATE -Wall -Wextra -Wpedantic)
 target_link_libraries(quant_hft_core PUBLIC pthread dl)
+
+set(QUANT_HFT_METRICS_ACTIVE OFF)
+if(QUANT_HFT_WITH_METRICS)
+    find_package(PrometheusCpp MODULE QUIET)
+    if(PrometheusCpp_FOUND)
+        set(QUANT_HFT_METRICS_ACTIVE ON)
+        target_compile_definitions(quant_hft_core PUBLIC QUANT_HFT_WITH_METRICS=1)
+        target_link_libraries(quant_hft_core PUBLIC PrometheusCpp::core PrometheusCpp::pull)
+    else()
+        message(WARNING "PrometheusCpp not found, metrics exporter will be disabled")
+        target_compile_definitions(quant_hft_core PUBLIC QUANT_HFT_WITH_METRICS=0)
+    endif()
+else()
+    target_compile_definitions(quant_hft_core PUBLIC QUANT_HFT_WITH_METRICS=0)
+endif()
 
 if(QUANT_HFT_ENABLE_CTP_REAL_API)
     if(NOT EXISTS "${CTP_V6711_DIR}/ThostFtdcTraderApi.h")
@@ -292,6 +312,14 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(rule_market_state_engine_test tests/unit/services/rule_market_state_engine_test.cpp)
     target_link_libraries(rule_market_state_engine_test PRIVATE quant_hft_core GTest::gtest_main)
 
+    add_executable(metric_registry_test tests/unit/monitoring/metric_registry_test.cpp)
+    target_link_libraries(metric_registry_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    if(QUANT_HFT_METRICS_ACTIVE)
+        add_executable(exporter_test tests/unit/monitoring/exporter_test.cpp)
+        target_link_libraries(exporter_test PRIVATE quant_hft_core GTest::gtest_main)
+    endif()
+
     include(GoogleTest)
     gtest_discover_tests(query_scheduler_test)
     gtest_discover_tests(ctp_config_test)
@@ -339,4 +367,8 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(settlement_price_provider_test)
     gtest_discover_tests(daily_settlement_service_test)
     gtest_discover_tests(rule_market_state_engine_test)
+    gtest_discover_tests(metric_registry_test)
+    if(QUANT_HFT_METRICS_ACTIVE)
+        gtest_discover_tests(exporter_test)
+    endif()
 endif()

@@ -297,7 +297,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         if (it == kv.end()) {
             return "";
         }
-        return it->second;
+        return ResolveEnvVars(it->second);
     };
 
     loaded.runtime.md_front = get_value("market_front");

@@ -40,13 +40,20 @@ bool ParseArgs(int argc,
         }
         return false;
     }
-    *config_path = "configs/prod/ctp.yaml";
+    const auto quant_root = quant_hft::GetEnvOrDefault("QUANT_ROOT", "");
+    const auto default_config =
+        quant_root.empty() ? "configs/prod/ctp.yaml" : (quant_root + "/configs/prod/ctp.yaml");
+    const auto default_price_cache = quant_root.empty()
+                                         ? "runtime/settlement_price_cache.sqlite"
+                                         : (quant_root + "/runtime/settlement_price_cache.sqlite");
+    *config_path = quant_hft::GetEnvOrDefault("CTP_CONFIG_PATH", default_config);
     *force_run = false;
     *shadow_mode = false;
     *strict_backfill = false;
     *evidence_path = "";
     *settlement_price_json_path = "";
-    *price_cache_db_path = "runtime/settlement_price_cache.sqlite";
+    *price_cache_db_path =
+        quant_hft::GetEnvOrDefault("SETTLEMENT_PRICE_CACHE_DB", default_price_cache);
     *diff_report_path = "";
 
     for (int i = 1; i < argc; ++i) {

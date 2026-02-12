@@ -5,11 +5,15 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=kevin0923
-Group=kevin0923
-WorkingDirectory=/home/kevin0923/workspace/quant_platform_HF
-EnvironmentFile=-/home/kevin0923/workspace/quant_platform_HF/deploy/systemd/quant-hft-data-pipeline.env
-ExecStart=/usr/bin/python3.12 /home/kevin0923/workspace/quant_platform_HF/scripts/data_pipeline/run_pipeline.py --analytics-db /home/kevin0923/workspace/quant_platform_HF/runtime/analytics.duckdb --export-dir /home/kevin0923/workspace/quant_platform_HF/runtime/exports --archive-endpoint localhost:9000 --archive-bucket quant-archive --archive-prefix etl --archive-local-dir /home/kevin0923/workspace/quant_platform_HF/runtime/archive --iterations 0 --interval-seconds 60
+WorkingDirectory=/
+Environment=QUANT_ROOT=/opt/quant_platform_HF
+Environment=PYTHON_BIN=/usr/bin/python3
+Environment=ARCHIVE_ENDPOINT=localhost:9000
+Environment=ARCHIVE_BUCKET=quant-archive
+Environment=ARCHIVE_PREFIX=etl
+EnvironmentFile=-/etc/quant/platform.conf
+EnvironmentFile=-/etc/quant/quant-hft-data-pipeline.env
+ExecStart=/bin/bash -lc ': "${QUANT_ROOT:?QUANT_ROOT is required}"; "${PYTHON_BIN}" "${QUANT_ROOT}/scripts/data_pipeline/run_pipeline.py" --analytics-db "${QUANT_ROOT}/runtime/analytics.duckdb" --export-dir "${QUANT_ROOT}/runtime/exports" --archive-endpoint "${ARCHIVE_ENDPOINT}" --archive-bucket "${ARCHIVE_BUCKET}" --archive-prefix "${ARCHIVE_PREFIX}" --archive-local-dir "${QUANT_ROOT}/runtime/archive" --iterations 0 --interval-seconds 60'
 Restart=always
 RestartSec=5
 LimitNOFILE=65535

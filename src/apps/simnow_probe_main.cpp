@@ -17,7 +17,10 @@ int main(int argc, char** argv) {
     return 2;
 #endif
 
-    std::string config_path = "configs/sim/ctp.yaml";
+    const auto quant_root = GetEnvOrDefault("QUANT_ROOT", "");
+    const auto default_config =
+        quant_root.empty() ? "configs/sim/ctp.yaml" : (quant_root + "/configs/sim/ctp.yaml");
+    std::string config_path = GetEnvOrDefault("CTP_CONFIG_PATH", default_config);
     int monitor_seconds = 300;
     int health_interval_ms = 1000;
     for (int i = 1; i < argc; ++i) {

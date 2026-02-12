@@ -4,15 +4,15 @@ ctp:
   is_production_mode: false
   enable_real_api: false
 
-  broker_id: "9999"
-  user_id: "191202"
-  investor_id: "191202"
-  market_front: "tcp://127.0.0.1:10131"
-  trader_front: "tcp://127.0.0.1:10130"
+  broker_id: "${CTP_DEV_BROKER_ID}"
+  user_id: "${CTP_DEV_USER_ID}"
+  investor_id: "${CTP_DEV_INVESTOR_ID}"
+  market_front: "${CTP_DEV_MARKET_FRONT}"
+  trader_front: "${CTP_DEV_TRADER_FRONT}"
 
-  password_env: "CTP_SIM_PASSWORD"
-  auth_code: "0000000000000000"
-  app_id: "simnow_client_test"
+  password: "${CTP_DEV_PASSWORD}"
+  auth_code: "${CTP_DEV_AUTH_CODE}"
+  app_id: "${CTP_DEV_APP_ID}"
 
   query_rate_limit_qps: 10
   query_rate_per_sec: 5
@@ -33,9 +33,9 @@ ctp:
   breaker_account_enabled: true
   breaker_system_enabled: true
   recovery_quiet_period_ms: 3000
-  kafka_bootstrap_servers: "127.0.0.1:9092"
+  kafka_bootstrap_servers: "${KAFKA_BOOTSTRAP_SERVERS}"
   kafka_topic_ticks: "market.ticks.v1"
-  clickhouse_dsn: "clickhouse://127.0.0.1:9000/default"
+  clickhouse_dsn: "${CLICKHOUSE_DSN}"
   audit_hot_days: 7
   audit_cold_days: 180
   connect_timeout_ms: 10000

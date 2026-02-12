@@ -51,6 +51,50 @@ std::filesystem::path WriteTempConfig(const std::string& body) {
     return path;
 }
 
+TEST(CtpConfigLoaderTest, ResolveEnvVarsReplacesExistingEnvVar) {
+    const ScopedEnvVar env("CTP_TEST_ENV_KEY", "resolved-value");
+    const auto resolved = ResolveEnvVars("prefix-${CTP_TEST_ENV_KEY}-suffix");
+    EXPECT_EQ(resolved, "prefix-resolved-value-suffix");
+}
+
+TEST(CtpConfigLoaderTest, ResolveEnvVarsLeavesUnknownVarEmpty) {
+    const ScopedEnvVar env("CTP_TEST_UNKNOWN_KEY", nullptr);
+    const auto resolved = ResolveEnvVars("left-${CTP_TEST_UNKNOWN_KEY}-right");
+    EXPECT_EQ(resolved, "left--right");
+}
+
+TEST(CtpConfigLoaderTest, LoadConfigWithEnvVarsSuccess) {
+    const ScopedEnvVar broker_id("CTP_TEST_BROKER_ID", "9999");
+    const ScopedEnvVar user_id("CTP_TEST_USER_ID", "191202");
+    const ScopedEnvVar investor_id("CTP_TEST_INVESTOR_ID", "191202");
+    const ScopedEnvVar market_front("CTP_TEST_MARKET_FRONT", "tcp://127.0.0.1:40011");
+    const ScopedEnvVar trader_front("CTP_TEST_TRADER_FRONT", "tcp://127.0.0.1:40001");
+    const ScopedEnvVar password("CTP_TEST_PASSWORD_VAR", "env-secret");
+
+    const auto config_path = WriteTempConfig(
+        "ctp:\n"
+        "  environment: sim\n"
+        "  is_production_mode: false\n"
+        "  broker_id: \"${CTP_TEST_BROKER_ID}\"\n"
+        "  user_id: \"${CTP_TEST_USER_ID}\"\n"
+        "  investor_id: \"${CTP_TEST_INVESTOR_ID}\"\n"
+        "  market_front: \"${CTP_TEST_MARKET_FRONT}\"\n"
+        "  trader_front: \"${CTP_TEST_TRADER_FRONT}\"\n"
+        "  password: \"${CTP_TEST_PASSWORD_VAR}\"\n");
+
+    CtpFileConfig config;
+    std::string error;
+    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error)) << error;
+    EXPECT_EQ(config.runtime.broker_id, "9999");
+    EXPECT_EQ(config.runtime.user_id, "191202");
+    EXPECT_EQ(config.runtime.investor_id, "191202");
+    EXPECT_EQ(config.runtime.md_front, "tcp://127.0.0.1:40011");
+    EXPECT_EQ(config.runtime.td_front, "tcp://127.0.0.1:40001");
+    EXPECT_EQ(config.runtime.password, "env-secret");
+
+    std::filesystem::remove(config_path);
+}
+
 TEST(CtpConfigLoaderTest, LoadsValidSimConfigWithPasswordEnv) {
     const ScopedEnvVar password_env("CTP_TEST_PASSWORD", "env-secret");
     const auto config_path = WriteTempConfig(

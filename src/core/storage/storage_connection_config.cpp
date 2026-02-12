@@ -57,6 +57,17 @@ StorageBackendMode ParseMode(const std::string& raw, StorageBackendMode default_
     return default_mode;
 }
 
+MarketBusMode ParseMarketBusMode(const std::string& raw, MarketBusMode default_mode) {
+    const auto value = ToLower(raw);
+    if (value == "disabled" || value == "off" || value == "none") {
+        return MarketBusMode::kDisabled;
+    }
+    if (value == "kafka") {
+        return MarketBusMode::kKafka;
+    }
+    return default_mode;
+}
+
 }  // namespace
 
 StorageConnectionConfig StorageConnectionConfig::FromEnvironment() {
@@ -94,6 +105,33 @@ StorageConnectionConfig StorageConnectionConfig::FromEnvironment() {
         GetEnvOrDefault("QUANT_HFT_TRADING_SCHEMA", config.timescale.trading_schema);
     config.timescale.analytics_schema =
         GetEnvOrDefault("QUANT_HFT_ANALYTICS_SCHEMA", config.timescale.analytics_schema);
+
+    config.kafka.mode = ParseMarketBusMode(GetEnvOrDefault("QUANT_HFT_MARKET_BUS_MODE", "disabled"),
+                                           MarketBusMode::kDisabled);
+    config.kafka.brokers = GetEnvOrDefault("QUANT_HFT_KAFKA_BROKERS", config.kafka.brokers);
+    config.kafka.market_topic =
+        GetEnvOrDefault("QUANT_HFT_KAFKA_MARKET_TOPIC", config.kafka.market_topic);
+    config.kafka.spool_dir =
+        GetEnvOrDefault("QUANT_HFT_KAFKA_SPOOL_DIR", config.kafka.spool_dir);
+    config.kafka.producer_command_template = GetEnvOrDefault(
+        "QUANT_HFT_KAFKA_PRODUCER_CMD_TEMPLATE", config.kafka.producer_command_template);
+    config.kafka.message_timeout_ms =
+        GetEnvOrDefaultInt("QUANT_HFT_KAFKA_MESSAGE_TIMEOUT_MS", config.kafka.message_timeout_ms);
+
+    config.clickhouse.mode = ParseMode(GetEnvOrDefault("QUANT_HFT_CLICKHOUSE_MODE", "in_memory"),
+                                       StorageBackendMode::kInMemory);
+    config.clickhouse.host =
+        GetEnvOrDefault("QUANT_HFT_CLICKHOUSE_HOST", config.clickhouse.host);
+    config.clickhouse.port =
+        GetEnvOrDefaultInt("QUANT_HFT_CLICKHOUSE_PORT", config.clickhouse.port);
+    config.clickhouse.database =
+        GetEnvOrDefault("QUANT_HFT_CLICKHOUSE_DB", config.clickhouse.database);
+    config.clickhouse.user =
+        GetEnvOrDefault("QUANT_HFT_CLICKHOUSE_USER", config.clickhouse.user);
+    config.clickhouse.password =
+        GetEnvOrDefault("QUANT_HFT_CLICKHOUSE_PASSWORD", config.clickhouse.password);
+    config.clickhouse.connect_timeout_ms = GetEnvOrDefaultInt(
+        "QUANT_HFT_CLICKHOUSE_CONNECT_TIMEOUT_MS", config.clickhouse.connect_timeout_ms);
 
     config.allow_inmemory_fallback =
         ParseBoolWithDefault(GetEnvOrDefault("QUANT_HFT_STORAGE_ALLOW_FALLBACK", "true"),

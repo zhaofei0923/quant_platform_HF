@@ -93,6 +93,15 @@ def test_minio_adapter_local_fallback_round_trip(tmp_path: Path) -> None:
     content = archive.get_text("snapshots/2026-02-10/report.json")
     assert content == '{"ok":true}'
 
+    archive.copy_object("snapshots/2026-02-10/report.json", "snapshots/2026-02-10/report.copy.json")
+    copied = archive.get_text("snapshots/2026-02-10/report.copy.json")
+    assert copied == '{"ok":true}'
+    stat = archive.stat_object("snapshots/2026-02-10/report.copy.json")
+    assert stat["exists"] is True
+    assert int(stat["size"]) > 0
+    archive.remove_object("snapshots/2026-02-10/report.copy.json")
+    assert archive.stat_object("snapshots/2026-02-10/report.copy.json")["exists"] is False
+
 
 def test_minio_adapter_requires_fallback_or_sdk(tmp_path: Path) -> None:
     # The test environment intentionally does not install MinIO SDK.
@@ -108,3 +117,34 @@ def test_minio_adapter_requires_fallback_or_sdk(tmp_path: Path) -> None:
         assert "minio sdk is not installed" in str(exc).lower()
     else:
         raise AssertionError("expected RuntimeError when MinIO SDK is missing")
+
+
+def test_duckdb_export_table_to_partitioned_parquet_fallback(tmp_path: Path) -> None:
+    db_path = tmp_path / "analytics.duckdb"
+    store = DuckDbAnalyticsStore(db_path, prefer_duckdb=False)
+    store.append_market_snapshots(
+        [
+            MarketSnapshotRecord(
+                instrument_id="rb2405",
+                ts_ns=1_707_628_800_000_000_000,
+                last_price=4100.5,
+                bid_price_1=4100.0,
+                ask_price_1=4101.0,
+                volume=10,
+            )
+        ]
+    )
+
+    artifacts = store.export_table_to_parquet_partitions(
+        "market_snapshots",
+        tmp_path / "partitions",
+        partition_keys=("dt", "instrument_id"),
+        compression="zstd",
+    )
+    store.close()
+
+    assert len(artifacts) == 1
+    assert artifacts[0].table == "market_snapshots"
+    assert artifacts[0].row_count == 1
+    assert artifacts[0].sha256
+    assert artifacts[0].format in {"parquet", "jsonl_fallback"}

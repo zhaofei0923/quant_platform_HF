@@ -25,6 +25,43 @@ Use this fixed template for every sprint update:
 Completion rule:
 - A sprint is marked `done` only when code, tests, and `develop/` status updates are all completed.
 
+## Sprint M2 (2026-02-12 ~ 2026-02-26)
+- Objective:
+  - single-host enhancement with Kafka market bus, ClickHouse realtime analytics, Debezium CDC, and parquet lifecycle governance.
+- Scope:
+  - `infra/docker-compose.single-host.m2.yaml`
+  - `infra/clickhouse/init/001_market_realtime.sql`
+  - `infra/clickhouse/init/002_trading_core_cdc.sql`
+  - `infra/debezium/connectors/trading_core.json`
+  - `infra/kafka-connect/Dockerfile`
+  - `scripts/infra/init_kafka_topics.sh`
+  - `scripts/infra/init_clickhouse_schema.sh`
+  - `scripts/infra/register_debezium_connectors.sh`
+  - `scripts/infra/check_debezium_connectors.py`
+  - `scripts/ops/replay_market_bus_spool.py`
+  - `scripts/data_pipeline/export_parquet_partitions.py`
+  - `scripts/data_pipeline/run_lifecycle.py`
+  - `scripts/ops/verify_m2_dataflow_evidence.py`
+  - `python/quant_hft/data_pipeline/adapters.py`
+  - `python/quant_hft/data_pipeline/process.py`
+  - `python/quant_hft/data_pipeline/lifecycle_policy.py`
+  - `python/quant_hft/ops/monitoring.py`
+  - `src/core/storage/kafka_market_bus_producer.cpp`
+  - `src/apps/core_engine_main.cpp`
+- Test Evidence:
+  - [x] `.venv/bin/pytest -q python/tests/test_bootstrap_prodlike_script.py python/tests/test_check_prodlike_health_script.py python/tests/test_single_host_m2_infra_assets.py python/tests/test_init_kafka_topics_script.py python/tests/test_init_clickhouse_schema_script.py python/tests/test_register_debezium_connectors_script.py python/tests/test_check_debezium_connectors_script.py python/tests/test_replay_market_bus_spool_script.py`
+  - [x] `.venv/bin/pytest -q python/tests/test_data_pipeline_adapters.py python/tests/test_data_pipeline_process.py python/tests/test_data_lifecycle.py python/tests/test_export_parquet_partitions_script.py`
+  - [x] `.venv/bin/pytest -q python/tests/test_monitoring_observability.py python/tests/test_run_ctp_readiness_evidence_script.py python/tests/test_verify_m2_dataflow_evidence_script.py`
+  - [x] `cmake -S . -B build -DQUANT_HFT_BUILD_TESTS=ON`
+  - [x] `cmake --build build --target core_engine storage_client_factory_test kafka_market_bus_producer_test -j$(nproc)`
+  - [x] `ctest --test-dir build -R 'StorageClientFactoryTest|KafkaMarketBusProducerTest' --output-on-failure`
+- Develop Docs Synced:
+  - [x] `develop/00-未完成能力补齐路线图.md`
+  - [x] `docs/SYSTEMD_DEPLOYMENT_RUNBOOK.md`
+  - [x] `docs/K8S_DEPLOYMENT_RUNBOOK.md`
+- Status:
+  - `done`
+
 ## Sprint M1 (2026-02-11 ~ 2026-02-24)
 - Objective:
   - add repository-local prodlike infrastructure bootstrap for external dependencies

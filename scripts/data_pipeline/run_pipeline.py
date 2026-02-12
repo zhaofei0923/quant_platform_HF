@@ -38,6 +38,15 @@ def _build_parser() -> argparse.ArgumentParser:
         default=os.getenv("QUANT_HFT_ARCHIVE_PREFIX", "etl"),
     )
     parser.add_argument("--prefer-duckdb", action="store_true")
+    parser.add_argument("--parquet-export-enabled", action="store_true")
+    parser.add_argument(
+        "--parquet-archive-prefix",
+        default=os.getenv("QUANT_HFT_PARQUET_ARCHIVE_PREFIX", "parquet"),
+    )
+    parser.add_argument(
+        "--parquet-compression",
+        default=os.getenv("QUANT_HFT_PARQUET_COMPRESSION", "zstd"),
+    )
     parser.add_argument("--run-once", action="store_true")
     parser.add_argument("--iterations", type=int, default=1)
     parser.add_argument("--interval-seconds", type=float, default=60.0)
@@ -60,6 +69,9 @@ def main() -> int:
         prefer_duckdb=bool(args.prefer_duckdb),
         interval_seconds=max(0.0, args.interval_seconds),
         archive_prefix=args.archive_prefix,
+        parquet_export_enabled=bool(args.parquet_export_enabled),
+        parquet_archive_prefix=args.parquet_archive_prefix,
+        parquet_compression=args.parquet_compression,
     )
 
     process = DataPipelineProcess(config)

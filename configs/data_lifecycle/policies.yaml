@@ -1,0 +1,23 @@
+{
+  "market": {
+    "base_prefix": "parquet/market_snapshots",
+    "hot_retention_days": 7,
+    "warm_retention_days": 90,
+    "cold_retention_days": 365,
+    "delete_after_days": 365
+  },
+  "trading_order_trade": {
+    "base_prefix": "parquet/order_events",
+    "hot_retention_days": 30,
+    "warm_retention_days": 365,
+    "cold_retention_days": 1825,
+    "delete_after_days": 1825
+  },
+  "trading_account_position": {
+    "base_prefix": "parquet/account_snapshots",
+    "hot_retention_days": 30,
+    "warm_retention_days": 365,
+    "cold_retention_days": 1825,
+    "delete_after_days": 1825
+  }
+}

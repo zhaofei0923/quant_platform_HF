@@ -48,6 +48,16 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--redis-health", default="unknown")
     parser.add_argument("--timescale-health", default="unknown")
     parser.add_argument("--postgres-health", default="")
+    parser.add_argument("--kafka-publish-success-rate", type=float, default=-1.0)
+    parser.add_argument("--kafka-publish-success-target", type=float, default=0.99)
+    parser.add_argument("--kafka-spool-backlog", type=float, default=-1.0)
+    parser.add_argument("--kafka-spool-backlog-target", type=float, default=1000.0)
+    parser.add_argument("--cdc-lag-seconds", type=float, default=-1.0)
+    parser.add_argument("--cdc-lag-target-seconds", type=float, default=5.0)
+    parser.add_argument("--clickhouse-ingest-lag-seconds", type=float, default=-1.0)
+    parser.add_argument("--clickhouse-ingest-lag-target-seconds", type=float, default=3.0)
+    parser.add_argument("--parquet-lifecycle-success", type=float, default=-1.0)
+    parser.add_argument("--parquet-lifecycle-success-target", type=float, default=1.0)
     parser.add_argument("--environment", default="prodlike")
     parser.add_argument("--service", default="core_engine")
     return parser
@@ -79,6 +89,22 @@ def main() -> int:
         ctp_disconnect_recovery_target=args.disconnect_recovery_target,
         ctp_reject_classified_ratio=args.reject_classified_ratio,
         ctp_reject_classified_target=args.reject_classified_target,
+        kafka_publish_success_rate=(
+            args.kafka_publish_success_rate if args.kafka_publish_success_rate >= 0 else None
+        ),
+        kafka_publish_success_target=args.kafka_publish_success_target,
+        kafka_spool_backlog=(args.kafka_spool_backlog if args.kafka_spool_backlog >= 0 else None),
+        kafka_spool_backlog_target=args.kafka_spool_backlog_target,
+        cdc_lag_seconds=(args.cdc_lag_seconds if args.cdc_lag_seconds >= 0 else None),
+        cdc_lag_target_seconds=args.cdc_lag_target_seconds,
+        clickhouse_ingest_lag_seconds=(
+            args.clickhouse_ingest_lag_seconds if args.clickhouse_ingest_lag_seconds >= 0 else None
+        ),
+        clickhouse_ingest_lag_target_seconds=args.clickhouse_ingest_lag_target_seconds,
+        parquet_lifecycle_success=(
+            args.parquet_lifecycle_success if args.parquet_lifecycle_success >= 0 else None
+        ),
+        parquet_lifecycle_success_target=args.parquet_lifecycle_success_target,
         environment=args.environment,
         service=args.service,
         metadata={"evidence_type": "ctp_readiness"},

@@ -9,6 +9,7 @@ option(QUANT_HFT_BUILD_TESTS "Build C++ unit tests" ON)
 option(QUANT_HFT_ENABLE_CTP_REAL_API "Enable CTP v6.7.11 real API integration" OFF)
 option(QUANT_HFT_ENABLE_REDIS_EXTERNAL "Enable external Redis driver path" OFF)
 option(QUANT_HFT_ENABLE_TIMESCALE_EXTERNAL "Enable external TimescaleDB driver path" OFF)
+option(QUANT_HFT_ENABLE_KAFKA_EXTERNAL "Enable external Kafka producer path" OFF)
 set(CTP_V6711_DIR "${CMAKE_SOURCE_DIR}/ctp_api/v6.7.11_20250617_api_traderapi_se_linux64"
     CACHE PATH "Path to CTP v6.7.11 API directory")
 
@@ -24,6 +25,7 @@ add_library(quant_hft_core STATIC
     src/core/storage/redis_hash_client.cpp
     src/core/storage/redis_realtime_store.cpp
     src/core/storage/redis_realtime_store_client_adapter.cpp
+    src/core/storage/kafka_market_bus_producer.cpp
     src/core/storage/libpq_timescale_sql_client.cpp
     src/core/storage/storage_client_pool.cpp
     src/core/storage/storage_client_factory.cpp
@@ -94,6 +96,12 @@ else()
     target_compile_definitions(quant_hft_core PUBLIC QUANT_HFT_ENABLE_TIMESCALE_EXTERNAL=0)
 endif()
 
+if(QUANT_HFT_ENABLE_KAFKA_EXTERNAL)
+    target_compile_definitions(quant_hft_core PUBLIC QUANT_HFT_ENABLE_KAFKA_EXTERNAL=1)
+else()
+    target_compile_definitions(quant_hft_core PUBLIC QUANT_HFT_ENABLE_KAFKA_EXTERNAL=0)
+endif()
+
 add_executable(core_engine src/apps/core_engine_main.cpp)
 target_link_libraries(core_engine PRIVATE quant_hft_core)
 
@@ -156,6 +164,9 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(storage_client_factory_test tests/unit/core/storage_client_factory_test.cpp)
     target_link_libraries(storage_client_factory_test PRIVATE quant_hft_core GTest::gtest_main)
 
+    add_executable(kafka_market_bus_producer_test tests/unit/core/kafka_market_bus_producer_test.cpp)
+    target_link_libraries(kafka_market_bus_producer_test PRIVATE quant_hft_core GTest::gtest_main)
+
     add_executable(tcp_redis_hash_client_test tests/unit/core/tcp_redis_hash_client_test.cpp)
     target_link_libraries(tcp_redis_hash_client_test PRIVATE quant_hft_core GTest::gtest_main)
 
@@ -217,6 +228,7 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(storage_client_pool_test)
     gtest_discover_tests(timescale_buffered_event_store_test)
     gtest_discover_tests(storage_client_factory_test)
+    gtest_discover_tests(kafka_market_bus_producer_test)
     gtest_discover_tests(tcp_redis_hash_client_test)
     gtest_discover_tests(strategy_intent_inbox_test)
     gtest_discover_tests(libpq_timescale_sql_client_test)

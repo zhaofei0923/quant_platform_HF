@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import importlib
 import io
+import json
 import sqlite3
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from shutil import copyfile
 from typing import Any, Protocol, cast
@@ -21,6 +24,17 @@ class MarketSnapshotRecord:
     bid_price_1: float
     ask_price_1: float
     volume: int
+
+
+@dataclass(frozen=True)
+class PartitionedExportArtifact:
+    table: str
+    relative_path: str
+    row_count: int
+    sha256: str
+    min_ts_ns: int | None
+    max_ts_ns: int | None
+    format: str
 
 
 class _CursorLike(Protocol):
@@ -83,6 +97,72 @@ def _coerce_float(value: object) -> float:
     if isinstance(value, (int, float, str)):
         return float(value)
     raise TypeError(f"cannot coerce {type(value)!r} to float")
+
+
+def _safe_partition_value(value: object) -> str:
+    text = str(value).strip()
+    if not text:
+        return "__null__"
+    normalized = text.replace("/", "_").replace("\\", "_").replace(" ", "_")
+    return normalized
+
+
+def _derive_partition_date(row: dict[str, object]) -> str:
+    for key in ("dt", "trade_date", "trading_day"):
+        value = row.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if not text:
+            continue
+        if len(text) >= 10 and text[4] == "-" and text[7] == "-":
+            return text[:10]
+        if len(text) == 8 and text.isdigit():
+            return f"{text[:4]}-{text[4:6]}-{text[6:8]}"
+    for key in ("ts_ns", "recv_ts_ns", "exchange_ts_ns"):
+        value = row.get(key)
+        if value is None:
+            continue
+        try:
+            ts_ns = int(str(value))
+        except (TypeError, ValueError):
+            continue
+        if ts_ns <= 0:
+            continue
+        dt = datetime.fromtimestamp(ts_ns / 1_000_000_000, tz=timezone.utc)
+        return dt.strftime("%Y-%m-%d")
+    return "1970-01-01"
+
+
+def _resolve_partition_value(row: dict[str, object], key: str) -> str:
+    if key == "dt":
+        return _derive_partition_date(row)
+    if key == "trade_date":
+        return _derive_partition_date(row)
+    return _safe_partition_value(row.get(key, "__null__"))
+
+
+def _write_rows_as_parquet_or_jsonl(
+    rows: list[dict[str, object]],
+    output_path: Path,
+    *,
+    compression: str,
+) -> tuple[Path, str]:
+    try:
+        pa = importlib.import_module("pyarrow")
+        pq = importlib.import_module("pyarrow.parquet")
+    except ModuleNotFoundError:
+        fallback = output_path.with_suffix(output_path.suffix + ".jsonl")
+        fallback.parent.mkdir(parents=True, exist_ok=True)
+        with fallback.open("w", encoding="utf-8") as fp:
+            for row in rows:
+                fp.write(json.dumps(row, ensure_ascii=True) + "\n")
+        return fallback, "jsonl_fallback"
+
+    table = pa.Table.from_pylist(rows)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(table, str(output_path), compression=compression)
+    return output_path, "parquet"
 
 
 class DuckDbAnalyticsStore:
@@ -248,10 +328,15 @@ class DuckDbAnalyticsStore:
         description = cursor.description or ()
         return tuple(str(item[0]) for item in description)
 
-    def read_table_as_dicts(self, table: str, *, limit: int = 1000) -> list[dict[str, object]]:
+    def read_table_as_dicts(
+        self, table: str, *, limit: int | None = 1000
+    ) -> list[dict[str, object]]:
         if not _is_valid_identifier(table):
             raise ValueError(f"invalid table name: {table}")
-        cursor = self._conn.execute(f"SELECT * FROM {table} LIMIT ?", (max(1, limit),))
+        if limit is None:
+            cursor = self._conn.execute(f"SELECT * FROM {table}")
+        else:
+            cursor = self._conn.execute(f"SELECT * FROM {table} LIMIT ?", (max(1, limit),))
         rows = list(cursor.fetchall())
         columns = self.list_table_columns(table)
         output: list[dict[str, object]] = []
@@ -277,6 +362,72 @@ class DuckDbAnalyticsStore:
                 writer.writerow(headers)
             writer.writerows(rows)
         return len(rows)
+
+    def export_table_to_parquet_partitions(
+        self,
+        table: str,
+        destination_root: Path | str,
+        *,
+        partition_keys: Sequence[str],
+        compression: str = "zstd",
+    ) -> list[PartitionedExportArtifact]:
+        if not _is_valid_identifier(table):
+            raise ValueError(f"invalid table name: {table}")
+        if not partition_keys:
+            raise ValueError("partition_keys is empty")
+        for key in partition_keys:
+            if not _is_valid_identifier(key):
+                raise ValueError(f"invalid partition key: {key}")
+
+        rows = self.read_table_as_dicts(table, limit=None)
+        grouped: dict[tuple[str, ...], list[dict[str, object]]] = {}
+        for row in rows:
+            partition_tuple = tuple(_resolve_partition_value(row, key) for key in partition_keys)
+            grouped.setdefault(partition_tuple, []).append(row)
+
+        root = Path(destination_root)
+        root.mkdir(parents=True, exist_ok=True)
+
+        artifacts: list[PartitionedExportArtifact] = []
+        for index, (partition_tuple, partition_rows) in enumerate(
+            sorted(grouped.items(), key=lambda item: item[0])
+        ):
+            partition_parts = [
+                f"{partition_keys[key_index]}={partition_tuple[key_index]}"
+                for key_index in range(len(partition_keys))
+            ]
+            parquet_path = root.joinpath(*partition_parts, f"part-{index:05d}.parquet")
+            output_path, output_format = _write_rows_as_parquet_or_jsonl(
+                partition_rows,
+                parquet_path,
+                compression=compression,
+            )
+
+            digest = hashlib.sha256(output_path.read_bytes()).hexdigest()
+            ts_values: list[int] = []
+            for row in partition_rows:
+                for key in ("ts_ns", "recv_ts_ns", "exchange_ts_ns"):
+                    raw = row.get(key)
+                    if raw in (None, ""):
+                        continue
+                    try:
+                        ts_values.append(int(str(raw)))
+                        break
+                    except (TypeError, ValueError):
+                        continue
+
+            artifacts.append(
+                PartitionedExportArtifact(
+                    table=table,
+                    relative_path=output_path.relative_to(root).as_posix(),
+                    row_count=len(partition_rows),
+                    sha256=digest,
+                    min_ts_ns=min(ts_values) if ts_values else None,
+                    max_ts_ns=max(ts_values) if ts_values else None,
+                    format=output_format,
+                )
+            )
+        return artifacts
 
     def close(self) -> None:
         self._conn.close()
@@ -421,3 +572,64 @@ class MinioArchiveStore:
                 items.append(name)
         items.sort()
         return items
+
+    def copy_object(self, source_object: str, destination_object: str) -> None:
+        source_name = self._validate_object_name(source_object)
+        destination_name = self._validate_object_name(destination_object)
+        if self._mode == "local_fallback":
+            source = self._local_path(source_name)
+            if not source.exists():
+                raise FileNotFoundError(source)
+            target = self._local_path(destination_name)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            copyfile(source, target)
+            return
+
+        assert self._client is not None
+        minio_commonconfig = importlib.import_module("minio.commonconfig")
+        copy_source = minio_commonconfig.CopySource(self._bucket, source_name)
+        self._client.copy_object(self._bucket, destination_name, copy_source)
+
+    def remove_object(self, object_name: str) -> None:
+        safe_name = self._validate_object_name(object_name)
+        if self._mode == "local_fallback":
+            target = self._local_path(safe_name)
+            if target.exists():
+                target.unlink()
+            return
+
+        assert self._client is not None
+        self._client.remove_object(self._bucket, safe_name)
+
+    def stat_object(self, object_name: str) -> dict[str, object]:
+        safe_name = self._validate_object_name(object_name)
+        if self._mode == "local_fallback":
+            target = self._local_path(safe_name)
+            if not target.exists():
+                return {"exists": False}
+            stat = target.stat()
+            return {
+                "exists": True,
+                "size": stat.st_size,
+                "last_modified_epoch": int(stat.st_mtime),
+            }
+
+        assert self._client is not None
+        try:
+            stat = self._client.stat_object(self._bucket, safe_name)
+        except Exception:
+            return {"exists": False}
+        size = getattr(stat, "size", 0)
+        last_modified = getattr(stat, "last_modified", None)
+        last_modified_epoch = 0
+        if last_modified is not None:
+            timestamp = getattr(last_modified, "timestamp", None)
+            if callable(timestamp):
+                last_modified_epoch = int(timestamp())
+        etag = getattr(stat, "etag", "")
+        return {
+            "exists": True,
+            "size": int(size),
+            "etag": str(etag),
+            "last_modified_epoch": last_modified_epoch,
+        }

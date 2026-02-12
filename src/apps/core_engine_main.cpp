@@ -3,6 +3,9 @@
 #include <chrono>
 #include <cmath>
 #include <csignal>
+#include <exception>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -15,6 +18,7 @@
 #include "quant_hft/contracts/types.h"
 #include "quant_hft/core/ctp_config_loader.h"
 #include "quant_hft/core/ctp_gateway_adapter.h"
+#include "quant_hft/core/kafka_market_bus_producer.h"
 #include "quant_hft/core/local_wal_regulatory_sink.h"
 #include "quant_hft/core/redis_realtime_store_client_adapter.h"
 #include "quant_hft/core/storage_client_factory.h"
@@ -373,10 +377,48 @@ int main(int argc, char** argv) {
     TradingLedgerStoreClientAdapter trading_ledger_store(pooled_timescale,
                                                          storage_retry_policy,
                                                          storage_config.timescale.trading_schema);
+    auto market_bus_producer = StorageClientFactory::CreateMarketBusProducer(storage_config, &error);
+    if (market_bus_producer == nullptr) {
+        std::cerr << "failed to create market bus producer: " << error << '\n';
+        return 7;
+    }
+    std::mutex market_bus_spool_mutex;
+    const std::filesystem::path market_bus_spool_file =
+        std::filesystem::path(storage_config.kafka.spool_dir) / "market_snapshots.jsonl";
     RuleMarketStateEngine market_state(32);
     LocalWalRegulatorySink wal_sink("runtime_events.wal");
     std::atomic<std::uint64_t> wal_write_failures{0};
     std::atomic<std::uint64_t> trading_write_failures{0};
+    std::atomic<std::uint64_t> market_bus_publish_failures{0};
+    std::atomic<std::uint64_t> market_bus_spool_failures{0};
+
+    auto append_market_bus_spool = [&](const std::string& payload, std::string* spool_error) {
+        if (storage_config.kafka.spool_dir.empty()) {
+            if (spool_error != nullptr) {
+                *spool_error = "kafka spool dir is empty";
+            }
+            return false;
+        }
+        try {
+            std::filesystem::create_directories(market_bus_spool_file.parent_path());
+        } catch (const std::exception& ex) {
+            if (spool_error != nullptr) {
+                *spool_error = std::string("failed to create spool dir: ") + ex.what();
+            }
+            return false;
+        }
+
+        std::lock_guard<std::mutex> lock(market_bus_spool_mutex);
+        std::ofstream out(market_bus_spool_file, std::ios::app);
+        if (!out.is_open()) {
+            if (spool_error != nullptr) {
+                *spool_error = "failed to open spool file";
+            }
+            return false;
+        }
+        out << payload << '\n';
+        return out.good();
+    };
 
     const auto replay_stats =
         replay_loader.Replay("runtime_events.wal", &order_state_machine, &ledger);
@@ -509,6 +551,27 @@ int main(int argc, char** argv) {
         }
         realtime_cache.UpsertMarketSnapshot(snapshot);
         timeseries_store.AppendMarketSnapshot(snapshot);
+        if (storage_config.kafka.mode == MarketBusMode::kKafka) {
+            std::string market_bus_error;
+            if (!market_bus_producer->PublishMarketSnapshot(snapshot, &market_bus_error)) {
+                const auto failure_count = market_bus_publish_failures.fetch_add(1) + 1;
+                const auto payload = KafkaMarketBusProducer::SerializeMarketSnapshotJson(snapshot);
+                std::string spool_error;
+                if (!append_market_bus_spool(payload, &spool_error)) {
+                    const auto spool_failure_count = market_bus_spool_failures.fetch_add(1) + 1;
+                    std::cerr << "{\"component\":\"market_bus\","
+                              << "\"stage\":\"spool_append_failed\","
+                              << "\"instrument_id\":\"" << snapshot.instrument_id << "\","
+                              << "\"error\":\"" << spool_error << "\","
+                              << "\"failure_count\":" << spool_failure_count << "}" << '\n';
+                }
+                std::cerr << "{\"component\":\"market_bus\","
+                          << "\"stage\":\"publish_market_snapshot\","
+                          << "\"instrument_id\":\"" << snapshot.instrument_id << "\","
+                          << "\"error\":\"" << market_bus_error << "\","
+                          << "\"failure_count\":" << failure_count << "}" << '\n';
+            }
+        }
         market_state.OnMarketSnapshot(snapshot);
     };
 
@@ -903,6 +966,10 @@ int main(int argc, char** argv) {
     (void)bar_aggregator.Flush();
     timeseries_store.Flush();
     wal_sink.Flush();
+    std::string market_bus_flush_error;
+    if (!market_bus_producer->Flush(&market_bus_flush_error)) {
+        std::cerr << "market bus flush failed: " << market_bus_flush_error << '\n';
+    }
 
     std::cout << "core_engine stopped cleanly" << '\n';
     return 0;

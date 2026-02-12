@@ -125,3 +125,35 @@ def test_ops_health_report_includes_ctp_specific_slis() -> None:
     assert "quant_hft_ctp_disconnect_recovery_success_rate" in sli_names
     assert "quant_hft_ctp_reject_classified_ratio" in sli_names
     assert len(payload["slis"]) == 10
+
+
+def test_ops_health_report_includes_m2_dataflow_slis() -> None:
+    report = build_ops_health_report(
+        strategy_bridge_latency_ms=320.0,
+        strategy_bridge_target_ms=1000.0,
+        strategy_bridge_chain_status="complete",
+        core_process_alive=True,
+        redis_health="healthy",
+        timescale_health="healthy",
+        kafka_publish_success_rate=0.999,
+        kafka_publish_success_target=0.99,
+        kafka_spool_backlog=10,
+        kafka_spool_backlog_target=1000,
+        cdc_lag_seconds=2.0,
+        cdc_lag_target_seconds=5.0,
+        clickhouse_ingest_lag_seconds=1.5,
+        clickhouse_ingest_lag_target_seconds=3.0,
+        parquet_lifecycle_success=1.0,
+        parquet_lifecycle_success_target=1.0,
+        environment="sim",
+        service="core_engine",
+        now_ns_fn=lambda: 77777,
+    )
+
+    payload = ops_health_report_to_dict(report)
+    sli_names = [item["name"] for item in payload["slis"]]
+    assert "quant_hft_kafka_publish_success_rate" in sli_names
+    assert "quant_hft_kafka_spool_backlog" in sli_names
+    assert "quant_hft_cdc_lag_seconds" in sli_names
+    assert "quant_hft_clickhouse_ingest_lag_seconds" in sli_names
+    assert "quant_hft_parquet_lifecycle_success" in sli_names

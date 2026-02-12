@@ -13,6 +13,10 @@ HEALTH_CHECK_SCRIPT="scripts/infra/check_prodlike_health.py"
 SCHEMA_INIT_SCRIPT="scripts/infra/init_timescale_schema.sh"
 SCHEMA_FILE="infra/timescale/init/001_quant_hft_schema.sql"
 SCHEMA_EVIDENCE="docs/results/timescale_schema_init_result.env"
+CLICKHOUSE_SCHEMA_INIT_SCRIPT="scripts/infra/init_clickhouse_schema.sh"
+CLICKHOUSE_SCHEMA_EVIDENCE="docs/results/clickhouse_schema_init_result.env"
+KAFKA_TOPICS_INIT_SCRIPT="scripts/infra/init_kafka_topics.sh"
+KAFKA_TOPICS_EVIDENCE="docs/results/kafka_topics_init_result.env"
 TIMESCALE_SERVICE="timescale-primary"
 TIMESCALE_DB="quant_hft"
 TIMESCALE_USER="quant_hft"
@@ -25,7 +29,7 @@ usage() {
 Usage: $0 [options]
 
 Options:
-  --profile <single-host|prodlike>  Deployment profile (default: single-host)
+  --profile <single-host|single-host-m2|prodlike>  Deployment profile (default: single-host)
   --action <up|down|ps|health>   Action to perform (default: up)
   --compose-file <path>          Docker compose file path (default by profile)
   --project-name <name>          Compose project name (default by profile)
@@ -37,6 +41,10 @@ Options:
   --schema-init-script <path>    Timescale schema initializer script path
   --schema-file <path>           Timescale SQL schema file path
   --schema-evidence <path>       Timescale schema initializer evidence output path
+  --clickhouse-schema-init-script <path> ClickHouse schema initializer script path
+  --clickhouse-schema-evidence <path>    ClickHouse schema initializer evidence output path
+  --kafka-topics-init-script <path>      Kafka topics initializer script path
+  --kafka-topics-evidence <path>         Kafka topics initializer evidence output path
   --timescale-service <name>     Timescale service name (default: timescale-primary)
   --timescale-db <name>          Timescale database name (default: quant_hft)
   --timescale-user <name>        Timescale database user (default: quant_hft)
@@ -98,6 +106,22 @@ while [[ $# -gt 0 ]]; do
       SCHEMA_EVIDENCE="${2:-}"
       shift 2
       ;;
+    --clickhouse-schema-init-script)
+      CLICKHOUSE_SCHEMA_INIT_SCRIPT="${2:-}"
+      shift 2
+      ;;
+    --clickhouse-schema-evidence)
+      CLICKHOUSE_SCHEMA_EVIDENCE="${2:-}"
+      shift 2
+      ;;
+    --kafka-topics-init-script)
+      KAFKA_TOPICS_INIT_SCRIPT="${2:-}"
+      shift 2
+      ;;
+    --kafka-topics-evidence)
+      KAFKA_TOPICS_EVIDENCE="${2:-}"
+      shift 2
+      ;;
     --timescale-service)
       TIMESCALE_SERVICE="${2:-}"
       shift 2
@@ -147,27 +171,39 @@ case "$ACTION" in
 esac
 
 case "$PROFILE" in
-  single-host|prodlike) ;;
+  single-host|single-host-m2|prodlike) ;;
   *)
-    echo "error: --profile must be one of single-host|prodlike" >&2
+    echo "error: --profile must be one of single-host|single-host-m2|prodlike" >&2
     exit 2
     ;;
 esac
 
 if [[ -z "$COMPOSE_FILE" ]]; then
-  if [[ "$PROFILE" == "single-host" ]]; then
-    COMPOSE_FILE="infra/docker-compose.single-host.yaml"
-  else
-    COMPOSE_FILE="infra/docker-compose.prodlike.yaml"
-  fi
+  case "$PROFILE" in
+    single-host)
+      COMPOSE_FILE="infra/docker-compose.single-host.yaml"
+      ;;
+    single-host-m2)
+      COMPOSE_FILE="infra/docker-compose.single-host.m2.yaml"
+      ;;
+    prodlike)
+      COMPOSE_FILE="infra/docker-compose.prodlike.yaml"
+      ;;
+  esac
 fi
 
 if [[ -z "$PROJECT_NAME" ]]; then
-  if [[ "$PROFILE" == "single-host" ]]; then
-    PROJECT_NAME="quant-hft-single-host"
-  else
-    PROJECT_NAME="quant-hft-prodlike"
-  fi
+  case "$PROFILE" in
+    single-host)
+      PROJECT_NAME="quant-hft-single-host"
+      ;;
+    single-host-m2)
+      PROJECT_NAME="quant-hft-single-host-m2"
+      ;;
+    prodlike)
+      PROJECT_NAME="quant-hft-prodlike"
+      ;;
+  esac
 fi
 
 if [[ ! -f "$COMPOSE_FILE" ]]; then
@@ -182,6 +218,16 @@ if [[ "$ACTION" == "up" ]]; then
   if [[ ! -f "$SCHEMA_FILE" ]]; then
     echo "error: schema file not found: $SCHEMA_FILE" >&2
     exit 2
+  fi
+  if [[ "$PROFILE" == "single-host-m2" ]]; then
+    if [[ ! -f "$CLICKHOUSE_SCHEMA_INIT_SCRIPT" ]]; then
+      echo "error: clickhouse schema init script not found: $CLICKHOUSE_SCHEMA_INIT_SCRIPT" >&2
+      exit 2
+    fi
+    if [[ ! -f "$KAFKA_TOPICS_INIT_SCRIPT" ]]; then
+      echo "error: kafka topics init script not found: $KAFKA_TOPICS_INIT_SCRIPT" >&2
+      exit 2
+    fi
   fi
 fi
 
@@ -203,6 +249,20 @@ if [[ "$ACTION" == "up" ]]; then
     steps_cmd+=("bash $SCHEMA_INIT_SCRIPT --compose-file $COMPOSE_FILE --project-name $PROJECT_NAME --env-file $ENV_FILE --schema-file $SCHEMA_FILE --timescale-service $TIMESCALE_SERVICE --timescale-db $TIMESCALE_DB --timescale-user $TIMESCALE_USER --docker-bin $DOCKER_BIN --output-file $SCHEMA_EVIDENCE --dry-run")
   else
     steps_cmd+=("bash $SCHEMA_INIT_SCRIPT --compose-file $COMPOSE_FILE --project-name $PROJECT_NAME --env-file $ENV_FILE --schema-file $SCHEMA_FILE --timescale-service $TIMESCALE_SERVICE --timescale-db $TIMESCALE_DB --timescale-user $TIMESCALE_USER --docker-bin $DOCKER_BIN --output-file $SCHEMA_EVIDENCE --execute")
+  fi
+  if [[ "$PROFILE" == "single-host-m2" ]]; then
+    steps_name+=("clickhouse_schema_init")
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+      steps_cmd+=("bash $CLICKHOUSE_SCHEMA_INIT_SCRIPT --compose-file $COMPOSE_FILE --project-name $PROJECT_NAME --env-file $ENV_FILE --docker-bin $DOCKER_BIN --output-file $CLICKHOUSE_SCHEMA_EVIDENCE --dry-run")
+    else
+      steps_cmd+=("bash $CLICKHOUSE_SCHEMA_INIT_SCRIPT --compose-file $COMPOSE_FILE --project-name $PROJECT_NAME --env-file $ENV_FILE --docker-bin $DOCKER_BIN --output-file $CLICKHOUSE_SCHEMA_EVIDENCE --execute")
+    fi
+    steps_name+=("kafka_topics_init")
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+      steps_cmd+=("bash $KAFKA_TOPICS_INIT_SCRIPT --compose-file $COMPOSE_FILE --project-name $PROJECT_NAME --env-file $ENV_FILE --docker-bin $DOCKER_BIN --output-file $KAFKA_TOPICS_EVIDENCE --dry-run")
+    else
+      steps_cmd+=("bash $KAFKA_TOPICS_INIT_SCRIPT --compose-file $COMPOSE_FILE --project-name $PROJECT_NAME --env-file $ENV_FILE --docker-bin $DOCKER_BIN --output-file $KAFKA_TOPICS_EVIDENCE --execute")
+    fi
   fi
   steps_name+=("health_check")
   steps_cmd+=("python3 $HEALTH_CHECK_SCRIPT --compose-file $COMPOSE_FILE --project-name $PROJECT_NAME --docker-bin $DOCKER_BIN --report-json $HEALTH_REPORT (timeout=${HEALTH_WAIT_TIMEOUT_SEC}s interval=${HEALTH_WAIT_POLL_INTERVAL_SEC}s)")
@@ -294,6 +354,8 @@ mkdir -p "$(dirname "$OUTPUT_FILE")"
   echo "PRODLIKE_ENV_FILE=$ENV_FILE"
   echo "PRODLIKE_HEALTH_REPORT=$HEALTH_REPORT"
   echo "PRODLIKE_TIMESCALE_SCHEMA_EVIDENCE=$SCHEMA_EVIDENCE"
+  echo "PRODLIKE_CLICKHOUSE_SCHEMA_EVIDENCE=$CLICKHOUSE_SCHEMA_EVIDENCE"
+  echo "PRODLIKE_KAFKA_TOPICS_EVIDENCE=$KAFKA_TOPICS_EVIDENCE"
   echo "PRODLIKE_HEALTH_WAIT_TIMEOUT_SEC=$HEALTH_WAIT_TIMEOUT_SEC"
   echo "PRODLIKE_HEALTH_WAIT_POLL_INTERVAL_SEC=$HEALTH_WAIT_POLL_INTERVAL_SEC"
   for idx in "${!steps_status[@]}"; do

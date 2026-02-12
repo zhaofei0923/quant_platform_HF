@@ -137,3 +137,35 @@ def test_data_pipeline_emits_observability_metrics_and_alerts(tmp_path: Path) ->
     assert any(
         item.code == "PIPELINE_EXPORT_EMPTY" and item.severity == "warn" for item in snapshot.alerts
     )
+
+
+def test_data_pipeline_run_once_with_parquet_enabled(tmp_path: Path) -> None:
+    db_path = tmp_path / "analytics.duckdb"
+    _seed_store(db_path).close()
+
+    config = DataPipelineConfig(
+        analytics_db_path=db_path,
+        export_dir=tmp_path / "exports",
+        archive=ArchiveConfig(
+            endpoint="localhost:9000",
+            access_key="minioadmin",
+            secret_key="minioadmin",
+            bucket="quant-archive",
+            local_fallback_dir=tmp_path / "archive",
+        ),
+        prefer_duckdb=False,
+        parquet_export_enabled=True,
+        parquet_tables=("market_snapshots",),
+    )
+    process = DataPipelineProcess(config)
+    report = process.run_once()
+    process.close()
+
+    manifest = json.loads(report.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["parquet_export_enabled"] is True
+    assert "market_snapshots" in manifest["parquet_partitions"]
+    assert manifest["parquet_partitions"]["market_snapshots"]
+
+    archive_root = tmp_path / "archive" / "quant-archive"
+    archived = [item.as_posix() for item in archive_root.rglob("*") if item.is_file()]
+    assert any("/parquet/" in item for item in archived)

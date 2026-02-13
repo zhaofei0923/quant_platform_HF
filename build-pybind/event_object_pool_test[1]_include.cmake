@@ -1,0 +1,5 @@
+if(EXISTS "/home/kevin0923/workspace/quant_platform_HF/build-pybind/event_object_pool_test[1]_tests.cmake")
+  include("/home/kevin0923/workspace/quant_platform_HF/build-pybind/event_object_pool_test[1]_tests.cmake")
+else()
+  add_test(event_object_pool_test_NOT_BUILT event_object_pool_test_NOT_BUILT)
+endif()

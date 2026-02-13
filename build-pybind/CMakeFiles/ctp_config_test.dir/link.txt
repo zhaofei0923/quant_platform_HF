@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/ctp_config_test.dir/tests/unit/core/ctp_config_test.cpp.o -o ctp_config_test  libquant_hft_core.a lib/libgtest_main.a -lpthread -ldl lib/libgtest.a 

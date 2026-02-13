@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/ctp_position_ledger_test.dir/tests/unit/services/ctp_position_ledger_test.cpp.o -o ctp_position_ledger_test  libquant_hft_core.a lib/libgtest_main.a -lpthread -ldl lib/libgtest.a 

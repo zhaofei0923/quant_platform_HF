@@ -25,6 +25,62 @@ Use this fixed template for every sprint update:
 Completion rule:
 - A sprint is marked `done` only when code, tests, and `develop/` status updates are all completed.
 
+## Sprint R1 (2026-02-12 ~ 2026-02-26)
+- Objective:
+  - establish PR-6.1 backtest data foundation with parquet conversion, validation, DVC config, and C++ parquet feed abstraction
+- Scope:
+  - `scripts/data/convert_backtest_csv_to_parquet.py`
+  - `scripts/data/validate_backtest_parquet_dataset.py`
+  - `python/tests/test_convert_backtest_csv_to_parquet_script.py`
+  - `python/tests/test_validate_backtest_parquet_dataset_script.py`
+  - `.dvc/config`
+  - `dvc.yaml`
+  - `infra/dvc/README.md`
+  - `include/quant_hft/backtest/parquet_data_feed.h`
+  - `src/core/backtest/parquet_data_feed.cpp`
+  - `tests/unit/backtest/parquet_data_feed_test.cpp`
+  - `docs/research/PR6_1_DATA_FOUNDATION.md`
+- Test Evidence:
+  - [x] `.venv/bin/pytest -q python/tests/test_convert_backtest_csv_to_parquet_script.py python/tests/test_validate_backtest_parquet_dataset_script.py`
+  - [x] `cmake --build build --target parquet_data_feed_test -j$(nproc)`
+  - [x] `ctest --test-dir build -R 'ParquetDataFeedTest|parquet_data_feed_test' --output-on-failure`
+- Develop Docs Synced:
+  - [x] `docs/IMPLEMENTATION_PROGRESS.md`
+  - [x] `docs/research/PR6_1_DATA_FOUNDATION.md`
+- Status:
+  - `done`
+
+## Sprint R2 (2026-02-12 ~ 2026-02-26)
+- Objective:
+  - unify data access abstraction for backtest/live with DataFeed interface and complete PR-6.2 bindings
+- Scope:
+  - `include/quant_hft/interfaces/data_feed.h`
+  - `include/quant_hft/common/timestamp.h`
+  - `include/quant_hft/models/tick.h`
+  - `include/quant_hft/models/bar.h`
+  - `include/quant_hft/backtest/backtest_data_feed.h`
+  - `include/quant_hft/backtest/live_data_feed.h`
+  - `src/backtest/backtest_data_feed.cpp`
+  - `src/backtest/live_data_feed.cpp`
+  - `src/binding/data_feed_wrapper.cpp`
+  - `python/quant_hft/data_feed.py`
+  - `python/tests/test_backtest_data_feed.py`
+  - `tests/unit/backtest/backtest_data_feed_test.cpp`
+  - `tests/unit/backtest/live_data_feed_test.cpp`
+  - `docs/research/data_feed.md`
+  - `CMakeLists.txt`
+- Test Evidence:
+  - [x] `cmake -S . -B build -DQUANT_HFT_BUILD_TESTS=ON`
+  - [x] `cmake --build build --target parquet_data_feed_test backtest_data_feed_test live_data_feed_test -j$(nproc)`
+  - [x] `ctest --test-dir build --output-on-failure -R 'ParquetDataFeedTest|BacktestDataFeedTest|LiveDataFeedTest|backtest_data_feed_test|live_data_feed_test'`
+  - [x] `.venv/bin/ruff check python/quant_hft/data_feed.py python/tests/test_backtest_data_feed.py`
+  - [x] `.venv/bin/pytest -q python/tests/test_backtest_data_feed.py`
+- Develop Docs Synced:
+  - [x] `docs/IMPLEMENTATION_PROGRESS.md`
+  - [x] `docs/research/data_feed.md`
+- Status:
+  - `done`
+
 ## Sprint M2 (2026-02-12 ~ 2026-02-26)
 - Objective:
   - single-host enhancement with Kafka market bus, ClickHouse realtime analytics, Debezium CDC, and parquet lifecycle governance.

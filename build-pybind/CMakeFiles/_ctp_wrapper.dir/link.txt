@@ -1,0 +1,1 @@
+/usr/bin/c++ -fPIC -flto=auto -shared  -o /home/kevin0923/workspace/quant_platform_HF/python/quant_hft/_ctp_wrapper.cpython-312-x86_64-linux-gnu.so CMakeFiles/_ctp_wrapper.dir/python/bindings/ctp_wrapper_module.cpp.o  libquant_hft_core.a -lpthread -ldl 

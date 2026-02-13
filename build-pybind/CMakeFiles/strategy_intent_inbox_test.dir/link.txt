@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/strategy_intent_inbox_test.dir/tests/unit/core/strategy_intent_inbox_test.cpp.o -o strategy_intent_inbox_test  libquant_hft_core.a lib/libgtest_main.a -lpthread -ldl lib/libgtest.a 

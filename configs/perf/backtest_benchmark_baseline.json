@@ -1,0 +1,8 @@
+{
+  "benchmark": "backtest_deterministic",
+  "max_ticks": 1200,
+  "runs": 3,
+  "warmup_runs": 1,
+  "min_ticks_read": 1000,
+  "max_p95_ms": 2500.0
+}

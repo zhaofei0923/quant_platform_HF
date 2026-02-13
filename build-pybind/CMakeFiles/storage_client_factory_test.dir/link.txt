@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/storage_client_factory_test.dir/tests/unit/core/storage_client_factory_test.cpp.o -o storage_client_factory_test  libquant_hft_core.a lib/libgtest_main.a -lpthread -ldl lib/libgtest.a 

@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/daily_settlement_service_test.dir/tests/unit/services/daily_settlement_service_test.cpp.o -o daily_settlement_service_test  libquant_hft_core.a lib/libgtest_main.a -lpthread -ldl lib/libgtest.a 

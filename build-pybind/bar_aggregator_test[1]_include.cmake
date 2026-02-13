@@ -1,0 +1,5 @@
+if(EXISTS "/home/kevin0923/workspace/quant_platform_HF/build-pybind/bar_aggregator_test[1]_tests.cmake")
+  include("/home/kevin0923/workspace/quant_platform_HF/build-pybind/bar_aggregator_test[1]_tests.cmake")
+else()
+  add_test(bar_aggregator_test_NOT_BUILT bar_aggregator_test_NOT_BUILT)
+endif()

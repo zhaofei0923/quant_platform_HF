@@ -1,0 +1,1 @@
+{"run_id": "factor-eval-ci", "template": "trend", "factor_id": "factor-smoke", "spec_signature": "0bc2b3b90b917c43288a9a1e57499757ac7add7acff5aa8fe28bdb21fcec641d", "metrics": {"total_pnl": 0.0, "max_drawdown": 0.0, "win_rate": 0.0, "fill_rate": 0.0, "capital_efficiency": 0.0}, "created_ts_ns": 1770946195889265970}

@@ -1,0 +1,5 @@
+if(EXISTS "/home/kevin0923/workspace/quant_platform_HF/build-pybind/tcp_redis_hash_client_test[1]_tests.cmake")
+  include("/home/kevin0923/workspace/quant_platform_HF/build-pybind/tcp_redis_hash_client_test[1]_tests.cmake")
+else()
+  add_test(tcp_redis_hash_client_test_NOT_BUILT tcp_redis_hash_client_test_NOT_BUILT)
+endif()

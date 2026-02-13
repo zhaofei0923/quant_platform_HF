@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/fixed_decimal_test.dir/tests/unit/core/fixed_decimal_test.cpp.o -o fixed_decimal_test  libquant_hft_core.a lib/libgtest_main.a -lpthread -ldl lib/libgtest.a 

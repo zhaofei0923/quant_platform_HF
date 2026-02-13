@@ -13,6 +13,18 @@ from .contracts import (
     Trade,
 )
 
+try:
+    from .data_feed import BacktestDataFeed, LiveDataFeed, Timestamp
+except ModuleNotFoundError:  # pragma: no cover
+    BacktestDataFeed = None  # type: ignore[assignment]
+    LiveDataFeed = None  # type: ignore[assignment]
+    Timestamp = None  # type: ignore[assignment]
+
+try:
+    from .strategy import Strategy
+except (ImportError, AttributeError):  # pragma: no cover
+    from .strategy import StrategyBase as Strategy
+
 __all__ = [
     "Account",
     "Bar",
@@ -24,4 +36,8 @@ __all__ = [
     "StateSnapshot7D",
     "Tick",
     "Trade",
+    "BacktestDataFeed",
+    "LiveDataFeed",
+    "Timestamp",
+    "Strategy",
 ]

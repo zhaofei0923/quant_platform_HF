@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/order_manager_test.dir/tests/unit/services/order_manager_test.cpp.o -o order_manager_test  libquant_hft_core.a lib/libgtest_main.a -lpthread -ldl lib/libgtest.a 

@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/wal_replay_loader_test.dir/tests/unit/core/wal_replay_loader_test.cpp.o -o wal_replay_loader_test  libquant_hft_core.a lib/libgtest_main.a -lpthread -ldl lib/libgtest.a 

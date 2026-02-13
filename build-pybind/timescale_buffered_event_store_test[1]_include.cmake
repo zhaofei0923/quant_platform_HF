@@ -1,0 +1,5 @@
+if(EXISTS "/home/kevin0923/workspace/quant_platform_HF/build-pybind/timescale_buffered_event_store_test[1]_tests.cmake")
+  include("/home/kevin0923/workspace/quant_platform_HF/build-pybind/timescale_buffered_event_store_test[1]_tests.cmake")
+else()
+  add_test(timescale_buffered_event_store_test_NOT_BUILT timescale_buffered_event_store_test_NOT_BUILT)
+endif()

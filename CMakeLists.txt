@@ -12,11 +12,19 @@ option(QUANT_HFT_ENABLE_CTP_REAL_API "Enable CTP v6.7.11 real API integration" O
 option(QUANT_HFT_ENABLE_REDIS_EXTERNAL "Enable external Redis driver path" OFF)
 option(QUANT_HFT_ENABLE_TIMESCALE_EXTERNAL "Enable external TimescaleDB driver path" OFF)
 option(QUANT_HFT_ENABLE_PYBIND "Build pybind11 CTP wrapper module" OFF)
+option(QUANT_HFT_ENABLE_ARROW_PARQUET "Enable native Arrow/Parquet C++ reader" OFF)
 option(QUANT_HFT_WITH_METRICS "Enable Prometheus metrics exporter" OFF)
 set(CTP_V6711_DIR "${CMAKE_SOURCE_DIR}/ctp_api/v6.7.11_20250617_api_traderapi_se_linux64"
     CACHE PATH "Path to CTP v6.7.11 API directory")
 
 add_library(quant_hft_core STATIC
+    src/backtest/broker.cpp
+    src/backtest/backtest_data_feed.cpp
+    src/backtest/engine.cpp
+    src/backtest/performance.cpp
+    src/backtest/live_data_feed.cpp
+    src/strategy/base_strategy.cpp
+    src/core/backtest/parquet_data_feed.cpp
     src/core/common/strategy_intent_codec.cpp
     src/core/common/strategy_intent_inbox.cpp
     src/core/common/event_dispatcher.cpp
@@ -77,6 +85,26 @@ add_library(quant_hft_core STATIC
 target_include_directories(quant_hft_core PUBLIC include)
 target_compile_options(quant_hft_core PRIVATE -Wall -Wextra -Wpedantic)
 target_link_libraries(quant_hft_core PUBLIC pthread dl)
+set_target_properties(quant_hft_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+if(QUANT_HFT_ENABLE_ARROW_PARQUET)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(ARROW QUIET arrow)
+    pkg_check_modules(PARQUET QUIET parquet)
+
+    if(NOT ARROW_FOUND OR NOT PARQUET_FOUND)
+        message(FATAL_ERROR
+            "Arrow/Parquet development libraries are required when QUANT_HFT_ENABLE_ARROW_PARQUET=ON.\n"
+            "Install example (Ubuntu): sudo apt-get update && sudo apt-get install -y libarrow-dev libparquet-dev")
+    endif()
+
+    target_compile_definitions(quant_hft_core PUBLIC QUANT_HFT_ENABLE_ARROW_PARQUET=1)
+    target_include_directories(quant_hft_core PUBLIC ${ARROW_INCLUDE_DIRS} ${PARQUET_INCLUDE_DIRS})
+    target_link_libraries(quant_hft_core PUBLIC ${ARROW_LIBRARIES} ${PARQUET_LIBRARIES})
+    target_link_directories(quant_hft_core PUBLIC ${ARROW_LIBRARY_DIRS} ${PARQUET_LIBRARY_DIRS})
+else()
+    target_compile_definitions(quant_hft_core PUBLIC QUANT_HFT_ENABLE_ARROW_PARQUET=0)
+endif()
 
 set(QUANT_HFT_METRICS_ACTIVE OFF)
 if(QUANT_HFT_WITH_METRICS)
@@ -158,6 +186,18 @@ if(QUANT_HFT_ENABLE_PYBIND)
     target_link_libraries(_ctp_wrapper PRIVATE quant_hft_core)
     set_target_properties(_ctp_wrapper PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/python/quant_hft")
+
+    pybind11_add_module(quant_hft_data_feed MODULE src/binding/data_feed_wrapper.cpp)
+    target_include_directories(quant_hft_data_feed PRIVATE include)
+    target_link_libraries(quant_hft_data_feed PRIVATE quant_hft_core)
+    set_target_properties(quant_hft_data_feed PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/python")
+
+    pybind11_add_module(quant_hft_strategy MODULE src/binding/strategy_wrapper.cpp)
+    target_include_directories(quant_hft_strategy PRIVATE include)
+    target_link_libraries(quant_hft_strategy PRIVATE quant_hft_core)
+    set_target_properties(quant_hft_strategy PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/python")
 endif()
 
 if(QUANT_HFT_BUILD_TESTS)
@@ -315,6 +355,27 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(metric_registry_test tests/unit/monitoring/metric_registry_test.cpp)
     target_link_libraries(metric_registry_test PRIVATE quant_hft_core GTest::gtest_main)
 
+    add_executable(parquet_data_feed_test tests/unit/backtest/parquet_data_feed_test.cpp)
+    target_link_libraries(parquet_data_feed_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(backtest_data_feed_test tests/unit/backtest/backtest_data_feed_test.cpp)
+    target_link_libraries(backtest_data_feed_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(live_data_feed_test tests/unit/backtest/live_data_feed_test.cpp)
+    target_link_libraries(live_data_feed_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(broker_test tests/unit/backtest/broker_test.cpp)
+    target_link_libraries(broker_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(engine_test tests/unit/backtest/engine_test.cpp)
+    target_link_libraries(engine_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(performance_test tests/unit/backtest/performance_test.cpp)
+    target_link_libraries(performance_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(base_strategy_test tests/unit/strategy/base_strategy_test.cpp)
+    target_link_libraries(base_strategy_test PRIVATE quant_hft_core GTest::gtest_main)
+
     if(QUANT_HFT_METRICS_ACTIVE)
         add_executable(exporter_test tests/unit/monitoring/exporter_test.cpp)
         target_link_libraries(exporter_test PRIVATE quant_hft_core GTest::gtest_main)
@@ -368,6 +429,13 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(daily_settlement_service_test)
     gtest_discover_tests(rule_market_state_engine_test)
     gtest_discover_tests(metric_registry_test)
+    gtest_discover_tests(parquet_data_feed_test)
+    gtest_discover_tests(backtest_data_feed_test)
+    gtest_discover_tests(live_data_feed_test)
+    gtest_discover_tests(broker_test)
+    gtest_discover_tests(engine_test)
+    gtest_discover_tests(performance_test)
+    gtest_discover_tests(base_strategy_test)
     if(QUANT_HFT_METRICS_ACTIVE)
         gtest_discover_tests(exporter_test)
     endif()

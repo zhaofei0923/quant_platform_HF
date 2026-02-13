@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/backtest_data_feed_test.dir/tests/unit/backtest/backtest_data_feed_test.cpp.o -o backtest_data_feed_test  libquant_hft_core.a lib/libgtest_main.a -lpthread -ldl lib/libgtest.a 

@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/bar_aggregator_test.dir/tests/unit/services/bar_aggregator_test.cpp.o -o bar_aggregator_test  libquant_hft_core.a lib/libgtest_main.a -lpthread -ldl lib/libgtest.a 

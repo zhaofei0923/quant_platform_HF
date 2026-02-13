@@ -1,0 +1,5 @@
+if(EXISTS "/home/kevin0923/workspace/quant_platform_HF/build-pybind/fixed_decimal_test[1]_tests.cmake")
+  include("/home/kevin0923/workspace/quant_platform_HF/build-pybind/fixed_decimal_test[1]_tests.cmake")
+else()
+  add_test(fixed_decimal_test_NOT_BUILT fixed_decimal_test_NOT_BUILT)
+endif()

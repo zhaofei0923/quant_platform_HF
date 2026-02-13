@@ -1,0 +1,18 @@
+stages:
+  backtest_parquet_convert:
+    cmd: python3 scripts/data/convert_backtest_csv_to_parquet.py --execute --input backtest_data --output-dir runtime/backtest/parquet --report-json docs/results/backtest_parquet_conversion_report.json
+    deps:
+      - backtest_data
+      - scripts/data/convert_backtest_csv_to_parquet.py
+    outs:
+      - runtime/backtest/parquet
+    metrics:
+      - docs/results/backtest_parquet_conversion_report.json
+
+  backtest_parquet_validate:
+    cmd: python3 scripts/data/validate_backtest_parquet_dataset.py --dataset-root runtime/backtest/parquet --report-json docs/results/backtest_parquet_validation_report.json --require-non-empty
+    deps:
+      - runtime/backtest/parquet
+      - scripts/data/validate_backtest_parquet_dataset.py
+    metrics:
+      - docs/results/backtest_parquet_validation_report.json

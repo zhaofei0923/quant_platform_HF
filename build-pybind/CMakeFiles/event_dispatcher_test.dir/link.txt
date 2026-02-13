@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/event_dispatcher_test.dir/tests/unit/core/event_dispatcher_test.cpp.o -o event_dispatcher_test  libquant_hft_core.a lib/libgtest_main.a -lpthread -ldl lib/libgtest.a 

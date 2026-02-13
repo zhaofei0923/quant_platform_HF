@@ -1,0 +1,11 @@
+{
+  "generated_ts_ns": 1770946195581099989,
+  "duration_ms": 6.398422,
+  "success": true,
+  "input_csv": "backtest_data/rb.csv",
+  "output_csv": "runtime/benchmarks/backtest/rb_ci_sample.csv",
+  "max_ticks": 1200,
+  "rows_written": 1200,
+  "first_instrument": "rb2305",
+  "last_instrument": "rb2305"
+}

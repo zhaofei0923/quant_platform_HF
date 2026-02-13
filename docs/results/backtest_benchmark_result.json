@@ -1,0 +1,15 @@
+{
+  "benchmark": "backtest_deterministic",
+  "csv_path": "runtime/benchmarks/backtest/rb_ci_sample.csv",
+  "runs": 3,
+  "warmup_runs": 1,
+  "max_ticks": 1200,
+  "mean_ms": 17.113846666666664,
+  "p95_ms": 17.176471,
+  "max_p95_ms_threshold": 2500.0,
+  "min_ticks_read": 1200,
+  "max_ticks_read": 1200,
+  "min_ticks_required": 1000,
+  "sample_total_pnl": 0.0,
+  "passed": true
+}

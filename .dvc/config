@@ -1,0 +1,7 @@
+[core]
+    remote = backtest-s3
+['remote "backtest-s3"']
+    url = s3://quant-backtest-data
+    endpointurl = https://s3.amazonaws.com
+    region = us-east-1
+    use_ssl = true

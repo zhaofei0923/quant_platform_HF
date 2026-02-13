@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/market_bus_producer_test.dir/tests/unit/core/market_bus_producer_test.cpp.o -o market_bus_producer_test  libquant_hft_core.a lib/libgtest_main.a -lpthread -ldl lib/libgtest.a 

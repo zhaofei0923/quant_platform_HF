@@ -1,0 +1,5 @@
+if(EXISTS "/home/kevin0923/workspace/quant_platform_HF/build-pybind/basic_risk_engine_test[1]_tests.cmake")
+  include("/home/kevin0923/workspace/quant_platform_HF/build-pybind/basic_risk_engine_test[1]_tests.cmake")
+else()
+  add_test(basic_risk_engine_test_NOT_BUILT basic_risk_engine_test_NOT_BUILT)
+endif()

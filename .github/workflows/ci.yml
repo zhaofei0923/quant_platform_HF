@@ -42,6 +42,18 @@ jobs:
           python scripts/build/verify_contract_sync.py
           python scripts/build/verify_develop_requirements.py
           pytest python/tests -q
+      - name: Backtest Benchmark Data Prep + Gate
+        run: |
+          mkdir -p runtime/benchmarks/backtest docs/results
+          python scripts/perf/prepare_backtest_benchmark_data.py \
+            --input-csv backtest_data/rb.csv \
+            --output-csv runtime/benchmarks/backtest/rb_ci_sample.csv \
+            --max-ticks 1200 \
+            --report-json docs/results/backtest_benchmark_data_report.json
+          python scripts/perf/run_backtest_benchmark.py \
+            --csv-path runtime/benchmarks/backtest/rb_ci_sample.csv \
+            --baseline configs/perf/backtest_benchmark_baseline.json \
+            --result-json docs/results/backtest_benchmark_result.json
       - name: Ops Smoke
         run: |
           mkdir -p runtime docs/results

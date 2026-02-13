@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/self_trade_risk_engine_test.dir/tests/unit/services/self_trade_risk_engine_test.cpp.o -o self_trade_risk_engine_test  libquant_hft_core.a lib/libgtest_main.a -lpthread -ldl lib/libgtest.a 

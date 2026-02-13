@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/execution_router_test.dir/tests/unit/services/execution_router_test.cpp.o -o execution_router_test  libquant_hft_core.a lib/libgtest_main.a -lpthread -ldl lib/libgtest.a 

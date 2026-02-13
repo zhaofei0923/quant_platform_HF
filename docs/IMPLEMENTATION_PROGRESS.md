@@ -25,6 +25,41 @@ Use this fixed template for every sprint update:
 Completion rule:
 - A sprint is marked `done` only when code, tests, and `develop/` status updates are all completed.
 
+## Sprint R7 (2026-02-13 ~ 2026-02-27)
+- Objective:
+  - complete Task-7 live-simulation integration and consistency verification across PR-7.1 ~ PR-7.3
+- Scope:
+  - `python/quant_hft/simnow/__init__.py`
+  - `python/quant_hft/simnow/adapters.py`
+  - `python/quant_hft/simnow/config.py`
+  - `python/quant_hft/simnow/runner.py`
+  - `python/quant_hft/simnow/reporter.py`
+  - `scripts/simnow/run_simnow_compare.py`
+  - `scripts/perf/run_simnow_weekly_stress.py`
+  - `.github/workflows/simnow_compare_daily.yml`
+  - `.github/workflows/simnow_weekly_stress.yml`
+  - `.env.example`
+  - `python/tests/test_simnow_compare_runner.py`
+  - `python/tests/test_run_simnow_compare_script.py`
+  - `python/tests/test_simnow_compare_reporter.py`
+  - `python/tests/test_run_simnow_weekly_stress_script.py`
+  - `docs/research/PR7_1_SIMNOW_COMPARE.md`
+  - `docs/research/PR7_2_ATTRIBUTION_REPORTING.md`
+  - `docs/research/PR7_3_WEEKLY_STRESS_COLLECTION.md`
+- Test Evidence:
+  - [x] `.venv/bin/python -m ruff check python/quant_hft/simnow scripts/simnow python/tests/test_simnow_compare_runner.py python/tests/test_run_simnow_compare_script.py python/tests/test_simnow_compare_reporter.py`
+  - [x] `.venv/bin/python -m pytest python/tests/test_simnow_compare_runner.py python/tests/test_run_simnow_compare_script.py python/tests/test_simnow_compare_reporter.py -q`
+  - [x] `.venv/bin/python -m ruff check scripts/perf/run_simnow_weekly_stress.py python/tests/test_run_simnow_weekly_stress_script.py`
+  - [x] `.venv/bin/python -m pytest python/tests/test_run_simnow_weekly_stress_script.py -q`
+  - [x] `.venv/bin/python -m pytest python/tests/test_simnow_compare_runner.py python/tests/test_run_simnow_compare_script.py python/tests/test_simnow_compare_reporter.py python/tests/test_run_simnow_weekly_stress_script.py -q`
+- Develop Docs Synced:
+  - [x] `docs/IMPLEMENTATION_PROGRESS.md`
+  - [x] `docs/research/PR7_1_SIMNOW_COMPARE.md`
+  - [x] `docs/research/PR7_2_ATTRIBUTION_REPORTING.md`
+  - [x] `docs/research/PR7_3_WEEKLY_STRESS_COLLECTION.md`
+- Status:
+  - `done`
+
 ## Sprint R1 (2026-02-12 ~ 2026-02-26)
 - Objective:
   - establish PR-6.1 backtest data foundation with parquet conversion, validation, DVC config, and C++ parquet feed abstraction

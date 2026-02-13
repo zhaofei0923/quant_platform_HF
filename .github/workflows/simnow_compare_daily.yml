@@ -1,0 +1,60 @@
+name: SimNow Compare Daily
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Force dry-run mode"
+        required: false
+        default: "true"
+  schedule:
+    - cron: "20 22 * * 1-5"
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+      - name: Run SimNow Compare
+        env:
+          CTP_SIM_BROKER_ID: ${{ secrets.CTP_SIM_BROKER_ID }}
+          CTP_SIM_USER_ID: ${{ secrets.CTP_SIM_USER_ID }}
+          CTP_SIM_INVESTOR_ID: ${{ secrets.CTP_SIM_INVESTOR_ID }}
+          CTP_SIM_PASSWORD: ${{ secrets.CTP_SIM_PASSWORD }}
+          CTP_SIM_AUTH_CODE: ${{ secrets.CTP_SIM_AUTH_CODE }}
+          CTP_SIM_APP_ID: ${{ secrets.CTP_SIM_APP_ID }}
+          CTP_SIM_MARKET_FRONT: ${{ secrets.CTP_SIM_MARKET_FRONT }}
+          CTP_SIM_TRADER_FRONT: ${{ secrets.CTP_SIM_TRADER_FRONT }}
+        run: |
+          mkdir -p docs/results runtime/simnow
+          EXTRA_ARGS=""
+          if [ "${{ github.event.inputs.dry_run || 'true' }}" = "true" ]; then
+            EXTRA_ARGS="--dry-run"
+          fi
+          python scripts/simnow/run_simnow_compare.py \
+            --config configs/sim/ctp.yaml \
+            --csv-path backtest_data/rb.csv \
+            --max-ticks 300 \
+            --output-json docs/results/simnow_compare_report.json \
+            --output-html docs/results/simnow_compare_report.html \
+            --sqlite-path runtime/simnow/simnow_compare.sqlite \
+            --strict \
+            ${EXTRA_ARGS}
+      - name: Upload compare artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: simnow-compare-report
+          path: |
+            docs/results/simnow_compare_report.json
+            docs/results/simnow_compare_report.html
+            runtime/simnow/simnow_compare.sqlite
+          if-no-files-found: warn
+          retention-days: 14

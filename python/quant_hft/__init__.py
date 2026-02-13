@@ -25,6 +25,11 @@ try:
 except (ImportError, AttributeError):  # pragma: no cover
     from .strategy import StrategyBase as Strategy
 
+try:
+    from . import simnow
+except Exception:  # pragma: no cover
+    simnow = None  # type: ignore[assignment]
+
 __all__ = [
     "Account",
     "Bar",
@@ -40,4 +45,5 @@ __all__ = [
     "LiveDataFeed",
     "Timestamp",
     "Strategy",
+    "simnow",
 ]

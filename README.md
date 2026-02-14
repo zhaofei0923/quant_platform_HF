@@ -8,6 +8,14 @@ Quantitative trading platform bootstrap using C++ core execution and Python stra
 ./scripts/build/bootstrap.sh
 ```
 
+在 Ubuntu 新机器上，脚本会自动安装缺失依赖并完成构建、测试、Python 环境准备。
+
+如需禁止自动安装（仅在依赖已齐全时使用）：
+
+```bash
+./scripts/build/bootstrap.sh --skip-install-deps
+```
+
 ## SimNow profiles
 
 - `configs/sim/ctp.yaml`: 7x24 SimNow (`182.254.243.31:40011/40001`)

@@ -46,3 +46,70 @@ def test_convert_backtest_csv_to_parquet_script_dry_run(tmp_path: Path) -> None:
     assert payload["total_rows"] == 2
     assert payload["output_file_count"] == 0
     assert payload["instrument_universe"] == ["rb2405"]
+
+
+def test_convert_backtest_csv_to_parquet_prefix_mismatch_warn_mode(tmp_path: Path) -> None:
+    csv_file = tmp_path / "rb.csv"
+    csv_file.write_text(
+        "\n".join(
+            [
+                "TradingDay,InstrumentID,UpdateTime,UpdateMillisec,LastPrice,Volume,BidPrice1,BidVolume1,AskPrice1,AskVolume1,AveragePrice,Turnover,OpenInterest",
+                "20260101,ag2405,09:00:00,0,5100.0,1,5099.0,1,5101.0,1,5100.0,0.0,0",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    report_file = tmp_path / "warn_report.json"
+    command = [
+        sys.executable,
+        "scripts/data/convert_backtest_csv_to_parquet.py",
+        "--input",
+        str(csv_file),
+        "--output-dir",
+        str(tmp_path / "out"),
+        "--report-json",
+        str(report_file),
+        "--dry-run",
+        "--filename-prefix-policy",
+        "warn",
+    ]
+
+    completed = subprocess.run(command, check=False, capture_output=True, text=True)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    payload = json.loads(report_file.read_text(encoding="utf-8"))
+    assert payload["success"] is True
+    assert payload["prefix_mismatch_count"] == 1
+
+
+def test_convert_backtest_csv_to_parquet_prefix_mismatch_error_mode(tmp_path: Path) -> None:
+    csv_file = tmp_path / "rb.csv"
+    csv_file.write_text(
+        "\n".join(
+            [
+                "TradingDay,InstrumentID,UpdateTime,UpdateMillisec,LastPrice,Volume,BidPrice1,BidVolume1,AskPrice1,AskVolume1,AveragePrice,Turnover,OpenInterest",
+                "20260101,ag2405,09:00:00,0,5100.0,1,5099.0,1,5101.0,1,5100.0,0.0,0",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    report_file = tmp_path / "error_report.json"
+    command = [
+        sys.executable,
+        "scripts/data/convert_backtest_csv_to_parquet.py",
+        "--input",
+        str(csv_file),
+        "--output-dir",
+        str(tmp_path / "out"),
+        "--report-json",
+        str(report_file),
+        "--dry-run",
+        "--filename-prefix-policy",
+        "error",
+    ]
+
+    completed = subprocess.run(command, check=False, capture_output=True, text=True)
+    assert completed.returncode == 2
+    payload = json.loads(report_file.read_text(encoding="utf-8"))
+    assert payload["success"] is False

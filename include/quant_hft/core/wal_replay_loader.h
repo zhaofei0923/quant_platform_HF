@@ -11,6 +11,7 @@ namespace quant_hft {
 struct WalReplayStats {
     std::size_t lines_total{0};
     std::size_t events_loaded{0};
+    std::size_t ignored_lines{0};
     std::size_t parse_errors{0};
     std::size_t state_rejected{0};
     std::size_t ledger_applied{0};

@@ -9,8 +9,14 @@ This document provides essential commands and style guidelines for agentic codin
 # Configure with tests enabled (default)
 cmake -S . -B build -DQUANT_HFT_BUILD_TESTS=ON
 
+# If mixed-toolchain issues appear in WSL, use isolated GCC build dir
+cmake -S . -B build-gcc -DQUANT_HFT_BUILD_TESTS=ON -DCMAKE_C_COMPILER=/usr/bin/gcc -DCMAKE_CXX_COMPILER=/usr/bin/g++
+
 # Build all targets
 cmake --build build -j$(nproc)
+
+# Build all targets in GCC-isolated directory
+cmake --build build-gcc -j$(nproc)
 
 # Build a specific target (e.g., core_engine)
 cmake --build build --target core_engine
@@ -101,6 +107,9 @@ python scripts/build/verify_develop_requirements.py
 
 # Performance benchmark smoke test
 python scripts/perf/run_hotpath_bench.py --benchmark-bin build/hotpath_benchmark --baseline configs/perf/baseline.json
+
+# One-command v3 acceptance (core_sim + WAL replay + evidence)
+scripts/ops/run_v3_acceptance.sh
 ```
 
 ## Code Style Guidelines

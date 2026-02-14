@@ -21,6 +21,23 @@ Quantitative trading platform bootstrap using C++ core execution and Python stra
   - `reconnect_initial_backoff_ms`
   - `reconnect_max_backoff_ms`
 
+## 使用 .env 注入 CTP_SIM_*（推荐）
+
+1) 复制模板并填写账号：
+```bash
+cp .env.example .env
+```
+2) 加载到当前 shell：
+```bash
+set -a && source .env && set +a
+```
+3) 启动前快速检查：
+```bash
+env | grep '^CTP_SIM_'
+```
+
+也可直接通过系统环境变量注入（CI/systemd/k8s），YAML 中 `${CTP_SIM_*}` 会在加载时自动替换。
+
 ## Core Engine config loading
 
 - `core_engine` now loads CTP runtime config from YAML at startup:
@@ -62,6 +79,19 @@ export QUANT_HFT_REDIS_PORT=6379
 ./build/core_engine configs/sim/ctp.yaml --run-seconds 30
 .venv/bin/python scripts/strategy/run_strategy.py --config configs/sim/ctp.yaml --strategy-id demo --run-seconds 30
 ```
+
+### Bar 分发端到端自检
+
+在发布前建议执行以下用例，验证 C++ 侧写入 `strategy:bar:*` 后，Python `strategy_runner` 能消费 bar 并触发 `on_bar` 产出 intent：
+
+```bash
+.venv/bin/python -m pytest python/tests/test_bar_dispatch_e2e.py python/tests/test_strategy_runner.py -q
+```
+
+通过标准：
+- 输出包含 `5 passed`
+- `test_bar_dispatch_e2e.py` 通过（键格式兼容）
+- `test_strategy_runner.py` 通过（单策略与多策略同合约分发）
 
 ## Real CTP probe (optional)
 

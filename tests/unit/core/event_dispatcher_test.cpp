@@ -61,4 +61,17 @@ TEST(EventDispatcherTest, SnapshotTracksProcessedCount) {
     EXPECT_GE(stats.processed_total, 2U);
 }
 
+TEST(EventDispatcherTest, QueueCapacityDropsWhenFull) {
+    EventDispatcher dispatcher(1, 1, 1);
+    ASSERT_TRUE(dispatcher.Post([] {}, EventPriority::kHigh));
+    EXPECT_FALSE(dispatcher.Post([] {}, EventPriority::kHigh));
+    ASSERT_TRUE(dispatcher.Post([] {}, EventPriority::kNormal));
+    EXPECT_FALSE(dispatcher.Post([] {}, EventPriority::kNormal));
+
+    const auto stats = dispatcher.GetStats();
+    EXPECT_EQ(stats.pending_high, 1U);
+    EXPECT_EQ(stats.pending_normal, 1U);
+    EXPECT_EQ(stats.dropped_total, 2U);
+}
+
 }  // namespace quant_hft

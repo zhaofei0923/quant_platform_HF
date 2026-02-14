@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -67,6 +68,36 @@ class StateOnlyStrategy(StrategyBase):
                 trace_id=f"{self.strategy_id}-{state_snapshot.ts_ns}",
             )
         ]
+
+    def on_order_event(self, ctx: dict[str, object], order_event: OrderEvent) -> None:
+        return None
+
+
+class OneShotBuyStrategy(StrategyBase):
+    def on_bar(
+        self, ctx: dict[str, object], bar_batch: list[dict[str, object]]
+    ) -> list[SignalIntent]:
+        if ctx.get("one_shot_done"):
+            return []
+        bar = bar_batch[0]
+        ctx["one_shot_done"] = True
+        return [
+            SignalIntent(
+                strategy_id=self.strategy_id,
+                instrument_id=str(bar["instrument_id"]),
+                side=Side.BUY,
+                offset=OffsetFlag.OPEN,
+                volume=1,
+                limit_price=float(bar["close"]),
+                ts_ns=int(bar["ts_ns"]),
+                trace_id=f"{self.strategy_id}-{bar['minute']}",
+            )
+        ]
+
+    def on_state(
+        self, ctx: dict[str, object], state_snapshot: StateSnapshot7D
+    ) -> list[SignalIntent]:
+        return []
 
     def on_order_event(self, ctx: dict[str, object], order_event: OrderEvent) -> None:
         return None
@@ -286,3 +317,132 @@ def test_build_backtest_spec_from_template(tmp_path: Path) -> None:
 def test_build_backtest_spec_from_unknown_template_raises() -> None:
     with pytest.raises(ValueError):
         build_backtest_spec_from_template("unknown-template", csv_path="backtest_data/rb.csv")
+
+
+def test_core_sim_strict_rollover_records_event_and_slippage(tmp_path: Path) -> None:
+    csv_path = tmp_path / "rollover_strict.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "TradingDay,InstrumentID,UpdateTime,UpdateMillisec,LastPrice,Volume,BidPrice1,BidVolume1,AskPrice1,AskVolume1,AveragePrice,Turnover,OpenInterest",
+                "20230103,rb2305,09:00:01,0,100.0,1,99.0,10,101.0,10,100.0,0.0,100",
+                "20230103,rb2305,09:01:01,0,101.0,2,100.0,10,102.0,10,101.0,0.0,100",
+                "20230103,rb2310,09:02:01,0,110.0,3,109.0,10,111.0,10,110.0,0.0,100",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    runtime = StrategyRuntime()
+    runtime.add_strategy(OneShotBuyStrategy("rollover-strict"))
+    result = run_backtest_spec(
+        BacktestRunSpec(
+            csv_path=str(csv_path),
+            engine_mode="core_sim",
+            rollover_mode="strict",
+            rollover_price_mode="bbo",
+            rollover_slippage_bps=10.0,
+            deterministic_fills=True,
+            max_ticks=100,
+            run_id="core-sim-strict",
+        ),
+        runtime,
+        ctx={},
+    )
+
+    assert result.deterministic is not None
+    events = result.deterministic.rollover_events
+    assert len(events) == 1
+    assert events[0]["from_instrument"] == "rb2305"
+    assert events[0]["to_instrument"] == "rb2310"
+    assert events[0]["mode"] == "strict"
+    assert events[0]["price_mode"] == "bbo"
+    assert [item["action"] for item in result.deterministic.rollover_actions] == ["close", "open"]
+    assert result.deterministic.rollover_slippage_cost > 0.0
+
+
+def test_core_sim_carry_rollover_has_zero_slippage(tmp_path: Path) -> None:
+    csv_path = tmp_path / "rollover_carry.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "TradingDay,InstrumentID,UpdateTime,UpdateMillisec,LastPrice,Volume,BidPrice1,BidVolume1,AskPrice1,AskVolume1,AveragePrice,Turnover,OpenInterest",
+                "20230103,rb2305,09:00:01,0,100.0,1,99.0,10,101.0,10,100.0,0.0,100",
+                "20230103,rb2305,09:01:01,0,101.0,2,100.0,10,102.0,10,101.0,0.0,100",
+                "20230103,rb2310,09:02:01,0,110.0,3,109.0,10,111.0,10,110.0,0.0,100",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    runtime = StrategyRuntime()
+    runtime.add_strategy(OneShotBuyStrategy("rollover-carry"))
+    result = run_backtest_spec(
+        BacktestRunSpec(
+            csv_path=str(csv_path),
+            engine_mode="core_sim",
+            rollover_mode="carry",
+            rollover_price_mode="last",
+            rollover_slippage_bps=50.0,
+            deterministic_fills=True,
+            max_ticks=100,
+            run_id="core-sim-carry",
+        ),
+        runtime,
+        ctx={},
+    )
+
+    assert result.deterministic is not None
+    events = result.deterministic.rollover_events
+    assert len(events) == 1
+    assert events[0]["mode"] == "carry"
+    assert events[0]["price_mode"] == "last"
+    assert [item["action"] for item in result.deterministic.rollover_actions] == ["carry"]
+    assert result.deterministic.rollover_slippage_cost == pytest.approx(0.0)
+
+
+def test_core_sim_rollover_actions_match_wal_records(tmp_path: Path) -> None:
+    csv_path = tmp_path / "rollover_wal.csv"
+    wal_path = tmp_path / "rollover.wal"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "TradingDay,InstrumentID,UpdateTime,UpdateMillisec,LastPrice,Volume,BidPrice1,BidVolume1,AskPrice1,AskVolume1,AveragePrice,Turnover,OpenInterest",
+                "20230103,rb2305,09:00:01,0,100.0,1,99.0,10,101.0,10,100.0,0.0,100",
+                "20230103,rb2305,09:01:01,0,101.0,2,100.0,10,102.0,10,101.0,0.0,100",
+                "20230103,rb2310,09:02:01,0,110.0,3,109.0,10,111.0,10,110.0,0.0,100",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    runtime = StrategyRuntime()
+    runtime.add_strategy(OneShotBuyStrategy("rollover-wal"))
+    result = run_backtest_spec(
+        BacktestRunSpec(
+            csv_path=str(csv_path),
+            engine_mode="core_sim",
+            rollover_mode="strict",
+            rollover_price_mode="bbo",
+            rollover_slippage_bps=5.0,
+            deterministic_fills=True,
+            max_ticks=100,
+            wal_path=str(wal_path),
+            run_id="core-sim-wal",
+        ),
+        runtime,
+        ctx={},
+    )
+
+    assert result.deterministic is not None
+    wal_records = [
+        json.loads(line)
+        for line in wal_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    rollover_lines = [item for item in wal_records if item.get("kind") == "rollover"]
+    assert len(rollover_lines) == len(result.deterministic.rollover_actions)
+    assert [item["action"] for item in rollover_lines] == [
+        item["action"] for item in result.deterministic.rollover_actions
+    ]
+    assert result.deterministic.wal_records == len(wal_records)

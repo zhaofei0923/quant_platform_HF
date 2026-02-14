@@ -7,9 +7,9 @@ ctp:
   enable_terminal_auth: true
 
   # SimNow trading-hours-aligned environment (官网 2025-06 调整后前置)
-  broker_id: "9999"
-  user_id: "191202"
-  investor_id: "191202"
+  broker_id: "${CTP_SIM_BROKER_ID}"
+  user_id: "${CTP_SIM_USER_ID}"
+  investor_id: "${CTP_SIM_INVESTOR_ID}"
   market_front: "tcp://182.254.243.31:30011"
   trader_front: "tcp://182.254.243.31:30001"
   # Alternate groups:
@@ -17,8 +17,8 @@ ctp:
   # Group3 => market_front: "tcp://182.254.243.31:30013", trader_front: "tcp://182.254.243.31:30003"
 
   password_env: "CTP_SIM_PASSWORD"
-  auth_code: "0000000000000000"
-  app_id: "simnow_client_test"
+  auth_code: "${CTP_SIM_AUTH_CODE}"
+  app_id: "${CTP_SIM_APP_ID}"
 
   query_rate_limit_qps: 10
   connect_timeout_ms: 10000

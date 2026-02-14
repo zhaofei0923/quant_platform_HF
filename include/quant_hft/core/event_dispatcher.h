@@ -23,11 +23,18 @@ public:
         std::size_t pending_high{0};
         std::size_t pending_normal{0};
         std::size_t pending_low{0};
+        std::size_t total_pending{0};
         std::size_t processed_total{0};
+        std::size_t dropped_total{0};
+        std::size_t max_pending{0};
+        std::size_t max_queue_size_normal{0};
+        std::size_t max_queue_size_high{0};
         std::size_t worker_threads{0};
     };
 
-    explicit EventDispatcher(std::size_t worker_threads = 1);
+    explicit EventDispatcher(std::size_t worker_threads = 1,
+                             std::size_t max_queue_size_normal = 10000,
+                             std::size_t max_queue_size_high = 20000);
     ~EventDispatcher();
 
     EventDispatcher(const EventDispatcher&) = delete;
@@ -36,20 +43,27 @@ public:
     void Start();
     void Stop();
     bool Post(Task task, EventPriority priority = EventPriority::kNormal);
+    Stats GetStats() const;
     Stats Snapshot() const;
     bool WaitUntilDrained(std::int64_t timeout_ms);
 
 private:
     void WorkerLoop();
     std::size_t PendingCountLocked() const;
+    std::size_t QueueCapacityByIndex(std::size_t index) const;
 
     const std::size_t worker_threads_;
+    const std::size_t max_queue_size_normal_;
+    const std::size_t max_queue_size_high_;
     mutable std::mutex mutex_;
     std::condition_variable cv_;
     std::condition_variable drained_cv_;
     std::array<std::deque<Task>, 3> queues_;
     std::vector<std::thread> workers_;
     std::atomic<std::size_t> processed_total_{0};
+    std::atomic<std::size_t> total_pending_{0};
+    std::atomic<std::size_t> dropped_count_{0};
+    std::atomic<std::size_t> max_pending_{0};
     bool started_{false};
     bool stop_{false};
 };

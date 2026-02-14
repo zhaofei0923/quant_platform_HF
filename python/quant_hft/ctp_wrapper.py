@@ -44,9 +44,15 @@ def _to_float(value: object, default: float = 0.0) -> float:
 class _FallbackCTPTraderAdapter:
     """Python fallback wrapper for environments without compiled pybind module."""
 
-    def __init__(self, query_qps_limit: int = 10, dispatcher_workers: int = 1) -> None:
+    def __init__(
+        self,
+        query_qps_limit: int = 10,
+        dispatcher_workers: int = 1,
+        python_queue_size: int = 5000,
+    ) -> None:
         del query_qps_limit
         del dispatcher_workers
+        del python_queue_size
         self._connected = False
         self._ready = False
         self._settlement_confirmed = False
@@ -128,9 +134,15 @@ class _FallbackCTPTraderAdapter:
 class _FallbackCTPMdAdapter:
     """Python fallback wrapper for environments without compiled pybind module."""
 
-    def __init__(self, query_qps_limit: int = 10, dispatcher_workers: int = 1) -> None:
+    def __init__(
+        self,
+        query_qps_limit: int = 10,
+        dispatcher_workers: int = 1,
+        python_queue_size: int = 5000,
+    ) -> None:
         del query_qps_limit
         del dispatcher_workers
+        del python_queue_size
         self._connected = False
         self._tick_callback: Callable[[dict[str, object]], None] | None = None
         self._subscribed: set[str] = set()

@@ -199,12 +199,18 @@ bool ParseStatus(int raw_status, OrderStatus* status) {
     }
 }
 
-bool ParseWalLine(const std::string& line, OrderEvent* event) {
+bool IsReplayableWalKind(const std::string& line, bool* replayable) {
     std::string kind;
     if (!ParseStringField(line, "kind", &kind)) {
         return false;
     }
-    if (kind != "order" && kind != "trade") {
+    *replayable = (kind == "order" || kind == "trade");
+    return true;
+}
+
+bool ParseWalLine(const std::string& line, OrderEvent* event) {
+    bool replayable = false;
+    if (!IsReplayableWalKind(line, &replayable) || !replayable) {
         return false;
     }
 
@@ -287,6 +293,16 @@ WalReplayStats WalReplayLoader::Replay(const std::string& wal_path,
         }
 
         ++stats.lines_total;
+        bool replayable = false;
+        if (!IsReplayableWalKind(line, &replayable)) {
+            ++stats.parse_errors;
+            continue;
+        }
+        if (!replayable) {
+            ++stats.ignored_lines;
+            continue;
+        }
+
         OrderEvent event;
         if (!ParseWalLine(line, &event)) {
             ++stats.parse_errors;

@@ -60,7 +60,7 @@ std::unordered_map<std::string, std::string> LoadSimpleYaml(const std::string& p
         const auto key = Trim(line.substr(0, pos));
         auto value = Trim(line.substr(pos + 1));
         if (!key.empty()) {
-            kv[key] = value;
+            kv[key] = ResolveEnvVars(value);
         }
     }
     return kv;

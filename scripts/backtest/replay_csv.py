@@ -31,6 +31,37 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Replay CSV ticks into minute bars.")
     parser.add_argument("--csv", default="", help="path to csv file")
     parser.add_argument(
+        "--dataset-root",
+        default="",
+        help="dataset root (reserved for parquet/core_sim modes)",
+    )
+    parser.add_argument(
+        "--engine-mode",
+        choices=("csv", "parquet", "core_sim"),
+        default="csv",
+        help="replay engine mode",
+    )
+    parser.add_argument(
+        "--rollover-mode",
+        choices=("strict", "carry"),
+        default="strict",
+        help="rollover handling mode",
+    )
+    parser.add_argument(
+        "--rollover-price-mode",
+        choices=("bbo", "mid", "last"),
+        default="bbo",
+        help="rollover pricing source for core_sim (bbo|mid|last)",
+    )
+    parser.add_argument(
+        "--rollover-slippage-bps",
+        type=float,
+        default=0.0,
+        help="extra rollover slippage in basis points for core_sim",
+    )
+    parser.add_argument("--start-date", default="", help="inclusive start trading day (YYYYMMDD)")
+    parser.add_argument("--end-date", default="", help="inclusive end trading day (YYYYMMDD)")
+    parser.add_argument(
         "--max-ticks",
         type=int,
         default=None,
@@ -105,12 +136,60 @@ def _render_markdown_report(result: Any) -> str:
 def main() -> int:
     args = build_parser().parse_args()
 
+    if args.engine_mode == "parquet" and not args.dataset_root:
+        print("error: --dataset-root is required when --engine-mode=parquet", file=sys.stderr)
+        return 2
+
+    if args.engine_mode == "core_sim" and not args.dataset_root and not args.csv:
+        print(
+            "error: --engine-mode=core_sim requires either --dataset-root or --csv",
+            file=sys.stderr,
+        )
+        return 2
+
+    effective_csv_path = args.csv
+    if args.dataset_root and args.engine_mode == "csv":
+        if not args.csv:
+            print(
+                "error: --dataset-root currently requires --csv when --engine-mode=csv",
+                file=sys.stderr,
+            )
+            return 2
+        effective_csv_path = args.csv
+
     runtime = StrategyRuntime()
+
+    def with_cli_overrides(base: BacktestRunSpec) -> BacktestRunSpec:
+        return BacktestRunSpec(
+            csv_path=base.csv_path,
+            dataset_root=args.dataset_root or base.dataset_root,
+            engine_mode=args.engine_mode or base.engine_mode,
+            rollover_mode=args.rollover_mode or base.rollover_mode,
+            rollover_price_mode=args.rollover_price_mode or base.rollover_price_mode,
+            rollover_slippage_bps=args.rollover_slippage_bps,
+            start_date=args.start_date or base.start_date,
+            end_date=args.end_date or base.end_date,
+            max_ticks=base.max_ticks,
+            deterministic_fills=base.deterministic_fills,
+            wal_path=base.wal_path,
+            account_id=base.account_id,
+            run_id=base.run_id,
+            emit_state_snapshots=base.emit_state_snapshots,
+        )
+
     if args.spec_file:
         spec = load_backtest_run_spec(args.spec_file)
+        spec = with_cli_overrides(spec)
         if args.run_id:
             spec = BacktestRunSpec(
                 csv_path=spec.csv_path,
+                dataset_root=spec.dataset_root,
+                engine_mode=spec.engine_mode,
+                rollover_mode=spec.rollover_mode,
+                rollover_price_mode=spec.rollover_price_mode,
+                rollover_slippage_bps=spec.rollover_slippage_bps,
+                start_date=spec.start_date,
+                end_date=spec.end_date,
                 max_ticks=spec.max_ticks,
                 deterministic_fills=spec.deterministic_fills,
                 wal_path=spec.wal_path,
@@ -121,6 +200,13 @@ def main() -> int:
         elif args.emit_state_snapshots and not spec.emit_state_snapshots:
             spec = BacktestRunSpec(
                 csv_path=spec.csv_path,
+                dataset_root=spec.dataset_root,
+                engine_mode=spec.engine_mode,
+                rollover_mode=spec.rollover_mode,
+                rollover_price_mode=spec.rollover_price_mode,
+                rollover_slippage_bps=spec.rollover_slippage_bps,
+                start_date=spec.start_date,
+                end_date=spec.end_date,
                 max_ticks=spec.max_ticks,
                 deterministic_fills=spec.deterministic_fills,
                 wal_path=spec.wal_path,
@@ -129,19 +215,27 @@ def main() -> int:
                 emit_state_snapshots=True,
             )
     else:
-        if not args.csv:
+        if args.engine_mode == "csv" and not effective_csv_path:
             print("error: --csv is required when --spec-file is not provided", file=sys.stderr)
             return 2
         if args.scenario_template:
             spec = build_backtest_spec_from_template(
                 args.scenario_template,
-                csv_path=args.csv,
+                csv_path=effective_csv_path,
                 run_id=args.run_id or None,
                 wal_dir=Path("runtime/backtest"),
             )
+            spec = with_cli_overrides(spec)
             if args.max_ticks is not None and args.max_ticks > 0:
                 spec = BacktestRunSpec(
                     csv_path=spec.csv_path,
+                    dataset_root=args.dataset_root,
+                    engine_mode=args.engine_mode,
+                    rollover_mode=args.rollover_mode,
+                    rollover_price_mode=args.rollover_price_mode,
+                    rollover_slippage_bps=args.rollover_slippage_bps,
+                    start_date=args.start_date,
+                    end_date=args.end_date,
                     max_ticks=args.max_ticks,
                     deterministic_fills=spec.deterministic_fills,
                     wal_path=spec.wal_path,
@@ -152,6 +246,13 @@ def main() -> int:
             elif args.emit_state_snapshots:
                 spec = BacktestRunSpec(
                     csv_path=spec.csv_path,
+                    dataset_root=args.dataset_root,
+                    engine_mode=args.engine_mode,
+                    rollover_mode=args.rollover_mode,
+                    rollover_price_mode=args.rollover_price_mode,
+                    rollover_slippage_bps=args.rollover_slippage_bps,
+                    start_date=args.start_date,
+                    end_date=args.end_date,
                     max_ticks=spec.max_ticks,
                     deterministic_fills=spec.deterministic_fills,
                     wal_path=spec.wal_path,
@@ -161,7 +262,14 @@ def main() -> int:
                 )
         else:
             spec = BacktestRunSpec(
-                csv_path=args.csv,
+                csv_path=effective_csv_path,
+                dataset_root=args.dataset_root,
+                engine_mode=args.engine_mode,
+                rollover_mode=args.rollover_mode,
+                rollover_price_mode=args.rollover_price_mode,
+                rollover_slippage_bps=args.rollover_slippage_bps,
+                start_date=args.start_date,
+                end_date=args.end_date,
                 max_ticks=args.max_ticks if args.max_ticks is not None else 50000,
                 deterministic_fills=args.deterministic_fills,
                 wal_path=None,

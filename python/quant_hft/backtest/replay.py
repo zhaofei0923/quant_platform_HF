@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import importlib
 import json
 from collections import defaultdict
 from collections.abc import Iterator
@@ -69,6 +70,10 @@ class DeterministicReplayReport:
     total_unrealized_pnl: float
     performance: BacktestPerformanceSummary
     invariant_violations: tuple[str, ...]
+    rollover_events: tuple[dict[str, Any], ...] = ()
+    rollover_actions: tuple[dict[str, Any], ...] = ()
+    rollover_slippage_cost: float = 0.0
+    rollover_canceled_orders: int = 0
 
 
 @dataclass(frozen=True)
@@ -85,6 +90,13 @@ class BacktestPerformanceSummary:
 @dataclass(frozen=True)
 class BacktestRunSpec:
     csv_path: str
+    dataset_root: str = ""
+    engine_mode: str = "csv"
+    rollover_mode: str = "strict"
+    rollover_price_mode: str = "bbo"
+    rollover_slippage_bps: float = 0.0
+    start_date: str = ""
+    end_date: str = ""
     max_ticks: int | None = None
     deterministic_fills: bool = True
     wal_path: str | None = None
@@ -103,6 +115,13 @@ class BacktestRunSpec:
         wal_path = str(wal_path_raw) if wal_path_raw is not None else None
         return BacktestRunSpec(
             csv_path=str(raw["csv_path"]),
+            dataset_root=str(raw.get("dataset_root", "")),
+            engine_mode=str(raw.get("engine_mode", "csv")),
+            rollover_mode=str(raw.get("rollover_mode", "strict")),
+            rollover_price_mode=str(raw.get("rollover_price_mode", "bbo")),
+            rollover_slippage_bps=float(raw.get("rollover_slippage_bps", 0.0)),
+            start_date=str(raw.get("start_date", "")),
+            end_date=str(raw.get("end_date", "")),
             max_ticks=max_ticks,
             deterministic_fills=bool(raw.get("deterministic_fills", True)),
             wal_path=wal_path,
@@ -117,6 +136,13 @@ class BacktestRunSpec:
     def to_dict(self) -> dict[str, Any]:
         return {
             "csv_path": self.csv_path,
+            "dataset_root": self.dataset_root,
+            "engine_mode": self.engine_mode,
+            "rollover_mode": self.rollover_mode,
+            "rollover_price_mode": self.rollover_price_mode,
+            "rollover_slippage_bps": self.rollover_slippage_bps,
+            "start_date": self.start_date,
+            "end_date": self.end_date,
             "max_ticks": self.max_ticks,
             "deterministic_fills": self.deterministic_fills,
             "wal_path": self.wal_path,
@@ -191,6 +217,9 @@ class BacktestRunResult:
     deterministic: DeterministicReplayReport | None
     input_signature: str
     data_signature: str
+    data_source: str = "csv"
+    engine_mode: str = "csv"
+    rollover_mode: str = "strict"
     attribution: dict[str, float] = field(default_factory=dict)
     risk_decomposition: dict[str, float] = field(default_factory=dict)
 
@@ -198,6 +227,9 @@ class BacktestRunResult:
         payload: dict[str, Any] = {
             "run_id": self.run_id,
             "mode": self.mode,
+            "data_source": self.data_source,
+            "engine_mode": self.engine_mode,
+            "rollover_mode": self.rollover_mode,
             "metric_keys": list(metric_keys()),
             "spec": self.spec.to_dict(),
             "input_signature": self.input_signature,
@@ -244,6 +276,10 @@ class BacktestRunResult:
                     "order_status_counts": self.deterministic.performance.order_status_counts,
                 },
                 "invariant_violations": list(self.deterministic.invariant_violations),
+                "rollover_events": list(self.deterministic.rollover_events),
+                "rollover_actions": list(self.deterministic.rollover_actions),
+                "rollover_slippage_cost": self.deterministic.rollover_slippage_cost,
+                "rollover_canceled_orders": self.deterministic.rollover_canceled_orders,
             }
         return payload
 
@@ -396,6 +432,31 @@ def _emit_wal_line(
     fp.write(json.dumps(record, ensure_ascii=True, separators=(",", ":")) + "\n")
 
 
+def _emit_wal_rollover_line(
+    fp: TextIO,
+    *,
+    seq: int,
+    action: dict[str, Any],
+) -> None:
+    record = {
+        "seq": seq,
+        "kind": "rollover",
+        "ts_ns": int(action.get("ts_ns", 0)),
+        "symbol": str(action.get("symbol", "")),
+        "action": str(action.get("action", "")),
+        "from_instrument": str(action.get("from_instrument", "")),
+        "to_instrument": str(action.get("to_instrument", "")),
+        "position": int(action.get("position", 0)),
+        "side": str(action.get("side", "")),
+        "price": float(action.get("price", 0.0)),
+        "mode": str(action.get("mode", "")),
+        "price_mode": str(action.get("price_mode", "")),
+        "slippage_bps": float(action.get("slippage_bps", 0.0)),
+        "canceled_orders": int(action.get("canceled_orders", 0)),
+    }
+    fp.write(json.dumps(record, ensure_ascii=True, separators=(",", ":")) + "\n")
+
+
 def _apply_trade(
     state: _InstrumentPnlState,
     side: Side,
@@ -444,6 +505,45 @@ def _compute_unrealized(net_position: int, avg_open_price: float, last_price: fl
     if net_position < 0:
         return (avg_open_price - last_price) * float(abs(net_position))
     return 0.0
+
+
+def _instrument_symbol(instrument_id: str) -> str:
+    symbol = []
+    for ch in instrument_id:
+        if ch.isalpha():
+            symbol.append(ch)
+            continue
+        break
+    return "".join(symbol).lower()
+
+
+def _rollover_price(
+    side: Side,
+    *,
+    last_price: float,
+    bid_price: float,
+    ask_price: float,
+    price_mode: str,
+    slippage_bps: float,
+) -> tuple[float, float]:
+    normalized_mode = price_mode.strip().lower()
+    if normalized_mode == "last":
+        base_price = last_price
+    elif normalized_mode == "mid":
+        if bid_price > 0.0 and ask_price > 0.0:
+            base_price = (bid_price + ask_price) * 0.5
+        else:
+            base_price = last_price
+    else:
+        if side == Side.BUY:
+            base_price = ask_price if ask_price > 0.0 else last_price
+        else:
+            base_price = bid_price if bid_price > 0.0 else last_price
+
+    slip = max(0.0, slippage_bps) * 0.0001 * max(0.0, base_price)
+    if side == Side.BUY:
+        return max(0.0, base_price + slip), slip
+    return max(0.0, base_price - slip), slip
 
 
 def _compute_total_equity(
@@ -520,91 +620,106 @@ def _build_data_signature(csv_path: Path | str) -> str:
     return hasher.hexdigest()
 
 
-def load_backtest_run_spec(spec_file: Path | str) -> BacktestRunSpec:
-    raw = json.loads(Path(spec_file).read_text(encoding="utf-8"))
-    if not isinstance(raw, dict):
-        raise ValueError("backtest spec must be a JSON object")
-    return BacktestRunSpec.from_dict(raw)
-
-
-def run_backtest_spec(
-    spec: BacktestRunSpec,
-    runtime: StrategyRuntime,
+def _build_parquet_dataset_signature(
+    dataset_root: Path | str,
     *,
-    ctx: dict[str, object] | None = None,
-    trade_recorder: TradeRecorder | None = None,
-) -> BacktestRunResult:
-    run_ctx: dict[str, object] = {} if ctx is None else ctx
-    mode = "deterministic" if spec.deterministic_fills else "bar_replay"
-    run_ctx.setdefault("metric_keys", list(metric_keys()))
-    ensure_backtest_ctx(run_ctx, run_id=spec.run_id, mode=mode, clock_ns=0)
+    start_date: str = "",
+    end_date: str = "",
+) -> str:
+    root = Path(dataset_root)
+    hasher = hashlib.sha256()
+    hasher.update(str(root.resolve()).encode("utf-8"))
+    hasher.update(start_date.encode("utf-8"))
+    hasher.update(end_date.encode("utf-8"))
 
-    if spec.deterministic_fills:
-        deterministic = replay_csv_with_deterministic_fills(
-            spec.csv_path,
-            runtime,
-            run_ctx,
-            max_ticks=spec.max_ticks,
-            wal_path=spec.wal_path,
-            account_id=spec.account_id,
-            emit_state_snapshots=spec.emit_state_snapshots,
-            trade_recorder=trade_recorder,
-        )
-        replay = deterministic.replay
-    else:
-        deterministic = None
-        replay = replay_csv_minute_bars(
-            spec.csv_path,
-            runtime,
-            run_ctx,
-            max_ticks=spec.max_ticks,
-            emit_state_snapshots=spec.emit_state_snapshots,
-        )
+    parquet_files = sorted(root.rglob("*.parquet")) if root.exists() else []
+    for path in parquet_files:
+        relative = path.relative_to(root).as_posix()
+        trading_day = ""
+        for part in path.relative_to(root).parts:
+            if part.startswith("trading_day="):
+                trading_day = part.split("=", 1)[1]
+                break
+        if start_date and trading_day and trading_day < start_date:
+            continue
+        if end_date and trading_day and trading_day > end_date:
+            continue
+        stat = path.stat()
+        hasher.update(relative.encode("utf-8"))
+        hasher.update(str(stat.st_size).encode("utf-8"))
+        hasher.update(str(stat.st_mtime_ns).encode("utf-8"))
+    return hasher.hexdigest()
 
-    return BacktestRunResult(
-        run_id=spec.run_id,
-        mode=mode,
-        spec=spec,
-        replay=replay,
-        deterministic=deterministic,
-        input_signature=_build_input_signature(spec),
-        data_signature=_build_data_signature(spec.csv_path),
-        attribution={},
-        risk_decomposition={},
+
+def _resolve_csv_path_for_spec(spec: BacktestRunSpec) -> str:
+    return spec.csv_path
+
+
+def _parse_tick_row(row: dict[str, Any]) -> CsvTick:
+    return CsvTick(
+        trading_day=str(row.get("TradingDay", "") or ""),
+        instrument_id=str(row.get("InstrumentID", "") or ""),
+        update_time=str(row.get("UpdateTime", "") or ""),
+        update_millisec=_parse_int(str(row.get("UpdateMillisec", "") or "")),
+        last_price=_parse_float(str(row.get("LastPrice", "") or "")),
+        volume=_parse_int(str(row.get("Volume", "") or "")),
+        bid_price_1=_parse_float(str(row.get("BidPrice1", "") or "")),
+        bid_volume_1=_parse_int(str(row.get("BidVolume1", "") or "")),
+        ask_price_1=_parse_float(str(row.get("AskPrice1", "") or "")),
+        ask_volume_1=_parse_int(str(row.get("AskVolume1", "") or "")),
+        average_price=_parse_float(str(row.get("AveragePrice", "") or "")),
+        turnover=_parse_float(str(row.get("Turnover", "") or "")),
+        open_interest=_parse_float(str(row.get("OpenInterest", "") or "")),
     )
 
 
-def iter_csv_ticks(csv_path: Path | str, max_ticks: int | None = None) -> Iterator[CsvTick]:
-    path = Path(csv_path)
-    with path.open("r", encoding="utf-8", newline="") as fp:
-        reader = csv.DictReader(fp)
-        for idx, row in enumerate(reader):
-            if max_ticks is not None and idx >= max_ticks:
+def iter_parquet_ticks(
+    dataset_root: Path | str,
+    *,
+    max_ticks: int | None = None,
+    start_date: str = "",
+    end_date: str = "",
+) -> Iterator[CsvTick]:
+    root = Path(dataset_root)
+    if not root.exists():
+        raise ValueError(f"dataset_root does not exist: {root}")
+
+    try:
+        pq = importlib.import_module("pyarrow.parquet")
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("pyarrow is required for parquet replay mode") from exc
+
+    parquet_files = sorted(root.rglob("*.parquet"))
+    rows: list[CsvTick] = []
+    for file_path in parquet_files:
+        trading_day = ""
+        for part in file_path.relative_to(root).parts:
+            if part.startswith("trading_day="):
+                trading_day = part.split("=", 1)[1]
                 break
+        if start_date and trading_day and trading_day < start_date:
+            continue
+        if end_date and trading_day and trading_day > end_date:
+            continue
 
-            yield CsvTick(
-                trading_day=row.get("TradingDay", ""),
-                instrument_id=row.get("InstrumentID", ""),
-                update_time=row.get("UpdateTime", ""),
-                update_millisec=_parse_int(row.get("UpdateMillisec", "")),
-                last_price=_parse_float(row.get("LastPrice", "")),
-                volume=_parse_int(row.get("Volume", "")),
-                bid_price_1=_parse_float(row.get("BidPrice1", "")),
-                bid_volume_1=_parse_int(row.get("BidVolume1", "")),
-                ask_price_1=_parse_float(row.get("AskPrice1", "")),
-                ask_volume_1=_parse_int(row.get("AskVolume1", "")),
-                average_price=_parse_float(row.get("AveragePrice", "")),
-                turnover=_parse_float(row.get("Turnover", "")),
-                open_interest=_parse_float(row.get("OpenInterest", "")),
-            )
+        table = pq.read_table(str(file_path))
+        payload = table.to_pylist()
+        for raw in payload:
+            rows.append(_parse_tick_row(raw))
+
+    rows.sort(key=lambda tick: _to_ts_ns(tick.trading_day, tick.update_time, tick.update_millisec))
+    if max_ticks is not None:
+        rows = rows[:max_ticks]
+
+    for tick in rows:
+        yield tick
 
 
-def replay_csv_minute_bars(
-    csv_path: Path | str,
+def _replay_minute_bars_from_ticks(
+    ticks: Iterator[CsvTick],
     runtime: StrategyRuntime,
     ctx: dict[str, object],
     *,
-    max_ticks: int | None = None,
     emit_state_snapshots: bool = False,
 ) -> ReplayReport:
     ticks_read = 0
@@ -619,7 +734,7 @@ def replay_csv_minute_bars(
     bucket: list[CsvTick] = []
     current_key = ""
 
-    for tick in iter_csv_ticks(csv_path, max_ticks=max_ticks):
+    for tick in ticks:
         ticks_read += 1
         instrument_ids.add(tick.instrument_id)
         tick_ts_ns = _to_ts_ns(tick.trading_day, tick.update_time, tick.update_millisec)
@@ -679,16 +794,19 @@ def replay_csv_minute_bars(
     )
 
 
-def replay_csv_with_deterministic_fills(
-    csv_path: Path | str,
+def _replay_deterministic_from_ticks(
+    ticks: Iterator[CsvTick],
     runtime: StrategyRuntime,
     ctx: dict[str, object],
     *,
-    max_ticks: int | None = None,
     wal_path: Path | str | None = None,
     account_id: str = "sim-account",
     emit_state_snapshots: bool = False,
     trade_recorder: TradeRecorder | None = None,
+    enable_rollover: bool = False,
+    rollover_mode: str = "strict",
+    rollover_price_mode: str = "bbo",
+    rollover_slippage_bps: float = 0.0,
 ) -> DeterministicReplayReport:
     ticks_read = 0
     bars_emitted = 0
@@ -707,6 +825,12 @@ def replay_csv_with_deterministic_fills(
     instrument_state: defaultdict[str, _InstrumentPnlState] = defaultdict(_InstrumentPnlState)
     order_status_counts: defaultdict[str, int] = defaultdict(int)
     equity_points: list[float] = []
+    rollover_events: list[dict[str, Any]] = []
+    rollover_actions: list[dict[str, Any]] = []
+    rollover_slippage_cost = 0.0
+    rollover_canceled_orders = 0
+    symbol_active_contract: dict[str, str] = {}
+    pending_orders: defaultdict[str, list[SignalIntent]] = defaultdict(list)
 
     bucket: list[CsvTick] = []
     current_key = ""
@@ -716,8 +840,279 @@ def replay_csv_with_deterministic_fills(
     if wal_path is not None:
         wal_fp = Path(wal_path).open("w", encoding="utf-8")
 
+    normalized_rollover_mode = rollover_mode.strip().lower()
+    if normalized_rollover_mode not in {"strict", "carry"}:
+        normalized_rollover_mode = "strict"
+
+    normalized_rollover_price_mode = rollover_price_mode.strip().lower()
+    if normalized_rollover_price_mode not in {"bbo", "mid", "last"}:
+        normalized_rollover_price_mode = "bbo"
+
+    normalized_rollover_slippage_bps = max(0.0, float(rollover_slippage_bps))
+
+    def _emit_deterministic_fill(intent: SignalIntent, fill_price: float) -> None:
+        nonlocal next_order_id, next_wal_seq, wal_records, order_events_emitted
+
+        client_order_id = f"bt-{next_order_id:09d}"
+        next_order_id += 1
+
+        accepted = OrderEvent(
+            account_id=account_id,
+            client_order_id=client_order_id,
+            instrument_id=intent.instrument_id,
+            status="ACCEPTED",
+            total_volume=intent.volume,
+            filled_volume=0,
+            avg_fill_price=0.0,
+            reason="deterministic_accept",
+            ts_ns=int(intent.ts_ns),
+            trace_id=intent.trace_id,
+            event_source="deterministic_accept",
+            exchange_ts_ns=int(intent.ts_ns),
+            recv_ts_ns=int(intent.ts_ns),
+        )
+        filled = OrderEvent(
+            account_id=account_id,
+            client_order_id=client_order_id,
+            instrument_id=intent.instrument_id,
+            status="FILLED",
+            total_volume=intent.volume,
+            filled_volume=intent.volume,
+            avg_fill_price=fill_price,
+            reason="deterministic_fill",
+            ts_ns=int(intent.ts_ns),
+            trace_id=intent.trace_id,
+            trade_id=f"{client_order_id}-fill",
+            event_source="deterministic_fill",
+            exchange_ts_ns=int(intent.ts_ns),
+            recv_ts_ns=int(intent.ts_ns),
+        )
+
+        runtime.on_order_event(ctx, accepted)
+        runtime.on_order_event(ctx, filled)
+        recorder.record_order_event(accepted)
+        recorder.record_order_event(filled)
+        order_events_emitted += 2
+        order_status_counts[accepted.status] += 1
+        order_status_counts[filled.status] += 1
+
+        state = instrument_state[intent.instrument_id]
+        _apply_trade(state, intent.side, intent.volume, fill_price)
+
+        if wal_fp is not None:
+            _emit_wal_line(wal_fp, seq=next_wal_seq, kind="order", event=accepted)
+            next_wal_seq += 1
+            _emit_wal_line(wal_fp, seq=next_wal_seq, kind="trade", event=filled)
+            next_wal_seq += 1
+            wal_records += 2
+
+    def _process_bar(bar: dict[str, object]) -> None:
+        nonlocal bars_emitted, intents_processed
+        bars_emitted += 1
+        instrument_id = str(bar["instrument_id"])
+        instrument_bars[instrument_id] += 1
+        fill_price = cast(float, bar["close"])
+        last_close_price[instrument_id] = fill_price
+
+        intents = _collect_strategy_intents(
+            runtime,
+            ctx,
+            bar,
+            emit_state_snapshots=emit_state_snapshots,
+        )
+        intents_processed += len(intents)
+        for intent in intents:
+            pending_orders[intent.instrument_id].append(intent)
+            _emit_deterministic_fill(intent, fill_price)
+            pending_orders[intent.instrument_id].clear()
+
+        equity_points.append(_compute_total_equity(instrument_state, last_close_price))
+
+    def _handle_rollover(tick: CsvTick) -> None:
+        nonlocal rollover_slippage_cost, rollover_canceled_orders, next_wal_seq, wal_records
+
+        symbol = _instrument_symbol(tick.instrument_id)
+        if not symbol:
+            return
+        current_contract = tick.instrument_id
+        previous_contract = symbol_active_contract.get(symbol)
+        if not previous_contract or previous_contract == current_contract:
+            symbol_active_contract[symbol] = current_contract
+            return
+
+        previous_state = instrument_state[previous_contract]
+        previous_position = int(abs(previous_state.net_position))
+        if previous_position == 0:
+            symbol_active_contract[symbol] = current_contract
+            return
+
+        canceled = len(pending_orders[previous_contract])
+        if canceled:
+            pending_orders[previous_contract].clear()
+            rollover_canceled_orders += canceled
+
+        tick_ts_ns = _to_ts_ns(tick.trading_day, tick.update_time, tick.update_millisec)
+
+        direction = "long" if previous_state.net_position > 0 else "short"
+
+        applied_mode = normalized_rollover_mode
+        next_state = instrument_state[current_contract]
+        if normalized_rollover_mode == "carry" and next_state.net_position != 0:
+            applied_mode = "strict"
+
+        if applied_mode == "strict":
+            close_side = Side.SELL if previous_state.net_position > 0 else Side.BUY
+            open_side = Side.BUY if previous_state.net_position > 0 else Side.SELL
+            close_price, close_slip = _rollover_price(
+                close_side,
+                last_price=tick.last_price,
+                bid_price=tick.bid_price_1,
+                ask_price=tick.ask_price_1,
+                price_mode=normalized_rollover_price_mode,
+                slippage_bps=normalized_rollover_slippage_bps,
+            )
+            open_price, open_slip = _rollover_price(
+                open_side,
+                last_price=tick.last_price,
+                bid_price=tick.bid_price_1,
+                ask_price=tick.ask_price_1,
+                price_mode=normalized_rollover_price_mode,
+                slippage_bps=normalized_rollover_slippage_bps,
+            )
+            _apply_trade(previous_state, close_side, previous_position, close_price)
+            _apply_trade(next_state, open_side, previous_position, open_price)
+            rollover_slippage_cost += (close_slip + open_slip) * float(previous_position)
+
+            if canceled:
+                action = {
+                    "symbol": symbol,
+                    "action": "cancel",
+                    "from_instrument": previous_contract,
+                    "to_instrument": current_contract,
+                    "position": previous_position,
+                    "side": "",
+                    "price": 0.0,
+                    "mode": applied_mode,
+                    "price_mode": normalized_rollover_price_mode,
+                    "slippage_bps": normalized_rollover_slippage_bps,
+                    "canceled_orders": canceled,
+                    "ts_ns": tick_ts_ns,
+                }
+                rollover_actions.append(action)
+                if wal_fp is not None:
+                    _emit_wal_rollover_line(wal_fp, seq=next_wal_seq, action=action)
+                    next_wal_seq += 1
+                    wal_records += 1
+
+            close_action = {
+                "symbol": symbol,
+                "action": "close",
+                "from_instrument": previous_contract,
+                "to_instrument": current_contract,
+                "position": previous_position,
+                "side": close_side.value,
+                "price": close_price,
+                "mode": applied_mode,
+                "price_mode": normalized_rollover_price_mode,
+                "slippage_bps": normalized_rollover_slippage_bps,
+                "canceled_orders": 0,
+                "ts_ns": tick_ts_ns,
+            }
+            open_action = {
+                "symbol": symbol,
+                "action": "open",
+                "from_instrument": previous_contract,
+                "to_instrument": current_contract,
+                "position": previous_position,
+                "side": open_side.value,
+                "price": open_price,
+                "mode": applied_mode,
+                "price_mode": normalized_rollover_price_mode,
+                "slippage_bps": normalized_rollover_slippage_bps,
+                "canceled_orders": 0,
+                "ts_ns": tick_ts_ns,
+            }
+            rollover_actions.append(close_action)
+            rollover_actions.append(open_action)
+            if wal_fp is not None:
+                _emit_wal_rollover_line(wal_fp, seq=next_wal_seq, action=close_action)
+                next_wal_seq += 1
+                wal_records += 1
+                _emit_wal_rollover_line(wal_fp, seq=next_wal_seq, action=open_action)
+                next_wal_seq += 1
+                wal_records += 1
+        else:
+            close_price = last_close_price.get(previous_contract, tick.last_price)
+            open_price = close_price
+            next_state.net_position = previous_state.net_position
+            next_state.avg_open_price = previous_state.avg_open_price
+            next_state.realized_pnl += previous_state.realized_pnl
+            previous_state.realized_pnl = 0.0
+            previous_state.avg_open_price = 0.0
+            previous_state.net_position = 0
+
+            if canceled:
+                action = {
+                    "symbol": symbol,
+                    "action": "cancel",
+                    "from_instrument": previous_contract,
+                    "to_instrument": current_contract,
+                    "position": previous_position,
+                    "side": "",
+                    "price": 0.0,
+                    "mode": applied_mode,
+                    "price_mode": normalized_rollover_price_mode,
+                    "slippage_bps": normalized_rollover_slippage_bps,
+                    "canceled_orders": canceled,
+                    "ts_ns": tick_ts_ns,
+                }
+                rollover_actions.append(action)
+                if wal_fp is not None:
+                    _emit_wal_rollover_line(wal_fp, seq=next_wal_seq, action=action)
+                    next_wal_seq += 1
+                    wal_records += 1
+
+            carry_action = {
+                "symbol": symbol,
+                "action": "carry",
+                "from_instrument": previous_contract,
+                "to_instrument": current_contract,
+                "position": previous_position,
+                "side": "",
+                "price": open_price,
+                "mode": applied_mode,
+                "price_mode": normalized_rollover_price_mode,
+                "slippage_bps": normalized_rollover_slippage_bps,
+                "canceled_orders": 0,
+                "ts_ns": tick_ts_ns,
+            }
+            rollover_actions.append(carry_action)
+            if wal_fp is not None:
+                _emit_wal_rollover_line(wal_fp, seq=next_wal_seq, action=carry_action)
+                next_wal_seq += 1
+                wal_records += 1
+
+        rollover_events.append(
+            {
+                "symbol": symbol,
+                "from_instrument": previous_contract,
+                "to_instrument": current_contract,
+                "mode": applied_mode,
+                "position": previous_position,
+                "direction": direction,
+                "from_price": close_price,
+                "to_price": open_price,
+                "canceled_orders": canceled,
+                "price_mode": normalized_rollover_price_mode,
+                "slippage_bps": normalized_rollover_slippage_bps,
+                "ts_ns": tick_ts_ns,
+            }
+        )
+
+        symbol_active_contract[symbol] = current_contract
+
     try:
-        for tick in iter_csv_ticks(csv_path, max_ticks=max_ticks):
+        for tick in ticks:
             ticks_read += 1
             instrument_ids.add(tick.instrument_id)
             tick_ts_ns = _to_ts_ns(tick.trading_day, tick.update_time, tick.update_millisec)
@@ -727,6 +1122,9 @@ def replay_csv_with_deterministic_fills(
             if not first_instrument:
                 first_instrument = tick.instrument_id
             last_instrument = tick.instrument_id
+
+            if enable_rollover:
+                _handle_rollover(tick)
 
             key = _minute_key(tick)
             if not bucket:
@@ -739,147 +1137,14 @@ def replay_csv_with_deterministic_fills(
                 continue
 
             bar = _build_bar(bucket)
-            bars_emitted += 1
-            instrument_id = str(bar["instrument_id"])
-            instrument_bars[instrument_id] += 1
-            fill_price = cast(float, bar["close"])
-            last_close_price[instrument_id] = fill_price
-
-            intents = _collect_strategy_intents(
-                runtime,
-                ctx,
-                bar,
-                emit_state_snapshots=emit_state_snapshots,
-            )
-            intents_processed += len(intents)
-            for intent in intents:
-                client_order_id = f"bt-{next_order_id:09d}"
-                next_order_id += 1
-
-                accepted = OrderEvent(
-                    account_id=account_id,
-                    client_order_id=client_order_id,
-                    instrument_id=intent.instrument_id,
-                    status="ACCEPTED",
-                    total_volume=intent.volume,
-                    filled_volume=0,
-                    avg_fill_price=0.0,
-                    reason="deterministic_accept",
-                    ts_ns=int(intent.ts_ns),
-                    trace_id=intent.trace_id,
-                    event_source="deterministic_accept",
-                    exchange_ts_ns=int(intent.ts_ns),
-                    recv_ts_ns=int(intent.ts_ns),
-                )
-                filled = OrderEvent(
-                    account_id=account_id,
-                    client_order_id=client_order_id,
-                    instrument_id=intent.instrument_id,
-                    status="FILLED",
-                    total_volume=intent.volume,
-                    filled_volume=intent.volume,
-                    avg_fill_price=fill_price,
-                    reason="deterministic_fill",
-                    ts_ns=int(intent.ts_ns),
-                    trace_id=intent.trace_id,
-                    trade_id=f"{client_order_id}-fill",
-                    event_source="deterministic_fill",
-                    exchange_ts_ns=int(intent.ts_ns),
-                    recv_ts_ns=int(intent.ts_ns),
-                )
-
-                runtime.on_order_event(ctx, accepted)
-                runtime.on_order_event(ctx, filled)
-                recorder.record_order_event(accepted)
-                recorder.record_order_event(filled)
-                order_events_emitted += 2
-                order_status_counts[accepted.status] += 1
-                order_status_counts[filled.status] += 1
-
-                state = instrument_state[intent.instrument_id]
-                _apply_trade(state, intent.side, intent.volume, fill_price)
-
-                if wal_fp is not None:
-                    _emit_wal_line(wal_fp, seq=next_wal_seq, kind="order", event=accepted)
-                    next_wal_seq += 1
-                    _emit_wal_line(wal_fp, seq=next_wal_seq, kind="trade", event=filled)
-                    next_wal_seq += 1
-                    wal_records += 2
-
-            equity_points.append(_compute_total_equity(instrument_state, last_close_price))
+            _process_bar(bar)
 
             bucket = [tick]
             current_key = key
 
         if bucket:
             bar = _build_bar(bucket)
-            bars_emitted += 1
-            instrument_id = str(bar["instrument_id"])
-            instrument_bars[instrument_id] += 1
-            fill_price = cast(float, bar["close"])
-            last_close_price[instrument_id] = fill_price
-
-            intents = _collect_strategy_intents(
-                runtime,
-                ctx,
-                bar,
-                emit_state_snapshots=emit_state_snapshots,
-            )
-            intents_processed += len(intents)
-            for intent in intents:
-                client_order_id = f"bt-{next_order_id:09d}"
-                next_order_id += 1
-
-                accepted = OrderEvent(
-                    account_id=account_id,
-                    client_order_id=client_order_id,
-                    instrument_id=intent.instrument_id,
-                    status="ACCEPTED",
-                    total_volume=intent.volume,
-                    filled_volume=0,
-                    avg_fill_price=0.0,
-                    reason="deterministic_accept",
-                    ts_ns=int(intent.ts_ns),
-                    trace_id=intent.trace_id,
-                    event_source="deterministic_accept",
-                    exchange_ts_ns=int(intent.ts_ns),
-                    recv_ts_ns=int(intent.ts_ns),
-                )
-                filled = OrderEvent(
-                    account_id=account_id,
-                    client_order_id=client_order_id,
-                    instrument_id=intent.instrument_id,
-                    status="FILLED",
-                    total_volume=intent.volume,
-                    filled_volume=intent.volume,
-                    avg_fill_price=fill_price,
-                    reason="deterministic_fill",
-                    ts_ns=int(intent.ts_ns),
-                    trace_id=intent.trace_id,
-                    trade_id=f"{client_order_id}-fill",
-                    event_source="deterministic_fill",
-                    exchange_ts_ns=int(intent.ts_ns),
-                    recv_ts_ns=int(intent.ts_ns),
-                )
-
-                runtime.on_order_event(ctx, accepted)
-                runtime.on_order_event(ctx, filled)
-                recorder.record_order_event(accepted)
-                recorder.record_order_event(filled)
-                order_events_emitted += 2
-                order_status_counts[accepted.status] += 1
-                order_status_counts[filled.status] += 1
-
-                state = instrument_state[intent.instrument_id]
-                _apply_trade(state, intent.side, intent.volume, fill_price)
-
-                if wal_fp is not None:
-                    _emit_wal_line(wal_fp, seq=next_wal_seq, kind="order", event=accepted)
-                    next_wal_seq += 1
-                    _emit_wal_line(wal_fp, seq=next_wal_seq, kind="trade", event=filled)
-                    next_wal_seq += 1
-                    wal_records += 2
-            equity_points.append(_compute_total_equity(instrument_state, last_close_price))
+            _process_bar(bar)
     finally:
         if wal_fp is not None:
             wal_fp.close()
@@ -932,10 +1197,189 @@ def replay_csv_with_deterministic_fills(
         intents_processed=intents_processed,
         order_events_emitted=order_events_emitted,
         wal_records=wal_records,
+        rollover_events=tuple(rollover_events),
+        rollover_actions=tuple(rollover_actions),
+        rollover_slippage_cost=rollover_slippage_cost,
+        rollover_canceled_orders=rollover_canceled_orders,
         instrument_bars=dict(instrument_bars),
         instrument_pnl=instrument_pnl,
         total_realized_pnl=total_realized_pnl,
         total_unrealized_pnl=total_unrealized_pnl,
         performance=performance,
         invariant_violations=_validate_invariants(instrument_pnl),
+    )
+
+
+def load_backtest_run_spec(spec_file: Path | str) -> BacktestRunSpec:
+    raw = json.loads(Path(spec_file).read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError("backtest spec must be a JSON object")
+    return BacktestRunSpec.from_dict(raw)
+
+
+def run_backtest_spec(
+    spec: BacktestRunSpec,
+    runtime: StrategyRuntime,
+    *,
+    ctx: dict[str, object] | None = None,
+    trade_recorder: TradeRecorder | None = None,
+) -> BacktestRunResult:
+    run_ctx: dict[str, object] = {} if ctx is None else ctx
+    mode = "deterministic" if spec.deterministic_fills else "bar_replay"
+    run_ctx.setdefault("metric_keys", list(metric_keys()))
+    ensure_backtest_ctx(run_ctx, run_id=spec.run_id, mode=mode, clock_ns=0)
+    resolved_csv_path = _resolve_csv_path_for_spec(spec)
+    engine_mode = spec.engine_mode.strip().lower()
+    rollover_mode = spec.rollover_mode.strip().lower()
+    rollover_price_mode = spec.rollover_price_mode.strip().lower()
+    rollover_slippage_bps = float(spec.rollover_slippage_bps)
+
+    if engine_mode not in {"csv", "parquet", "core_sim"}:
+        raise ValueError(f"unsupported engine_mode: {spec.engine_mode}")
+
+    if rollover_mode not in {"strict", "carry"}:
+        raise ValueError(f"unsupported rollover_mode: {spec.rollover_mode}")
+
+    if rollover_price_mode not in {"bbo", "mid", "last"}:
+        raise ValueError(f"unsupported rollover_price_mode: {spec.rollover_price_mode}")
+
+    if rollover_slippage_bps < 0.0:
+        raise ValueError("rollover_slippage_bps must be non-negative")
+
+    if engine_mode == "parquet":
+        ticks = iter_parquet_ticks(
+            spec.dataset_root,
+            max_ticks=spec.max_ticks,
+            start_date=spec.start_date,
+            end_date=spec.end_date,
+        )
+        data_source = "parquet"
+    elif engine_mode == "core_sim":
+        if spec.dataset_root:
+            ticks = iter_parquet_ticks(
+                spec.dataset_root,
+                max_ticks=spec.max_ticks,
+                start_date=spec.start_date,
+                end_date=spec.end_date,
+            )
+            data_source = "parquet"
+        else:
+            if not resolved_csv_path:
+                raise ValueError("csv_path is required for core_sim when dataset_root is empty")
+            ticks = iter_csv_ticks(resolved_csv_path, max_ticks=spec.max_ticks)
+            data_source = "csv"
+    else:
+        ticks = iter_csv_ticks(resolved_csv_path, max_ticks=spec.max_ticks)
+        data_source = "csv"
+
+    if spec.deterministic_fills:
+        deterministic = _replay_deterministic_from_ticks(
+            ticks,
+            runtime,
+            run_ctx,
+            wal_path=spec.wal_path,
+            account_id=spec.account_id,
+            emit_state_snapshots=spec.emit_state_snapshots,
+            trade_recorder=trade_recorder,
+            enable_rollover=(engine_mode == "core_sim"),
+            rollover_mode=rollover_mode,
+            rollover_price_mode=rollover_price_mode,
+            rollover_slippage_bps=rollover_slippage_bps,
+        )
+        replay = deterministic.replay
+    else:
+        deterministic = None
+        replay = _replay_minute_bars_from_ticks(
+            ticks,
+            runtime,
+            run_ctx,
+            emit_state_snapshots=spec.emit_state_snapshots,
+        )
+
+    data_signature = (
+        _build_parquet_dataset_signature(
+            spec.dataset_root,
+            start_date=spec.start_date,
+            end_date=spec.end_date,
+        )
+        if data_source == "parquet"
+        else _build_data_signature(resolved_csv_path)
+    )
+
+    return BacktestRunResult(
+        run_id=spec.run_id,
+        mode=mode,
+        spec=spec,
+        replay=replay,
+        deterministic=deterministic,
+        input_signature=_build_input_signature(spec),
+        data_signature=data_signature,
+        data_source=data_source,
+        engine_mode=spec.engine_mode,
+        rollover_mode=spec.rollover_mode,
+        attribution={},
+        risk_decomposition={},
+    )
+
+
+def iter_csv_ticks(csv_path: Path | str, max_ticks: int | None = None) -> Iterator[CsvTick]:
+    path = Path(csv_path)
+    with path.open("r", encoding="utf-8", newline="") as fp:
+        reader = csv.DictReader(fp)
+        for idx, row in enumerate(reader):
+            if max_ticks is not None and idx >= max_ticks:
+                break
+
+            yield CsvTick(
+                trading_day=row.get("TradingDay", ""),
+                instrument_id=row.get("InstrumentID", ""),
+                update_time=row.get("UpdateTime", ""),
+                update_millisec=_parse_int(row.get("UpdateMillisec", "")),
+                last_price=_parse_float(row.get("LastPrice", "")),
+                volume=_parse_int(row.get("Volume", "")),
+                bid_price_1=_parse_float(row.get("BidPrice1", "")),
+                bid_volume_1=_parse_int(row.get("BidVolume1", "")),
+                ask_price_1=_parse_float(row.get("AskPrice1", "")),
+                ask_volume_1=_parse_int(row.get("AskVolume1", "")),
+                average_price=_parse_float(row.get("AveragePrice", "")),
+                turnover=_parse_float(row.get("Turnover", "")),
+                open_interest=_parse_float(row.get("OpenInterest", "")),
+            )
+
+
+def replay_csv_minute_bars(
+    csv_path: Path | str,
+    runtime: StrategyRuntime,
+    ctx: dict[str, object],
+    *,
+    max_ticks: int | None = None,
+    emit_state_snapshots: bool = False,
+) -> ReplayReport:
+    return _replay_minute_bars_from_ticks(
+        iter_csv_ticks(csv_path, max_ticks=max_ticks),
+        runtime,
+        ctx,
+        emit_state_snapshots=emit_state_snapshots,
+    )
+
+
+def replay_csv_with_deterministic_fills(
+    csv_path: Path | str,
+    runtime: StrategyRuntime,
+    ctx: dict[str, object],
+    *,
+    max_ticks: int | None = None,
+    wal_path: Path | str | None = None,
+    account_id: str = "sim-account",
+    emit_state_snapshots: bool = False,
+    trade_recorder: TradeRecorder | None = None,
+) -> DeterministicReplayReport:
+    return _replay_deterministic_from_ticks(
+        iter_csv_ticks(csv_path, max_ticks=max_ticks),
+        runtime,
+        ctx,
+        wal_path=wal_path,
+        account_id=account_id,
+        emit_state_snapshots=emit_state_snapshots,
+        trade_recorder=trade_recorder,
     )

@@ -15,6 +15,7 @@
 #include "quant_hft/contracts/types.h"
 #include "quant_hft/core/ctp_gateway_adapter.h"
 #include "quant_hft/core/event_dispatcher.h"
+#include "quant_hft/core/python_callback_dispatcher.h"
 #include "quant_hft/interfaces/market_data_gateway.h"
 #include "quant_hft/interfaces/order_gateway.h"
 
@@ -42,9 +43,13 @@ public:
         CtpGatewayAdapter::BrokerTradingParamsSnapshotCallback;
 
     explicit CTPTraderAdapter(std::size_t query_qps_limit = 10,
-                              std::size_t dispatcher_workers = 1);
+                              std::size_t dispatcher_workers = 1,
+                              std::size_t python_queue_size = 5000,
+                              std::int64_t python_critical_wait_ms = 10);
     explicit CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
-                              std::size_t dispatcher_workers = 1);
+                              std::size_t dispatcher_workers = 1,
+                              std::size_t python_queue_size = 5000,
+                              std::int64_t python_critical_wait_ms = 10);
     ~CTPTraderAdapter();
 
     CTPTraderAdapter(const CTPTraderAdapter&) = delete;
@@ -89,6 +94,7 @@ public:
     void RegisterInvestorPositionSnapshotCallback(InvestorPositionSnapshotCallback callback);
     void RegisterInstrumentMetaSnapshotCallback(InstrumentMetaSnapshotCallback callback);
     void RegisterBrokerTradingParamsSnapshotCallback(BrokerTradingParamsSnapshotCallback callback);
+    void SetCircuitBreaker(std::function<void(bool)> callback);
 
     CtpUserSessionInfo GetLastUserSession() const;
     TradingAccountSnapshot GetLastTradingAccountSnapshot() const;
@@ -114,6 +120,7 @@ private:
     mutable std::mutex mutex_;
     std::shared_ptr<CtpGatewayAdapter> gateway_;
     EventDispatcher dispatcher_;
+    PythonCallbackDispatcher python_dispatcher_;
     OrderEventCallback user_order_event_callback_;
     TradingAccountSnapshotCallback user_trading_account_callback_;
     InvestorPositionSnapshotCallback user_investor_position_callback_;
@@ -133,6 +140,7 @@ private:
     std::unordered_map<int, std::shared_ptr<std::promise<void>>> settlement_promises_;
     std::unordered_map<int, std::shared_ptr<std::promise<std::pair<int, std::string>>>> login_promises_;
     mutable std::uint64_t order_ref_seq_{0};
+    std::function<void(bool)> circuit_breaker_callback_;
 };
 
 }  // namespace quant_hft

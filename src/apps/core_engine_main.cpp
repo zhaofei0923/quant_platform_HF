@@ -20,6 +20,7 @@
 #include "quant_hft/core/flow_controller.h"
 #include "quant_hft/core/local_wal_regulatory_sink.h"
 #include "quant_hft/core/market_bus_producer.h"
+#include "quant_hft/core/python_callback_dispatcher.h"
 #include "quant_hft/monitoring/exporter.h"
 #include "quant_hft/core/redis_realtime_store_client_adapter.h"
 #include "quant_hft/core/structured_log.h"
@@ -211,6 +212,27 @@ quant_hft::CtpOrderIntentForLedger BuildCtpLedgerIntent(const quant_hft::OrderIn
     return ledger_intent;
 }
 
+quant_hft::Bar ConvertToBar(const quant_hft::BarSnapshot& snapshot) {
+    quant_hft::Bar bar;
+    bar.symbol = snapshot.instrument_id;
+    bar.exchange = snapshot.exchange_id;
+    bar.timeframe = "1m";
+    bar.ts_ns = snapshot.ts_ns;
+    bar.open = snapshot.open;
+    bar.high = snapshot.high;
+    bar.low = snapshot.low;
+    bar.close = snapshot.close;
+    bar.volume = snapshot.volume;
+    bar.turnover = 0.0;
+    bar.open_interest = 0;
+    return bar;
+}
+
+std::string BuildStrategyBarKey(const std::string& strategy_id,
+                                const std::string& instrument_id) {
+    return "strategy:bar:" + strategy_id + ":" + instrument_id + ":latest";
+}
+
 bool IsTerminalStatus(quant_hft::OrderStatus status) {
     return status == quant_hft::OrderStatus::kFilled ||
            status == quant_hft::OrderStatus::kCanceled ||
@@ -268,6 +290,8 @@ int main(int argc, char** argv) {
     auto ctp_md = std::make_shared<CTPMdAdapter>(
         static_cast<std::size_t>(std::max(1, config.query_rate_per_sec)),
         2);
+    PythonCallbackDispatcher strategy_bar_dispatcher(5000, 10);
+    strategy_bar_dispatcher.Start();
     auto flow_controller = std::make_shared<FlowController>();
     auto breaker_manager = std::make_shared<CircuitBreakerManager>();
     {
@@ -306,6 +330,7 @@ int main(int argc, char** argv) {
     CtpAccountLedger ctp_account_ledger;
     OrderStateMachine order_state_machine;
     BarAggregator bar_aggregator;
+    (void)bar_aggregator.Flush();
     std::mutex ctp_ledger_mutex;
     std::mutex planner_mutex;
     std::mutex execution_metadata_mutex;
@@ -314,6 +339,12 @@ int main(int argc, char** argv) {
     std::unordered_map<std::string, std::vector<MarketSnapshot>> recent_market_history;
     std::mutex cancel_pending_mutex;
     std::unordered_set<std::string> cancel_pending_orders;
+    std::unordered_map<std::string, std::vector<std::string>> strategy_subscriptions_by_instrument;
+    for (const auto& instrument : instruments) {
+        strategy_subscriptions_by_instrument[instrument] = strategy_ids;
+    }
+    std::unordered_map<std::string, std::function<void(const Bar&)>> strategy_bar_callbacks;
+    std::unordered_set<std::string> missing_bar_callback_warned;
     WalReplayLoader replay_loader;
     StorageRetryPolicy storage_retry_policy;
     storage_retry_policy.max_attempts = 3;
@@ -338,6 +369,31 @@ int main(int argc, char** argv) {
     }
     auto pooled_redis = std::make_shared<PooledRedisHashClient>(
         std::vector<std::shared_ptr<IRedisHashClient>>{redis_client});
+    for (const auto& strategy_id : strategy_ids) {
+        strategy_bar_callbacks[strategy_id] =
+            [pooled_redis, strategy_id](const Bar& bar) {
+                if (pooled_redis == nullptr || bar.symbol.empty()) {
+                    return;
+                }
+                const auto key = BuildStrategyBarKey(strategy_id, bar.symbol);
+                std::unordered_map<std::string, std::string> fields{
+                    {"instrument_id", bar.symbol},
+                    {"exchange", bar.exchange},
+                    {"timeframe", bar.timeframe},
+                    {"ts_ns", std::to_string(bar.ts_ns)},
+                    {"open", std::to_string(bar.open)},
+                    {"high", std::to_string(bar.high)},
+                    {"low", std::to_string(bar.low)},
+                    {"close", std::to_string(bar.close)},
+                    {"volume", std::to_string(bar.volume)},
+                    {"turnover", std::to_string(bar.turnover)},
+                    {"open_interest", std::to_string(bar.open_interest)},
+                };
+                std::string ignored_error;
+                (void)pooled_redis->HSet(key, fields, &ignored_error);
+                (void)pooled_redis->Expire(key, 3 * 24 * 60 * 60, &ignored_error);
+            };
+    }
     RedisRealtimeStoreClientAdapter realtime_cache(pooled_redis, storage_retry_policy);
     StrategyIntentInbox strategy_inbox(pooled_redis);
 
@@ -390,6 +446,17 @@ int main(int argc, char** argv) {
                                      config.cancel_retry_base_ms,
                                      config.cancel_retry_max_delay_ms,
                                      config.cancel_wait_ack_timeout_ms);
+    ctp_trader->SetCircuitBreaker([breaker_manager, &config](bool opened) {
+        if (!opened) {
+            return;
+        }
+        breaker_manager->RecordFailure(BreakerScope::kSystem, "__system__");
+        EmitStructuredLog(&config,
+                          "core_engine",
+                          "warn",
+                          "python_callback_breaker_failure_recorded",
+                          {{"scope", "system"}});
+    });
     auto risk_manager = CreateRiskManager(order_manager, trading_domain_store);
     RiskManagerConfig risk_manager_config;
     risk_manager_config.default_max_order_volume = file_config.risk.default_max_order_volume;
@@ -539,7 +606,40 @@ int main(int argc, char** argv) {
             return;
         }
         const auto bars = bar_aggregator.OnMarketSnapshot(snapshot);
-        (void)bars;
+        if (!bars.empty()) {
+            for (const auto& bar_snapshot : bars) {
+                const auto bar = ConvertToBar(bar_snapshot);
+                const auto subscriptions_it =
+                    strategy_subscriptions_by_instrument.find(bar_snapshot.instrument_id);
+                if (subscriptions_it == strategy_subscriptions_by_instrument.end()) {
+                    continue;
+                }
+                for (const auto& strategy_id : subscriptions_it->second) {
+                    const auto callback_it = strategy_bar_callbacks.find(strategy_id);
+                    if (callback_it == strategy_bar_callbacks.end() || !callback_it->second) {
+                        if (missing_bar_callback_warned.insert(strategy_id).second) {
+                            EmitStructuredLog(&config,
+                                              "core_engine",
+                                              "warn",
+                                              "strategy_on_bar_callback_missing",
+                                              {{"strategy_id", strategy_id}});
+                        }
+                        continue;
+                    }
+                    const auto callback = callback_it->second;
+                    const bool posted =
+                        strategy_bar_dispatcher.Post([callback, bar]() { callback(bar); }, true);
+                    if (!posted) {
+                        EmitStructuredLog(
+                            &config,
+                            "core_engine",
+                            "error",
+                            "strategy_on_bar_dispatch_failed",
+                            {{"strategy_id", strategy_id}, {"instrument_id", bar_snapshot.instrument_id}});
+                    }
+                }
+            }
+        }
         {
             std::lock_guard<std::mutex> lock(market_history_mutex);
             auto& history = recent_market_history[snapshot.instrument_id];
@@ -686,6 +786,9 @@ int main(int argc, char** argv) {
                           "ctp_subscribe_failed",
                           {{"instrument_count", std::to_string(instruments.size())}});
         return 2;
+    }
+    for (const auto& instrument_id : instruments) {
+        bar_aggregator.ResetInstrument(instrument_id);
     }
 
     std::atomic<int> query_request_id{1};
@@ -976,6 +1079,7 @@ int main(int argc, char** argv) {
 
     ctp_md->Disconnect();
     ctp_trader->Disconnect();
+    strategy_bar_dispatcher.Stop();
     metrics_exporter.Stop();
     (void)bar_aggregator.Flush();
     timeseries_store.Flush();

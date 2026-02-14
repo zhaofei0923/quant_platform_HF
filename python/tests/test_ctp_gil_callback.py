@@ -3,7 +3,10 @@ from __future__ import annotations
 import threading
 import time
 
+import pytest
+
 from quant_hft.ctp_wrapper import CTPMdAdapter, CTPTraderAdapter
+from quant_hft.ctp_wrapper import is_native_backend
 
 
 def _connect_cfg() -> dict[str, object]:
@@ -89,3 +92,51 @@ def test_trader_order_callback_thread_safety_under_concurrent_place_order() -> N
     with lock:
         assert len(events) == 12
         assert len(set(events)) == 12
+
+
+def test_native_backend_slow_order_callback_does_not_block_place_order_path() -> None:
+    if not is_native_backend():
+        pytest.skip("requires native pybind backend")
+
+    trader = CTPTraderAdapter(dispatcher_workers=1, python_queue_size=5000)
+    assert trader.connect(_connect_cfg()) is True
+    assert trader.confirm_settlement() is True
+
+    callback_count = 0
+    callback_lock = threading.Lock()
+
+    def slow_on_order(_: dict[str, object]) -> None:
+        nonlocal callback_count
+        time.sleep(0.02)
+        with callback_lock:
+            callback_count += 1
+
+    trader.on_order_status(slow_on_order)
+
+    started_at = time.monotonic()
+    for seq in range(20):
+        assert trader.place_order(
+            {
+                "account_id": "191202",
+                "client_order_id": f"lat-{seq}",
+                "strategy_id": "demo",
+                "instrument_id": "SHFE.ag2406",
+                "volume": 1,
+                "price": 100.0,
+                "trace_id": f"latency-{seq}",
+            }
+        )
+    elapsed = time.monotonic() - started_at
+
+    deadline = time.time() + 3.0
+    while time.time() < deadline:
+        with callback_lock:
+            if callback_count >= 20:
+                break
+        time.sleep(0.02)
+
+    trader.disconnect()
+
+    assert elapsed < 0.5
+    with callback_lock:
+        assert callback_count >= 20

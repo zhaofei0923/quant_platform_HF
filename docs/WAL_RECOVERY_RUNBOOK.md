@@ -24,13 +24,14 @@ cmake --build build -j
 
 Expected output pattern:
 ```text
-WAL replay completed path=runtime_events.wal lines=<N> events=<M> parse_errors=<P> state_rejected=<R> ledger_applied=<L>
+WAL replay completed path=runtime_events.wal lines=<N> events=<M> ignored=<I> parse_errors=<P> state_rejected=<R> ledger_applied=<L>
 ```
 
 Acceptance:
 - `parse_errors=0`
 - `state_rejected=0`
-- `events` and `ledger_applied` are non-zero for non-empty WAL
+- `events` and `ledger_applied` are non-zero for non-empty order/trade WAL
+- `ignored` is allowed for non-order WAL kinds (for example `kind=rollover` audit lines)
 
 ### 3. Start core engine
 - `core_engine` startup now runs WAL replay first, then starts live path.

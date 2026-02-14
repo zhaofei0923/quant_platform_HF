@@ -173,6 +173,19 @@ TEST(ExecutionEngineTest, PlaceOrderRiskRejectReturnsFailedResult) {
     EXPECT_NE(result.message.find("risk reject"), std::string::npos);
 }
 
+TEST(ExecutionEngineTest, CircuitBreakerOpenBlocksNewOrder) {
+    auto bundle = BuildEngineBundle();
+    for (int i = 0; i < 3; ++i) {
+        bundle.breaker->RecordFailure(BreakerScope::kStrategy, "strat1");
+        bundle.breaker->RecordFailure(BreakerScope::kAccount, "acc1");
+        bundle.breaker->RecordFailure(BreakerScope::kSystem, "__system__");
+    }
+
+    const auto result = bundle.engine->PlaceOrderAsync(BuildOrder("ord-breaker-open")).get();
+    EXPECT_FALSE(result.success);
+    EXPECT_NE(result.message.find("blocked by circuit breaker"), std::string::npos);
+}
+
 TEST(ExecutionEngineTest, OrderStateTransitionValidSequence) {
     auto bundle = BuildEngineBundle();
     auto submit = bundle.engine->PlaceOrderAsync(BuildOrder("ord-2")).get();

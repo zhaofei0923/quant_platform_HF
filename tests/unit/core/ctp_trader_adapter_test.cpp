@@ -1,4 +1,5 @@
 #include <chrono>
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -236,6 +237,17 @@ public:
         auto_login_response_ = value;
     }
 
+    void EmitOrderEvent(const OrderEvent& event) {
+        OrderEventCallback cb;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            cb = order_event_callback_;
+        }
+        if (cb) {
+            cb(event);
+        }
+    }
+
 private:
     mutable std::mutex mutex_;
     MarketDataConnectConfig config_{};
@@ -346,6 +358,38 @@ TEST(CTPTraderAdapterTest, PlaceOrderWithRefReturnsNonEmptyString) {
     ASSERT_FALSE(client_order_id.empty());
     EXPECT_EQ(client_order_id.rfind("stratA_", 0), 0U);
     EXPECT_EQ(fake_gateway->last_order_intent().client_order_id, client_order_id);
+}
+
+TEST(CTPTraderAdapterTest, PythonCriticalDispatchTimeoutTriggersCircuitBreakerCallback) {
+    auto fake_gateway = std::make_shared<FakeGateway>();
+    CTPTraderAdapter adapter(fake_gateway, 1, 1, 5);
+    ASSERT_TRUE(adapter.Connect(BuildSimConfig()));
+
+    std::atomic<bool> breaker_triggered{false};
+    adapter.SetCircuitBreaker([&breaker_triggered](bool opened) {
+        if (opened) {
+            breaker_triggered.store(true);
+        }
+    });
+
+    adapter.RegisterOrderEventCallback([](const OrderEvent&) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    });
+
+    OrderEvent event;
+    event.account_id = "acc1";
+    event.client_order_id = "ord-timeout";
+    event.order_ref = "ord-timeout";
+    event.instrument_id = "SHFE.ag2406";
+    event.status = OrderStatus::kAccepted;
+    event.event_source = "OnRtnOrder";
+    event.ts_ns = 1;
+
+    fake_gateway->EmitOrderEvent(event);
+    fake_gateway->EmitOrderEvent(event);
+    fake_gateway->EmitOrderEvent(event);
+
+    EXPECT_TRUE(WaitUntil([&breaker_triggered]() { return breaker_triggered.load(); }, 2000));
 }
 
 }  // namespace quant_hft

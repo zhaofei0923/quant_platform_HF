@@ -18,6 +18,7 @@ int main(int argc, char** argv) {
     std::cout << "WAL replay completed path=" << wal_path
               << " lines=" << stats.lines_total
               << " events=" << stats.events_loaded
+              << " ignored=" << stats.ignored_lines
               << " parse_errors=" << stats.parse_errors
               << " state_rejected=" << stats.state_rejected
               << " ledger_applied=" << stats.ledger_applied << '\n';

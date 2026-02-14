@@ -98,10 +98,40 @@ TEST(WalReplayLoaderTest, SupportsLegacyWalWithoutExtendedFields) {
 
     EXPECT_EQ(stats.lines_total, 1);
     EXPECT_EQ(stats.events_loaded, 1);
+    EXPECT_EQ(stats.ignored_lines, 0);
     EXPECT_EQ(stats.parse_errors, 0);
     EXPECT_EQ(stats.state_rejected, 0);
 
     const auto snapshot = order_state_machine.GetOrderSnapshot("ord-old");
+    EXPECT_EQ(snapshot.status, OrderStatus::kAccepted);
+
+    std::filesystem::remove(wal_path);
+}
+
+TEST(WalReplayLoaderTest, IgnoresRolloverLinesWithoutParseErrors) {
+    const auto wal_path = NewTempWalPath("rollover");
+    {
+        std::ofstream out(wal_path);
+        out << "{\"seq\":1,\"kind\":\"rollover\",\"ts_ns\":10,"
+               "\"symbol\":\"rb\",\"action\":\"carry\","
+               "\"from_instrument\":\"rb2305\",\"to_instrument\":\"rb2310\"}\n";
+        out << "{\"seq\":2,\"kind\":\"order\",\"ts_ns\":11,"
+               "\"account_id\":\"a1\",\"client_order_id\":\"ord-new\","
+               "\"instrument_id\":\"SHFE.ag2406\",\"status\":1,"
+               "\"filled_volume\":0}\n";
+    }
+
+    OrderStateMachine order_state_machine;
+    InMemoryPortfolioLedger ledger;
+    WalReplayLoader loader;
+    const auto stats = loader.Replay(wal_path.string(), &order_state_machine, &ledger);
+
+    EXPECT_EQ(stats.lines_total, 2);
+    EXPECT_EQ(stats.events_loaded, 1);
+    EXPECT_EQ(stats.ignored_lines, 1);
+    EXPECT_EQ(stats.parse_errors, 0);
+
+    const auto snapshot = order_state_machine.GetOrderSnapshot("ord-new");
     EXPECT_EQ(snapshot.status, OrderStatus::kAccepted);
 
     std::filesystem::remove(wal_path);

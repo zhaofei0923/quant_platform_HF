@@ -119,6 +119,7 @@ class StrategyRunner:
         self._poll_interval_ms = max(1, poll_interval_ms)
         self._ctx: dict[str, object] = {} if ctx is None else ctx
         self._last_state_ts_ns: dict[str, int] = {}
+        self._last_bar_ts_ns: dict[str, int] = {}
         self._seq = 0
         self._active_trace_ids: set[str] = set()
         self._last_order_fingerprint: dict[str, tuple[str, int, int]] = {}
@@ -150,6 +151,30 @@ class StrategyRunner:
     def _collect_signal_intents(self) -> list[SignalIntent]:
         intents: list[SignalIntent] = []
         for instrument_id in self._instruments:
+            bar = self._datafeed.get_latest_bar(self._strategy_id, instrument_id)
+            if bar is not None:
+                bar_ts_ns = int(bar.get("ts_ns", 0))
+                last_bar_ts = self._last_bar_ts_ns.get(instrument_id, -1)
+                if bar_ts_ns > last_bar_ts:
+                    self._last_bar_ts_ns[instrument_id] = bar_ts_ns
+                    produced_bars = self._runtime.on_bar(self._ctx, [bar])
+                    for intent in produced_bars:
+                        if intent.strategy_id == self._strategy_id:
+                            intents.append(intent)
+                            continue
+                        intents.append(
+                            SignalIntent(
+                                strategy_id=self._strategy_id,
+                                instrument_id=intent.instrument_id,
+                                side=intent.side,
+                                offset=intent.offset,
+                                volume=intent.volume,
+                                limit_price=intent.limit_price,
+                                ts_ns=intent.ts_ns,
+                                trace_id=intent.trace_id,
+                            )
+                        )
+
             snapshot = self._datafeed.get_latest_state_snapshot(instrument_id)
             if snapshot is None:
                 continue

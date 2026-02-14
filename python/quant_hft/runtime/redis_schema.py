@@ -17,6 +17,10 @@ def order_event_key(trace_id: str) -> str:
     return f"trade:order:{trace_id}:info"
 
 
+def strategy_bar_key(strategy_id: str, instrument_id: str) -> str:
+    return f"strategy:bar:{strategy_id}:{instrument_id}:latest"
+
+
 def encode_signal_intent(intent: SignalIntent) -> str:
     parts = [
         intent.instrument_id,
@@ -160,5 +164,37 @@ def parse_order_event(fields: Mapping[str, str]) -> OrderEvent | None:
             slippage_bps=slippage_bps,
             impact_cost=impact_cost,
         )
+    except ValueError:
+        return None
+
+
+def parse_strategy_bar(fields: Mapping[str, str]) -> dict[str, object] | None:
+    required = (
+        "instrument_id",
+        "exchange",
+        "timeframe",
+        "ts_ns",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+    )
+    if any(fields.get(key) is None for key in required):
+        return None
+    try:
+        return {
+            "instrument_id": fields["instrument_id"],
+            "exchange": fields["exchange"],
+            "timeframe": fields["timeframe"],
+            "ts_ns": int(fields["ts_ns"]),
+            "open": float(fields["open"]),
+            "high": float(fields["high"]),
+            "low": float(fields["low"]),
+            "close": float(fields["close"]),
+            "volume": int(fields["volume"]),
+            "turnover": float(fields.get("turnover", "0")),
+            "open_interest": int(fields.get("open_interest", "0")),
+        }
     except ValueError:
         return None

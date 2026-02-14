@@ -28,6 +28,7 @@ add_library(quant_hft_core STATIC
     src/core/common/strategy_intent_codec.cpp
     src/core/common/strategy_intent_inbox.cpp
     src/core/common/event_dispatcher.cpp
+    src/core/common/python_callback_dispatcher.cpp
     src/core/common/flow_controller.cpp
     src/core/common/circuit_breaker.cpp
     src/core/common/fixed_decimal.cpp
@@ -174,6 +175,9 @@ target_link_libraries(wal_replay_tool PRIVATE quant_hft_core)
 add_executable(hotpath_benchmark src/apps/hotpath_benchmark_main.cpp)
 target_link_libraries(hotpath_benchmark PRIVATE quant_hft_core)
 
+add_executable(hotpath_hybrid src/apps/hotpath_hybrid_main.cpp)
+target_link_libraries(hotpath_hybrid PRIVATE quant_hft_core)
+
 add_executable(daily_settlement src/apps/daily_settlement_main.cpp)
 target_link_libraries(daily_settlement PRIVATE quant_hft_core)
 
@@ -282,6 +286,9 @@ if(QUANT_HFT_BUILD_TESTS)
 
     add_executable(event_dispatcher_test tests/unit/core/event_dispatcher_test.cpp)
     target_link_libraries(event_dispatcher_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(python_callback_dispatcher_test tests/unit/core/python_callback_dispatcher_test.cpp)
+    target_link_libraries(python_callback_dispatcher_test PRIVATE quant_hft_core GTest::gtest_main)
 
     add_executable(flow_controller_test tests/unit/core/flow_controller_test.cpp)
     target_link_libraries(flow_controller_test PRIVATE quant_hft_core GTest::gtest_main)

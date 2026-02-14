@@ -1,3 +1,6 @@
+#include <chrono>
+#include <cstdio>
+#include <fstream>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -100,13 +103,140 @@ TEST(BarAggregatorTest, NightSessionUsesTradingDayAndKeepsActionDay) {
     EXPECT_EQ(bars[0].action_day, "20260211");
 }
 
-TEST(BarAggregatorTest, TradingSessionTimeMatcherHandlesDayAndNightWindows) {
-    EXPECT_TRUE(BarAggregator::IsTradingSessionTime("09:00:00"));
-    EXPECT_TRUE(BarAggregator::IsTradingSessionTime("14:59:59"));
-    EXPECT_TRUE(BarAggregator::IsTradingSessionTime("21:00:00"));
-    EXPECT_TRUE(BarAggregator::IsTradingSessionTime("02:30:00"));
-    EXPECT_FALSE(BarAggregator::IsTradingSessionTime("03:10:00"));
-    EXPECT_FALSE(BarAggregator::IsTradingSessionTime("16:30:00"));
+TEST(BarAggregatorTest, TradingSessionMatcherHandlesDayAndNightWindowsByExchange) {
+    BarAggregator aggregator;
+
+    EXPECT_TRUE(aggregator.IsInTradingSession("SHFE", "09:00:00"));
+    EXPECT_TRUE(aggregator.IsInTradingSession("SHFE", "14:59:59"));
+    EXPECT_TRUE(aggregator.IsInTradingSession("SHFE", "21:00:00"));
+    EXPECT_TRUE(aggregator.IsInTradingSession("SHFE", "00:59:59"));
+    EXPECT_FALSE(aggregator.IsInTradingSession("SHFE", "03:10:00"));
+    EXPECT_FALSE(aggregator.IsInTradingSession("CFFEX", "21:10:00"));
+    EXPECT_FALSE(aggregator.IsInTradingSession("DCE", "23:10:00"));
+}
+
+TEST(BarAggregatorTest, ResolveTimestampUsesExchangeTimeInBacktestMode) {
+    BarAggregatorConfig config;
+    config.is_backtest_mode = true;
+    BarAggregator aggregator(config);
+
+    MarketSnapshot snapshot =
+        MakeSnapshot("SHFE.ag2406", "20260211", "20260211", "09:00:01", 0, 10.0, 1, 100);
+    snapshot.exchange_ts_ns = 200;
+
+    EXPECT_TRUE(aggregator.OnMarketSnapshot(snapshot).empty());
+    const auto bars = aggregator.Flush();
+    ASSERT_EQ(bars.size(), 1U);
+    EXPECT_EQ(bars[0].ts_ns, 200);
+}
+
+TEST(BarAggregatorTest, ResetInstrumentClearsActiveBucket) {
+    BarAggregator aggregator;
+
+    EXPECT_TRUE(aggregator.OnMarketSnapshot(
+                            MakeSnapshot("SHFE.ag2406",
+                                         "20260211",
+                                         "20260211",
+                                         "09:00:01",
+                                         0,
+                                         10.0,
+                                         100))
+                    .empty());
+
+    aggregator.ResetInstrument("SHFE.ag2406");
+
+    EXPECT_TRUE(aggregator.OnMarketSnapshot(
+                            MakeSnapshot("SHFE.ag2406",
+                                         "20260211",
+                                         "20260211",
+                                         "09:01:01",
+                                         0,
+                                         11.0,
+                                         101))
+                    .empty());
+    const auto bars = aggregator.Flush();
+    ASSERT_EQ(bars.size(), 1U);
+    EXPECT_EQ(bars[0].minute, "20260211 09:01");
+}
+
+TEST(BarAggregatorTest, SessionConfigSupportsProductSpecificRules) {
+    const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto config_path =
+        std::string("/tmp/trading_sessions_test_") + std::to_string(now) + ".yaml";
+    {
+        std::ofstream out(config_path);
+        ASSERT_TRUE(out.is_open());
+        out << "sessions:\n"
+            << "  - exchange: CFFEX\n"
+            << "    product: IF\n"
+            << "    day: \"09:30-15:00\"\n"
+            << "    night: null\n"
+            << "  - exchange: CFFEX\n"
+            << "    product: T\n"
+            << "    day: \"09:30-15:15\"\n"
+            << "    night: null\n";
+    }
+
+    BarAggregatorConfig config;
+    config.trading_sessions_config_path = config_path;
+    config.use_default_session_fallback = false;
+    BarAggregator aggregator(config);
+
+    const auto if_snapshot =
+        MakeSnapshot("CFFEX.IF2503", "20260211", "20260211", "15:10:00", 0, 4300.0, 100);
+    const auto tb_snapshot =
+        MakeSnapshot("CFFEX.T2506", "20260211", "20260211", "15:10:00", 0, 101.0, 100);
+
+    EXPECT_FALSE(aggregator.ShouldProcessSnapshot(if_snapshot));
+    EXPECT_TRUE(aggregator.ShouldProcessSnapshot(tb_snapshot));
+
+    std::remove(config_path.c_str());
+}
+
+TEST(BarAggregatorTest, SessionConfigPrefixMatchesInstrumentSymbolAfterDot) {
+    const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto config_path =
+        std::string("/tmp/trading_sessions_prefix_test_") + std::to_string(now) + ".yaml";
+    {
+        std::ofstream out(config_path);
+        ASSERT_TRUE(out.is_open());
+        out << "sessions:\n"
+            << "  - exchange: SHFE\n"
+            << "    instrument_prefix: \"ag\"\n"
+            << "    day: \"09:00-15:00\"\n"
+            << "    night: \"21:00-02:30\"\n";
+    }
+
+    BarAggregatorConfig config;
+    config.trading_sessions_config_path = config_path;
+    config.use_default_session_fallback = false;
+    BarAggregator aggregator(config);
+
+    const auto ag_snapshot =
+        MakeSnapshot("SHFE.ag2406", "20260211", "20260211", "01:30:00", 0, 6000.0, 100);
+    const auto rb_snapshot =
+        MakeSnapshot("SHFE.rb2406", "20260211", "20260211", "01:30:00", 0, 3500.0, 100);
+
+    EXPECT_TRUE(aggregator.ShouldProcessSnapshot(ag_snapshot));
+    EXPECT_FALSE(aggregator.ShouldProcessSnapshot(rb_snapshot));
+
+    std::remove(config_path.c_str());
+}
+
+TEST(BarAggregatorTest, DefaultCffexSessionKeepsTreasuryAndFiltersEquityAfter1500) {
+    BarAggregatorConfig config;
+    config.trading_sessions_config_path =
+        "/tmp/nonexistent_trading_sessions_for_default_rule_test.yaml";
+    config.use_default_session_fallback = true;
+    BarAggregator aggregator(config);
+
+    const auto treasury_snapshot =
+        MakeSnapshot("CFFEX.T2406", "20260211", "20260211", "15:05:00", 0, 101.0, 100);
+    const auto equity_snapshot =
+        MakeSnapshot("CFFEX.IF2406", "20260211", "20260211", "15:05:00", 0, 4300.0, 100);
+
+    EXPECT_TRUE(aggregator.ShouldProcessSnapshot(treasury_snapshot));
+    EXPECT_FALSE(aggregator.ShouldProcessSnapshot(equity_snapshot));
 }
 
 TEST(BarAggregatorTest, AggregatesOneMinuteBarsToHigherTimeframe) {

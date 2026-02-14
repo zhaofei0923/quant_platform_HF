@@ -107,8 +107,11 @@ py::dict ToTickDict(const MarketSnapshot& snapshot) {
 
 class PyCTPTraderAdapter {
 public:
-    PyCTPTraderAdapter(std::size_t query_qps_limit, std::size_t dispatcher_workers)
-        : impl_(std::make_shared<CTPTraderAdapter>(query_qps_limit, dispatcher_workers)) {}
+    PyCTPTraderAdapter(std::size_t query_qps_limit,
+                       std::size_t dispatcher_workers,
+                       std::size_t python_queue_size)
+        : impl_(std::make_shared<CTPTraderAdapter>(
+              query_qps_limit, dispatcher_workers, python_queue_size)) {}
 
     bool connect(const py::dict& config) {
         return impl_->Connect(ParseConnectConfig(config));
@@ -148,8 +151,11 @@ private:
 
 class PyCTPMdAdapter {
 public:
-    PyCTPMdAdapter(std::size_t query_qps_limit, std::size_t dispatcher_workers)
-        : impl_(std::make_shared<CTPMdAdapter>(query_qps_limit, dispatcher_workers)) {}
+    PyCTPMdAdapter(std::size_t query_qps_limit,
+                   std::size_t dispatcher_workers,
+                   std::size_t python_queue_size)
+        : impl_(std::make_shared<CTPMdAdapter>(
+              query_qps_limit, dispatcher_workers, python_queue_size)) {}
 
     bool connect(const py::dict& config) {
         return impl_->Connect(ParseConnectConfig(config));
@@ -188,8 +194,10 @@ private:
 
 PYBIND11_MODULE(_ctp_wrapper, m) {
     py::class_<quant_hft::PyCTPTraderAdapter>(m, "CTPTraderAdapter")
-        .def(py::init<std::size_t, std::size_t>(), py::arg("query_qps_limit") = 10,
-             py::arg("dispatcher_workers") = 1)
+       .def(py::init<std::size_t, std::size_t, std::size_t>(),
+           py::arg("query_qps_limit") = 10,
+           py::arg("dispatcher_workers") = 1,
+           py::arg("python_queue_size") = 5000)
         .def("connect", &quant_hft::PyCTPTraderAdapter::connect)
         .def("disconnect", &quant_hft::PyCTPTraderAdapter::disconnect)
         .def("confirm_settlement", &quant_hft::PyCTPTraderAdapter::confirm_settlement)
@@ -199,8 +207,10 @@ PYBIND11_MODULE(_ctp_wrapper, m) {
         .def("on_order_status", &quant_hft::PyCTPTraderAdapter::on_order_status);
 
     py::class_<quant_hft::PyCTPMdAdapter>(m, "CTPMdAdapter")
-        .def(py::init<std::size_t, std::size_t>(), py::arg("query_qps_limit") = 10,
-             py::arg("dispatcher_workers") = 1)
+           .def(py::init<std::size_t, std::size_t, std::size_t>(),
+               py::arg("query_qps_limit") = 10,
+               py::arg("dispatcher_workers") = 1,
+               py::arg("python_queue_size") = 5000)
         .def("connect", &quant_hft::PyCTPMdAdapter::connect)
         .def("disconnect", &quant_hft::PyCTPMdAdapter::disconnect)
         .def("is_ready", &quant_hft::PyCTPMdAdapter::is_ready)

@@ -34,6 +34,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--input", default="backtest_data")
     parser.add_argument("--output-dir", default="runtime/backtest/parquet")
     parser.add_argument(
+        "--no-run-id",
+        action="store_true",
+        help="Write parquet partitions directly under --output-dir without timestamp run_id",
+    )
+    parser.add_argument(
         "--report-json",
         default="docs/results/backtest_parquet_conversion_report.json",
     )
@@ -135,7 +140,7 @@ def main() -> int:
     run_id = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
 
     input_root = Path(args.input)
-    output_root = Path(args.output_dir) / run_id
+    output_root = Path(args.output_dir) if args.no_run_id else Path(args.output_dir) / run_id
     report_path = Path(args.report_json)
 
     success = True

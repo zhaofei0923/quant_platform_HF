@@ -4,9 +4,7 @@ import threading
 import time
 
 import pytest
-
-from quant_hft.ctp_wrapper import CTPMdAdapter, CTPTraderAdapter
-from quant_hft.ctp_wrapper import is_native_backend
+from quant_hft.ctp_wrapper import CTPMdAdapter, CTPTraderAdapter, is_native_backend
 
 
 def _connect_cfg() -> dict[str, object]:

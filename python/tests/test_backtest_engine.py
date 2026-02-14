@@ -22,7 +22,11 @@ class _OnceBuyStrategy(Strategy):
             return
         if getattr(tick, "last_price", 0.0) <= 0.0:
             return
-        self.buy(getattr(tick, "symbol", "rb2405"), float(getattr(tick, "last_price", 0.0)) + 1.0, 1)
+        self.buy(
+            getattr(tick, "symbol", "rb2405"),
+            float(getattr(tick, "last_price", 0.0)) + 1.0,
+            1,
+        )
         self._ordered = True
 
 

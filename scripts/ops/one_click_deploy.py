@@ -58,9 +58,7 @@ def _select_workflow(mode: str, kv: dict[str, str]) -> str:
     if mode != "auto":
         return mode
     has_failover_keys = (
-        "backup_sync_check_cmd" in kv
-        or "demote_primary_cmd" in kv
-        or "promote_standby_cmd" in kv
+        "backup_sync_check_cmd" in kv or "demote_primary_cmd" in kv or "promote_standby_cmd" in kv
     )
     return "failover" if has_failover_keys else "rollout"
 
@@ -130,7 +128,8 @@ def main() -> int:
     _append_result(lines, "DEPLOY_EVIDENCE_FILE", str(evidence_file))
     _append_result(lines, "DEPLOY_ORCHESTRATOR_EXIT", str(run_result.returncode))
     _append_result(lines, "DEPLOY_VERIFY_EXIT", str(verify_result.returncode))
-    _append_result(lines, "DEPLOY_SUCCESS", "true" if run_result.returncode == 0 and verify_result.returncode == 0 else "false")
+    deploy_success = run_result.returncode == 0 and verify_result.returncode == 0
+    _append_result(lines, "DEPLOY_SUCCESS", "true" if deploy_success else "false")
     summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     if run_result.stdout:

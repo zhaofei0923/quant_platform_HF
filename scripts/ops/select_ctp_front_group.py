@@ -46,7 +46,9 @@ def _probe(host: str, port: int, timeout_ms: int) -> tuple[bool, str]:
         return False, str(exc)
 
 
-def _discover_group(host: str, timeout_ms: int) -> tuple[FrontGroup | None, list[dict[str, object]]]:
+def _discover_group(
+    host: str, timeout_ms: int
+) -> tuple[FrontGroup | None, list[dict[str, object]]]:
     groups = (
         FrontGroup(1, 30001, 30011),
         FrontGroup(2, 30002, 30012),

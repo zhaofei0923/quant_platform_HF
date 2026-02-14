@@ -6,8 +6,8 @@ from .optimizer import (
     OptimizationConfig,
     OptimizationResult,
     OptimizationTrial,
-    OptunaOptimizer,
     OptimizerBackend,
+    OptunaOptimizer,
 )
 
 __all__ = [

@@ -45,12 +45,12 @@ class OptimizationConfig:
     factor_id: str = "factor-default"
 
 
-def _spec_signature(spec: "BacktestRunSpec") -> str:
+def _spec_signature(spec: BacktestRunSpec) -> str:
     canonical = json.dumps(spec.to_dict(), ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _validate_param_space(base_spec: "BacktestRunSpec", param_space: dict[str, list[Any]]) -> None:
+def _validate_param_space(base_spec: BacktestRunSpec, param_space: dict[str, list[Any]]) -> None:
     if not param_space:
         raise ValueError("param_space is required")
     allowed_keys = set(base_spec.to_dict().keys())
@@ -77,7 +77,7 @@ class OptimizerBackend(ABC):
     def optimize(
         self,
         config: OptimizationConfig,
-        evaluator: Callable[["BacktestRunSpec"], float],
+        evaluator: Callable[[BacktestRunSpec], float],
         *,
         tracker: ExperimentTracker | None = None,
     ) -> OptimizationResult:
@@ -92,7 +92,7 @@ class GridSearchOptimizer(OptimizerBackend):
     def optimize(
         self,
         config: OptimizationConfig,
-        evaluator: Callable[["BacktestRunSpec"], float],
+        evaluator: Callable[[BacktestRunSpec], float],
         *,
         tracker: ExperimentTracker | None = None,
     ) -> OptimizationResult:
@@ -101,7 +101,8 @@ class GridSearchOptimizer(OptimizerBackend):
         keys = sorted(config.param_space.keys())
         trials: list[OptimizationTrial] = []
 
-        for index, values in enumerate(product(*(config.param_space[key] for key in keys)), start=1):
+        combinations = product(*(config.param_space[key] for key in keys))
+        for index, values in enumerate(combinations, start=1):
             params = {key: value for key, value in zip(keys, values, strict=True)}
             run_id = f"{config.run_id_prefix}-{index:04d}"
             trial_spec = replace(config.base_spec, run_id=run_id, **params)
@@ -147,7 +148,7 @@ class OptunaOptimizer(OptimizerBackend):
     def optimize(
         self,
         config: OptimizationConfig,
-        evaluator: Callable[["BacktestRunSpec"], float],
+        evaluator: Callable[[BacktestRunSpec], float],
         *,
         tracker: ExperimentTracker | None = None,
     ) -> OptimizationResult:

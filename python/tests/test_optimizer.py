@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from quant_hft.backtest.replay import BacktestRunSpec
 from quant_hft.research.experiment_tracker import ExperimentTracker
 from quant_hft.research.optimizer import (

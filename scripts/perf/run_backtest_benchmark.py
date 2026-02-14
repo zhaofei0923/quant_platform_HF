@@ -16,7 +16,10 @@ try:
 except ModuleNotFoundError:
     repo_python = Path(__file__).resolve().parents[2] / "python"
     sys.path.insert(0, str(repo_python))
-    from quant_hft.backtest.replay import BacktestRunSpec, run_backtest_spec  # type: ignore[no-redef]
+    from quant_hft.backtest.replay import (  # type: ignore[no-redef]
+        BacktestRunSpec,
+        run_backtest_spec,
+    )
     from quant_hft.runtime.engine import StrategyRuntime  # type: ignore[no-redef]
     from quant_hft.strategy.demo import DemoStrategy  # type: ignore[no-redef]
 
@@ -32,7 +35,9 @@ class BacktestBenchmarkSummary:
     sample_total_pnl: float
 
 
-def run_backtest_benchmark(csv_path: Path, *, max_ticks: int, runs: int, warmup_runs: int) -> BacktestBenchmarkSummary:
+def run_backtest_benchmark(
+    csv_path: Path, *, max_ticks: int, runs: int, warmup_runs: int
+) -> BacktestBenchmarkSummary:
     if runs <= 0:
         raise ValueError("runs must be positive")
     if warmup_runs < 0:
@@ -128,7 +133,9 @@ def main() -> int:
 
     result_path = Path(args.result_json)
     result_path.parent.mkdir(parents=True, exist_ok=True)
-    result_path.write_text(json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
+    result_path.write_text(
+        json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8"
+    )
     print(str(result_path))
     return 0 if passed else 2
 

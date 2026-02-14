@@ -29,7 +29,9 @@ class BenchmarkDatasetReport:
         }
 
 
-def prepare_benchmark_dataset(input_csv: Path, output_csv: Path, *, max_ticks: int) -> BenchmarkDatasetReport:
+def prepare_benchmark_dataset(
+    input_csv: Path, output_csv: Path, *, max_ticks: int
+) -> BenchmarkDatasetReport:
     if max_ticks <= 0:
         raise ValueError("max_ticks must be positive")
 
@@ -70,7 +72,9 @@ def prepare_benchmark_dataset(input_csv: Path, output_csv: Path, *, max_ticks: i
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Prepare compact backtest benchmark dataset for CI")
+    parser = argparse.ArgumentParser(
+        description="Prepare compact backtest benchmark dataset for CI"
+    )
     parser.add_argument("--input-csv", default="backtest_data/rb.csv")
     parser.add_argument("--output-csv", default="runtime/benchmarks/backtest/rb_ci_sample.csv")
     parser.add_argument("--max-ticks", type=int, default=1500)
@@ -94,7 +98,9 @@ def main() -> int:
     }
     report_path = Path(args.report_json)
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
+    report_path.write_text(
+        json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8"
+    )
     print(str(report_path))
     return 0
 

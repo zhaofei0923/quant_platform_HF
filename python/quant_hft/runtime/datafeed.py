@@ -10,8 +10,8 @@ from quant_hft.runtime.redis_schema import (
     build_intent_batch_fields,
     order_event_key,
     parse_order_event,
-    parse_strategy_bar,
     parse_state_snapshot,
+    parse_strategy_bar,
     state_snapshot_key,
     strategy_bar_key,
     strategy_intent_key,
@@ -21,9 +21,7 @@ from quant_hft.runtime.redis_schema import (
 class DataFeed(Protocol):
     def get_latest_state_snapshot(self, instrument_id: str) -> StateSnapshot7D | None: ...
 
-    def get_latest_bar(
-        self, strategy_id: str, instrument_id: str
-    ) -> dict[str, object] | None: ...
+    def get_latest_bar(self, strategy_id: str, instrument_id: str) -> dict[str, object] | None: ...
 
     def publish_intent_batch(
         self, strategy_id: str, seq: int, intents: list[SignalIntent]
@@ -42,9 +40,7 @@ class RedisLiveDataFeed(DataFeed):
             return None
         return parse_state_snapshot(fields)
 
-    def get_latest_bar(
-        self, strategy_id: str, instrument_id: str
-    ) -> dict[str, object] | None:
+    def get_latest_bar(self, strategy_id: str, instrument_id: str) -> dict[str, object] | None:
         fields = self.redis_client.hgetall(strategy_bar_key(strategy_id, instrument_id))
         if not fields:
             return None
@@ -73,9 +69,7 @@ class BacktestReplayDataFeed(DataFeed):
     def get_latest_state_snapshot(self, instrument_id: str) -> StateSnapshot7D | None:
         return self.state_by_instrument.get(instrument_id)
 
-    def get_latest_bar(
-        self, strategy_id: str, instrument_id: str
-    ) -> dict[str, object] | None:
+    def get_latest_bar(self, strategy_id: str, instrument_id: str) -> dict[str, object] | None:
         return self.bar_by_strategy_and_instrument.get((strategy_id, instrument_id))
 
     def publish_intent_batch(self, strategy_id: str, seq: int, intents: list[SignalIntent]) -> None:

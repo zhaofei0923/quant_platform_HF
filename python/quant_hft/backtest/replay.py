@@ -711,8 +711,7 @@ def iter_parquet_ticks(
     if max_ticks is not None:
         rows = rows[:max_ticks]
 
-    for tick in rows:
-        yield tick
+    yield from rows
 
 
 def _replay_minute_bars_from_ticks(

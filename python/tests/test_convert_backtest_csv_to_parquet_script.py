@@ -113,3 +113,38 @@ def test_convert_backtest_csv_to_parquet_prefix_mismatch_error_mode(tmp_path: Pa
     assert completed.returncode == 2
     payload = json.loads(report_file.read_text(encoding="utf-8"))
     assert payload["success"] is False
+
+
+def test_convert_backtest_csv_to_parquet_accepts_float_like_millisec(tmp_path: Path) -> None:
+    csv_file = tmp_path / "c.csv"
+    csv_file.write_text(
+        "\n".join(
+            [
+                "TradingDay,InstrumentID,UpdateTime,UpdateMillisec,LastPrice,Volume,BidPrice1,BidVolume1,AskPrice1,AskVolume1,AveragePrice,Turnover,OpenInterest",
+                "20260101,c2501,09:00:00,0.0,2500.0,1,2499.0,1,2501.0,1,2500.0,0.0,0",
+                "20260101,c2501,09:00:01,1.0,2500.5,2,2500.0,1,2501.5,1,2500.2,0.0,0",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    report_file = tmp_path / "float_ms_report.json"
+    command = [
+        sys.executable,
+        "scripts/data/convert_backtest_csv_to_parquet.py",
+        "--input",
+        str(csv_file),
+        "--output-dir",
+        str(tmp_path / "out"),
+        "--report-json",
+        str(report_file),
+        "--execute",
+        "--no-run-id",
+    ]
+
+    completed = subprocess.run(command, check=False, capture_output=True, text=True)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    payload = json.loads(report_file.read_text(encoding="utf-8"))
+    assert payload["success"] is True
+    assert payload["output_file_count"] == 1

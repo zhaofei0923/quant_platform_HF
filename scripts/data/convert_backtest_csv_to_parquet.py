@@ -5,6 +5,8 @@ import argparse
 import csv
 import importlib
 import json
+import sys
+import tempfile
 import time
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -40,9 +42,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--report-json",
-        default="docs/results/backtest_parquet_conversion_report.json",
+        default="",
+        help="Optional path to write conversion report JSON (omit to disable report file)",
     )
     parser.add_argument("--compression", default="zstd")
+    parser.add_argument(
+        "--progress-every",
+        type=int,
+        default=100000,
+        help="Print progress every N processed rows per source file (0 to disable)",
+    )
     parser.add_argument(
         "--filename-prefix-policy",
         choices=("error", "warn"),
@@ -98,6 +107,23 @@ def _read_csv_rows(csv_path: Path) -> tuple[list[dict[str, str]], list[str]]:
     return rows, header
 
 
+def _iter_csv_rows(csv_path: Path):
+    with csv_path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames is None:
+            raise ValueError(f"missing CSV header in {csv_path}")
+        header = [name.strip() for name in reader.fieldnames if name is not None]
+        missing = sorted(_REQUIRED_COLUMNS.difference(header))
+        if missing:
+            raise ValueError(f"missing required columns in {csv_path}: {', '.join(missing)}")
+        for row in reader:
+            yield {
+                key: (value.strip() if isinstance(value, str) else "")
+                for key, value in row.items()
+                if key is not None
+            }
+
+
 def _extract_symbol_prefix(value: str) -> str:
     prefix = []
     for ch in value.strip():
@@ -111,9 +137,35 @@ def _extract_symbol_prefix(value: str) -> str:
 def _tick_ts_ms(trading_day: str, update_time: str, update_millisec: int) -> int:
     if not trading_day or not update_time:
         return -1
-    dt = datetime.strptime(f"{trading_day} {update_time}", "%Y%m%d %H:%M:%S")
+    try:
+        dt = datetime.strptime(f"{trading_day} {update_time}", "%Y%m%d %H:%M:%S")
+    except ValueError:
+        return -1
     dt = dt.replace(tzinfo=timezone.utc)
     return int(dt.timestamp() * 1000) + max(0, update_millisec)
+
+
+def _to_int_millis(value: str) -> int:
+    raw = (value or "").strip()
+    if not raw:
+        return 0
+    try:
+        return int(raw)
+    except ValueError:
+        try:
+            return int(float(raw))
+        except ValueError:
+            return 0
+
+
+def _to_float(value: str) -> float:
+    raw = (value or "").strip()
+    if not raw:
+        return 0.0
+    try:
+        return float(raw)
+    except ValueError:
+        return 0.0
 
 
 def _write_parquet_partition(
@@ -134,6 +186,80 @@ def _write_parquet_partition(
     return "pyarrow"
 
 
+def _partition_relative_path(csv_file: Path, trading_day: str, instrument: str) -> str:
+    return (
+        f"source={csv_file.stem}/trading_day={trading_day}/"
+        f"instrument_id={instrument}/part-0000.parquet"
+    )
+
+
+def _write_jsonl_to_parquet(
+    spool_file: Path,
+    output_path: Path,
+    *,
+    compression: str,
+    batch_rows: int = 10_000,
+) -> str:
+    try:
+        pa = importlib.import_module("pyarrow")
+        pq = importlib.import_module("pyarrow.parquet")
+    except ModuleNotFoundError as exc:  # pragma: no cover
+        raise RuntimeError("pyarrow is required for --execute mode") from exc
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_output_path = output_path.with_suffix(output_path.suffix + ".tmp")
+    if tmp_output_path.exists():
+        tmp_output_path.unlink()
+
+    writer = None
+    batch: list[dict[str, str]] = []
+    try:
+        with spool_file.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                batch.append(json.loads(line))
+                if len(batch) < batch_rows:
+                    continue
+                table = pa.Table.from_pylist(batch)
+                if writer is None:
+                    writer = pq.ParquetWriter(
+                        str(tmp_output_path),
+                        table.schema,
+                        compression=compression,
+                    )
+                writer.write_table(table)
+                batch.clear()
+
+        if batch:
+            table = pa.Table.from_pylist(batch)
+            if writer is None:
+                writer = pq.ParquetWriter(
+                    str(tmp_output_path),
+                    table.schema,
+                    compression=compression,
+                )
+            writer.write_table(table)
+            batch.clear()
+
+        if writer is None:
+            raise ValueError(f"no rows available for parquet partition: {spool_file}")
+    except Exception:
+        if writer is not None:
+            writer.close()
+        if tmp_output_path.exists():
+            tmp_output_path.unlink()
+        raise
+
+    writer.close()
+    if output_path.exists():
+        output_path.unlink()
+    tmp_output_path.replace(output_path)
+    return "pyarrow"
+
+
+def _log_progress(message: str) -> None:
+    print(message, file=sys.stderr, flush=True)
+
+
 def main() -> int:
     args = _build_parser()
     started_ns = time.time_ns()
@@ -141,7 +267,7 @@ def main() -> int:
 
     input_root = Path(args.input)
     output_root = Path(args.output_dir) if args.no_run_id else Path(args.output_dir) / run_id
-    report_path = Path(args.report_json)
+    report_path = Path(args.report_json) if args.report_json else None
 
     success = True
     error = ""
@@ -162,9 +288,8 @@ def main() -> int:
         inputs = [str(path) for path in csv_files]
 
         for csv_file in csv_files:
-            rows, _header = _read_csv_rows(csv_file)
-            total_rows += len(rows)
             source_symbol = csv_file.stem.strip().lower()
+            _log_progress(f"[convert] start source={csv_file}")
 
             source_prefix_mismatches: list[dict[str, object]] = []
             rollover_events: list[dict[str, object]] = []
@@ -172,11 +297,13 @@ def main() -> int:
             previous_ts_ms = -1
             previous_price = 0.0
 
-            grouped: dict[tuple[str, str], list[dict[str, str]]] = defaultdict(list)
-            for row_index, row in enumerate(rows, start=1):
+            source_row_count = 0
+            partition_row_counts: dict[tuple[str, str], int] = defaultdict(int)
+            for row_index, row in enumerate(_iter_csv_rows(csv_file), start=1):
+                source_row_count += 1
                 trading_day = row.get("TradingDay", "").strip() or "unknown"
                 instrument = row.get("InstrumentID", "").strip() or "unknown"
-                grouped[(trading_day, instrument)].append(row)
+                partition_row_counts[(trading_day, instrument)] += 1
                 instruments.add(instrument)
                 trading_days.add(trading_day)
 
@@ -194,9 +321,9 @@ def main() -> int:
                 current_ts_ms = _tick_ts_ms(
                     trading_day,
                     row.get("UpdateTime", "").strip(),
-                    int(row.get("UpdateMillisec", "0") or "0"),
+                    _to_int_millis(row.get("UpdateMillisec", "0")),
                 )
-                current_price = float(row.get("LastPrice", "0") or "0")
+                current_price = _to_float(row.get("LastPrice", "0"))
                 if (
                     previous_instrument
                     and instrument != previous_instrument
@@ -217,7 +344,9 @@ def main() -> int:
                                 "to_instrument_id": instrument,
                                 "at_trading_day": trading_day,
                                 "at_update_time": row.get("UpdateTime", "").strip(),
-                                "at_update_millisec": int(row.get("UpdateMillisec", "0") or "0"),
+                                "at_update_millisec": _to_int_millis(
+                                    row.get("UpdateMillisec", "0")
+                                ),
                                 "at_ts_ms": current_ts_ms,
                                 "gap_ms": gap_ms,
                                 "from_last_price": previous_price,
@@ -232,6 +361,14 @@ def main() -> int:
                 previous_ts_ms = current_ts_ms
                 previous_price = current_price
 
+                if args.progress_every > 0 and row_index % args.progress_every == 0:
+                    _log_progress(
+                        f"[convert] scan source={csv_file.stem} rows={row_index} "
+                        f"partitions={len(partition_row_counts)}"
+                    )
+
+            total_rows += source_row_count
+
             if source_prefix_mismatches:
                 total_prefix_mismatch_count += len(source_prefix_mismatches)
                 prefix_mismatch_samples.extend(source_prefix_mismatches[:20])
@@ -244,33 +381,64 @@ def main() -> int:
                 warnings.append(msg)
 
             total_rollover_events += len(rollover_events)
+            _log_progress(
+                f"[convert] scan done source={csv_file.stem} rows={source_row_count} "
+                f"partitions={len(partition_row_counts)}"
+            )
 
             partitions: list[dict[str, object]] = []
-            for (trading_day, instrument), payload in sorted(grouped.items()):
-                partition_rel = (
-                    f"source={csv_file.stem}/trading_day={trading_day}/"
-                    f"instrument_id={instrument}/part-0000.parquet"
-                )
+            sorted_partition_keys = sorted(partition_row_counts)
+            for trading_day, instrument in sorted_partition_keys:
+                partition_rel = _partition_relative_path(csv_file, trading_day, instrument)
                 partition_path = output_root / partition_rel
-                if args.execute:
-                    writer_backend = _write_parquet_partition(
-                        payload,
-                        partition_path,
-                        compression=args.compression,
-                    )
-                    output_files.append(str(partition_path))
                 partitions.append(
                     {
                         "trading_day": trading_day,
                         "instrument_id": instrument,
-                        "row_count": len(payload),
+                        "row_count": partition_row_counts[(trading_day, instrument)],
                         "relative_path": partition_rel,
                     }
                 )
 
+            if args.execute:
+                with tempfile.TemporaryDirectory(prefix="csv2parquet_spool_") as spool_dir_raw:
+                    spool_dir = Path(spool_dir_raw)
+                    spool_files = {
+                        key: spool_dir / f"partition_{idx:06d}.jsonl"
+                        for idx, key in enumerate(sorted_partition_keys)
+                    }
+                    for write_row_index, row in enumerate(_iter_csv_rows(csv_file), start=1):
+                        trading_day = row.get("TradingDay", "").strip() or "unknown"
+                        instrument = row.get("InstrumentID", "").strip() or "unknown"
+                        spool_path = spool_files[(trading_day, instrument)]
+                        with spool_path.open("a", encoding="utf-8") as spool_handle:
+                            spool_handle.write(json.dumps(row, ensure_ascii=True))
+                            spool_handle.write("\n")
+
+                        if args.progress_every > 0 and write_row_index % args.progress_every == 0:
+                            _log_progress(
+                                f"[convert] spool source={csv_file.stem} rows={write_row_index}"
+                            )
+
+                    _log_progress(
+                        f"[convert] spool done source={csv_file.stem} rows={source_row_count}"
+                    )
+                    for trading_day, instrument in sorted_partition_keys:
+                        partition_rel = _partition_relative_path(csv_file, trading_day, instrument)
+                        partition_path = output_root / partition_rel
+                        writer_backend = _write_jsonl_to_parquet(
+                            spool_files[(trading_day, instrument)],
+                            partition_path,
+                            compression=args.compression,
+                        )
+                        output_files.append(str(partition_path))
+                    _log_progress(
+                        f"[convert] parquet done source={csv_file.stem} files={len(sorted_partition_keys)}"
+                    )
+
             source_reports[str(csv_file)] = {
                 "source_symbol": source_symbol,
-                "row_count": len(rows),
+                "row_count": source_row_count,
                 "partition_count": len(partitions),
                 "prefix_mismatch_count": len(source_prefix_mismatches),
                 "rollover_min_gap_ms": args.rollover_min_gap_ms,
@@ -293,7 +461,7 @@ def main() -> int:
         "input": str(input_root),
         "inputs": inputs,
         "output_dir": str(output_root),
-        "report_path": str(report_path),
+        "report_path": str(report_path) if report_path is not None else "",
         "writer_backend": writer_backend,
         "filename_prefix_policy": args.filename_prefix_policy,
         "rollover_min_gap_ms": args.rollover_min_gap_ms,
@@ -308,9 +476,15 @@ def main() -> int:
         "trading_days": sorted(trading_days),
         "sources": source_reports,
     }
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(json.dumps(report, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
-    print(str(report_path))
+    if report_path is not None:
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps(report, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
+        print(str(report_path))
+    else:
+        if success:
+            print("convert_backtest_csv_to_parquet: success")
+        else:
+            print(f"convert_backtest_csv_to_parquet: failed: {error}")
     return 0 if success else 2
 
 

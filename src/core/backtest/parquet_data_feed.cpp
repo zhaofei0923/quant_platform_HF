@@ -123,45 +123,52 @@ Tick BuildTickFromValues(const std::vector<std::string>& headers,
 }
 
 #if QUANT_HFT_ENABLE_ARROW_PARQUET
-std::string ReadStringScalar(const std::shared_ptr<arrow::Scalar>& scalar) {
-    if (scalar == nullptr || !scalar->is_valid) {
+std::string ReadStringArrayValue(const std::shared_ptr<arrow::Array>& values, std::int64_t row) {
+    if (values == nullptr || row < 0 || row >= values->length() || values->IsNull(row)) {
         return "";
     }
-    if (scalar->type->id() == arrow::Type::STRING) {
-        return std::static_pointer_cast<arrow::StringScalar>(scalar)->value->ToString();
+    if (values->type_id() == arrow::Type::STRING) {
+        const auto& array = static_cast<const arrow::StringArray&>(*values);
+        return array.GetString(row);
     }
-    return scalar->ToString();
+    auto scalar_result = values->GetScalar(row);
+    if (!scalar_result.ok()) {
+        return "";
+    }
+    return scalar_result.ValueOrDie()->ToString();
 }
 
-double ReadDoubleScalar(const std::shared_ptr<arrow::Scalar>& scalar) {
-    if (scalar == nullptr || !scalar->is_valid) {
+double ReadDoubleArrayValue(const std::shared_ptr<arrow::Array>& values, std::int64_t row) {
+    if (values == nullptr || row < 0 || row >= values->length() || values->IsNull(row)) {
         return 0.0;
     }
-    switch (scalar->type->id()) {
+    switch (values->type_id()) {
         case arrow::Type::DOUBLE:
-            return std::static_pointer_cast<arrow::DoubleScalar>(scalar)->value;
+            return static_cast<const arrow::DoubleArray&>(*values).Value(row);
         case arrow::Type::FLOAT:
-            return std::static_pointer_cast<arrow::FloatScalar>(scalar)->value;
+            return static_cast<const arrow::FloatArray&>(*values).Value(row);
         case arrow::Type::INT64:
-            return static_cast<double>(std::static_pointer_cast<arrow::Int64Scalar>(scalar)->value);
+            return static_cast<double>(static_cast<const arrow::Int64Array&>(*values).Value(row));
         case arrow::Type::INT32:
-            return static_cast<double>(std::static_pointer_cast<arrow::Int32Scalar>(scalar)->value);
+            return static_cast<double>(static_cast<const arrow::Int32Array&>(*values).Value(row));
         default:
             return 0.0;
     }
 }
 
-std::int64_t ReadInt64Scalar(const std::shared_ptr<arrow::Scalar>& scalar) {
-    if (scalar == nullptr || !scalar->is_valid) {
+std::int64_t ReadInt64ArrayValue(const std::shared_ptr<arrow::Array>& values, std::int64_t row) {
+    if (values == nullptr || row < 0 || row >= values->length() || values->IsNull(row)) {
         return 0;
     }
-    switch (scalar->type->id()) {
+    switch (values->type_id()) {
         case arrow::Type::INT64:
-            return std::static_pointer_cast<arrow::Int64Scalar>(scalar)->value;
+            return static_cast<const arrow::Int64Array&>(*values).Value(row);
         case arrow::Type::INT32:
-            return std::static_pointer_cast<arrow::Int32Scalar>(scalar)->value;
+            return static_cast<const arrow::Int32Array&>(*values).Value(row);
         case arrow::Type::DOUBLE:
-            return static_cast<std::int64_t>(std::static_pointer_cast<arrow::DoubleScalar>(scalar)->value);
+            return static_cast<std::int64_t>(static_cast<const arrow::DoubleArray&>(*values).Value(row));
+        case arrow::Type::FLOAT:
+            return static_cast<std::int64_t>(static_cast<const arrow::FloatArray&>(*values).Value(row));
         default:
             return 0;
     }
@@ -207,43 +214,65 @@ bool AppendTicksFromParquet(const std::filesystem::path& parquet_path,
         return false;
     }
 
-    for (std::int64_t row = 0; row < table->num_rows(); ++row) {
-        Tick tick;
-        tick.symbol = default_symbol;
+    arrow::TableBatchReader batch_reader(*table);
+    std::shared_ptr<arrow::RecordBatch> batch;
+    while (true) {
+        auto batch_status = batch_reader.ReadNext(&batch);
+        if (!batch_status.ok()) {
+            return false;
+        }
+        if (batch == nullptr) {
+            break;
+        }
 
-        auto get_scalar = [&](int index) -> std::shared_ptr<arrow::Scalar> {
-            if (index < 0) {
+        const auto get_column = [&](int index) -> std::shared_ptr<arrow::Array> {
+            if (index < 0 || index >= batch->num_columns()) {
                 return nullptr;
             }
-            auto scalar_result = table->column(index)->GetScalar(row);
-            if (!scalar_result.ok()) {
-                return nullptr;
-            }
-            return scalar_result.ValueOrDie();
+            return batch->column(index);
         };
 
-        if (symbol_index >= 0) {
-            const std::string parsed_symbol = ReadStringScalar(get_scalar(symbol_index));
-            if (!parsed_symbol.empty()) {
-                tick.symbol = parsed_symbol;
-            }
-        }
-        tick.exchange = ReadStringScalar(get_scalar(exchange_index));
-        tick.ts_ns = ReadInt64Scalar(get_scalar(ts_index));
-        tick.last_price = ReadDoubleScalar(get_scalar(last_price_index));
-        tick.last_volume = static_cast<std::int32_t>(ReadInt64Scalar(get_scalar(last_volume_index)));
-        tick.bid_price1 = ReadDoubleScalar(get_scalar(bid_price_index));
-        tick.bid_volume1 = static_cast<std::int32_t>(ReadInt64Scalar(get_scalar(bid_volume_index)));
-        tick.ask_price1 = ReadDoubleScalar(get_scalar(ask_price_index));
-        tick.ask_volume1 = static_cast<std::int32_t>(ReadInt64Scalar(get_scalar(ask_volume_index)));
-        tick.volume = ReadInt64Scalar(get_scalar(volume_index));
-        tick.turnover = ReadDoubleScalar(get_scalar(turnover_index));
-        tick.open_interest = ReadInt64Scalar(get_scalar(open_interest_index));
+        const std::shared_ptr<arrow::Array> symbol_column = get_column(symbol_index);
+        const std::shared_ptr<arrow::Array> exchange_column = get_column(exchange_index);
+        const std::shared_ptr<arrow::Array> ts_column = get_column(ts_index);
+        const std::shared_ptr<arrow::Array> last_price_column = get_column(last_price_index);
+        const std::shared_ptr<arrow::Array> last_volume_column = get_column(last_volume_index);
+        const std::shared_ptr<arrow::Array> bid_price_column = get_column(bid_price_index);
+        const std::shared_ptr<arrow::Array> bid_volume_column = get_column(bid_volume_index);
+        const std::shared_ptr<arrow::Array> ask_price_column = get_column(ask_price_index);
+        const std::shared_ptr<arrow::Array> ask_volume_column = get_column(ask_volume_index);
+        const std::shared_ptr<arrow::Array> volume_column = get_column(volume_index);
+        const std::shared_ptr<arrow::Array> turnover_column = get_column(turnover_index);
+        const std::shared_ptr<arrow::Array> open_interest_column = get_column(open_interest_index);
 
-        if (tick.ts_ns < start.ToEpochNanos() || tick.ts_ns > end.ToEpochNanos()) {
-            continue;
+        for (std::int64_t row = 0; row < batch->num_rows(); ++row) {
+            Tick tick;
+            tick.symbol = default_symbol;
+
+            if (symbol_column != nullptr) {
+                const std::string parsed_symbol = ReadStringArrayValue(symbol_column, row);
+                if (!parsed_symbol.empty()) {
+                    tick.symbol = parsed_symbol;
+                }
+            }
+
+            tick.exchange = ReadStringArrayValue(exchange_column, row);
+            tick.ts_ns = ReadInt64ArrayValue(ts_column, row);
+            tick.last_price = ReadDoubleArrayValue(last_price_column, row);
+            tick.last_volume = static_cast<std::int32_t>(ReadInt64ArrayValue(last_volume_column, row));
+            tick.bid_price1 = ReadDoubleArrayValue(bid_price_column, row);
+            tick.bid_volume1 = static_cast<std::int32_t>(ReadInt64ArrayValue(bid_volume_column, row));
+            tick.ask_price1 = ReadDoubleArrayValue(ask_price_column, row);
+            tick.ask_volume1 = static_cast<std::int32_t>(ReadInt64ArrayValue(ask_volume_column, row));
+            tick.volume = ReadInt64ArrayValue(volume_column, row);
+            tick.turnover = ReadDoubleArrayValue(turnover_column, row);
+            tick.open_interest = ReadInt64ArrayValue(open_interest_column, row);
+
+            if (tick.ts_ns < start.ToEpochNanos() || tick.ts_ns > end.ToEpochNanos()) {
+                continue;
+            }
+            out->push_back(tick);
         }
-        out->push_back(tick);
     }
 
     return true;

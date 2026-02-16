@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import json
 from pathlib import Path
 
@@ -7,6 +8,7 @@ import pytest
 from quant_hft.backtest.replay import (
     BacktestRunSpec,
     build_backtest_spec_from_template,
+    iter_parquet_ticks,
     load_backtest_run_spec,
     replay_csv_minute_bars,
     run_backtest_spec,
@@ -282,6 +284,88 @@ def test_run_backtest_spec_data_signature_changes_when_csv_changes(tmp_path: Pat
 
     assert result1.input_signature == result2.input_signature
     assert result1.data_signature != result2.data_signature
+
+
+def test_iter_parquet_ticks_preserves_time_order_and_max_ticks(tmp_path: Path) -> None:
+    pa = pytest.importorskip("pyarrow")
+    pq = pytest.importorskip("pyarrow.parquet")
+
+    dataset_root = tmp_path / "parquet"
+    part1 = dataset_root / "source=c" / "trading_day=20230103" / "instrument_id=c2305"
+    part2 = dataset_root / "source=c" / "trading_day=20230103" / "instrument_id=c2309"
+    part1.mkdir(parents=True, exist_ok=True)
+    part2.mkdir(parents=True, exist_ok=True)
+
+    rows1 = [
+        {
+            "TradingDay": "20230103",
+            "InstrumentID": "c2305",
+            "UpdateTime": "09:00:02",
+            "UpdateMillisec": "0",
+            "LastPrice": "100.0",
+            "Volume": "1",
+            "BidPrice1": "99.0",
+            "BidVolume1": "1",
+            "AskPrice1": "101.0",
+            "AskVolume1": "1",
+            "AveragePrice": "100.0",
+            "Turnover": "0",
+            "OpenInterest": "0",
+        },
+        {
+            "TradingDay": "20230103",
+            "InstrumentID": "c2305",
+            "UpdateTime": "09:00:04",
+            "UpdateMillisec": "0",
+            "LastPrice": "100.2",
+            "Volume": "2",
+            "BidPrice1": "99.2",
+            "BidVolume1": "1",
+            "AskPrice1": "101.2",
+            "AskVolume1": "1",
+            "AveragePrice": "100.1",
+            "Turnover": "0",
+            "OpenInterest": "0",
+        },
+    ]
+    rows2 = [
+        {
+            "TradingDay": "20230103",
+            "InstrumentID": "c2309",
+            "UpdateTime": "09:00:01",
+            "UpdateMillisec": "0",
+            "LastPrice": "200.0",
+            "Volume": "1",
+            "BidPrice1": "199.0",
+            "BidVolume1": "1",
+            "AskPrice1": "201.0",
+            "AskVolume1": "1",
+            "AveragePrice": "200.0",
+            "Turnover": "0",
+            "OpenInterest": "0",
+        },
+        {
+            "TradingDay": "20230103",
+            "InstrumentID": "c2309",
+            "UpdateTime": "09:00:03",
+            "UpdateMillisec": "0",
+            "LastPrice": "200.2",
+            "Volume": "2",
+            "BidPrice1": "199.2",
+            "BidVolume1": "1",
+            "AskPrice1": "201.2",
+            "AskVolume1": "1",
+            "AveragePrice": "200.1",
+            "Turnover": "0",
+            "OpenInterest": "0",
+        },
+    ]
+
+    pq.write_table(pa.Table.from_pylist(rows1), str(part1 / "part-0000.parquet"))
+    pq.write_table(pa.Table.from_pylist(rows2), str(part2 / "part-0000.parquet"))
+
+    ticks = list(itertools.islice(iter_parquet_ticks(dataset_root, max_ticks=3), 3))
+    assert [tick.update_time for tick in ticks] == ["09:00:01", "09:00:02", "09:00:03"]
 
 
 def test_load_backtest_run_spec_from_json(tmp_path: Path) -> None:

@@ -1,0 +1,44 @@
+{
+  "benchmark": "csv_parquet_compare",
+  "csv_path": "backtest_data/c.csv",
+  "parquet_root": "backtest_data/parquet/source=c",
+  "runs": 1,
+  "warmup_runs": 0,
+  "max_ticks": 50000,
+  "summary": {
+    "csv": {
+      "engine_mode": "csv",
+      "runs": 1,
+      "warmup_runs": 0,
+      "max_ticks": 50000,
+      "elapsed_ms_values": [
+        4407.488835
+      ],
+      "mean_ms": 4407.488835,
+      "p95_ms": 4407.488835,
+      "min_ms": 4407.488835,
+      "max_ms": 4407.488835,
+      "ticks_read_min": 50000,
+      "ticks_read_max": 50000,
+      "mean_ticks_per_sec": 11344.32822675545
+    },
+    "parquet": {
+      "engine_mode": "parquet",
+      "runs": 1,
+      "warmup_runs": 0,
+      "max_ticks": 50000,
+      "elapsed_ms_values": [
+        520326.29344
+      ],
+      "mean_ms": 520326.29344,
+      "p95_ms": 520326.29344,
+      "min_ms": 520326.29344,
+      "max_ms": 520326.29344,
+      "ticks_read_min": 50000,
+      "ticks_read_max": 50000,
+      "mean_ticks_per_sec": 96.09354866431637
+    },
+    "parquet_vs_csv_speedup": 0.008470624857070072,
+    "ticks_read_consistent": true
+  }
+}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import heapq
 import hashlib
 import importlib
 import json
@@ -632,14 +633,10 @@ def _build_parquet_dataset_signature(
     hasher.update(start_date.encode("utf-8"))
     hasher.update(end_date.encode("utf-8"))
 
-    parquet_files = sorted(root.rglob("*.parquet")) if root.exists() else []
+    parquet_files = _discover_parquet_files(root, start_date=start_date, end_date=end_date)
     for path in parquet_files:
         relative = path.relative_to(root).as_posix()
-        trading_day = ""
-        for part in path.relative_to(root).parts:
-            if part.startswith("trading_day="):
-                trading_day = part.split("=", 1)[1]
-                break
+        trading_day = _extract_trading_day_from_parts(path.relative_to(root).parts)
         if start_date and trading_day and trading_day < start_date:
             continue
         if end_date and trading_day and trading_day > end_date:
@@ -653,6 +650,48 @@ def _build_parquet_dataset_signature(
 
 def _resolve_csv_path_for_spec(spec: BacktestRunSpec) -> str:
     return spec.csv_path
+
+
+def _extract_trading_day_from_parts(parts: tuple[str, ...]) -> str:
+    for part in parts:
+        if part.startswith("trading_day="):
+            return part.split("=", 1)[1]
+    return ""
+
+
+def _discover_parquet_files(
+    root: Path,
+    *,
+    start_date: str = "",
+    end_date: str = "",
+) -> list[Path]:
+    day_partitions: list[Path] = []
+    for entry in root.iterdir() if root.exists() else ():
+        if not entry.is_dir() or not entry.name.startswith("trading_day="):
+            continue
+        trading_day = entry.name.split("=", 1)[1]
+        if start_date and trading_day < start_date:
+            continue
+        if end_date and trading_day > end_date:
+            continue
+        day_partitions.append(entry)
+
+    if day_partitions:
+        parquet_files: list[Path] = []
+        for partition_dir in sorted(day_partitions):
+            parquet_files.extend(sorted(partition_dir.rglob("*.parquet")))
+        return parquet_files
+
+    parquet_files = sorted(root.rglob("*.parquet")) if root.exists() else []
+    filtered_files: list[Path] = []
+    for file_path in parquet_files:
+        trading_day = _extract_trading_day_from_parts(file_path.relative_to(root).parts)
+        if start_date and trading_day and trading_day < start_date:
+            continue
+        if end_date and trading_day and trading_day > end_date:
+            continue
+        filtered_files.append(file_path)
+    return filtered_files
 
 
 def _parse_tick_row(row: dict[str, Any]) -> CsvTick:
@@ -673,6 +712,52 @@ def _parse_tick_row(row: dict[str, Any]) -> CsvTick:
     )
 
 
+def _iter_parquet_file_ticks(file_path: Path, pq_module: Any) -> Iterator[CsvTick]:
+    parquet_file = pq_module.ParquetFile(str(file_path))
+    columns = [
+        "TradingDay",
+        "InstrumentID",
+        "UpdateTime",
+        "UpdateMillisec",
+        "LastPrice",
+        "Volume",
+        "BidPrice1",
+        "BidVolume1",
+        "AskPrice1",
+        "AskVolume1",
+        "AveragePrice",
+        "Turnover",
+        "OpenInterest",
+    ]
+    column_index = {name: idx for idx, name in enumerate(columns)}
+
+    def cell(data: dict[str, list[Any]], name: str, row_idx: int) -> Any:
+        values = data.get(name)
+        if values is None or row_idx >= len(values):
+            return ""
+        value = values[row_idx]
+        return "" if value is None else value
+
+    for batch in parquet_file.iter_batches(columns=columns):
+        data = {name: batch.column(index).to_pylist() for name, index in column_index.items()}
+        for row_idx in range(batch.num_rows):
+            yield CsvTick(
+                trading_day=str(cell(data, "TradingDay", row_idx)),
+                instrument_id=str(cell(data, "InstrumentID", row_idx)),
+                update_time=str(cell(data, "UpdateTime", row_idx)),
+                update_millisec=_parse_int(str(cell(data, "UpdateMillisec", row_idx))),
+                last_price=_parse_float(str(cell(data, "LastPrice", row_idx))),
+                volume=_parse_int(str(cell(data, "Volume", row_idx))),
+                bid_price_1=_parse_float(str(cell(data, "BidPrice1", row_idx))),
+                bid_volume_1=_parse_int(str(cell(data, "BidVolume1", row_idx))),
+                ask_price_1=_parse_float(str(cell(data, "AskPrice1", row_idx))),
+                ask_volume_1=_parse_int(str(cell(data, "AskVolume1", row_idx))),
+                average_price=_parse_float(str(cell(data, "AveragePrice", row_idx))),
+                turnover=_parse_float(str(cell(data, "Turnover", row_idx))),
+                open_interest=_parse_float(str(cell(data, "OpenInterest", row_idx))),
+            )
+
+
 def iter_parquet_ticks(
     dataset_root: Path | str,
     *,
@@ -689,29 +774,35 @@ def iter_parquet_ticks(
     except ModuleNotFoundError as exc:
         raise RuntimeError("pyarrow is required for parquet replay mode") from exc
 
-    parquet_files = sorted(root.rglob("*.parquet"))
-    rows: list[CsvTick] = []
-    for file_path in parquet_files:
-        trading_day = ""
-        for part in file_path.relative_to(root).parts:
-            if part.startswith("trading_day="):
-                trading_day = part.split("=", 1)[1]
-                break
-        if start_date and trading_day and trading_day < start_date:
+    filtered_files = _discover_parquet_files(root, start_date=start_date, end_date=end_date)
+
+    heap: list[tuple[int, int, CsvTick, Iterator[CsvTick]]] = []
+    sequence = 0
+    for file_path in filtered_files:
+        tick_iter = _iter_parquet_file_ticks(file_path, pq)
+        try:
+            tick = next(tick_iter)
+        except StopIteration:
             continue
-        if end_date and trading_day and trading_day > end_date:
+        ts_ns = _to_ts_ns(tick.trading_day, tick.update_time, tick.update_millisec)
+        heapq.heappush(heap, (ts_ns, sequence, tick, tick_iter))
+        sequence += 1
+
+    emitted = 0
+    while heap:
+        _, _, tick, tick_iter = heapq.heappop(heap)
+        yield tick
+        emitted += 1
+        if max_ticks is not None and emitted >= max_ticks:
+            return
+
+        try:
+            next_tick = next(tick_iter)
+        except StopIteration:
             continue
-
-        table = pq.read_table(str(file_path))
-        payload = table.to_pylist()
-        for raw in payload:
-            rows.append(_parse_tick_row(raw))
-
-    rows.sort(key=lambda tick: _to_ts_ns(tick.trading_day, tick.update_time, tick.update_millisec))
-    if max_ticks is not None:
-        rows = rows[:max_ticks]
-
-    yield from rows
+        next_ts_ns = _to_ts_ns(next_tick.trading_day, next_tick.update_time, next_tick.update_millisec)
+        heapq.heappush(heap, (next_ts_ns, sequence, next_tick, tick_iter))
+        sequence += 1
 
 
 def _replay_minute_bars_from_ticks(

@@ -28,6 +28,13 @@ _REQUIRED_COLUMNS = {
     "OpenInterest",
 }
 
+_INT_NORMALIZE_COLUMNS = {
+    "UpdateMillisec",
+    "Volume",
+    "BidVolume1",
+    "AskVolume1",
+}
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -117,11 +124,15 @@ def _iter_csv_rows(csv_path: Path):
         if missing:
             raise ValueError(f"missing required columns in {csv_path}: {', '.join(missing)}")
         for row in reader:
-            yield {
+            normalized_row = {
                 key: (value.strip() if isinstance(value, str) else "")
                 for key, value in row.items()
                 if key is not None
             }
+            for column in _INT_NORMALIZE_COLUMNS:
+                if column in normalized_row:
+                    normalized_row[column] = str(_to_int_millis(normalized_row[column]))
+            yield normalized_row
 
 
 def _extract_symbol_prefix(value: str) -> str:

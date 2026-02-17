@@ -4,7 +4,7 @@
 
 - Runtime strategy path migrated to in-process C++ `StrategyEngine`.
 - Backtest/perf/simnow/ops/builder verification CLIs are C++ executables.
-- Python runtime assets removed from repository.
+- Legacy mixed-stack runtime assets removed from repository.
 - CI uses C++ build/test plus dependency and purity hard gates.
 
 ## Completed Phases

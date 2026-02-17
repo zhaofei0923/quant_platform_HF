@@ -27,6 +27,6 @@
 
 ## Repository Rules
 
-- No Python runtime assets are allowed.
+- No legacy mixed-stack runtime assets are allowed.
 - CI gates include dependency audit and repository purity check.
 - Contract and requirement synchronization are verified via C++ CLIs.

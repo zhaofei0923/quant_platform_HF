@@ -2,7 +2,7 @@
 
 ## Goal
 
-Generate reconnect evidence and SLI/SLO artifacts without Python orchestration.
+Generate reconnect evidence and SLI/SLO artifacts with pure C++ orchestration.
 
 ## Build
 

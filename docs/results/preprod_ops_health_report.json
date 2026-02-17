@@ -1,0 +1,81 @@
+{
+  "generated_ts_ns": 1771308714529389534,
+  "scope": "core_engine + strategy_engine + storage",
+  "overall_healthy": true,
+  "metadata": {
+    "environment": "unknown",
+    "service": "core_engine",
+    "strategy_engine_chain_source": "in_process",
+    "strategy_engine_intent_count": "1",
+    "strategy_engine_order_key_count": "1",
+    "strategy_engine_state_key_count": "2"
+  },
+  "slis": [
+    {
+      "name": "quant_hft_core_process_alive",
+      "slo_name": "quant_hft_core_process_alive",
+      "environment": "unknown",
+      "service": "core_engine",
+      "value": 1,
+      "target": 1,
+      "unit": "bool",
+      "healthy": true,
+      "detail": "probe process stayed alive during collection"
+    },
+    {
+      "name": "quant_hft_strategy_engine_latency_p99_ms",
+      "slo_name": "quant_hft_strategy_engine_latency_p99_ms",
+      "environment": "unknown",
+      "service": "core_engine",
+      "value": 0,
+      "target": 1500,
+      "unit": "ms",
+      "healthy": true,
+      "detail": "derived from reconnect recovery samples"
+    },
+    {
+      "name": "quant_hft_strategy_engine_chain_integrity",
+      "slo_name": "quant_hft_strategy_engine_chain_integrity",
+      "environment": "unknown",
+      "service": "core_engine",
+      "value": 1,
+      "target": 1,
+      "unit": "bool",
+      "healthy": true,
+      "detail": "input=complete"
+    },
+    {
+      "name": "quant_hft_storage_redis_health",
+      "slo_name": "quant_hft_storage_redis_health",
+      "environment": "unknown",
+      "service": "core_engine",
+      "value": 1,
+      "target": 1,
+      "unit": "bool",
+      "healthy": true,
+      "detail": "input=healthy"
+    },
+    {
+      "name": "quant_hft_storage_timescale_health",
+      "slo_name": "quant_hft_storage_timescale_health",
+      "environment": "unknown",
+      "service": "core_engine",
+      "value": 1,
+      "target": 1,
+      "unit": "bool",
+      "healthy": true,
+      "detail": "input=healthy"
+    },
+    {
+      "name": "quant_hft_storage_postgres_health",
+      "slo_name": "quant_hft_storage_postgres_health",
+      "environment": "unknown",
+      "service": "core_engine",
+      "value": 1,
+      "target": 1,
+      "unit": "bool",
+      "healthy": true,
+      "detail": "input=healthy"
+    }
+  ]
+}

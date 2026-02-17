@@ -1,6 +1,6 @@
 # quant_platform_HF
 
-Quantitative trading platform bootstrap using C++ core execution and Python strategy orchestration.
+Quantitative trading platform bootstrap using a pure C++ execution and strategy stack.
 
 ## Quick start
 
@@ -8,12 +8,27 @@ Quantitative trading platform bootstrap using C++ core execution and Python stra
 ./scripts/build/bootstrap.sh
 ```
 
-在 Ubuntu 新机器上，脚本会自动安装缺失依赖并完成构建、测试、Python 环境准备。
+在 Ubuntu 新机器上，脚本会自动安装缺失依赖并完成构建与测试。
 
 如需禁止自动安装（仅在依赖已齐全时使用）：
 
 ```bash
 ./scripts/build/bootstrap.sh --skip-install-deps
+```
+
+## Migration Note
+
+- 仓库已切换为纯 C++：`python/`、`.py` 脚本与 pybind 绑定已移除。
+- 运行入口统一为 `build/` 下的 C++ CLI（如 `backtest_cli`、`simnow_compare_cli`、`reconnect_evidence_cli`）。
+- CI 与本地统一使用 `scripts/build/dependency_audit.sh` + `scripts/build/repo_purity_check.sh` 作为硬门禁。
+
+## Quality gates
+
+```bash
+bash scripts/build/dependency_audit.sh --build-dir build
+bash scripts/build/repo_purity_check.sh --repo-root .
+bash scripts/build/run_consistency_gates.sh --build-dir build --results-dir docs/results
+bash scripts/build/run_preprod_rehearsal_gate.sh --build-dir build --results-dir docs/results
 ```
 
 ## SimNow profiles
@@ -63,15 +78,14 @@ export CTP_SIM_PASSWORD='your_password'
   1. `password` in YAML
   2. `password_env` in YAML (fallback default `CTP_SIM_PASSWORD`)
 
-## Redis Strategy Bridge (Strategy Closed Loop)
+## Strategy Engine Closed Loop
 
-Protocol: `docs/STRATEGY_BRIDGE_REDIS_PROTOCOL.md`
+纯 C++ 主链路中，策略闭环已改为进程内执行：
+- `core_engine` 生成并分发 `StateSnapshot7D`
+- `StrategyEngine` 将状态与订单事件派发到 `ILiveStrategy` 实例
+- `SignalIntent` 进入既有 `ExecutionPlanner + Risk + ExecutionEngine`
 
-This bridge connects:
-- C++ `core_engine`: publishes `market:state7d:*`, consumes `strategy:intent:*`, writes `trade:order:*`
-- Python strategy runner: consumes `market:state7d:*`, writes `strategy:intent:*`, consumes `trade:order:*`
-
-Run with external Redis:
+需要外部 Redis 存储时可开启 external 模式：
 
 ```bash
 docker run --rm -p 6379:6379 redis:7-alpine
@@ -85,21 +99,13 @@ export QUANT_HFT_REDIS_HOST=127.0.0.1
 export QUANT_HFT_REDIS_PORT=6379
 
 ./build/core_engine configs/sim/ctp.yaml --run-seconds 30
-.venv/bin/python scripts/strategy/run_strategy.py --config configs/sim/ctp.yaml --strategy-id demo --run-seconds 30
 ```
 
-### Bar 分发端到端自检
-
-在发布前建议执行以下用例，验证 C++ 侧写入 `strategy:bar:*` 后，Python `strategy_runner` 能消费 bar 并触发 `on_bar` 产出 intent：
+### Strategy path smoke
 
 ```bash
-.venv/bin/python -m pytest python/tests/test_bar_dispatch_e2e.py python/tests/test_strategy_runner.py -q
+ctest --test-dir build -R "(StrategyRegistryTest|StrategyEngineTest|DemoLiveStrategyTest|CallbackDispatcherTest)" --output-on-failure
 ```
-
-通过标准：
-- 输出包含 `5 passed`
-- `test_bar_dispatch_e2e.py` 通过（键格式兼容）
-- `test_strategy_runner.py` 通过（单策略与多策略同合约分发）
 
 ## Real CTP probe (optional)
 
@@ -107,10 +113,6 @@ export QUANT_HFT_REDIS_PORT=6379
 cmake -S . -B build-real -DQUANT_HFT_BUILD_TESTS=ON -DQUANT_HFT_ENABLE_CTP_REAL_API=ON
 cmake --build build-real -j
 export CTP_SIM_PASSWORD='your_password'
-
-# preflight (config / password / CTP libs / TCP reachability)
-.venv/bin/python scripts/ops/ctp_preflight_check.py \
-  --config configs/sim/ctp_trading_hours.yaml
 
 LD_LIBRARY_PATH=$PWD/ctp_api/v6.7.11_20250617_api_traderapi_se_linux64:$LD_LIBRARY_PATH \
   ./build-real/simnow_probe configs/sim/ctp_trading_hours.yaml
@@ -126,52 +128,31 @@ Optional probe runtime flags:
 ## Reconnect Fault Injection (SimNow)
 
 - Runbook: `docs/CTP_SIMNOW_RECONNECT_FAULT_INJECTION_RUNBOOK.md`
-- Planner/executor CLI: `scripts/ops/ctp_fault_inject.py`
-- SLO report generator: `scripts/ops/reconnect_slo_report.py`
 - Result template: `docs/templates/RECONNECT_FAULT_INJECTION_RESULT.md`
 
-Typical evidence flow:
+One-shot evidence generation:
 ```bash
-# 1) run probe and record health timeline
-LD_LIBRARY_PATH=$PWD/ctp_api/v6.7.11_20250617_api_traderapi_se_linux64:$LD_LIBRARY_PATH \
-  ./build-real/simnow_probe configs/sim/ctp.yaml --monitor-seconds 900 | tee runtime/reconnect_probe.log
-
-# 2) run fault injections and record apply/clear events
-sudo scripts/ops/ctp_fault_inject.py run --scenario disconnect --duration-sec 20 --execute \
-  --event-log-file runtime/fault_events.jsonl
-
-# 3) generate markdown evidence with p99 result
-.venv/bin/python scripts/ops/reconnect_slo_report.py \
-  --fault-events-file runtime/fault_events.jsonl \
-  --probe-log-file runtime/reconnect_probe.log \
-  --output-file docs/results/reconnect_fault_result.md \
-  --config-profile configs/sim/ctp.yaml
+mkdir -p docs/results
+./build/reconnect_evidence_cli \
+  --config-profile configs/sim/ctp.yaml \
+  --report_file docs/results/reconnect_fault_result.md \
+  --health_json_file docs/results/ops_health_report.json \
+  --health_markdown_file docs/results/ops_health_report.md \
+  --alert_json_file docs/results/ops_alert_report.json \
+  --alert_markdown_file docs/results/ops_alert_report.md
 ```
 
-One-shot orchestrator (probe + fault + report):
+Independent health/alert reports:
 ```bash
-.venv/bin/python scripts/ops/run_reconnect_evidence.py \
-  --config configs/sim/ctp_trading_hours.yaml \
-  --execute-faults \
-  --use-sudo \
-  --build "build-real-$(date +%Y%m%d)"
-```
+./build/ops_health_report_cli \
+  --strategy-engine-chain-status complete \
+  --output_json docs/results/ops_health_report.json \
+  --output_md docs/results/ops_health_report.md
 
-When `ctp_trading_hours` group1 times out and preflight reports reachable alternate groups,
-the runner auto-falls back to `ctp_trading_hours_group2.yaml` then `group3` by default.
-Disable auto-fallback explicitly:
-```bash
-.venv/bin/python scripts/ops/run_reconnect_evidence.py \
-  --config configs/sim/ctp_trading_hours.yaml \
-  --no-auto-fallback-trading-groups
-```
-
-If host lacks `iptables`, run non-disconnect scenarios first:
-```bash
-.venv/bin/python scripts/ops/run_reconnect_evidence.py \
-  --execute-faults \
-  --use-sudo \
-  --scenarios jitter,loss,combined
+./build/ops_alert_report_cli \
+  --health-json-file docs/results/ops_health_report.json \
+  --output_json docs/results/ops_alert_report.json \
+  --output_md docs/results/ops_alert_report.md
 ```
 
 ## WAL Replay Recovery
@@ -188,93 +169,20 @@ If host lacks `iptables`, run non-disconnect scenarios first:
 - Runbook: `docs/BACKTEST_REPLAY_HARNESS.md`
 - CLI:
 ```bash
-scripts/backtest/replay_csv.py --csv backtest_data/rb.csv --max-ticks 5000
+mkdir -p docs/results
+./build/backtest_cli \
+  --engine_mode csv \
+  --csv_path backtest_data/rb.csv \
+  --max_ticks 5000 \
+  --output_json docs/results/backtest_cli_smoke.json \
+  --output_md docs/results/backtest_cli_smoke.md
 ```
-- Python deterministic fill API:
-  - `replay_csv_with_deterministic_fills(...)`
-  - optional WAL JSONL output + PnL/position invariant report
 
 ## Architecture
 
 - `core_engine` (C++): market data, risk, order, portfolio, regulatory sink, market state rule engine.
-- `strategy_runtime` (Python): strategy APIs (`on_bar`, `on_state`, `on_order_event`) and orchestration.
+- `strategy_engine` (C++): strategy APIs (`Initialize`, `OnState`, `OnOrderEvent`, `OnTimer`) and in-process orchestration.
 - `proto/`: cross-process contracts with versioned Protobuf schema.
-
-## Data Pipeline Adapters (Python)
-
-- `quant_hft.data_pipeline.DuckDbAnalyticsStore`
-  - append/query market/order records
-  - prefers `duckdb` module, auto-falls back to sqlite in local/dev env
-  - supports table export to CSV for offline research flow
-- `quant_hft.data_pipeline.MinioArchiveStore`
-  - object put/get/list
-  - supports real MinIO SDK mode
-  - supports local filesystem fallback mode (`bucket/object` path layout)
-
-## Data Pipeline Process (Python)
-
-- standalone process module:
-  - `quant_hft.data_pipeline.DataPipelineProcess`
-  - exports `market_snapshots`/`order_events` from analytics DB to per-run CSV bundle
-  - writes `manifest.json` and archives bundle to MinIO (or local fallback)
-  - emits in-memory observability records:
-    - metrics (`runs_total`, `run_latency_ms`, table rows/latency)
-    - traces (`data_pipeline.run_once`, `data_pipeline.export_table`)
-    - alerts (`PIPELINE_EXPORT_EMPTY`, `PIPELINE_ARCHIVE_INCOMPLETE`, `PIPELINE_RUN_SLOW`, `PIPELINE_RUN_FAILED`)
-- CLI:
-```bash
-.venv/bin/python scripts/data_pipeline/run_pipeline.py \
-  --analytics-db runtime/analytics.duckdb \
-  --export-dir runtime/exports \
-  --archive-local-dir runtime/archive \
-  --run-once
-```
-
-The CLI also supports archive env defaults:
-- `QUANT_HFT_ARCHIVE_ENDPOINT`
-- `QUANT_HFT_ARCHIVE_ACCESS_KEY`
-- `QUANT_HFT_ARCHIVE_SECRET_KEY`
-- `QUANT_HFT_ARCHIVE_BUCKET`
-- `QUANT_HFT_ARCHIVE_LOCAL_DIR`
-- `QUANT_HFT_ARCHIVE_PREFIX`
-
-## Systemd deployment artifacts
-
-- Render ready-to-install unit files and env templates:
-```bash
-.venv/bin/python scripts/ops/render_systemd_units.py \
-  --repo-root . \
-  --output-dir deploy/systemd \
-  --service-user "$USER"
-```
-- Generated files:
-  - `deploy/systemd/quant-hft-core-engine.service`
-  - `deploy/systemd/quant-hft-data-pipeline.service`
-  - `deploy/systemd/quant-hft-core-engine.env.example`
-  - `deploy/systemd/quant-hft-data-pipeline.env.example`
-- `quant-hft-core-engine.service` uses YAML config path and env-file injected credentials.
-- `quant-hft-data-pipeline.service` runs loop mode (`--iterations 0`) with configurable interval.
-- Detailed runbook: `docs/SYSTEMD_DEPLOYMENT_RUNBOOK.md`
-
-## Kubernetes deployment artifacts (non-hotpath)
-
-- Render Kubernetes manifests for `data_pipeline`:
-```bash
-.venv/bin/python scripts/ops/render_k8s_manifests.py \
-  --repo-root . \
-  --output-dir deploy/k8s \
-  --namespace quant-hft \
-  --image-repository ghcr.io/<org>/quant-hft \
-  --image-tag v0.1.0
-```
-- Generated files:
-  - `deploy/k8s/namespace.yaml`
-  - `deploy/k8s/configmap-data-pipeline.yaml`
-  - `deploy/k8s/secret-archive.example.yaml`
-  - `deploy/k8s/persistentvolumeclaim-runtime.yaml`
-  - `deploy/k8s/deployment-data-pipeline.yaml`
-  - `deploy/k8s/kustomization.yaml`
-- Detailed runbook: `docs/K8S_DEPLOYMENT_RUNBOOK.md`
 
 ## Release packaging (non-hotpath)
 

@@ -18,89 +18,39 @@ jobs:
       - name: Perf Smoke
         run: |
           mkdir -p docs/results
-          python3 scripts/perf/run_hotpath_bench.py \
-            --benchmark-bin build/hotpath_benchmark \
-            --baseline configs/perf/baseline.json \
-            --result-json docs/results/hotpath_bench_result.json
-
-  python:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install
+          ./build/backtest_benchmark_cli \
+            --runs 5 \
+            --baseline_p95_ms 100 \
+            --result_json docs/results/backtest_benchmark_result.json
+      - name: Consistency Gates
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
-      - name: Lint + Type + Tests
+          bash scripts/build/run_consistency_gates.sh \
+            --build-dir build \
+            --results-dir docs/results
+      - name: Preprod Rehearsal Gate
         run: |
-          ruff check python scripts
-          black --check python scripts
-          mypy python/quant_hft
-          python scripts/build/verify_contract_sync.py
-          python scripts/build/verify_develop_requirements.py
-          pytest python/tests -q
-      - name: Backtest Benchmark Data Prep + Gate
-        run: |
-          mkdir -p runtime/benchmarks/backtest docs/results
-          python scripts/perf/prepare_backtest_benchmark_data.py \
-            --input-csv backtest_data/rb.csv \
-            --output-csv runtime/benchmarks/backtest/rb_ci_sample.csv \
-            --max-ticks 1200 \
-            --report-json docs/results/backtest_benchmark_data_report.json
-          python scripts/perf/run_backtest_benchmark.py \
-            --csv-path runtime/benchmarks/backtest/rb_ci_sample.csv \
-            --baseline configs/perf/backtest_benchmark_baseline.json \
-            --result-json docs/results/backtest_benchmark_result.json
+          bash scripts/build/run_preprod_rehearsal_gate.sh \
+            --build-dir build \
+            --results-dir docs/results
       - name: Ops Smoke
         run: |
-          mkdir -p runtime docs/results
-          python scripts/ops/fake_redis_bridge_server.py --host 127.0.0.1 --port 16379 > runtime/fake_redis.log 2>&1 &
-          FAKE_REDIS_PID=$!
-          trap "kill ${FAKE_REDIS_PID}" EXIT
-          sleep 1
-          QUANT_HFT_REDIS_HOST=127.0.0.1 QUANT_HFT_REDIS_PORT=16379 \
-          python scripts/ops/run_reconnect_evidence.py \
-            --dry-run \
-            --skip-preflight \
-            --probe-bin /bin/echo \
-            --config configs/sim/ctp.yaml \
-            --scenarios disconnect \
-            --strategy-bridge-chain-status auto \
-            --report-file docs/results/reconnect_fault_result.md \
-            --health-json-file docs/results/ops_health_report.json \
-            --health-markdown-file docs/results/ops_health_report.md | tee runtime/ops_smoke.out
-          grep -q -- "--strategy-bridge-chain-status complete" runtime/ops_smoke.out
-          grep -q -- "--strategy-bridge-chain-source auto_detected" runtime/ops_smoke.out
-          grep -q -- "--strategy-bridge-state-key-count 2" runtime/ops_smoke.out
-          grep -q -- "--strategy-bridge-intent-count 1" runtime/ops_smoke.out
-          grep -q -- "--strategy-bridge-order-key-count 1" runtime/ops_smoke.out
-          python scripts/ops/failover_orchestrator.py \
-            --env-config configs/deploy/environments/prodlike_multi_host.yaml \
-            --output-file docs/results/failover_result.env
-          python scripts/ops/verify_failover_evidence.py \
-            --evidence-file docs/results/failover_result.env \
-            --max-failover-seconds 300 \
-            --max-data-lag-events 0
+          mkdir -p docs/results runtime
+          ./build/reconnect_evidence_cli \
+            --report_file docs/results/reconnect_fault_result.md \
+            --health_json_file docs/results/ops_health_report.json \
+            --health_markdown_file docs/results/ops_health_report.md \
+            --alert_json_file docs/results/ops_alert_report.json \
+            --alert_markdown_file docs/results/ops_alert_report.md | tee runtime/ops_smoke.out
+          ./build/ctp_cutover_orchestrator_cli \
+            --cutover_env docs/results/cutover_result.env \
+            --rollback_env docs/results/rollback_result.env
+          grep -q -- "--strategy-engine-chain-status complete" runtime/ops_smoke.out
+          grep -q -- "quant_hft_strategy_engine_chain_integrity" docs/results/ops_health_report.md
           test -f docs/results/ops_alert_report.json
           test -f docs/results/ops_alert_report.md
-          test -f docs/results/failover_result.env
-          grep -q "quant_hft_strategy_bridge_chain_integrity" docs/results/ops_health_report.md
-      - name: Upload Ops Smoke Artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ops-smoke-artifacts
-          path: |
-            runtime/fake_redis.log
-            runtime/ops_smoke.out
-            docs/results/reconnect_fault_result.md
-            docs/results/ops_health_report.json
-            docs/results/ops_health_report.md
-            docs/results/ops_alert_report.json
-            docs/results/ops_alert_report.md
-            docs/results/failover_result.env
-          if-no-files-found: error
-          retention-days: 14
+          test -f docs/results/cutover_result.env
+          test -f docs/results/rollback_result.env
+      - name: Dependency Audit
+        run: bash scripts/build/dependency_audit.sh --build-dir build
+      - name: Repo Purity Check
+        run: bash scripts/build/repo_purity_check.sh --repo-root .

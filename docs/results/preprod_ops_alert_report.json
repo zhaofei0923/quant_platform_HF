@@ -1,0 +1,12 @@
+{
+  "generated_ts_ns": 1771308714529389534,
+  "overall_healthy": true,
+  "alerts": [
+    {
+      "code": "OPS_ALL_HEALTHY",
+      "severity": "info",
+      "message": "all SLI checks are healthy",
+      "sli_name": "quant_hft_core_process_alive"
+    }
+  ]
+}

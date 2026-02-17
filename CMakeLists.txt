@@ -11,7 +11,6 @@ option(QUANT_HFT_BUILD_TESTS "Build C++ unit tests" ON)
 option(QUANT_HFT_ENABLE_CTP_REAL_API "Enable CTP v6.7.11 real API integration" OFF)
 option(QUANT_HFT_ENABLE_REDIS_EXTERNAL "Enable external Redis driver path" OFF)
 option(QUANT_HFT_ENABLE_TIMESCALE_EXTERNAL "Enable external TimescaleDB driver path" OFF)
-option(QUANT_HFT_ENABLE_PYBIND "Build pybind11 CTP wrapper module" OFF)
 option(QUANT_HFT_ENABLE_ARROW_PARQUET "Enable native Arrow/Parquet C++ reader" OFF)
 option(QUANT_HFT_WITH_METRICS "Enable Prometheus metrics exporter" OFF)
 set(CTP_V6711_DIR "${CMAKE_SOURCE_DIR}/ctp_api/v6.7.11_20250617_api_traderapi_se_linux64"
@@ -24,11 +23,12 @@ add_library(quant_hft_core STATIC
     src/backtest/performance.cpp
     src/backtest/live_data_feed.cpp
     src/strategy/base_strategy.cpp
+    src/strategy/strategy_registry.cpp
+    src/strategy/strategy_engine.cpp
+    src/strategy/demo_live_strategy.cpp
     src/core/backtest/parquet_data_feed.cpp
-    src/core/common/strategy_intent_codec.cpp
-    src/core/common/strategy_intent_inbox.cpp
+    src/core/common/callback_dispatcher.cpp
     src/core/common/event_dispatcher.cpp
-    src/core/common/python_callback_dispatcher.cpp
     src/core/common/flow_controller.cpp
     src/core/common/circuit_breaker.cpp
     src/core/common/fixed_decimal.cpp
@@ -181,28 +181,41 @@ target_link_libraries(hotpath_hybrid PRIVATE quant_hft_core)
 add_executable(daily_settlement src/apps/daily_settlement_main.cpp)
 target_link_libraries(daily_settlement PRIVATE quant_hft_core)
 
-if(QUANT_HFT_ENABLE_PYBIND)
-    find_package(Python3 REQUIRED COMPONENTS Interpreter Development.Module)
-    find_package(pybind11 CONFIG REQUIRED)
+add_executable(backtest_cli src/apps/backtest_cli_main.cpp)
+target_link_libraries(backtest_cli PRIVATE quant_hft_core)
 
-    pybind11_add_module(_ctp_wrapper MODULE python/bindings/ctp_wrapper_module.cpp)
-    target_include_directories(_ctp_wrapper PRIVATE include)
-    target_link_libraries(_ctp_wrapper PRIVATE quant_hft_core)
-    set_target_properties(_ctp_wrapper PROPERTIES
-        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/python/quant_hft")
+add_executable(factor_eval_cli src/apps/factor_eval_cli_main.cpp)
+target_link_libraries(factor_eval_cli PRIVATE quant_hft_core)
 
-    pybind11_add_module(quant_hft_data_feed MODULE src/binding/data_feed_wrapper.cpp)
-    target_include_directories(quant_hft_data_feed PRIVATE include)
-    target_link_libraries(quant_hft_data_feed PRIVATE quant_hft_core)
-    set_target_properties(quant_hft_data_feed PROPERTIES
-        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/python")
+add_executable(backtest_benchmark_cli src/apps/backtest_benchmark_cli_main.cpp)
+target_link_libraries(backtest_benchmark_cli PRIVATE quant_hft_core)
 
-    pybind11_add_module(quant_hft_strategy MODULE src/binding/strategy_wrapper.cpp)
-    target_include_directories(quant_hft_strategy PRIVATE include)
-    target_link_libraries(quant_hft_strategy PRIVATE quant_hft_core)
-    set_target_properties(quant_hft_strategy PROPERTIES
-        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/python")
-endif()
+add_executable(csv_parquet_compare_cli src/apps/csv_parquet_compare_cli_main.cpp)
+target_link_libraries(csv_parquet_compare_cli PRIVATE quant_hft_core)
+
+add_executable(simnow_compare_cli src/apps/simnow_compare_cli_main.cpp)
+target_link_libraries(simnow_compare_cli PRIVATE quant_hft_core)
+
+add_executable(simnow_weekly_stress_cli src/apps/simnow_weekly_stress_cli_main.cpp)
+target_link_libraries(simnow_weekly_stress_cli PRIVATE quant_hft_core)
+
+add_executable(reconnect_evidence_cli src/apps/reconnect_evidence_cli_main.cpp)
+target_link_libraries(reconnect_evidence_cli PRIVATE quant_hft_core)
+
+add_executable(ops_health_report_cli src/apps/ops_health_report_cli_main.cpp)
+target_link_libraries(ops_health_report_cli PRIVATE quant_hft_core)
+
+add_executable(ops_alert_report_cli src/apps/ops_alert_report_cli_main.cpp)
+target_link_libraries(ops_alert_report_cli PRIVATE quant_hft_core)
+
+add_executable(ctp_cutover_orchestrator_cli src/apps/ctp_cutover_orchestrator_cli_main.cpp)
+target_link_libraries(ctp_cutover_orchestrator_cli PRIVATE quant_hft_core)
+
+add_executable(verify_contract_sync_cli src/apps/verify_contract_sync_cli_main.cpp)
+target_link_libraries(verify_contract_sync_cli PRIVATE quant_hft_core)
+
+add_executable(verify_develop_requirements_cli src/apps/verify_develop_requirements_cli_main.cpp)
+target_link_libraries(verify_develop_requirements_cli PRIVATE quant_hft_core)
 
 if(QUANT_HFT_BUILD_TESTS)
     include(CTest)
@@ -263,9 +276,6 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(tcp_redis_hash_client_test tests/unit/core/tcp_redis_hash_client_test.cpp)
     target_link_libraries(tcp_redis_hash_client_test PRIVATE quant_hft_core GTest::gtest_main)
 
-    add_executable(strategy_intent_inbox_test tests/unit/core/strategy_intent_inbox_test.cpp)
-    target_link_libraries(strategy_intent_inbox_test PRIVATE quant_hft_core GTest::gtest_main)
-
     add_executable(libpq_timescale_sql_client_test tests/unit/core/libpq_timescale_sql_client_test.cpp)
     target_link_libraries(libpq_timescale_sql_client_test PRIVATE quant_hft_core GTest::gtest_main)
 
@@ -287,8 +297,8 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(event_dispatcher_test tests/unit/core/event_dispatcher_test.cpp)
     target_link_libraries(event_dispatcher_test PRIVATE quant_hft_core GTest::gtest_main)
 
-    add_executable(python_callback_dispatcher_test tests/unit/core/python_callback_dispatcher_test.cpp)
-    target_link_libraries(python_callback_dispatcher_test PRIVATE quant_hft_core GTest::gtest_main)
+    add_executable(callback_dispatcher_test tests/unit/core/callback_dispatcher_test.cpp)
+    target_link_libraries(callback_dispatcher_test PRIVATE quant_hft_core GTest::gtest_main)
 
     add_executable(flow_controller_test tests/unit/core/flow_controller_test.cpp)
     target_link_libraries(flow_controller_test PRIVATE quant_hft_core GTest::gtest_main)
@@ -383,6 +393,29 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(base_strategy_test tests/unit/strategy/base_strategy_test.cpp)
     target_link_libraries(base_strategy_test PRIVATE quant_hft_core GTest::gtest_main)
 
+    add_executable(strategy_registry_test tests/unit/strategy/strategy_registry_test.cpp)
+    target_link_libraries(strategy_registry_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(strategy_engine_test tests/unit/strategy/strategy_engine_test.cpp)
+    target_link_libraries(strategy_engine_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(demo_live_strategy_test tests/unit/strategy/demo_live_strategy_test.cpp)
+    target_link_libraries(demo_live_strategy_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(ops_cli_test tests/unit/apps/ops_cli_test.cpp)
+    target_link_libraries(ops_cli_test PRIVATE GTest::gtest_main)
+    target_compile_definitions(ops_cli_test PRIVATE QUANT_HFT_BUILD_DIR="${CMAKE_BINARY_DIR}")
+
+    add_executable(quality_gate_scripts_test tests/unit/build/quality_gate_scripts_test.cpp)
+    target_link_libraries(quality_gate_scripts_test PRIVATE GTest::gtest_main)
+
+    add_executable(consistency_gate_script_test tests/unit/build/consistency_gate_script_test.cpp)
+    target_link_libraries(consistency_gate_script_test PRIVATE GTest::gtest_main)
+
+    add_executable(preprod_rehearsal_gate_script_test
+                   tests/unit/build/preprod_rehearsal_gate_script_test.cpp)
+    target_link_libraries(preprod_rehearsal_gate_script_test PRIVATE GTest::gtest_main)
+
     if(QUANT_HFT_METRICS_ACTIVE)
         add_executable(exporter_test tests/unit/monitoring/exporter_test.cpp)
         target_link_libraries(exporter_test PRIVATE quant_hft_core GTest::gtest_main)
@@ -404,7 +437,6 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(timescale_buffered_event_store_test)
     gtest_discover_tests(storage_client_factory_test)
     gtest_discover_tests(tcp_redis_hash_client_test)
-    gtest_discover_tests(strategy_intent_inbox_test)
     gtest_discover_tests(libpq_timescale_sql_client_test)
     gtest_discover_tests(trading_ledger_store_client_adapter_test)
     gtest_discover_tests(trading_domain_store_client_adapter_test)
@@ -415,6 +447,7 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(flow_controller_test)
     gtest_discover_tests(circuit_breaker_test)
     gtest_discover_tests(fixed_decimal_test)
+    gtest_discover_tests(callback_dispatcher_test)
     gtest_discover_tests(basic_risk_engine_test)
     gtest_discover_tests(risk_policy_engine_test)
     gtest_discover_tests(in_memory_portfolio_ledger_test)
@@ -443,6 +476,13 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(engine_test)
     gtest_discover_tests(performance_test)
     gtest_discover_tests(base_strategy_test)
+    gtest_discover_tests(strategy_registry_test)
+    gtest_discover_tests(strategy_engine_test)
+    gtest_discover_tests(demo_live_strategy_test)
+    gtest_discover_tests(ops_cli_test)
+    gtest_discover_tests(quality_gate_scripts_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    gtest_discover_tests(consistency_gate_script_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    gtest_discover_tests(preprod_rehearsal_gate_script_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     if(QUANT_HFT_METRICS_ACTIVE)
         gtest_discover_tests(exporter_test)
     endif()

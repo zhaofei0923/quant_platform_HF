@@ -62,6 +62,7 @@ void TimescaleEventStoreClientAdapter::AppendOrderEvent(const OrderEvent& event)
 
     std::unordered_map<std::string, std::string> row{
         {"account_id", event.account_id},
+        {"strategy_id", event.strategy_id},
         {"client_order_id", event.client_order_id},
         {"exchange_order_id", event.exchange_order_id},
         {"instrument_id", event.instrument_id},
@@ -274,6 +275,7 @@ std::vector<OrderEvent> TimescaleEventStoreClientAdapter::GetOrderEvents(
     for (const auto& row : rows) {
         OrderEvent event;
         event.account_id = GetOrEmpty(row, "account_id");
+        event.strategy_id = GetOrEmpty(row, "strategy_id");
         event.client_order_id = GetOrEmpty(row, "client_order_id");
         event.exchange_order_id = GetOrEmpty(row, "exchange_order_id");
         event.instrument_id = GetOrEmpty(row, "instrument_id");

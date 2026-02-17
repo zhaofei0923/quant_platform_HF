@@ -50,6 +50,7 @@ bool LocalWalRegulatorySink::Append(const char* kind, const OrderEvent& event) {
         << "\"recv_ts_ns\":" << event.recv_ts_ns << ","
         << "\"ts_ns\":" << event.ts_ns << ","
         << "\"account_id\":\"" << EscapeJsonString(event.account_id) << "\","
+        << "\"strategy_id\":\"" << EscapeJsonString(event.strategy_id) << "\","
         << "\"client_order_id\":\"" << EscapeJsonString(event.client_order_id) << "\","
         << "\"exchange_order_id\":\"" << EscapeJsonString(event.exchange_order_id) << "\","
         << "\"instrument_id\":\"" << EscapeJsonString(event.instrument_id) << "\","

@@ -225,6 +225,7 @@ bool ParseWalLine(const std::string& line, OrderEvent* event) {
     }
 
     (void)ParseStringField(line, "account_id", &event->account_id);
+    (void)ParseStringField(line, "strategy_id", &event->strategy_id);
     (void)ParseStringField(line, "exchange_order_id", &event->exchange_order_id);
     (void)ParseStringField(line, "instrument_id", &event->instrument_id);
     (void)ParseStringField(line, "trade_id", &event->trade_id);

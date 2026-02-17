@@ -11,6 +11,7 @@ bool InMemoryOrderGateway::PlaceOrder(const OrderIntent& intent) {
     if (callback_) {
         OrderEvent event;
         event.account_id = intent.account_id;
+        event.strategy_id = intent.strategy_id;
         event.client_order_id = intent.client_order_id;
         event.exchange_order_id = "sim-" + intent.client_order_id;
         event.instrument_id = intent.instrument_id;
@@ -38,6 +39,7 @@ bool InMemoryOrderGateway::CancelOrder(const std::string& client_order_id,
     if (callback_) {
         OrderEvent event;
         event.account_id = order.account_id;
+        event.strategy_id = order.strategy_id;
         event.client_order_id = order.client_order_id;
         event.exchange_order_id = "sim-" + order.client_order_id;
         event.instrument_id = order.instrument_id;

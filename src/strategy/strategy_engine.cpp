@@ -204,22 +204,60 @@ void StrategyEngine::WorkerLoop() {
 void StrategyEngine::DispatchState(const StateSnapshot7D& state) {
     std::vector<SignalIntent> intents;
     for (auto& entry : strategies_) {
-        intents = entry.strategy->OnState(state);
-        EmitIntents(entry.strategy_id, std::move(intents));
+        try {
+            intents = entry.strategy->OnState(state);
+            EmitIntents(entry.strategy_id, std::move(intents));
+        } catch (...) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            ++stats_.strategy_callback_exceptions;
+        }
     }
 }
 
 void StrategyEngine::DispatchOrderEvent(const OrderEvent& event) {
-    for (auto& entry : strategies_) {
-        entry.strategy->OnOrderEvent(event);
+    if (event.strategy_id.empty()) {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            ++stats_.broadcast_order_events;
+        }
+        for (auto& entry : strategies_) {
+            try {
+                entry.strategy->OnOrderEvent(event);
+            } catch (...) {
+                std::lock_guard<std::mutex> lock(mutex_);
+                ++stats_.strategy_callback_exceptions;
+            }
+        }
+        return;
+    }
+
+    auto it = std::find_if(strategies_.begin(), strategies_.end(), [&](const StrategyEntry& entry) {
+        return entry.strategy_id == event.strategy_id;
+    });
+    if (it == strategies_.end()) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ++stats_.unmatched_order_events;
+        return;
+    }
+
+    try {
+        it->strategy->OnOrderEvent(event);
+    } catch (...) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ++stats_.strategy_callback_exceptions;
     }
 }
 
 void StrategyEngine::DispatchTimer(EpochNanos now_ns) {
     std::vector<SignalIntent> intents;
     for (auto& entry : strategies_) {
-        intents = entry.strategy->OnTimer(now_ns);
-        EmitIntents(entry.strategy_id, std::move(intents));
+        try {
+            intents = entry.strategy->OnTimer(now_ns);
+            EmitIntents(entry.strategy_id, std::move(intents));
+        } catch (...) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            ++stats_.strategy_callback_exceptions;
+        }
     }
 }
 

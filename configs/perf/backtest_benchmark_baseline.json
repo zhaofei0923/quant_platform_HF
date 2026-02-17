@@ -1,8 +1,9 @@
 {
   "benchmark": "backtest_deterministic",
-  "max_ticks": 1200,
-  "runs": 3,
+  "max_ticks": 120000,
+  "runs": 5,
   "warmup_runs": 1,
   "min_ticks_read": 1000,
-  "max_p95_ms": 2500.0
+  "max_p95_ms": 2500.0,
+  "dataset_signature": "rb_perf_large_csv_v1"
 }

@@ -253,10 +253,23 @@ int main(int argc, char** argv) {
     const bool dry_run = !HasArg(args, "execute");
     const bool force_rollback = HasArg(args, "force-rollback");
 
-    const std::string cutover_output =
-        GetArg(args, "cutover-output", cutover.at("CUTOVER_EVIDENCE_OUTPUT"));
-    const std::string rollback_output =
-        GetArg(args, "rollback-output", rollback.at("ROLLBACK_EVIDENCE_OUTPUT"));
+    std::string cutover_output = GetArg(args, "cutover-output");
+    if (cutover_output.empty()) {
+        // Backward-compatible alias used by legacy CI scripts.
+        cutover_output = GetArg(args, "cutover_env");
+    }
+    if (cutover_output.empty()) {
+        cutover_output = cutover.at("CUTOVER_EVIDENCE_OUTPUT");
+    }
+
+    std::string rollback_output = GetArg(args, "rollback-output");
+    if (rollback_output.empty()) {
+        // Backward-compatible alias used by legacy CI scripts.
+        rollback_output = GetArg(args, "rollback_env");
+    }
+    if (rollback_output.empty()) {
+        rollback_output = rollback.at("ROLLBACK_EVIDENCE_OUTPUT");
+    }
 
     const std::vector<std::pair<std::string, std::string>> cutover_steps = {
         {"stop_old_core_engine", "OLD_CORE_ENGINE_STOP_CMD"},

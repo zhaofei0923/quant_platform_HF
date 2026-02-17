@@ -27,6 +27,9 @@ public:
         std::uint64_t enqueued_events{0};
         std::uint64_t processed_events{0};
         std::uint64_t dropped_oldest_events{0};
+        std::uint64_t broadcast_order_events{0};
+        std::uint64_t unmatched_order_events{0};
+        std::uint64_t strategy_callback_exceptions{0};
     };
 
     using IntentSink = std::function<void(const SignalIntent&)>;

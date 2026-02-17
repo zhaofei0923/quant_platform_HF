@@ -84,7 +84,7 @@ bool OrderManager::OnOrderEvent(const OrderEvent& event, Order* out_order, std::
         if (it == orders_.end()) {
             order.order_id = order_id;
             order.account_id = event.account_id;
-            order.strategy_id = "";
+            order.strategy_id = event.strategy_id;
             order.symbol = event.instrument_id;
             order.exchange = event.exchange_id;
             order.side = event.side;
@@ -144,9 +144,9 @@ bool OrderManager::OnTradeEvent(const OrderEvent& event, Trade* out_trade, std::
 
     Trade trade;
     trade.trade_id = event.trade_id.empty() ? event_key : event.trade_id;
-    trade.order_id = ResolveOrderId(event);
-    trade.account_id = event.account_id;
-    trade.strategy_id = "";
+        trade.order_id = ResolveOrderId(event);
+        trade.account_id = event.account_id;
+    trade.strategy_id = event.strategy_id;
     {
         const auto order = GetOrder(trade.order_id);
         if (order.has_value()) {
@@ -334,4 +334,3 @@ std::string OrderManager::ResolveOrderId(const OrderEvent& event) {
 }
 
 }  // namespace quant_hft
-

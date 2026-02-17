@@ -258,6 +258,7 @@ struct RiskDecision {
 
 struct OrderEvent {
     std::string account_id;
+    std::string strategy_id;
     std::string client_order_id;
     std::string exchange_order_id;
     std::string instrument_id;

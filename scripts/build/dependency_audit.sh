@@ -78,6 +78,34 @@ bool_on() {
   [[ "${value}" == "ON" || "${value}" == "1" || "${value}" == "TRUE" ]]
 }
 
+read_prometheus_version_from_header() {
+  local include_dir="$1"
+  local header_path=""
+  local version=""
+
+  if [[ -z "${include_dir}" || "${include_dir}" == *"-NOTFOUND" ]]; then
+    printf ''
+    return 0
+  fi
+
+  for header_path in \
+    "${include_dir}/prometheus/version.h" \
+    "${include_dir}/version.h" \
+    "/usr/include/prometheus/version.h" \
+    "/usr/local/include/prometheus/version.h"; do
+    if [[ -f "${header_path}" ]]; then
+      version="$(grep -Eo 'PROMETHEUS_CPP_VERSION[[:space:]]+\"[0-9]+(\.[0-9]+){0,2}\"' "${header_path}" \
+        | grep -Eo '[0-9]+(\.[0-9]+){0,2}' | head -n1 || true)"
+      if [[ -n "${version}" ]]; then
+        printf '%s' "${version}"
+        return 0
+      fi
+    fi
+  done
+
+  printf ''
+}
+
 require_pkg_version() {
   local package_name="$1"
   local min_version="$2"
@@ -127,6 +155,7 @@ fi
 arrow_enabled="$(cache_value QUANT_HFT_ENABLE_ARROW_PARQUET)"
 redis_external_enabled="$(cache_value QUANT_HFT_ENABLE_REDIS_EXTERNAL)"
 timescale_external_enabled="$(cache_value QUANT_HFT_ENABLE_TIMESCALE_EXTERNAL)"
+metrics_enabled="$(cache_value QUANT_HFT_WITH_METRICS)"
 
 if bool_on "${arrow_enabled}"; then
   require_pkg_version "arrow" "12"
@@ -151,6 +180,18 @@ if bool_on "${redis_external_enabled}" || bool_on "${timescale_external_enabled}
   require_pkg_version "openssl" "1.1"
 else
   echo "[skip] openssl check (no external Redis/Timescale enabled)"
+fi
+
+if bool_on "${metrics_enabled}"; then
+  prometheus_include_dir="$(cache_value PrometheusCpp_INCLUDE_DIR)"
+  prometheus_version="$(read_prometheus_version_from_header "${prometheus_include_dir}")"
+  if [[ -z "${prometheus_version}" ]]; then
+    failures+=("prometheus-cpp version unavailable (PrometheusCpp_INCLUDE_DIR=${prometheus_include_dir:-unknown})")
+  else
+    record_version_check "prometheus-cpp" "${prometheus_version}" "1.1"
+  fi
+else
+  echo "[skip] prometheus-cpp check (QUANT_HFT_WITH_METRICS=${metrics_enabled:-OFF})"
 fi
 
 if [[ ${#failures[@]} -gt 0 ]]; then

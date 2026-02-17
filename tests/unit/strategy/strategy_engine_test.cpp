@@ -5,10 +5,10 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -22,11 +22,16 @@ struct Probe {
     std::mutex mutex;
     std::vector<std::string> initialized_strategy_ids;
     std::vector<EpochNanos> observed_state_ts;
-    std::vector<std::string> observed_order_ids;
+    std::vector<std::string> observed_order_events;
+    std::vector<std::string> observed_timer_strategies;
 };
 
 Probe* g_probe = nullptr;
 std::atomic<int> g_state_delay_ms{0};
+std::mutex g_behavior_mutex;
+std::string g_throw_on_state_strategy;
+std::string g_throw_on_order_strategy;
+std::string g_throw_on_timer_strategy;
 
 std::string UniqueFactoryName() {
     static std::atomic<int> seq{0};
@@ -44,6 +49,32 @@ bool WaitUntil(const std::function<bool()>& predicate, std::chrono::milliseconds
     return predicate();
 }
 
+void ResetThrowingBehavior() {
+    std::lock_guard<std::mutex> lock(g_behavior_mutex);
+    g_throw_on_state_strategy.clear();
+    g_throw_on_order_strategy.clear();
+    g_throw_on_timer_strategy.clear();
+}
+
+bool ShouldThrowOnState(const std::string& strategy_id) {
+    std::lock_guard<std::mutex> lock(g_behavior_mutex);
+    return strategy_id == g_throw_on_state_strategy;
+}
+
+bool ShouldThrowOnOrder(const std::string& strategy_id) {
+    std::lock_guard<std::mutex> lock(g_behavior_mutex);
+    return strategy_id == g_throw_on_order_strategy;
+}
+
+bool ShouldThrowOnTimer(const std::string& strategy_id) {
+    std::lock_guard<std::mutex> lock(g_behavior_mutex);
+    return strategy_id == g_throw_on_timer_strategy;
+}
+
+bool ContainsEvent(const std::vector<std::string>& events, const std::string& needle) {
+    return std::find(events.begin(), events.end(), needle) != events.end();
+}
+
 class RecordingStrategy final : public ILiveStrategy {
 public:
     void Initialize(const StrategyContext& ctx) override {
@@ -55,6 +86,10 @@ public:
     }
 
     std::vector<SignalIntent> OnState(const StateSnapshot7D& state) override {
+        if (ShouldThrowOnState(strategy_id_)) {
+            throw std::runtime_error("state exception");
+        }
+
         const int delay_ms = g_state_delay_ms.load();
         if (delay_ms > 0) {
             std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
@@ -77,13 +112,24 @@ public:
     }
 
     void OnOrderEvent(const OrderEvent& event) override {
+        if (ShouldThrowOnOrder(strategy_id_)) {
+            throw std::runtime_error("order exception");
+        }
         if (g_probe != nullptr) {
             std::lock_guard<std::mutex> lock(g_probe->mutex);
-            g_probe->observed_order_ids.push_back(event.client_order_id);
+            g_probe->observed_order_events.push_back(strategy_id_ + ":" + event.client_order_id);
         }
     }
 
     std::vector<SignalIntent> OnTimer(EpochNanos now_ns) override {
+        if (ShouldThrowOnTimer(strategy_id_)) {
+            throw std::runtime_error("timer exception");
+        }
+        if (g_probe != nullptr) {
+            std::lock_guard<std::mutex> lock(g_probe->mutex);
+            g_probe->observed_timer_strategies.push_back(strategy_id_);
+        }
+
         (void)now_ns;
         return {};
     }
@@ -94,11 +140,10 @@ private:
     std::string strategy_id_;
 };
 
-}  // namespace
-
 TEST(StrategyEngineTest, DispatchesStateAndOrderEventsToAllStrategies) {
     Probe probe;
     g_probe = &probe;
+    ResetThrowingBehavior();
 
     std::string error;
     const auto factory_name = UniqueFactoryName();
@@ -136,7 +181,7 @@ TEST(StrategyEngineTest, DispatchesStateAndOrderEventsToAllStrategies) {
         [&]() {
             std::lock_guard<std::mutex> sink_lock(sink_mutex);
             std::lock_guard<std::mutex> probe_lock(probe.mutex);
-            return emitted_intents.size() >= 2 && probe.observed_order_ids.size() >= 2;
+            return emitted_intents.size() >= 2 && probe.observed_order_events.size() >= 2;
         },
         std::chrono::milliseconds(500)));
 
@@ -156,12 +201,184 @@ TEST(StrategyEngineTest, DispatchesStateAndOrderEventsToAllStrategies) {
 
     std::lock_guard<std::mutex> probe_lock(probe.mutex);
     EXPECT_EQ(probe.initialized_strategy_ids.size(), 2U);
-    EXPECT_EQ(probe.observed_order_ids.size(), 2U);
+    EXPECT_TRUE(ContainsEvent(probe.observed_order_events, "alpha:ord-1"));
+    EXPECT_TRUE(ContainsEvent(probe.observed_order_events, "beta:ord-1"));
+
+    const auto stats = engine.GetStats();
+    EXPECT_EQ(stats.broadcast_order_events, 1U);
+    EXPECT_EQ(stats.unmatched_order_events, 0U);
+}
+
+TEST(StrategyEngineTest, RoutesOrderEventByStrategyId) {
+    Probe probe;
+    g_probe = &probe;
+    ResetThrowingBehavior();
+
+    std::string error;
+    const auto factory_name = UniqueFactoryName();
+    ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
+        factory_name,
+        []() { return std::make_unique<RecordingStrategy>(); },
+        &error))
+        << error;
+
+    StrategyEngineConfig cfg;
+    cfg.queue_capacity = 64;
+    cfg.timer_interval_ns = 1000 * 1000 * 1000;
+    StrategyEngine engine(cfg, nullptr);
+
+    StrategyContext base_context;
+    ASSERT_TRUE(engine.Start({"alpha", "beta"}, factory_name, base_context, &error)) << error;
+
+    OrderEvent event;
+    event.client_order_id = "ord-target";
+    event.strategy_id = "beta";
+    engine.EnqueueOrderEvent(event);
+
+    ASSERT_TRUE(WaitUntil(
+        [&]() {
+            std::lock_guard<std::mutex> lock(probe.mutex);
+            return ContainsEvent(probe.observed_order_events, "beta:ord-target");
+        },
+        std::chrono::milliseconds(500)));
+
+    engine.Stop();
+    g_probe = nullptr;
+
+    std::lock_guard<std::mutex> lock(probe.mutex);
+    EXPECT_FALSE(ContainsEvent(probe.observed_order_events, "alpha:ord-target"));
+    EXPECT_TRUE(ContainsEvent(probe.observed_order_events, "beta:ord-target"));
+
+    const auto stats = engine.GetStats();
+    EXPECT_EQ(stats.broadcast_order_events, 0U);
+    EXPECT_EQ(stats.unmatched_order_events, 0U);
+}
+
+TEST(StrategyEngineTest, CountsUnmatchedOrderEvents) {
+    Probe probe;
+    g_probe = &probe;
+    ResetThrowingBehavior();
+
+    std::string error;
+    const auto factory_name = UniqueFactoryName();
+    ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
+        factory_name,
+        []() { return std::make_unique<RecordingStrategy>(); },
+        &error))
+        << error;
+
+    StrategyEngineConfig cfg;
+    cfg.queue_capacity = 64;
+    cfg.timer_interval_ns = 1000 * 1000 * 1000;
+    StrategyEngine engine(cfg, nullptr);
+
+    StrategyContext base_context;
+    ASSERT_TRUE(engine.Start({"alpha"}, factory_name, base_context, &error)) << error;
+
+    OrderEvent event;
+    event.client_order_id = "ord-unknown";
+    event.strategy_id = "ghost";
+    engine.EnqueueOrderEvent(event);
+
+    ASSERT_TRUE(WaitUntil(
+        [&]() {
+            const auto stats = engine.GetStats();
+            return stats.unmatched_order_events > 0;
+        },
+        std::chrono::milliseconds(500)));
+
+    engine.Stop();
+    g_probe = nullptr;
+
+    const auto stats = engine.GetStats();
+    EXPECT_EQ(stats.unmatched_order_events, 1U);
+    EXPECT_EQ(stats.broadcast_order_events, 0U);
+}
+
+TEST(StrategyEngineTest, IsolatesStrategyExceptionsInOrderDispatch) {
+    Probe probe;
+    g_probe = &probe;
+    ResetThrowingBehavior();
+
+    std::string error;
+    const auto factory_name = UniqueFactoryName();
+    ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
+        factory_name,
+        []() { return std::make_unique<RecordingStrategy>(); },
+        &error))
+        << error;
+
+    {
+        std::lock_guard<std::mutex> lock(g_behavior_mutex);
+        g_throw_on_order_strategy = "alpha";
+    }
+
+    StrategyEngineConfig cfg;
+    cfg.queue_capacity = 64;
+    cfg.timer_interval_ns = 1000 * 1000 * 1000;
+    StrategyEngine engine(cfg, nullptr);
+
+    StrategyContext base_context;
+    ASSERT_TRUE(engine.Start({"alpha", "beta"}, factory_name, base_context, &error)) << error;
+
+    OrderEvent event;
+    event.client_order_id = "ord-ex";
+    engine.EnqueueOrderEvent(event);
+
+    ASSERT_TRUE(WaitUntil(
+        [&]() {
+            std::lock_guard<std::mutex> lock(probe.mutex);
+            return ContainsEvent(probe.observed_order_events, "beta:ord-ex");
+        },
+        std::chrono::milliseconds(500)));
+
+    engine.Stop();
+    g_probe = nullptr;
+    ResetThrowingBehavior();
+
+    const auto stats = engine.GetStats();
+    EXPECT_GT(stats.strategy_callback_exceptions, 0U);
+}
+
+TEST(StrategyEngineTest, TriggersTimerCallbacks) {
+    Probe probe;
+    g_probe = &probe;
+    ResetThrowingBehavior();
+
+    std::string error;
+    const auto factory_name = UniqueFactoryName();
+    ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
+        factory_name,
+        []() { return std::make_unique<RecordingStrategy>(); },
+        &error))
+        << error;
+
+    StrategyEngineConfig cfg;
+    cfg.queue_capacity = 64;
+    cfg.timer_interval_ns = 10 * 1000 * 1000;
+    StrategyEngine engine(cfg, nullptr);
+
+    StrategyContext base_context;
+    ASSERT_TRUE(engine.Start({"alpha"}, factory_name, base_context, &error)) << error;
+
+    ASSERT_TRUE(WaitUntil(
+        [&]() {
+            std::lock_guard<std::mutex> lock(probe.mutex);
+            return !probe.observed_timer_strategies.empty();
+        },
+        std::chrono::milliseconds(500)));
+
+    engine.Stop();
+    g_probe = nullptr;
+
+    std::lock_guard<std::mutex> lock(probe.mutex);
+    EXPECT_FALSE(probe.observed_timer_strategies.empty());
 }
 
 TEST(StrategyEngineTest, DropsOldestEventsWhenQueueIsFull) {
     Probe probe;
     g_probe = &probe;
+    ResetThrowingBehavior();
 
     std::string error;
     const auto factory_name = UniqueFactoryName();
@@ -207,4 +424,5 @@ TEST(StrategyEngineTest, DropsOldestEventsWhenQueueIsFull) {
     EXPECT_GT(stats.dropped_oldest_events, 0U);
 }
 
+}  // namespace
 }  // namespace quant_hft

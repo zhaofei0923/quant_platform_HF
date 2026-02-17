@@ -18,7 +18,7 @@ Quantitative trading platform bootstrap using a pure C++ execution and strategy 
 
 ## Migration Note
 
-- 仓库已切换为纯 C++：`python/`、`.py` 脚本与 pybind 绑定已移除。
+- 仓库已切换为纯 C++：旧语言桥接脚本与 pybind 绑定已移除。
 - 运行入口统一为 `build/` 下的 C++ CLI（如 `backtest_cli`、`simnow_compare_cli`、`reconnect_evidence_cli`）。
 - CI 与本地统一使用 `scripts/build/dependency_audit.sh` + `scripts/build/repo_purity_check.sh` 作为硬门禁。
 

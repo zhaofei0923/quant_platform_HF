@@ -7,6 +7,19 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS 11)
+        message(FATAL_ERROR "GCC >= 11 is required, found ${CMAKE_CXX_COMPILER_VERSION}")
+    endif()
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS 14)
+        message(FATAL_ERROR "Clang >= 14 is required, found ${CMAKE_CXX_COMPILER_VERSION}")
+    endif()
+else()
+    message(FATAL_ERROR
+        "Unsupported compiler '${CMAKE_CXX_COMPILER_ID}'. Use GCC >= 11 or Clang >= 14.")
+endif()
+
 option(QUANT_HFT_BUILD_TESTS "Build C++ unit tests" ON)
 option(QUANT_HFT_ENABLE_CTP_REAL_API "Enable CTP v6.7.11 real API integration" OFF)
 option(QUANT_HFT_ENABLE_REDIS_EXTERNAL "Enable external Redis driver path" OFF)
@@ -15,6 +28,11 @@ option(QUANT_HFT_ENABLE_ARROW_PARQUET "Enable native Arrow/Parquet C++ reader" O
 option(QUANT_HFT_WITH_METRICS "Enable Prometheus metrics exporter" OFF)
 set(CTP_V6711_DIR "${CMAKE_SOURCE_DIR}/ctp_api/v6.7.11_20250617_api_traderapi_se_linux64"
     CACHE PATH "Path to CTP v6.7.11 API directory")
+
+if(QUANT_HFT_ENABLE_ARROW_PARQUET OR QUANT_HFT_ENABLE_REDIS_EXTERNAL OR
+   QUANT_HFT_ENABLE_TIMESCALE_EXTERNAL)
+    find_package(PkgConfig REQUIRED)
+endif()
 
 add_library(quant_hft_core STATIC
     src/backtest/broker.cpp
@@ -89,15 +107,8 @@ target_link_libraries(quant_hft_core PUBLIC pthread dl)
 set_target_properties(quant_hft_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 if(QUANT_HFT_ENABLE_ARROW_PARQUET)
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(ARROW QUIET arrow)
-    pkg_check_modules(PARQUET QUIET parquet)
-
-    if(NOT ARROW_FOUND OR NOT PARQUET_FOUND)
-        message(FATAL_ERROR
-            "Arrow/Parquet development libraries are required when QUANT_HFT_ENABLE_ARROW_PARQUET=ON.\n"
-            "Install example (Ubuntu): sudo apt-get update && sudo apt-get install -y libarrow-dev libparquet-dev")
-    endif()
+    pkg_check_modules(ARROW REQUIRED arrow>=12.0)
+    pkg_check_modules(PARQUET REQUIRED parquet>=12.0)
 
     target_compile_definitions(quant_hft_core PUBLIC QUANT_HFT_ENABLE_ARROW_PARQUET=1)
     target_include_directories(quant_hft_core PUBLIC ${ARROW_INCLUDE_DIRS} ${PARQUET_INCLUDE_DIRS})
@@ -109,15 +120,10 @@ endif()
 
 set(QUANT_HFT_METRICS_ACTIVE OFF)
 if(QUANT_HFT_WITH_METRICS)
-    find_package(PrometheusCpp MODULE QUIET)
-    if(PrometheusCpp_FOUND)
-        set(QUANT_HFT_METRICS_ACTIVE ON)
-        target_compile_definitions(quant_hft_core PUBLIC QUANT_HFT_WITH_METRICS=1)
-        target_link_libraries(quant_hft_core PUBLIC PrometheusCpp::core PrometheusCpp::pull)
-    else()
-        message(WARNING "PrometheusCpp not found, metrics exporter will be disabled")
-        target_compile_definitions(quant_hft_core PUBLIC QUANT_HFT_WITH_METRICS=0)
-    endif()
+    find_package(PrometheusCpp 1.1 MODULE REQUIRED)
+    set(QUANT_HFT_METRICS_ACTIVE ON)
+    target_compile_definitions(quant_hft_core PUBLIC QUANT_HFT_WITH_METRICS=1)
+    target_link_libraries(quant_hft_core PUBLIC PrometheusCpp::core PrometheusCpp::pull)
 else()
     target_compile_definitions(quant_hft_core PUBLIC QUANT_HFT_WITH_METRICS=0)
 endif()
@@ -151,13 +157,19 @@ else()
     target_compile_definitions(quant_hft_core PUBLIC QUANT_HFT_ENABLE_CTP_REAL_API=0)
 endif()
 
+if(QUANT_HFT_ENABLE_REDIS_EXTERNAL OR QUANT_HFT_ENABLE_TIMESCALE_EXTERNAL)
+    pkg_check_modules(OPENSSL_PC REQUIRED openssl>=1.1)
+endif()
+
 if(QUANT_HFT_ENABLE_REDIS_EXTERNAL)
+    pkg_check_modules(HIREDIS REQUIRED hiredis>=1.1)
     target_compile_definitions(quant_hft_core PUBLIC QUANT_HFT_ENABLE_REDIS_EXTERNAL=1)
 else()
     target_compile_definitions(quant_hft_core PUBLIC QUANT_HFT_ENABLE_REDIS_EXTERNAL=0)
 endif()
 
 if(QUANT_HFT_ENABLE_TIMESCALE_EXTERNAL)
+    pkg_check_modules(LIBPQ REQUIRED libpq>=14)
     target_compile_definitions(quant_hft_core PUBLIC QUANT_HFT_ENABLE_TIMESCALE_EXTERNAL=1)
 else()
     target_compile_definitions(quant_hft_core PUBLIC QUANT_HFT_ENABLE_TIMESCALE_EXTERNAL=0)
@@ -183,6 +195,9 @@ target_link_libraries(daily_settlement PRIVATE quant_hft_core)
 
 add_executable(backtest_cli src/apps/backtest_cli_main.cpp)
 target_link_libraries(backtest_cli PRIVATE quant_hft_core)
+
+add_executable(backtest_consistency_cli src/apps/backtest_consistency_cli_main.cpp)
+target_link_libraries(backtest_consistency_cli PRIVATE quant_hft_core)
 
 add_executable(factor_eval_cli src/apps/factor_eval_cli_main.cpp)
 target_link_libraries(factor_eval_cli PRIVATE quant_hft_core)

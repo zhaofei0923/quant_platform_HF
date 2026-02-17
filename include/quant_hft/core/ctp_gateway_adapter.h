@@ -102,6 +102,7 @@ private:
 
     struct OrderMeta {
         std::string order_ref;
+        std::string strategy_id;
         std::string instrument_id;
         Side side{Side::kBuy};
         OffsetFlag offset{OffsetFlag::kOpen};

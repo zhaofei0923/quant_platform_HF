@@ -197,6 +197,7 @@ message RiskDecision {
 
 message OrderEvent {
   string account_id = 1;
+  string strategy_id = 32;
   string client_order_id = 2;
   string exchange_order_id = 3;
   string instrument_id = 4;

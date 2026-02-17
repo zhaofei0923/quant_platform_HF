@@ -785,6 +785,10 @@ public:
             } else {
                 event.client_order_id = order_ref;
             }
+            const auto meta_it = owner_->client_order_meta_.find(event.client_order_id);
+            if (meta_it != owner_->client_order_meta_.end()) {
+                event.strategy_id = meta_it->second.strategy_id;
+            }
             callback = owner_->order_event_callback_;
         }
         if (callback) {
@@ -839,6 +843,10 @@ public:
             const auto it = owner_->order_ref_to_client_id_.find(order_ref);
             event.client_order_id =
                 it == owner_->order_ref_to_client_id_.end() ? order_ref : it->second;
+            const auto meta_it = owner_->client_order_meta_.find(event.client_order_id);
+            if (meta_it != owner_->client_order_meta_.end()) {
+                event.strategy_id = meta_it->second.strategy_id;
+            }
             callback = owner_->order_event_callback_;
         }
         if (callback) {
@@ -1002,6 +1010,10 @@ public:
             const auto it = owner_->order_ref_to_client_id_.find(order_ref);
             if (it != owner_->order_ref_to_client_id_.end()) {
                 event.client_order_id = it->second;
+                const auto meta_it = owner_->client_order_meta_.find(it->second);
+                if (meta_it != owner_->client_order_meta_.end()) {
+                    event.strategy_id = meta_it->second.strategy_id;
+                }
                 if (IsTerminalStatus(event.status)) {
                     owner_->client_order_meta_.erase(it->second);
                     owner_->order_ref_to_client_id_.erase(it);
@@ -1047,6 +1059,10 @@ public:
             const auto it = owner_->order_ref_to_client_id_.find(order_ref);
             event.client_order_id =
                 it == owner_->order_ref_to_client_id_.end() ? order_ref : it->second;
+            const auto meta_it = owner_->client_order_meta_.find(event.client_order_id);
+            if (meta_it != owner_->client_order_meta_.end()) {
+                event.strategy_id = meta_it->second.strategy_id;
+            }
             callback = owner_->order_event_callback_;
         }
 
@@ -1110,6 +1126,10 @@ private:
             }
             if (event.client_order_id.empty()) {
                 event.client_order_id = event.order_ref;
+            }
+            const auto meta_it = owner_->client_order_meta_.find(event.client_order_id);
+            if (meta_it != owner_->client_order_meta_.end()) {
+                event.strategy_id = meta_it->second.strategy_id;
             }
             if (erase_terminal_mapping && !event.client_order_id.empty()) {
                 owner_->client_order_meta_.erase(event.client_order_id);
@@ -1792,6 +1812,7 @@ bool CtpGatewayAdapter::PlaceOrder(const OrderIntent& intent) {
 
             OrderMeta meta;
             meta.order_ref = order_ref;
+            meta.strategy_id = intent.strategy_id;
             meta.instrument_id = intent.instrument_id;
             meta.side = intent.side;
             meta.offset = intent.offset;
@@ -1813,6 +1834,7 @@ bool CtpGatewayAdapter::PlaceOrder(const OrderIntent& intent) {
         }
 
         simulated_event.account_id = intent.account_id;
+        simulated_event.strategy_id = intent.strategy_id;
         simulated_event.client_order_id = intent.client_order_id;
         simulated_event.exchange_order_id = "ctp-sim-" + intent.client_order_id;
         simulated_event.instrument_id = intent.instrument_id;
@@ -1827,6 +1849,7 @@ bool CtpGatewayAdapter::PlaceOrder(const OrderIntent& intent) {
 
         OrderMeta meta;
         meta.order_ref = intent.client_order_id;
+        meta.strategy_id = intent.strategy_id;
         meta.instrument_id = intent.instrument_id;
         meta.side = intent.side;
         meta.offset = intent.offset;
@@ -1917,6 +1940,7 @@ bool CtpGatewayAdapter::CancelOrder(const std::string& client_order_id,
         simulated_event.trace_id = trace_id;
         const auto it = client_order_meta_.find(client_order_id);
         if (it != client_order_meta_.end()) {
+            simulated_event.strategy_id = it->second.strategy_id;
             simulated_event.instrument_id = it->second.instrument_id;
             simulated_event.side = it->second.side;
             simulated_event.offset = it->second.offset;

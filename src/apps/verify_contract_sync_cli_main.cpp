@@ -199,6 +199,7 @@ int main() {
               "observed_value", "threshold_value", "decision_tags", "reason", "decision_ts_ns"}},
             {"OrderEvent",
              {"account_id",
+              "strategy_id",
               "client_order_id",
               "exchange_order_id",
               "instrument_id",

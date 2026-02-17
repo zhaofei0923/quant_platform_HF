@@ -63,4 +63,39 @@ TEST(QualityGateScriptsTest, DependencyAuditPassesCurrentBuild) {
     EXPECT_EQ(rc, 0);
 }
 
+TEST(QualityGateScriptsTest, BacktestBaselineCheckPassesCurrentRepository) {
+    const int rc = RunCommand(
+        "bash scripts/build/check_backtest_baseline.sh "
+        "--baseline-json tests/regression/backtest_consistency/baseline/legacy_python/backtest_baseline.json "
+        "--provenance-json tests/regression/backtest_consistency/baseline/legacy_python/provenance.json");
+    EXPECT_EQ(rc, 0);
+}
+
+TEST(QualityGateScriptsTest, BacktestBaselineCheckFailsForMissingProvenanceFields) {
+    const auto root = MakeTempDir("baseline_fail");
+    const auto baseline = root / "baseline.json";
+    const auto provenance = root / "provenance.json";
+    WriteFile(
+        baseline,
+        "{\n"
+        "  \"run_id\": \"r1\",\n"
+        "  \"mode\": \"deterministic\",\n"
+        "  \"spec\": {},\n"
+        "  \"replay\": {},\n"
+        "  \"deterministic\": {},\n"
+        "  \"summary\": {}\n"
+        "}\n");
+    WriteFile(
+        provenance,
+        "{\n"
+        "  \"source\": \"legacy_python\"\n"
+        "}\n");
+
+    const std::string cmd = "bash scripts/build/check_backtest_baseline.sh --baseline-json '" +
+                            EscapePathForShell(baseline) + "' --provenance-json '" +
+                            EscapePathForShell(provenance) + "'";
+    const int rc = RunCommand(cmd);
+    EXPECT_NE(rc, 0);
+}
+
 }  // namespace

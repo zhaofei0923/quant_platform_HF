@@ -147,6 +147,7 @@ std::vector<std::string> ResolveStrategyIds(const quant_hft::CtpFileConfig& conf
 }
 
 struct ExecutionMetadata {
+    std::string strategy_id;
     std::string execution_algo_id;
     std::int32_t slice_index{0};
     std::int32_t slice_total{0};
@@ -162,6 +163,7 @@ quant_hft::OrderEvent BuildRejectedEvent(const quant_hft::OrderIntent& intent,
                                          const ExecutionMetadata& metadata) {
     quant_hft::OrderEvent event;
     event.account_id = intent.account_id;
+    event.strategy_id = intent.strategy_id;
     event.client_order_id = intent.client_order_id;
     event.exchange_order_id = "internal-reject";
     event.instrument_id = intent.instrument_id;
@@ -420,6 +422,9 @@ int main(int argc, char** argv) {
             std::lock_guard<std::mutex> lock(execution_metadata_mutex);
             const auto it = execution_metadata_by_order.find(event.client_order_id);
             if (it != execution_metadata_by_order.end()) {
+                if (event.strategy_id.empty()) {
+                    event.strategy_id = it->second.strategy_id;
+                }
                 event.execution_algo_id = it->second.execution_algo_id;
                 event.slice_index = it->second.slice_index;
                 event.slice_total = it->second.slice_total;
@@ -448,6 +453,12 @@ int main(int argc, char** argv) {
                               {{"client_order_id", event.client_order_id}});
         }
         execution_engine.HandleOrderEvent(event);
+        if (event.strategy_id.empty()) {
+            const auto tracked_order = order_manager->GetOrder(event.client_order_id);
+            if (tracked_order.has_value()) {
+                event.strategy_id = tracked_order->strategy_id;
+            }
+        }
         if (IsTerminalStatus(event.status)) {
             std::lock_guard<std::mutex> lock(cancel_pending_mutex);
             cancel_pending_orders.erase(event.client_order_id);
@@ -523,6 +534,7 @@ int main(int argc, char** argv) {
         for (const auto& planned : plans) {
             const auto& intent = planned.intent;
             ExecutionMetadata metadata;
+            metadata.strategy_id = intent.strategy_id;
             metadata.execution_algo_id = planned.execution_algo_id;
             metadata.slice_index = planned.slice_index;
             metadata.slice_total = planned.slice_total;

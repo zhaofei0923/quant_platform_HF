@@ -6,6 +6,10 @@ csv_path="runtime/benchmarks/backtest/rb_ci_sample.csv"
 results_dir="docs/results"
 config_path="configs/sim/ctp.yaml"
 max_ticks="4"
+baseline_json="tests/regression/backtest_consistency/baseline/legacy_python/backtest_baseline.json"
+provenance_json="tests/regression/backtest_consistency/baseline/legacy_python/provenance.json"
+abs_tol="1e-8"
+rel_tol="1e-6"
 
 usage() {
   cat <<EOF
@@ -17,6 +21,10 @@ Options:
   --results-dir PATH  Directory for generated reports (default: docs/results)
   --config PATH       Config path for simnow_compare_cli (default: configs/sim/ctp.yaml)
   --max-ticks N       Max ticks used in checks (default: 4)
+  --baseline-json P   Legacy baseline JSON path
+  --provenance-json P Legacy provenance JSON path
+  --abs-tol V         Absolute tolerance for floating fields (default: 1e-8)
+  --rel-tol V         Relative tolerance for floating fields (default: 1e-6)
   -h, --help          Show help
 EOF
 }
@@ -43,6 +51,22 @@ while [[ $# -gt 0 ]]; do
       max_ticks="$2"
       shift 2
       ;;
+    --baseline-json)
+      baseline_json="$2"
+      shift 2
+      ;;
+    --provenance-json)
+      provenance_json="$2"
+      shift 2
+      ;;
+    --abs-tol)
+      abs_tol="$2"
+      shift 2
+      ;;
+    --rel-tol)
+      rel_tol="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -55,8 +79,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ ! -x "${build_dir}/backtest_cli" ]]; then
-  echo "error: missing executable: ${build_dir}/backtest_cli" >&2
+if [[ ! -x "${build_dir}/backtest_consistency_cli" ]]; then
+  echo "error: missing executable: ${build_dir}/backtest_consistency_cli" >&2
   exit 2
 fi
 if [[ ! -x "${build_dir}/simnow_compare_cli" ]]; then
@@ -99,53 +123,44 @@ if ! "${build_dir}/simnow_compare_cli" \
   shadow_reason="simnow_compare_cli returned non-zero"
 fi
 
-backtest_json_a="${results_dir}/backtest_consistency_a.json"
-backtest_json_b="${results_dir}/backtest_consistency_b.json"
-backtest_md_a="${results_dir}/backtest_consistency_a.md"
-backtest_md_b="${results_dir}/backtest_consistency_b.md"
 backtest_report_json="${results_dir}/backtest_consistency_report.json"
 summary_json="${results_dir}/consistency_gate_summary.json"
 
 backtest_status="pass"
-backtest_reason="outputs_identical"
+backtest_reason="within_tolerance"
 
-"${build_dir}/backtest_cli" \
-  --engine_mode csv \
-  --csv_path "${csv_path}" \
-  --max_ticks "${max_ticks}" \
-  --run_id "backtest-consistency-gate" \
-  --output_json "${backtest_json_a}" \
-  --output_md "${backtest_md_a}" >/dev/null
-
-"${build_dir}/backtest_cli" \
-  --engine_mode csv \
-  --csv_path "${csv_path}" \
-  --max_ticks "${max_ticks}" \
-  --run_id "backtest-consistency-gate" \
-  --output_json "${backtest_json_b}" \
-  --output_md "${backtest_md_b}" >/dev/null
-
-if ! cmp -s "${backtest_json_a}" "${backtest_json_b}"; then
+if ! bash scripts/build/check_backtest_baseline.sh \
+  --baseline-json "${baseline_json}" \
+  --provenance-json "${provenance_json}" >/dev/null; then
   backtest_status="fail"
-  backtest_reason="dual_run_output_differs"
+  backtest_reason="baseline_unavailable_or_invalid"
 fi
 
-sha_a="$(sha256sum "${backtest_json_a}" | awk '{print $1}')"
-sha_b="$(sha256sum "${backtest_json_b}" | awk '{print $1}')"
+if [[ "${backtest_status}" == "pass" ]]; then
+  if ! "${build_dir}/backtest_consistency_cli" \
+    --engine_mode csv \
+    --csv_path "${csv_path}" \
+    --max_ticks "${max_ticks}" \
+    --run_id "backtest-consistency-gate" \
+    --deterministic_fills true \
+    --baseline_json "${baseline_json}" \
+    --output_json "${backtest_report_json}" \
+    --abs_tol "${abs_tol}" \
+    --rel_tol "${rel_tol}" >/dev/null; then
+    backtest_status="fail"
+    backtest_reason="baseline_diff_exceeds_tolerance"
+  fi
+fi
 
-cat >"${backtest_report_json}" <<EOF
+if [[ ! -f "${backtest_report_json}" ]]; then
+  cat >"${backtest_report_json}" <<EOF
 {
-  "status": "${backtest_status}",
+  "status": "fail",
   "reason": "${backtest_reason}",
-  "csv_path": "${csv_path}",
-  "run_id": "backtest-consistency-gate",
-  "files_equal": $([[ "${backtest_status}" == "pass" ]] && echo "true" || echo "false"),
-  "sha256_a": "${sha_a}",
-  "sha256_b": "${sha_b}",
-  "json_a": "${backtest_json_a}",
-  "json_b": "${backtest_json_b}"
+  "baseline_json": "${baseline_json}"
 }
 EOF
+fi
 
 overall_status="pass"
 if [[ "${shadow_status}" != "pass" || "${backtest_status}" != "pass" ]]; then

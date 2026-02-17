@@ -54,6 +54,7 @@ CREATE INDEX IF NOT EXISTS idx_analytics_market_snapshots_instrument_recv_ts
 
 CREATE TABLE IF NOT EXISTS analytics_ts.order_events (
     account_id TEXT NOT NULL,
+    strategy_id TEXT NOT NULL DEFAULT '',
     client_order_id TEXT NOT NULL,
     exchange_order_id TEXT NOT NULL,
     instrument_id TEXT NOT NULL,
@@ -83,6 +84,7 @@ CREATE TABLE IF NOT EXISTS analytics_ts.order_events (
     slippage_bps DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     impact_cost DOUBLE PRECISION NOT NULL DEFAULT 0.0
 );
+ALTER TABLE analytics_ts.order_events ADD COLUMN IF NOT EXISTS strategy_id TEXT NOT NULL DEFAULT '';
 
 SELECT create_hypertable('analytics_ts.order_events', by_range('ts_ns'), if_not_exists => TRUE);
 
@@ -266,6 +268,7 @@ CREATE TABLE IF NOT EXISTS trading_core.order_events (
     trade_date DATE NOT NULL,
     idempotency_key TEXT NOT NULL,
     account_id TEXT NOT NULL,
+    strategy_id TEXT NOT NULL DEFAULT '',
     client_order_id TEXT NOT NULL,
     exchange_order_id TEXT NOT NULL DEFAULT '',
     instrument_id TEXT NOT NULL,
@@ -297,6 +300,7 @@ CREATE TABLE IF NOT EXISTS trading_core.order_events (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (trade_date, idempotency_key)
 ) PARTITION BY RANGE (trade_date);
+ALTER TABLE trading_core.order_events ADD COLUMN IF NOT EXISTS strategy_id TEXT NOT NULL DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_trading_core_order_events_client_order_ts
     ON trading_core.order_events (client_order_id, ts_ns DESC);

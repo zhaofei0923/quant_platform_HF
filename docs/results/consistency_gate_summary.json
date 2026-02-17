@@ -3,7 +3,7 @@
   "shadow_consistency": "pass",
   "shadow_reason": "within_threshold",
   "backtest_consistency": "pass",
-  "backtest_reason": "outputs_identical",
+  "backtest_reason": "within_tolerance",
   "shadow_report": "docs/results/shadow_consistency_report.json",
   "backtest_report": "docs/results/backtest_consistency_report.json"
 }

@@ -48,6 +48,7 @@ CREATE INDEX IF NOT EXISTS idx_market_snapshots_instrument_recv_ts
 
 CREATE TABLE IF NOT EXISTS order_events (
     account_id TEXT NOT NULL,
+    strategy_id TEXT NOT NULL DEFAULT '',
     client_order_id TEXT NOT NULL,
     exchange_order_id TEXT NOT NULL,
     instrument_id TEXT NOT NULL,
@@ -79,6 +80,7 @@ CREATE TABLE IF NOT EXISTS order_events (
 );
 
 ALTER TABLE order_events ADD COLUMN IF NOT EXISTS exchange_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_events ADD COLUMN IF NOT EXISTS strategy_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE order_events ADD COLUMN IF NOT EXISTS status_msg TEXT NOT NULL DEFAULT '';
 ALTER TABLE order_events ADD COLUMN IF NOT EXISTS order_submit_status TEXT NOT NULL DEFAULT '';
 ALTER TABLE order_events ADD COLUMN IF NOT EXISTS order_ref TEXT NOT NULL DEFAULT '';

@@ -140,7 +140,13 @@ int main(int argc, char** argv) {
         *std::max_element(ticks_read_values.begin(), ticks_read_values.end());
 
     const double allowed_p95_ms = baseline_old_p95_ms * 1.10;
-    const bool passed = new_p95_ms <= allowed_p95_ms && min_ticks_read >= min_ticks_required;
+    std::string failure_reason = "none";
+    if (min_ticks_read < min_ticks_required) {
+        failure_reason = "insufficient_ticks";
+    } else if (new_p95_ms > allowed_p95_ms) {
+        failure_reason = "p95_exceeds_threshold";
+    }
+    const bool passed = failure_reason == "none";
 
     std::ostringstream json;
     json << "{\n"
@@ -157,6 +163,7 @@ int main(int argc, char** argv) {
          << "  \"max_ticks_read\": " << max_ticks_read << ",\n"
          << "  \"min_ticks_required\": " << min_ticks_required << ",\n"
          << "  \"sample_total_pnl\": " << detail::FormatDouble(sample_total_pnl) << ",\n"
+         << "  \"failure_reason\": \"" << failure_reason << "\",\n"
          << "  \"passed\": " << (passed ? "true" : "false") << ",\n"
          << "  \"status\": \"" << (passed ? "ok" : "failed") << "\"\n"
          << "}\n";

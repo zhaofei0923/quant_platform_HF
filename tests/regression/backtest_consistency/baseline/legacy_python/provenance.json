@@ -1,0 +1,7 @@
+{
+  "source": "legacy_python",
+  "legacy_commit": "legacy-cutover-2026-02-17",
+  "generated_at": "2026-02-17T00:00:00Z",
+  "owner": "quant-platform",
+  "dataset_signature": "rb_ci_sample_csv_v1"
+}

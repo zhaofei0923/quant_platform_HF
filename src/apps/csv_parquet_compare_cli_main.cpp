@@ -116,6 +116,12 @@ int main(int argc, char** argv) {
     std::int64_t runs = 3;
     std::int64_t warmup_runs = 1;
     bool deterministic_fills = false;
+    const std::vector<std::string> symbols_filter =
+        detail::SplitCommaList(detail::GetArgAny(args, {"symbols", "symbol"}));
+    const std::string start_date =
+        detail::NormalizeTradingDay(detail::GetArgAny(args, {"start_date", "start-date"}));
+    const std::string end_date =
+        detail::NormalizeTradingDay(detail::GetArgAny(args, {"end_date", "end-date"}));
     std::string error;
 
     {
@@ -157,6 +163,9 @@ int main(int argc, char** argv) {
     csv_spec.rollover_slippage_bps = 0.0;
     csv_spec.max_ticks = max_ticks;
     csv_spec.deterministic_fills = deterministic_fills;
+    csv_spec.symbols = symbols_filter;
+    csv_spec.start_date = start_date;
+    csv_spec.end_date = end_date;
     csv_spec.account_id = "sim-account";
     csv_spec.run_id = "compare-csv";
     csv_spec.emit_state_snapshots = false;
@@ -212,6 +221,12 @@ int main(int argc, char** argv) {
          << "      \"max_ms\": " << detail::FormatDouble(csv_summary.max_ms) << ",\n"
          << "      \"ticks_read_min\": " << csv_summary.ticks_read_min << ",\n"
          << "      \"ticks_read_max\": " << csv_summary.ticks_read_max << ",\n"
+         << "      \"scan_rows\": " << csv_summary.sample_result.replay.scan_rows << ",\n"
+         << "      \"scan_row_groups\": " << csv_summary.sample_result.replay.scan_row_groups
+         << ",\n"
+         << "      \"io_bytes\": " << csv_summary.sample_result.replay.io_bytes << ",\n"
+         << "      \"early_stop_hit\": "
+         << (csv_summary.sample_result.replay.early_stop_hit ? "true" : "false") << ",\n"
          << "      \"mean_ticks_per_sec\": " << detail::FormatDouble(csv_summary.mean_ticks_per_sec)
          << "\n"
          << "    },\n"
@@ -223,6 +238,12 @@ int main(int argc, char** argv) {
          << "      \"max_ms\": " << detail::FormatDouble(parquet_summary.max_ms) << ",\n"
          << "      \"ticks_read_min\": " << parquet_summary.ticks_read_min << ",\n"
          << "      \"ticks_read_max\": " << parquet_summary.ticks_read_max << ",\n"
+         << "      \"scan_rows\": " << parquet_summary.sample_result.replay.scan_rows << ",\n"
+         << "      \"scan_row_groups\": " << parquet_summary.sample_result.replay.scan_row_groups
+         << ",\n"
+         << "      \"io_bytes\": " << parquet_summary.sample_result.replay.io_bytes << ",\n"
+         << "      \"early_stop_hit\": "
+         << (parquet_summary.sample_result.replay.early_stop_hit ? "true" : "false") << ",\n"
          << "      \"mean_ticks_per_sec\": "
          << detail::FormatDouble(parquet_summary.mean_ticks_per_sec) << "\n"
          << "    },\n"

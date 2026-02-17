@@ -1,10 +1,10 @@
+#include <gtest/gtest.h>
+
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
-
-#include <gtest/gtest.h>
 
 namespace {
 
@@ -13,7 +13,7 @@ std::string EscapePathForShell(const std::filesystem::path& path) {
     std::string escaped;
     escaped.reserve(text.size() + 8);
     for (const char ch : text) {
-        if (ch == '\'' ) {
+        if (ch == '\'') {
             escaped += "'\\''";
         } else {
             escaped.push_back(ch);
@@ -22,13 +22,11 @@ std::string EscapePathForShell(const std::filesystem::path& path) {
     return escaped;
 }
 
-int RunCommand(const std::string& command) {
-    return std::system(command.c_str());
-}
+int RunCommand(const std::string& command) { return std::system(command.c_str()); }
 
 std::filesystem::path MakeTempDir(const std::string& suffix) {
-    const auto path = std::filesystem::temp_directory_path() /
-                      ("quant_hft_quality_gate_test_" + suffix);
+    const auto path =
+        std::filesystem::temp_directory_path() / ("quant_hft_quality_gate_test_" + suffix);
     std::filesystem::remove_all(path);
     std::filesystem::create_directories(path);
     return path;
@@ -52,8 +50,8 @@ TEST(QualityGateScriptsTest, RepoPurityCheckFailsWhenPythonAssetExists) {
     WriteFile(root / "README.md", "# sample\n");
     WriteFile(root / "sample.py", "print('x')\n");
 
-    const std::string cmd = "bash scripts/build/repo_purity_check.sh --repo-root '" +
-                            EscapePathForShell(root) + "'";
+    const std::string cmd =
+        "bash scripts/build/repo_purity_check.sh --repo-root '" + EscapePathForShell(root) + "'";
     const int rc = RunCommand(cmd);
     EXPECT_NE(rc, 0);
 }
@@ -66,8 +64,10 @@ TEST(QualityGateScriptsTest, DependencyAuditPassesCurrentBuild) {
 TEST(QualityGateScriptsTest, BacktestBaselineCheckPassesCurrentRepository) {
     const int rc = RunCommand(
         "bash scripts/build/check_backtest_baseline.sh "
-        "--baseline-json tests/regression/backtest_consistency/baseline/legacy_python/backtest_baseline.json "
-        "--provenance-json tests/regression/backtest_consistency/baseline/legacy_python/provenance.json");
+        "--baseline-json "
+        "tests/regression/backtest_consistency/baseline/legacy_python/backtest_baseline.json "
+        "--provenance-json "
+        "tests/regression/backtest_consistency/baseline/legacy_python/provenance.json");
     EXPECT_EQ(rc, 0);
 }
 
@@ -75,27 +75,59 @@ TEST(QualityGateScriptsTest, BacktestBaselineCheckFailsForMissingProvenanceField
     const auto root = MakeTempDir("baseline_fail");
     const auto baseline = root / "baseline.json";
     const auto provenance = root / "provenance.json";
-    WriteFile(
-        baseline,
-        "{\n"
-        "  \"run_id\": \"r1\",\n"
-        "  \"mode\": \"deterministic\",\n"
-        "  \"spec\": {},\n"
-        "  \"replay\": {},\n"
-        "  \"deterministic\": {},\n"
-        "  \"summary\": {}\n"
-        "}\n");
-    WriteFile(
-        provenance,
-        "{\n"
-        "  \"source\": \"legacy_python\"\n"
-        "}\n");
+    WriteFile(baseline,
+              "{\n"
+              "  \"run_id\": \"r1\",\n"
+              "  \"mode\": \"deterministic\",\n"
+              "  \"spec\": {},\n"
+              "  \"replay\": {},\n"
+              "  \"deterministic\": {},\n"
+              "  \"summary\": {}\n"
+              "}\n");
+    WriteFile(provenance,
+              "{\n"
+              "  \"source\": \"legacy_python\"\n"
+              "}\n");
 
     const std::string cmd = "bash scripts/build/check_backtest_baseline.sh --baseline-json '" +
                             EscapePathForShell(baseline) + "' --provenance-json '" +
                             EscapePathForShell(provenance) + "'";
     const int rc = RunCommand(cmd);
     EXPECT_NE(rc, 0);
+}
+
+TEST(QualityGateScriptsTest, CsvParquetSpeedupGateFailsWhenSpeedupBelowThreshold) {
+    const auto root = MakeTempDir("speedup_gate_fail");
+    const auto compare_json = root / "compare.json";
+    WriteFile(compare_json,
+              "{\n"
+              "  \"equal\": true,\n"
+              "  \"summary\": {\n"
+              "    \"parquet_vs_csv_speedup\": 4.5\n"
+              "  }\n"
+              "}\n");
+
+    const std::string cmd = "bash scripts/build/run_csv_parquet_speedup_gate.sh --input-json '" +
+                            EscapePathForShell(compare_json) + "' --min-speedup 5.0";
+    const int rc = RunCommand(cmd);
+    EXPECT_NE(rc, 0);
+}
+
+TEST(QualityGateScriptsTest, CsvParquetSpeedupGatePassesWhenSpeedupMeetsThreshold) {
+    const auto root = MakeTempDir("speedup_gate_pass");
+    const auto compare_json = root / "compare.json";
+    WriteFile(compare_json,
+              "{\n"
+              "  \"equal\": true,\n"
+              "  \"summary\": {\n"
+              "    \"parquet_vs_csv_speedup\": 6.2\n"
+              "  }\n"
+              "}\n");
+
+    const std::string cmd = "bash scripts/build/run_csv_parquet_speedup_gate.sh --input-json '" +
+                            EscapePathForShell(compare_json) + "' --min-speedup 5.0";
+    const int rc = RunCommand(cmd);
+    EXPECT_EQ(rc, 0);
 }
 
 }  // namespace

@@ -1,11 +1,17 @@
 #include "quant_hft/backtest/parquet_data_feed.h"
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <optional>
+#include <set>
 #include <sstream>
+#include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
+#include <vector>
 
 #if QUANT_HFT_ENABLE_ARROW_PARQUET
 #include <arrow/api.h>
@@ -36,6 +42,17 @@ std::vector<std::string> SplitCsvLine(const std::string& line) {
     return cells;
 }
 
+std::string Trim(std::string text) {
+    const auto is_space = [](unsigned char ch) { return std::isspace(ch) != 0; };
+    while (!text.empty() && is_space(static_cast<unsigned char>(text.front()))) {
+        text.erase(text.begin());
+    }
+    while (!text.empty() && is_space(static_cast<unsigned char>(text.back()))) {
+        text.pop_back();
+    }
+    return text;
+}
+
 std::string ParsePartitionValue(const std::filesystem::path& path_segment,
                                 const std::string& key_prefix) {
     const std::string text = path_segment.string();
@@ -45,7 +62,154 @@ std::string ParsePartitionValue(const std::filesystem::path& path_segment,
     return text.substr(key_prefix.size());
 }
 
+std::int64_t SafeFileSize(const std::filesystem::path& path) {
+    std::error_code ec;
+    const auto bytes = std::filesystem::file_size(path, ec);
+    if (ec) {
+        return 0;
+    }
+    return static_cast<std::int64_t>(bytes);
+}
+
+bool ParseInt64(const std::string& raw, std::int64_t* out) {
+    if (out == nullptr) {
+        return false;
+    }
+    const std::string value = Trim(raw);
+    if (value.empty()) {
+        return false;
+    }
+    try {
+        std::size_t parsed = 0;
+        const std::int64_t number = std::stoll(value, &parsed);
+        if (parsed != value.size()) {
+            return false;
+        }
+        *out = number;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool ParseSize(const std::string& raw, std::size_t* out) {
+    if (out == nullptr) {
+        return false;
+    }
+    const std::string value = Trim(raw);
+    if (value.empty()) {
+        return false;
+    }
+    try {
+        std::size_t parsed = 0;
+        const auto number = std::stoull(value, &parsed);
+        if (parsed != value.size()) {
+            return false;
+        }
+        *out = static_cast<std::size_t>(number);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool ExtractJsonString(const std::string& json, const std::string& key, std::string* out) {
+    if (out == nullptr) {
+        return false;
+    }
+    const std::string quoted_key = "\"" + key + "\"";
+    const std::size_t key_pos = json.find(quoted_key);
+    if (key_pos == std::string::npos) {
+        return false;
+    }
+    const std::size_t colon_pos = json.find(':', key_pos + quoted_key.size());
+    if (colon_pos == std::string::npos) {
+        return false;
+    }
+
+    std::size_t pos = colon_pos + 1;
+    while (pos < json.size() && std::isspace(static_cast<unsigned char>(json[pos])) != 0) {
+        ++pos;
+    }
+    if (pos >= json.size() || json[pos] != '"') {
+        return false;
+    }
+    ++pos;
+
+    std::string value;
+    bool escaped = false;
+    while (pos < json.size()) {
+        const char ch = json[pos++];
+        if (escaped) {
+            switch (ch) {
+                case '"':
+                    value.push_back('"');
+                    break;
+                case '\\':
+                    value.push_back('\\');
+                    break;
+                case 'n':
+                    value.push_back('\n');
+                    break;
+                case 'r':
+                    value.push_back('\r');
+                    break;
+                case 't':
+                    value.push_back('\t');
+                    break;
+                default:
+                    value.push_back(ch);
+                    break;
+            }
+            escaped = false;
+            continue;
+        }
+        if (ch == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (ch == '"') {
+            *out = value;
+            return true;
+        }
+        value.push_back(ch);
+    }
+    return false;
+}
+
+bool ExtractJsonInt64(const std::string& json, const std::string& key, std::int64_t* out) {
+    if (out == nullptr) {
+        return false;
+    }
+    const std::string quoted_key = "\"" + key + "\"";
+    const std::size_t key_pos = json.find(quoted_key);
+    if (key_pos == std::string::npos) {
+        return false;
+    }
+    const std::size_t colon_pos = json.find(':', key_pos + quoted_key.size());
+    if (colon_pos == std::string::npos) {
+        return false;
+    }
+    std::size_t start = colon_pos + 1;
+    while (start < json.size() && std::isspace(static_cast<unsigned char>(json[start])) != 0) {
+        ++start;
+    }
+    std::size_t end = start;
+    while (end < json.size() &&
+           (std::isdigit(static_cast<unsigned char>(json[end])) != 0 || json[end] == '-')) {
+        ++end;
+    }
+    if (end <= start) {
+        return false;
+    }
+    return ParseInt64(json.substr(start, end - start), out);
+}
+
 void LoadMetaFile(const std::filesystem::path& meta_path, ParquetPartitionMeta* out) {
+    if (out == nullptr) {
+        return;
+    }
+
     std::ifstream input(meta_path);
     if (!input.is_open()) {
         return;
@@ -57,18 +221,39 @@ void LoadMetaFile(const std::filesystem::path& meta_path, ParquetPartitionMeta* 
         if (split_pos == std::string::npos) {
             continue;
         }
-        const std::string key = line.substr(0, split_pos);
-        const std::string value = line.substr(split_pos + 1);
-        try {
-            if (key == "min_ts_ns") {
-                out->min_ts_ns = static_cast<EpochNanos>(std::stoll(value));
-            } else if (key == "max_ts_ns") {
-                out->max_ts_ns = static_cast<EpochNanos>(std::stoll(value));
-            } else if (key == "row_count") {
-                out->row_count = static_cast<std::size_t>(std::stoull(value));
+        const std::string key = Trim(line.substr(0, split_pos));
+        const std::string value = Trim(line.substr(split_pos + 1));
+        if (key == "min_ts_ns") {
+            std::int64_t parsed = 0;
+            if (ParseInt64(value, &parsed)) {
+                out->min_ts_ns = static_cast<EpochNanos>(parsed);
             }
-        } catch (...) {
             continue;
+        }
+        if (key == "max_ts_ns") {
+            std::int64_t parsed = 0;
+            if (ParseInt64(value, &parsed)) {
+                out->max_ts_ns = static_cast<EpochNanos>(parsed);
+            }
+            continue;
+        }
+        if (key == "row_count") {
+            std::size_t parsed = 0;
+            if (ParseSize(value, &parsed)) {
+                out->row_count = parsed;
+            }
+            continue;
+        }
+        if (key == "schema_version") {
+            out->schema_version = value;
+            continue;
+        }
+        if (key == "source_csv_fingerprint") {
+            out->source_csv_fingerprint = value;
+            continue;
+        }
+        if (key == "source") {
+            out->source = value;
         }
     }
 }
@@ -83,7 +268,8 @@ Tick BuildTickFromValues(const std::vector<std::string>& headers,
 
     Tick tick;
     const auto symbol_it = row.find("symbol");
-    tick.symbol = symbol_it != row.end() && !symbol_it->second.empty() ? symbol_it->second : default_symbol;
+    tick.symbol =
+        symbol_it != row.end() && !symbol_it->second.empty() ? symbol_it->second : default_symbol;
 
     const auto exchange_it = row.find("exchange");
     tick.exchange = exchange_it != row.end() ? exchange_it->second : "";
@@ -110,14 +296,16 @@ Tick BuildTickFromValues(const std::vector<std::string>& headers,
     tick.ask_volume1 = ask_volume1_it != row.end() ? std::stoi(ask_volume1_it->second) : 0;
 
     const auto volume_it = row.find("volume");
-    tick.volume = volume_it != row.end() ? static_cast<std::int64_t>(std::stoll(volume_it->second)) : 0;
+    tick.volume =
+        volume_it != row.end() ? static_cast<std::int64_t>(std::stoll(volume_it->second)) : 0;
 
     const auto turnover_it = row.find("turnover");
     tick.turnover = turnover_it != row.end() ? std::stod(turnover_it->second) : 0.0;
 
     const auto open_interest_it = row.find("open_interest");
-    tick.open_interest =
-        open_interest_it != row.end() ? static_cast<std::int64_t>(std::stoll(open_interest_it->second)) : 0;
+    tick.open_interest = open_interest_it != row.end()
+                             ? static_cast<std::int64_t>(std::stoll(open_interest_it->second))
+                             : 0;
 
     return tick;
 }
@@ -166,26 +354,39 @@ std::int64_t ReadInt64ArrayValue(const std::shared_ptr<arrow::Array>& values, st
         case arrow::Type::INT32:
             return static_cast<const arrow::Int32Array&>(*values).Value(row);
         case arrow::Type::DOUBLE:
-            return static_cast<std::int64_t>(static_cast<const arrow::DoubleArray&>(*values).Value(row));
+            return static_cast<std::int64_t>(
+                static_cast<const arrow::DoubleArray&>(*values).Value(row));
         case arrow::Type::FLOAT:
-            return static_cast<std::int64_t>(static_cast<const arrow::FloatArray&>(*values).Value(row));
+            return static_cast<std::int64_t>(
+                static_cast<const arrow::FloatArray&>(*values).Value(row));
         default:
             return 0;
     }
 }
 
 bool AppendTicksFromParquet(const std::filesystem::path& parquet_path,
-                            const std::string& default_symbol,
-                            const Timestamp& start,
-                            const Timestamp& end,
-                            std::vector<Tick>* out) {
+                            const std::string& default_symbol, const Timestamp& start,
+                            const Timestamp& end, std::vector<Tick>* out,
+                            ParquetScanMetrics* metrics, std::int64_t max_ticks,
+                            std::string* error) {
+    if (out == nullptr) {
+        return false;
+    }
+    if (max_ticks == 0) {
+        if (metrics != nullptr) {
+            metrics->early_stop_hit = true;
+        }
+        return true;
+    }
+
     auto input_res = arrow::io::ReadableFile::Open(parquet_path.string());
     if (!input_res.ok()) {
         return false;
     }
 
     std::unique_ptr<parquet::arrow::FileReader> reader;
-    auto reader_status = parquet::arrow::OpenFile(*input_res.ValueOrDie(), arrow::default_memory_pool(), &reader);
+    auto reader_status =
+        parquet::arrow::OpenFile(input_res.ValueOrDie(), arrow::default_memory_pool(), &reader);
     if (!reader_status.ok() || reader == nullptr) {
         return false;
     }
@@ -194,6 +395,10 @@ bool AppendTicksFromParquet(const std::filesystem::path& parquet_path,
     auto table_status = reader->ReadTable(&table);
     if (!table_status.ok() || table == nullptr) {
         return false;
+    }
+
+    if (metrics != nullptr) {
+        metrics->io_bytes += SafeFileSize(parquet_path);
     }
 
     const auto* schema = table->schema().get();
@@ -211,6 +416,9 @@ bool AppendTicksFromParquet(const std::filesystem::path& parquet_path,
     const int open_interest_index = schema->GetFieldIndex("open_interest");
 
     if (ts_index < 0) {
+        if (error != nullptr) {
+            *error = "parquet missing required column: ts_ns";
+        }
         return false;
     }
 
@@ -219,10 +427,17 @@ bool AppendTicksFromParquet(const std::filesystem::path& parquet_path,
     while (true) {
         auto batch_status = batch_reader.ReadNext(&batch);
         if (!batch_status.ok()) {
+            if (error != nullptr) {
+                *error = batch_status.ToString();
+            }
             return false;
         }
         if (batch == nullptr) {
             break;
+        }
+
+        if (metrics != nullptr) {
+            metrics->scan_row_groups += 1;
         }
 
         const auto get_column = [&](int index) -> std::shared_ptr<arrow::Array> {
@@ -246,6 +461,10 @@ bool AppendTicksFromParquet(const std::filesystem::path& parquet_path,
         const std::shared_ptr<arrow::Array> open_interest_column = get_column(open_interest_index);
 
         for (std::int64_t row = 0; row < batch->num_rows(); ++row) {
+            if (metrics != nullptr) {
+                metrics->scan_rows += 1;
+            }
+
             Tick tick;
             tick.symbol = default_symbol;
 
@@ -259,11 +478,14 @@ bool AppendTicksFromParquet(const std::filesystem::path& parquet_path,
             tick.exchange = ReadStringArrayValue(exchange_column, row);
             tick.ts_ns = ReadInt64ArrayValue(ts_column, row);
             tick.last_price = ReadDoubleArrayValue(last_price_column, row);
-            tick.last_volume = static_cast<std::int32_t>(ReadInt64ArrayValue(last_volume_column, row));
+            tick.last_volume =
+                static_cast<std::int32_t>(ReadInt64ArrayValue(last_volume_column, row));
             tick.bid_price1 = ReadDoubleArrayValue(bid_price_column, row);
-            tick.bid_volume1 = static_cast<std::int32_t>(ReadInt64ArrayValue(bid_volume_column, row));
+            tick.bid_volume1 =
+                static_cast<std::int32_t>(ReadInt64ArrayValue(bid_volume_column, row));
             tick.ask_price1 = ReadDoubleArrayValue(ask_price_column, row);
-            tick.ask_volume1 = static_cast<std::int32_t>(ReadInt64ArrayValue(ask_volume_column, row));
+            tick.ask_volume1 =
+                static_cast<std::int32_t>(ReadInt64ArrayValue(ask_volume_column, row));
             tick.volume = ReadInt64ArrayValue(volume_column, row);
             tick.turnover = ReadDoubleArrayValue(turnover_column, row);
             tick.open_interest = ReadInt64ArrayValue(open_interest_column, row);
@@ -272,6 +494,12 @@ bool AppendTicksFromParquet(const std::filesystem::path& parquet_path,
                 continue;
             }
             out->push_back(tick);
+            if (max_ticks > 0 && static_cast<std::int64_t>(out->size()) >= max_ticks) {
+                if (metrics != nullptr) {
+                    metrics->early_stop_hit = true;
+                }
+                return true;
+            }
         }
     }
 
@@ -279,9 +507,84 @@ bool AppendTicksFromParquet(const std::filesystem::path& parquet_path,
 }
 #endif
 
+bool LoadTicksFromSidecar(const ParquetPartitionMeta& partition, const Timestamp& start,
+                          const Timestamp& end, std::vector<Tick>* out, ParquetScanMetrics* metrics,
+                          std::int64_t max_ticks, std::string* error) {
+    if (out == nullptr) {
+        if (error != nullptr) {
+            *error = "tick output is null";
+        }
+        return false;
+    }
+    if (max_ticks == 0) {
+        if (metrics != nullptr) {
+            metrics->early_stop_hit = true;
+        }
+        return true;
+    }
+
+    const std::filesystem::path ticks_sidecar = partition.file_path + ".ticks.csv";
+    if (!std::filesystem::exists(ticks_sidecar)) {
+        if (error != nullptr) {
+            *error = "ticks sidecar missing: " + ticks_sidecar.string();
+        }
+        return false;
+    }
+
+    std::ifstream input(ticks_sidecar);
+    if (!input.is_open()) {
+        if (error != nullptr) {
+            *error = "unable to open ticks sidecar: " + ticks_sidecar.string();
+        }
+        return false;
+    }
+
+    if (metrics != nullptr) {
+        metrics->io_bytes += SafeFileSize(ticks_sidecar);
+        metrics->scan_row_groups += 1;
+    }
+
+    std::string line;
+    if (!std::getline(input, line)) {
+        if (error != nullptr) {
+            *error = "ticks sidecar is empty: " + ticks_sidecar.string();
+        }
+        return false;
+    }
+    const auto headers = SplitCsvLine(line);
+
+    while (std::getline(input, line)) {
+        if (line.empty()) {
+            continue;
+        }
+        try {
+            const auto values = SplitCsvLine(line);
+            Tick tick = BuildTickFromValues(headers, values, partition.instrument_id);
+            if (metrics != nullptr) {
+                metrics->scan_rows += 1;
+            }
+            if (tick.ts_ns < start.ToEpochNanos() || tick.ts_ns > end.ToEpochNanos()) {
+                continue;
+            }
+            out->push_back(tick);
+            if (max_ticks > 0 && static_cast<std::int64_t>(out->size()) >= max_ticks) {
+                if (metrics != nullptr) {
+                    metrics->early_stop_hit = true;
+                }
+                return true;
+            }
+        } catch (...) {
+            continue;
+        }
+    }
+
+    return true;
+}
+
 }  // namespace
 
-ParquetDataFeed::ParquetDataFeed(std::string parquet_root) : parquet_root_(std::move(parquet_root)) {}
+ParquetDataFeed::ParquetDataFeed(std::string parquet_root)
+    : parquet_root_(std::move(parquet_root)) {}
 
 void ParquetDataFeed::SetParquetRoot(const std::string& parquet_root) {
     parquet_root_ = parquet_root;
@@ -291,14 +594,94 @@ bool ParquetDataFeed::RegisterPartition(const ParquetPartitionMeta& partition) {
     if (partition.file_path.empty()) {
         return false;
     }
-    if (partition.min_ts_ns > 0 && partition.max_ts_ns > 0 && partition.min_ts_ns > partition.max_ts_ns) {
+    if (partition.min_ts_ns > 0 && partition.max_ts_ns > 0 &&
+        partition.min_ts_ns > partition.max_ts_ns) {
         return false;
     }
     partitions_.push_back(partition);
     return true;
 }
 
-std::vector<ParquetPartitionMeta> ParquetDataFeed::DiscoverFromDirectory(const std::string& root_path) const {
+bool ParquetDataFeed::LoadManifestJsonl(const std::string& manifest_path, std::string* error) {
+    std::ifstream input(manifest_path);
+    if (!input.is_open()) {
+        if (error != nullptr) {
+            *error = "unable to open manifest: " + manifest_path;
+        }
+        return false;
+    }
+
+    partitions_.clear();
+    std::string line;
+    const std::filesystem::path manifest_dir = std::filesystem::path(manifest_path).parent_path();
+    const std::filesystem::path root = manifest_dir.parent_path();
+
+    while (std::getline(input, line)) {
+        line = Trim(line);
+        if (line.empty()) {
+            continue;
+        }
+
+        ParquetPartitionMeta meta;
+        std::string file_path;
+        if (!ExtractJsonString(line, "file_path", &file_path)) {
+            if (error != nullptr) {
+                *error = "manifest line missing file_path";
+            }
+            return false;
+        }
+
+        std::filesystem::path parsed(file_path);
+        if (parsed.is_relative()) {
+            parsed = root / parsed;
+        }
+        meta.file_path = parsed.lexically_normal().string();
+        ExtractJsonString(line, "source", &meta.source);
+        ExtractJsonString(line, "trading_day", &meta.trading_day);
+        ExtractJsonString(line, "instrument_id", &meta.instrument_id);
+        ExtractJsonString(line, "schema_version", &meta.schema_version);
+        ExtractJsonString(line, "source_csv_fingerprint", &meta.source_csv_fingerprint);
+
+        std::int64_t parsed_int = 0;
+        if (ExtractJsonInt64(line, "min_ts_ns", &parsed_int)) {
+            meta.min_ts_ns = static_cast<EpochNanos>(parsed_int);
+        }
+        if (ExtractJsonInt64(line, "max_ts_ns", &parsed_int)) {
+            meta.max_ts_ns = static_cast<EpochNanos>(parsed_int);
+        }
+        if (ExtractJsonInt64(line, "row_count", &parsed_int) && parsed_int >= 0) {
+            meta.row_count = static_cast<std::size_t>(parsed_int);
+        }
+
+        if (meta.source.empty()) {
+            for (const auto& segment : parsed) {
+                const std::string value = ParsePartitionValue(segment, "source=");
+                if (!value.empty()) {
+                    meta.source = value;
+                }
+            }
+        }
+
+        if (!RegisterPartition(meta)) {
+            if (error != nullptr) {
+                *error = "invalid partition in manifest: " + meta.file_path;
+            }
+            return false;
+        }
+    }
+
+    std::sort(partitions_.begin(), partitions_.end(),
+              [](const ParquetPartitionMeta& left, const ParquetPartitionMeta& right) {
+                  if (left.min_ts_ns != right.min_ts_ns) {
+                      return left.min_ts_ns < right.min_ts_ns;
+                  }
+                  return left.file_path < right.file_path;
+              });
+    return true;
+}
+
+std::vector<ParquetPartitionMeta> ParquetDataFeed::DiscoverFromDirectory(
+    const std::string& root_path) const {
     std::vector<ParquetPartitionMeta> discovered;
     const std::filesystem::path root(root_path);
     if (!std::filesystem::exists(root)) {
@@ -317,6 +700,10 @@ std::vector<ParquetPartitionMeta> ParquetDataFeed::DiscoverFromDirectory(const s
         meta.file_path = entry.path().string();
 
         for (const auto& segment : entry.path()) {
+            const std::string source = ParsePartitionValue(segment, "source=");
+            if (!source.empty()) {
+                meta.source = source;
+            }
             const std::string trading_day = ParsePartitionValue(segment, "trading_day=");
             if (!trading_day.empty()) {
                 meta.trading_day = trading_day;
@@ -334,25 +721,49 @@ std::vector<ParquetPartitionMeta> ParquetDataFeed::DiscoverFromDirectory(const s
         discovered.push_back(meta);
     }
 
-    std::sort(discovered.begin(), discovered.end(), [](const ParquetPartitionMeta& left, const ParquetPartitionMeta& right) {
-        if (left.min_ts_ns != right.min_ts_ns) {
-            return left.min_ts_ns < right.min_ts_ns;
-        }
-        return left.file_path < right.file_path;
-    });
+    std::sort(discovered.begin(), discovered.end(),
+              [](const ParquetPartitionMeta& left, const ParquetPartitionMeta& right) {
+                  if (left.min_ts_ns != right.min_ts_ns) {
+                      return left.min_ts_ns < right.min_ts_ns;
+                  }
+                  return left.file_path < right.file_path;
+              });
     return discovered;
 }
 
-std::vector<ParquetPartitionMeta> ParquetDataFeed::QueryPartitions(EpochNanos start_ts_ns,
-                                                                   EpochNanos end_ts_ns,
-                                                                   const std::string& instrument_id) const {
+std::vector<ParquetPartitionMeta> ParquetDataFeed::QueryPartitions(
+    EpochNanos start_ts_ns, EpochNanos end_ts_ns, const std::string& instrument_id) const {
+    std::vector<std::string> instruments;
+    if (!instrument_id.empty()) {
+        instruments.push_back(instrument_id);
+    }
+    return QueryPartitions(start_ts_ns, end_ts_ns, instruments, "");
+}
+
+std::vector<ParquetPartitionMeta> ParquetDataFeed::QueryPartitions(
+    EpochNanos start_ts_ns, EpochNanos end_ts_ns, const std::vector<std::string>& instrument_ids,
+    const std::string& source) const {
     std::vector<ParquetPartitionMeta> filtered;
     if (start_ts_ns > end_ts_ns) {
         return filtered;
     }
 
-    for (const auto& partition : partitions_) {
-        if (!instrument_id.empty() && partition.instrument_id != instrument_id) {
+    const std::vector<ParquetPartitionMeta> source_partitions =
+        partitions_.empty() ? DiscoverFromDirectory(parquet_root_) : partitions_;
+
+    std::unordered_set<std::string> instrument_set;
+    for (const std::string& instrument_id : instrument_ids) {
+        if (!instrument_id.empty()) {
+            instrument_set.insert(instrument_id);
+        }
+    }
+
+    for (const auto& partition : source_partitions) {
+        if (!source.empty() && partition.source != source) {
+            continue;
+        }
+        if (!instrument_set.empty() &&
+            instrument_set.find(partition.instrument_id) == instrument_set.end()) {
             continue;
         }
 
@@ -361,99 +772,101 @@ std::vector<ParquetPartitionMeta> ParquetDataFeed::QueryPartitions(EpochNanos st
             continue;
         }
 
-        const bool no_overlap = partition.max_ts_ns < start_ts_ns || partition.min_ts_ns > end_ts_ns;
+        const bool no_overlap =
+            partition.max_ts_ns < start_ts_ns || partition.min_ts_ns > end_ts_ns;
         if (no_overlap) {
             continue;
         }
         filtered.push_back(partition);
     }
 
-    std::sort(filtered.begin(), filtered.end(), [](const ParquetPartitionMeta& left, const ParquetPartitionMeta& right) {
-        if (left.min_ts_ns != right.min_ts_ns) {
-            return left.min_ts_ns < right.min_ts_ns;
-        }
-        return left.file_path < right.file_path;
-    });
+    std::sort(filtered.begin(), filtered.end(),
+              [](const ParquetPartitionMeta& left, const ParquetPartitionMeta& right) {
+                  if (left.min_ts_ns != right.min_ts_ns) {
+                      return left.min_ts_ns < right.min_ts_ns;
+                  }
+                  return left.file_path < right.file_path;
+              });
     return filtered;
 }
 
-std::vector<Tick> ParquetDataFeed::LoadTicks(const std::string& symbol,
-                                             const Timestamp& start,
+bool ParquetDataFeed::LoadPartitionTicks(const ParquetPartitionMeta& partition,
+                                         const Timestamp& start, const Timestamp& end,
+                                         const std::vector<std::string>& /*projected_columns*/,
+                                         std::vector<Tick>* out, ParquetScanMetrics* metrics,
+                                         std::int64_t max_ticks, std::string* error) const {
+    if (out == nullptr) {
+        if (error != nullptr) {
+            *error = "partition tick output is null";
+        }
+        return false;
+    }
+    out->clear();
+
+    if (partition.min_ts_ns > 0 && partition.max_ts_ns > 0) {
+        if (partition.max_ts_ns < start.ToEpochNanos() ||
+            partition.min_ts_ns > end.ToEpochNanos()) {
+            return true;
+        }
+    }
+
+#if QUANT_HFT_ENABLE_ARROW_PARQUET
+    if (AppendTicksFromParquet(partition.file_path, partition.instrument_id, start, end, out,
+                               metrics, max_ticks, nullptr)) {
+        std::sort(out->begin(), out->end(), [](const Tick& left, const Tick& right) {
+            if (left.ts_ns != right.ts_ns) {
+                return left.ts_ns < right.ts_ns;
+            }
+            return left.symbol < right.symbol;
+        });
+        return true;
+    }
+#endif
+
+    if (!LoadTicksFromSidecar(partition, start, end, out, metrics, max_ticks, error)) {
+        return false;
+    }
+
+    std::sort(out->begin(), out->end(), [](const Tick& left, const Tick& right) {
+        if (left.ts_ns != right.ts_ns) {
+            return left.ts_ns < right.ts_ns;
+        }
+        return left.symbol < right.symbol;
+    });
+    return true;
+}
+
+std::vector<Tick> ParquetDataFeed::LoadTicks(const std::string& symbol, const Timestamp& start,
                                              const Timestamp& end) const {
     std::vector<Tick> ticks;
     if (start > end) {
         return ticks;
     }
 
-    std::vector<ParquetPartitionMeta> source_partitions;
-    if (partitions_.empty()) {
-        source_partitions = DiscoverFromDirectory(parquet_root_);
-    } else {
-        source_partitions = partitions_;
+    std::vector<std::string> symbols;
+    if (!symbol.empty()) {
+        symbols.push_back(symbol);
     }
 
-    const auto selected = [&]() {
-        std::vector<ParquetPartitionMeta> result;
-        for (const auto& partition : source_partitions) {
-            if (!symbol.empty() && partition.instrument_id != symbol) {
-                continue;
-            }
-            if (partition.min_ts_ns > 0 && partition.max_ts_ns > 0) {
-                if (partition.max_ts_ns < start.ToEpochNanos() || partition.min_ts_ns > end.ToEpochNanos()) {
-                    continue;
-                }
-            }
-            result.push_back(partition);
-        }
-        return result;
-    }();
-
+    const auto selected = QueryPartitions(start.ToEpochNanos(), end.ToEpochNanos(), symbols, "");
     for (const auto& partition : selected) {
-#if QUANT_HFT_ENABLE_ARROW_PARQUET
-        if (AppendTicksFromParquet(partition.file_path, partition.instrument_id, start, end, &ticks)) {
+        std::vector<Tick> partition_ticks;
+        if (!LoadPartitionTicks(partition, start, end, {}, &partition_ticks, nullptr, -1,
+                                nullptr)) {
             continue;
         }
-#endif
-        const std::filesystem::path ticks_sidecar = partition.file_path + ".ticks.csv";
-        if (!std::filesystem::exists(ticks_sidecar)) {
-            continue;
-        }
-
-        std::ifstream input(ticks_sidecar);
-        if (!input.is_open()) {
-            continue;
-        }
-
-        std::string line;
-        if (!std::getline(input, line)) {
-            continue;
-        }
-        const auto headers = SplitCsvLine(line);
-        while (std::getline(input, line)) {
-            if (line.empty()) {
-                continue;
-            }
-            try {
-                const auto values = SplitCsvLine(line);
-                Tick tick = BuildTickFromValues(headers, values, partition.instrument_id);
-                if (tick.ts_ns < start.ToEpochNanos() || tick.ts_ns > end.ToEpochNanos()) {
-                    continue;
-                }
-                ticks.push_back(tick);
-            } catch (...) {
-                continue;
-            }
-        }
+        ticks.insert(ticks.end(), partition_ticks.begin(), partition_ticks.end());
     }
 
     std::sort(ticks.begin(), ticks.end(), [](const Tick& left, const Tick& right) {
-        return left.ts_ns < right.ts_ns;
+        if (left.ts_ns != right.ts_ns) {
+            return left.ts_ns < right.ts_ns;
+        }
+        return left.symbol < right.symbol;
     });
     return ticks;
 }
 
-std::size_t ParquetDataFeed::PartitionCount() const noexcept {
-    return partitions_.size();
-}
+std::size_t ParquetDataFeed::PartitionCount() const noexcept { return partitions_.size(); }
 
 }  // namespace quant_hft

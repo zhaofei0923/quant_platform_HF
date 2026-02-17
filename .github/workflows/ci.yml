@@ -7,10 +7,15 @@ on:
 jobs:
   cpp:
     runs-on: ubuntu-latest
+    env:
+      ENABLE_PARQUET_SPEEDUP_GATE: "1"
     steps:
       - uses: actions/checkout@v4
+      - name: Install Arrow/Parquet Deps
+        run: |
+          bash scripts/build/install_arrow_parquet_deps.sh
       - name: Configure
-        run: cmake -S . -B build -DQUANT_HFT_BUILD_TESTS=ON
+        run: cmake -S . -B build -DQUANT_HFT_BUILD_TESTS=ON -DQUANT_HFT_ENABLE_ARROW_PARQUET=ON
       - name: Dependency Audit
         run: bash scripts/build/dependency_audit.sh --build-dir build
       - name: Build
@@ -33,6 +38,22 @@ jobs:
             --runs 5 \
             --min_ticks_read 1000 \
             --result_json docs/results/backtest_benchmark_result.json
+      - name: CSV Parquet Speedup Gate
+        if: ${{ env.ENABLE_PARQUET_SPEEDUP_GATE == '1' }}
+        run: |
+          bash scripts/build/run_csv_parquet_speedup_gate.sh \
+            --build-dir build \
+            --csv-path runtime/benchmarks/backtest/rb_perf_large.csv \
+            --source rb \
+            --output-root runtime/benchmarks/backtest/parquet_v2_ci \
+            --results-dir docs/results \
+            --runs 3 \
+            --warmup-runs 1 \
+            --max-ticks 50000 \
+            --min-speedup 5.0 \
+            --symbol-count 20 \
+            --focus-symbol rb2405 \
+            --require-arrow-writer true
       - name: Preprod Rehearsal Gate
         run: |
           bash scripts/build/run_preprod_rehearsal_gate.sh \

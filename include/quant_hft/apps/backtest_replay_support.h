@@ -14,11 +14,13 @@
 #include <map>
 #include <numeric>
 #include <optional>
+#include <queue>
 #include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 
 #include "quant_hft/apps/cli_support.h"
@@ -263,6 +265,27 @@ inline std::vector<std::string> SplitCsvLine(const std::string& line) {
     return cells;
 }
 
+inline std::vector<std::string> SplitCommaList(const std::string& raw) {
+    std::vector<std::string> out;
+    std::string current;
+    for (const char ch : raw) {
+        if (ch == ',') {
+            const std::string trimmed = Trim(current);
+            if (!trimmed.empty()) {
+                out.push_back(trimmed);
+            }
+            current.clear();
+            continue;
+        }
+        current.push_back(ch);
+    }
+    const std::string trimmed = Trim(current);
+    if (!trimmed.empty()) {
+        out.push_back(trimmed);
+    }
+    return out;
+}
+
 inline std::string FindCell(const std::map<std::string, std::size_t>& header_index,
                             const std::vector<std::string>& cells,
                             std::initializer_list<const char*> candidates) {
@@ -458,14 +481,18 @@ inline bool ExtractJsonBool(const std::string& json, const std::string& key, boo
 struct BacktestCliSpec {
     std::string csv_path;
     std::string dataset_root;
+    std::string dataset_manifest;
     std::string engine_mode{"csv"};
     std::string rollover_mode{"strict"};
     std::string rollover_price_mode{"bbo"};
     double rollover_slippage_bps{0.0};
+    std::vector<std::string> symbols;
     std::string start_date;
     std::string end_date;
     std::optional<std::int64_t> max_ticks;
     bool deterministic_fills{true};
+    bool streaming{true};
+    bool strict_parquet{true};
     std::string wal_path;
     std::string account_id{"sim-account"};
     std::string run_id;
@@ -488,6 +515,10 @@ struct ReplayTick {
 
 struct ReplayReport {
     std::int64_t ticks_read{0};
+    std::int64_t scan_rows{0};
+    std::int64_t scan_row_groups{0};
+    std::int64_t io_bytes{0};
+    bool early_stop_hit{false};
     std::int64_t bars_emitted{0};
     std::int64_t intents_emitted{0};
     std::string first_instrument;
@@ -605,6 +636,8 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
     spec.csv_path = detail::GetArgAny(args, {"csv_path", "csv-path", "csv"});
     spec.dataset_root =
         detail::GetArgAny(args, {"dataset_root", "dataset-root", "parquet_root", "parquet-root"});
+    spec.dataset_manifest = detail::GetArgAny(
+        args, {"dataset_manifest", "dataset-manifest", "manifest_path", "manifest-path"});
     spec.engine_mode =
         detail::ToLower(detail::GetArgAny(args, {"engine_mode", "engine-mode"}, "csv"));
     spec.rollover_mode =
@@ -618,6 +651,7 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
     spec.account_id = detail::GetArgAny(args, {"account_id", "account-id"}, "sim-account");
     spec.run_id = detail::GetArgAny(args, {"run_id", "run-id"},
                                     "backtest-" + std::to_string(UnixEpochMillisNow()));
+    spec.symbols = detail::SplitCommaList(detail::GetArgAny(args, {"symbols", "symbol"}));
 
     {
         const std::string raw =
@@ -678,6 +712,30 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
         }
         spec.emit_state_snapshots = parsed;
     }
+    {
+        const std::string raw_streaming =
+            detail::GetArgAny(args, {"streaming", "streaming_mode", "streaming-mode"}, "true");
+        bool parsed = true;
+        if (!detail::ParseBool(raw_streaming, &parsed)) {
+            if (error != nullptr) {
+                *error = "invalid streaming: " + raw_streaming;
+            }
+            return false;
+        }
+        spec.streaming = parsed;
+    }
+    {
+        const std::string raw_strict =
+            detail::GetArgAny(args, {"strict_parquet", "strict-parquet"}, "true");
+        bool parsed = true;
+        if (!detail::ParseBool(raw_strict, &parsed)) {
+            if (error != nullptr) {
+                *error = "invalid strict_parquet: " + raw_strict;
+            }
+            return false;
+        }
+        spec.strict_parquet = parsed;
+    }
 
     if (spec.engine_mode != "csv" && spec.engine_mode != "parquet" &&
         spec.engine_mode != "core_sim") {
@@ -724,17 +782,33 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
         }
         return false;
     }
+    if (!spec.dataset_root.empty() && spec.dataset_manifest.empty()) {
+        spec.dataset_manifest =
+            (std::filesystem::path(spec.dataset_root) / "_manifest" / "partitions.jsonl").string();
+    }
 
     *out = std::move(spec);
     return true;
 }
 
 inline std::string BuildInputSignature(const BacktestCliSpec& spec) {
+    std::ostringstream symbols_stream;
+    for (std::size_t index = 0; index < spec.symbols.size(); ++index) {
+        if (index > 0) {
+            symbols_stream << ',';
+        }
+        symbols_stream << spec.symbols[index];
+    }
+
     std::ostringstream oss;
     oss << "csv_path=" << spec.csv_path << ';' << "dataset_root=" << spec.dataset_root << ';'
-        << "engine_mode=" << spec.engine_mode << ';' << "rollover_mode=" << spec.rollover_mode
-        << ';' << "rollover_price_mode=" << spec.rollover_price_mode << ';'
+        << "dataset_manifest=" << spec.dataset_manifest << ';' << "engine_mode=" << spec.engine_mode
+        << ';' << "rollover_mode=" << spec.rollover_mode << ';'
+        << "rollover_price_mode=" << spec.rollover_price_mode << ';'
         << "rollover_slippage_bps=" << detail::FormatDouble(spec.rollover_slippage_bps) << ';'
+        << "symbols=" << symbols_stream.str() << ';'
+        << "streaming=" << (spec.streaming ? "true" : "false") << ';'
+        << "strict_parquet=" << (spec.strict_parquet ? "true" : "false") << ';'
         << "start_date=" << spec.start_date << ';' << "end_date=" << spec.end_date << ';'
         << "max_ticks="
         << (spec.max_ticks.has_value() ? std::to_string(spec.max_ticks.value()) : "null") << ';'
@@ -956,6 +1030,12 @@ inline bool LoadCsvTicks(const BacktestCliSpec& spec, std::vector<ReplayTick>* o
     for (std::size_t i = 0; i < headers.size(); ++i) {
         header_index[headers[i]] = i;
     }
+    std::unordered_set<std::string> instrument_filter;
+    for (const std::string& symbol : spec.symbols) {
+        if (!symbol.empty()) {
+            instrument_filter.insert(symbol);
+        }
+    }
 
     out->clear();
     std::string line;
@@ -981,6 +1061,10 @@ inline bool LoadCsvTicks(const BacktestCliSpec& spec, std::vector<ReplayTick>* o
             if (!day.empty() && day > spec.end_date) {
                 continue;
             }
+        }
+        if (!instrument_filter.empty() &&
+            instrument_filter.find(tick.instrument_id) == instrument_filter.end()) {
+            continue;
         }
 
         out->push_back(std::move(tick));
@@ -1035,11 +1119,84 @@ inline bool BuildTimestampRange(const BacktestCliSpec& spec, Timestamp* out_star
     return true;
 }
 
+inline bool ValidatePartitionMetaFile(const std::filesystem::path& meta_path, std::string* error) {
+    std::ifstream input(meta_path);
+    if (!input.is_open()) {
+        if (error != nullptr) {
+            *error = "unable to open parquet meta file: " + meta_path.string();
+        }
+        return false;
+    }
+
+    bool has_min = false;
+    bool has_max = false;
+    bool has_rows = false;
+    bool has_schema = false;
+    bool has_fingerprint = false;
+    std::string schema_version;
+
+    std::string line;
+    while (std::getline(input, line)) {
+        const std::size_t split = line.find('=');
+        if (split == std::string::npos) {
+            continue;
+        }
+        const std::string key = detail::Trim(line.substr(0, split));
+        const std::string value = detail::Trim(line.substr(split + 1));
+        if (key == "min_ts_ns") {
+            has_min = true;
+        } else if (key == "max_ts_ns") {
+            has_max = true;
+        } else if (key == "row_count") {
+            has_rows = true;
+        } else if (key == "schema_version") {
+            has_schema = true;
+            schema_version = value;
+        } else if (key == "source_csv_fingerprint") {
+            has_fingerprint = true;
+        }
+    }
+
+    if (!has_min || !has_max || !has_rows || !has_schema || !has_fingerprint) {
+        if (error != nullptr) {
+            *error = "parquet meta missing required fields: " + meta_path.string();
+        }
+        return false;
+    }
+    if (schema_version != "v2") {
+        if (error != nullptr) {
+            *error = "unsupported schema_version in meta: " + meta_path.string();
+        }
+        return false;
+    }
+    return true;
+}
+
+inline std::string SourceFilterFromSymbols(const std::vector<std::string>& symbols) {
+    std::set<std::string> prefixes;
+    for (const std::string& symbol : symbols) {
+        const std::string prefix = detail::InstrumentSymbolPrefix(symbol);
+        if (!prefix.empty()) {
+            prefixes.insert(prefix);
+        }
+    }
+    if (prefixes.size() == 1U) {
+        return *prefixes.begin();
+    }
+    return "";
+}
+
 inline bool LoadParquetTicks(const BacktestCliSpec& spec, std::vector<ReplayTick>* out,
-                             std::string* error) {
+                             ReplayReport* report, std::string* error) {
     if (out == nullptr) {
         if (error != nullptr) {
             *error = "parquet tick output is null";
+        }
+        return false;
+    }
+    if (report == nullptr) {
+        if (error != nullptr) {
+            *error = "parquet replay report is null";
         }
         return false;
     }
@@ -1059,59 +1216,243 @@ inline bool LoadParquetTicks(const BacktestCliSpec& spec, std::vector<ReplayTick
     }
 
     ParquetDataFeed feed(root.string());
-    const std::vector<Tick> ticks = feed.LoadTicks("", start, end);
-
-    out->clear();
-    out->reserve(ticks.size());
-    for (const Tick& tick : ticks) {
-        ReplayTick replay_tick;
-        replay_tick.trading_day = detail::TradingDayFromEpochNs(tick.ts_ns);
-        replay_tick.instrument_id = tick.symbol;
-        replay_tick.update_time = detail::UpdateTimeFromEpochNs(tick.ts_ns);
-        replay_tick.update_millisec =
-            static_cast<int>((tick.ts_ns % detail::kNanosPerSecond) / detail::kNanosPerMillisecond);
-        replay_tick.ts_ns = tick.ts_ns;
-        replay_tick.last_price = tick.last_price;
-        replay_tick.volume = tick.volume;
-        replay_tick.bid_price_1 = tick.bid_price1;
-        replay_tick.bid_volume_1 = tick.bid_volume1;
-        replay_tick.ask_price_1 = tick.ask_price1;
-        replay_tick.ask_volume_1 = tick.ask_volume1;
-        out->push_back(std::move(replay_tick));
-        if (spec.max_ticks.has_value() &&
-            static_cast<std::int64_t>(out->size()) >= spec.max_ticks.value()) {
-            break;
+    std::filesystem::path manifest_path(spec.dataset_manifest);
+    if (manifest_path.empty()) {
+        manifest_path = root / "_manifest" / "partitions.jsonl";
+    } else if (manifest_path.is_relative()) {
+        if (!std::filesystem::exists(manifest_path)) {
+            manifest_path = root / manifest_path;
         }
     }
 
+    const bool manifest_exists = std::filesystem::exists(manifest_path);
+    if (!manifest_exists && spec.strict_parquet) {
+        if (error != nullptr) {
+            *error =
+                "missing parquet manifest, run csv_to_parquet_cli first: " + manifest_path.string();
+        }
+        return false;
+    }
+    if (manifest_exists) {
+        std::string manifest_error;
+        if (!feed.LoadManifestJsonl(manifest_path.string(), &manifest_error)) {
+            if (error != nullptr) {
+                *error = "failed to load parquet manifest: " + manifest_error;
+            }
+            return false;
+        }
+    }
+
+    const std::string source_filter = SourceFilterFromSymbols(spec.symbols);
+    const auto selected =
+        feed.QueryPartitions(start.ToEpochNanos(), end.ToEpochNanos(), spec.symbols, source_filter);
+
+    out->clear();
+    std::vector<std::vector<ReplayTick>> streams;
+    if (spec.streaming) {
+        streams.reserve(selected.size());
+    }
+
+    ParquetScanMetrics totals;
+    const std::vector<std::string> projected_columns = {
+        "symbol",      "exchange",   "ts_ns",       "last_price", "last_volume", "bid_price1",
+        "bid_volume1", "ask_price1", "ask_volume1", "volume",     "turnover",    "open_interest",
+    };
+
+    for (const ParquetPartitionMeta& partition : selected) {
+        if (spec.strict_parquet) {
+            const std::filesystem::path meta_path = partition.file_path + ".meta";
+            if (!std::filesystem::exists(meta_path)) {
+                if (error != nullptr) {
+                    *error = "missing parquet meta sidecar: " + meta_path.string();
+                }
+                return false;
+            }
+            if (!ValidatePartitionMetaFile(meta_path, error)) {
+                return false;
+            }
+        }
+
+        std::int64_t partition_limit = -1;
+        if (spec.max_ticks.has_value() && !spec.streaming) {
+            partition_limit = std::max<std::int64_t>(
+                0, spec.max_ticks.value() - static_cast<std::int64_t>(out->size()));
+            if (partition_limit == 0) {
+                totals.early_stop_hit = true;
+                break;
+            }
+        }
+
+        std::vector<Tick> partition_ticks;
+        ParquetScanMetrics partition_metrics;
+        if (!feed.LoadPartitionTicks(partition, start, end, projected_columns, &partition_ticks,
+                                     &partition_metrics, partition_limit, error)) {
+            return false;
+        }
+
+        totals.scan_rows += partition_metrics.scan_rows;
+        totals.scan_row_groups += partition_metrics.scan_row_groups;
+        totals.io_bytes += partition_metrics.io_bytes;
+        totals.early_stop_hit = totals.early_stop_hit || partition_metrics.early_stop_hit;
+
+        std::vector<ReplayTick> replay_ticks;
+        replay_ticks.reserve(partition_ticks.size());
+        for (const Tick& tick : partition_ticks) {
+            ReplayTick replay_tick;
+            replay_tick.trading_day = detail::TradingDayFromEpochNs(tick.ts_ns);
+            replay_tick.instrument_id = tick.symbol;
+            replay_tick.update_time = detail::UpdateTimeFromEpochNs(tick.ts_ns);
+            replay_tick.update_millisec = static_cast<int>((tick.ts_ns % detail::kNanosPerSecond) /
+                                                           detail::kNanosPerMillisecond);
+            replay_tick.ts_ns = tick.ts_ns;
+            replay_tick.last_price = tick.last_price;
+            replay_tick.volume = tick.volume;
+            replay_tick.bid_price_1 = tick.bid_price1;
+            replay_tick.bid_volume_1 = tick.bid_volume1;
+            replay_tick.ask_price_1 = tick.ask_price1;
+            replay_tick.ask_volume_1 = tick.ask_volume1;
+            replay_ticks.push_back(std::move(replay_tick));
+        }
+
+        if (spec.streaming) {
+            streams.push_back(std::move(replay_ticks));
+        } else {
+            out->insert(out->end(), replay_ticks.begin(), replay_ticks.end());
+            if (spec.max_ticks.has_value() &&
+                static_cast<std::int64_t>(out->size()) >= spec.max_ticks.value()) {
+                totals.early_stop_hit = true;
+                break;
+            }
+        }
+    }
+
+    if (spec.streaming) {
+        struct MergeNode {
+            EpochNanos ts_ns{0};
+            std::string instrument_id;
+            std::size_t stream_index{0};
+            std::size_t row_index{0};
+        };
+        struct MergeNodeCompare {
+            bool operator()(const MergeNode& left, const MergeNode& right) const {
+                if (left.ts_ns != right.ts_ns) {
+                    return left.ts_ns > right.ts_ns;
+                }
+                if (left.instrument_id != right.instrument_id) {
+                    return left.instrument_id > right.instrument_id;
+                }
+                return left.stream_index > right.stream_index;
+            }
+        };
+
+        std::priority_queue<MergeNode, std::vector<MergeNode>, MergeNodeCompare> heap;
+        for (std::size_t index = 0; index < streams.size(); ++index) {
+            if (!streams[index].empty()) {
+                heap.push(MergeNode{
+                    .ts_ns = streams[index][0].ts_ns,
+                    .instrument_id = streams[index][0].instrument_id,
+                    .stream_index = index,
+                    .row_index = 0,
+                });
+            }
+        }
+
+        while (!heap.empty()) {
+            const MergeNode node = heap.top();
+            heap.pop();
+
+            out->push_back(streams[node.stream_index][node.row_index]);
+            if (spec.max_ticks.has_value() &&
+                static_cast<std::int64_t>(out->size()) >= spec.max_ticks.value()) {
+                totals.early_stop_hit = true;
+                break;
+            }
+
+            const std::size_t next_row = node.row_index + 1;
+            if (next_row < streams[node.stream_index].size()) {
+                const ReplayTick& next_tick = streams[node.stream_index][next_row];
+                heap.push(MergeNode{
+                    .ts_ns = next_tick.ts_ns,
+                    .instrument_id = next_tick.instrument_id,
+                    .stream_index = node.stream_index,
+                    .row_index = next_row,
+                });
+            }
+        }
+    } else {
+        std::sort(out->begin(), out->end(), [](const ReplayTick& left, const ReplayTick& right) {
+            if (left.ts_ns != right.ts_ns) {
+                return left.ts_ns < right.ts_ns;
+            }
+            return left.instrument_id < right.instrument_id;
+        });
+    }
+
+    if (spec.max_ticks.has_value() &&
+        static_cast<std::int64_t>(out->size()) > spec.max_ticks.value()) {
+        out->resize(static_cast<std::size_t>(spec.max_ticks.value()));
+        totals.early_stop_hit = true;
+    }
+
+    report->scan_rows += totals.scan_rows;
+    report->scan_row_groups += totals.scan_row_groups;
+    report->io_bytes += totals.io_bytes;
+    report->early_stop_hit = report->early_stop_hit || totals.early_stop_hit;
     return true;
 }
 
 inline bool LoadTicksForSpec(const BacktestCliSpec& spec, std::vector<ReplayTick>* out,
-                             std::string* out_data_source, std::string* error) {
+                             std::string* out_data_source, ReplayReport* report,
+                             std::string* error) {
+    if (out == nullptr) {
+        if (error != nullptr) {
+            *error = "tick output is null";
+        }
+        return false;
+    }
     if (out_data_source == nullptr) {
         if (error != nullptr) {
             *error = "data source output is null";
         }
         return false;
     }
+    if (report == nullptr) {
+        if (error != nullptr) {
+            *error = "replay report output is null";
+        }
+        return false;
+    }
+    report->scan_rows = 0;
+    report->scan_row_groups = 0;
+    report->io_bytes = 0;
+    report->early_stop_hit = false;
 
     if (spec.engine_mode == "parquet") {
         *out_data_source = "parquet";
-        return LoadParquetTicks(spec, out, error);
+        return LoadParquetTicks(spec, out, report, error);
     }
 
     if (spec.engine_mode == "core_sim") {
         if (!spec.dataset_root.empty()) {
             *out_data_source = "parquet";
-            return LoadParquetTicks(spec, out, error);
+            return LoadParquetTicks(spec, out, report, error);
         }
         *out_data_source = "csv";
-        return LoadCsvTicks(spec, out, error);
+        const bool ok = LoadCsvTicks(spec, out, error);
+        if (ok && spec.max_ticks.has_value() &&
+            static_cast<std::int64_t>(out->size()) >= spec.max_ticks.value()) {
+            report->early_stop_hit = true;
+        }
+        return ok;
     }
 
     *out_data_source = "csv";
-    return LoadCsvTicks(spec, out, error);
+    const bool ok = LoadCsvTicks(spec, out, error);
+    if (ok && spec.max_ticks.has_value() &&
+        static_cast<std::int64_t>(out->size()) >= spec.max_ticks.value()) {
+        report->early_stop_hit = true;
+    }
+    return ok;
 }
 
 inline StateSnapshot7D BuildStateSnapshotFromBar(const ReplayTick& first, const ReplayTick& last,
@@ -1280,7 +1621,8 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
 
     std::vector<ReplayTick> ticks;
     std::string data_source;
-    if (!LoadTicksForSpec(spec, &ticks, &data_source, error)) {
+    ReplayReport replay;
+    if (!LoadTicksForSpec(spec, &ticks, &data_source, &replay, error)) {
         return false;
     }
 
@@ -1298,7 +1640,6 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     strategy_ctx.account_id = spec.account_id;
     strategy.Initialize(strategy_ctx);
 
-    ReplayReport replay;
     std::set<std::string> instrument_universe;
 
     std::map<std::string, PositionState> position_state;
@@ -1716,6 +2057,10 @@ inline std::string RenderBacktestMarkdown(const BacktestCliResult& result) {
        << "- Data Signature: `" << result.data_signature << "`\n\n"
        << "## Replay Overview\n"
        << "- Ticks Read: `" << result.replay.ticks_read << "`\n"
+       << "- Scan Rows: `" << result.replay.scan_rows << "`\n"
+       << "- Scan Row Groups: `" << result.replay.scan_row_groups << "`\n"
+       << "- IO Bytes: `" << result.replay.io_bytes << "`\n"
+       << "- Early Stop Hit: `" << (result.replay.early_stop_hit ? "true" : "false") << "`\n"
        << "- Bars Emitted: `" << result.replay.bars_emitted << "`\n"
        << "- Intents Emitted: `" << result.replay.intents_emitted << "`\n"
        << "- Instrument Count: `" << result.replay.instrument_count << "`\n"
@@ -1756,6 +2101,7 @@ inline std::string RenderBacktestJson(const BacktestCliResult& result) {
          << "  \"spec\": {\n"
          << "    \"csv_path\": \"" << JsonEscape(result.spec.csv_path) << "\",\n"
          << "    \"dataset_root\": \"" << JsonEscape(result.spec.dataset_root) << "\",\n"
+         << "    \"dataset_manifest\": \"" << JsonEscape(result.spec.dataset_manifest) << "\",\n"
          << "    \"engine_mode\": \"" << JsonEscape(result.spec.engine_mode) << "\",\n"
          << "    \"rollover_mode\": \"" << JsonEscape(result.spec.rollover_mode) << "\",\n"
          << "    \"rollover_price_mode\": \"" << JsonEscape(result.spec.rollover_price_mode)
@@ -1773,8 +2119,18 @@ inline std::string RenderBacktestJson(const BacktestCliResult& result) {
     }
 
     json << ",\n"
+         << "    \"symbols\": [";
+    for (std::size_t i = 0; i < result.spec.symbols.size(); ++i) {
+        if (i > 0) {
+            json << ", ";
+        }
+        json << "\"" << JsonEscape(result.spec.symbols[i]) << "\"";
+    }
+    json << "],\n"
          << "    \"deterministic_fills\": " << (result.spec.deterministic_fills ? "true" : "false")
          << ",\n"
+         << "    \"streaming\": " << (result.spec.streaming ? "true" : "false") << ",\n"
+         << "    \"strict_parquet\": " << (result.spec.strict_parquet ? "true" : "false") << ",\n"
          << "    \"wal_path\": \"" << JsonEscape(result.spec.wal_path) << "\",\n"
          << "    \"account_id\": \"" << JsonEscape(result.spec.account_id) << "\",\n"
          << "    \"run_id\": \"" << JsonEscape(result.spec.run_id) << "\",\n"
@@ -1787,6 +2143,10 @@ inline std::string RenderBacktestJson(const BacktestCliResult& result) {
          << "  \"risk_decomposition\": {},\n"
          << "  \"replay\": {\n"
          << "    \"ticks_read\": " << result.replay.ticks_read << ",\n"
+         << "    \"scan_rows\": " << result.replay.scan_rows << ",\n"
+         << "    \"scan_row_groups\": " << result.replay.scan_row_groups << ",\n"
+         << "    \"io_bytes\": " << result.replay.io_bytes << ",\n"
+         << "    \"early_stop_hit\": " << (result.replay.early_stop_hit ? "true" : "false") << ",\n"
          << "    \"bars_emitted\": " << result.replay.bars_emitted << ",\n"
          << "    \"intents_emitted\": " << result.replay.intents_emitted << ",\n"
          << "    \"first_instrument\": \"" << JsonEscape(result.replay.first_instrument) << "\",\n"

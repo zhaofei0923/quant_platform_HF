@@ -208,6 +208,9 @@ target_link_libraries(backtest_benchmark_cli PRIVATE quant_hft_core)
 add_executable(csv_parquet_compare_cli src/apps/csv_parquet_compare_cli_main.cpp)
 target_link_libraries(csv_parquet_compare_cli PRIVATE quant_hft_core)
 
+add_executable(csv_to_parquet_cli src/apps/csv_to_parquet_cli_main.cpp)
+target_link_libraries(csv_to_parquet_cli PRIVATE quant_hft_core)
+
 add_executable(simnow_compare_cli src/apps/simnow_compare_cli_main.cpp)
 target_link_libraries(simnow_compare_cli PRIVATE quant_hft_core)
 

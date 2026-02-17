@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/settlement_price_provider_test.dir/tests/unit/services/settlement_price_provider_test.cpp.o -o settlement_price_provider_test  libquant_hft_core.a lib/libgtest_main.a -lpthread -ldl lib/libgtest.a 

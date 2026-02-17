@@ -1,5 +1,0 @@
-if(EXISTS "/home/kevin0923/workspace/quant_platform_HF/build-pybind/daily_settlement_service_test[1]_tests.cmake")
-  include("/home/kevin0923/workspace/quant_platform_HF/build-pybind/daily_settlement_service_test[1]_tests.cmake")
-else()
-  add_test(daily_settlement_service_test_NOT_BUILT daily_settlement_service_test_NOT_BUILT)
-endif()

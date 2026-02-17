@@ -1,5 +1,0 @@
-if(EXISTS "/home/kevin0923/workspace/quant_platform_HF/build-pybind/redis_realtime_store_client_adapter_test[1]_tests.cmake")
-  include("/home/kevin0923/workspace/quant_platform_HF/build-pybind/redis_realtime_store_client_adapter_test[1]_tests.cmake")
-else()
-  add_test(redis_realtime_store_client_adapter_test_NOT_BUILT redis_realtime_store_client_adapter_test_NOT_BUILT)
-endif()

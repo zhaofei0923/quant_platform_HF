@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/object_pool_test.dir/tests/unit/core/object_pool_test.cpp.o -o object_pool_test  libquant_hft_core.a lib/libgtest_main.a -lpthread -ldl lib/libgtest.a 

@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/rate_limiter_test.dir/tests/unit/risk/rate_limiter_test.cpp.o -o rate_limiter_test  libquant_hft_core.a lib/libgtest_main.a -lpthread -ldl lib/libgtest.a 

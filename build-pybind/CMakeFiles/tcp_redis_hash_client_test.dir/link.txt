@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/tcp_redis_hash_client_test.dir/tests/unit/core/tcp_redis_hash_client_test.cpp.o -o tcp_redis_hash_client_test  libquant_hft_core.a lib/libgtest_main.a -lpthread -ldl lib/libgtest.a 

@@ -1,5 +1,0 @@
-if(EXISTS "/home/kevin0923/workspace/quant_platform_HF/build-pybind/risk_rule_executor_test[1]_tests.cmake")
-  include("/home/kevin0923/workspace/quant_platform_HF/build-pybind/risk_rule_executor_test[1]_tests.cmake")
-else()
-  add_test(risk_rule_executor_test_NOT_BUILT risk_rule_executor_test_NOT_BUILT)
-endif()

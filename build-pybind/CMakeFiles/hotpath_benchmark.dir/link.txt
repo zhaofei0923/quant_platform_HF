@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/hotpath_benchmark.dir/src/apps/hotpath_benchmark_main.cpp.o -o hotpath_benchmark  libquant_hft_core.a -lpthread -ldl 

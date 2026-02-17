@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/trading_domain_store_client_adapter_test.dir/tests/unit/core/trading_domain_store_client_adapter_test.cpp.o -o trading_domain_store_client_adapter_test  libquant_hft_core.a lib/libgtest_main.a -lpthread -ldl lib/libgtest.a 

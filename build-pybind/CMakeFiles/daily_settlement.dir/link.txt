@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/daily_settlement.dir/src/apps/daily_settlement_main.cpp.o -o daily_settlement  libquant_hft_core.a -lpthread -ldl 

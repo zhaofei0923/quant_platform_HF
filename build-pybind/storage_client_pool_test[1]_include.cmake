@@ -1,5 +1,0 @@
-if(EXISTS "/home/kevin0923/workspace/quant_platform_HF/build-pybind/storage_client_pool_test[1]_tests.cmake")
-  include("/home/kevin0923/workspace/quant_platform_HF/build-pybind/storage_client_pool_test[1]_tests.cmake")
-else()
-  add_test(storage_client_pool_test_NOT_BUILT storage_client_pool_test_NOT_BUILT)
-endif()

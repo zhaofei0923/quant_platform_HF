@@ -1,5 +1,0 @@
-if(EXISTS "/home/kevin0923/workspace/quant_platform_HF/build-pybind/strategy_intent_inbox_test[1]_tests.cmake")
-  include("/home/kevin0923/workspace/quant_platform_HF/build-pybind/strategy_intent_inbox_test[1]_tests.cmake")
-else()
-  add_test(strategy_intent_inbox_test_NOT_BUILT strategy_intent_inbox_test_NOT_BUILT)
-endif()

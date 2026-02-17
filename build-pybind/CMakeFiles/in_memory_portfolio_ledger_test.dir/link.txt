@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/in_memory_portfolio_ledger_test.dir/tests/unit/services/in_memory_portfolio_ledger_test.cpp.o -o in_memory_portfolio_ledger_test  libquant_hft_core.a lib/libgtest_main.a -lpthread -ldl lib/libgtest.a 

@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/order_state_machine_test.dir/tests/unit/services/order_state_machine_test.cpp.o -o order_state_machine_test  libquant_hft_core.a lib/libgtest_main.a -lpthread -ldl lib/libgtest.a 

@@ -1,5 +1,0 @@
-if(EXISTS "/home/kevin0923/workspace/quant_platform_HF/build-pybind/timescale_event_store_client_adapter_test[1]_tests.cmake")
-  include("/home/kevin0923/workspace/quant_platform_HF/build-pybind/timescale_event_store_client_adapter_test[1]_tests.cmake")
-else()
-  add_test(timescale_event_store_client_adapter_test_NOT_BUILT timescale_event_store_client_adapter_test_NOT_BUILT)
-endif()

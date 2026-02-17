@@ -1,5 +1,0 @@
-if(EXISTS "/home/kevin0923/workspace/quant_platform_HF/build-pybind/wal_replay_loader_test[1]_tests.cmake")
-  include("/home/kevin0923/workspace/quant_platform_HF/build-pybind/wal_replay_loader_test[1]_tests.cmake")
-else()
-  add_test(wal_replay_loader_test_NOT_BUILT wal_replay_loader_test_NOT_BUILT)
-endif()

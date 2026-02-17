@@ -1,5 +1,0 @@
-if(EXISTS "/home/kevin0923/workspace/quant_platform_HF/build-pybind/order_manager_test[1]_tests.cmake")
-  include("/home/kevin0923/workspace/quant_platform_HF/build-pybind/order_manager_test[1]_tests.cmake")
-else()
-  add_test(order_manager_test_NOT_BUILT order_manager_test_NOT_BUILT)
-endif()

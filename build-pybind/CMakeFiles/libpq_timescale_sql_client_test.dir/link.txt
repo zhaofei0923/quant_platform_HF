@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/libpq_timescale_sql_client_test.dir/tests/unit/core/libpq_timescale_sql_client_test.cpp.o -o libpq_timescale_sql_client_test  libquant_hft_core.a lib/libgtest_main.a -lpthread -ldl lib/libgtest.a 

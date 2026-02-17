@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/position_manager_test.dir/tests/unit/services/position_manager_test.cpp.o -o position_manager_test  libquant_hft_core.a lib/libgtest_main.a -lpthread -ldl lib/libgtest.a 

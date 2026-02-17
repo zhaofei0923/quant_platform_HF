@@ -1,5 +1,0 @@
-if(EXISTS "/home/kevin0923/workspace/quant_platform_HF/build-pybind/ctp_position_ledger_test[1]_tests.cmake")
-  include("/home/kevin0923/workspace/quant_platform_HF/build-pybind/ctp_position_ledger_test[1]_tests.cmake")
-else()
-  add_test(ctp_position_ledger_test_NOT_BUILT ctp_position_ledger_test_NOT_BUILT)
-endif()

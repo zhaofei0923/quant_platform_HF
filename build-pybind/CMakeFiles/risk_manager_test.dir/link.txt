@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/risk_manager_test.dir/tests/unit/risk/risk_manager_test.cpp.o -o risk_manager_test  libquant_hft_core.a lib/libgtest_main.a -lpthread -ldl lib/libgtest.a 

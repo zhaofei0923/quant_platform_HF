@@ -1,1 +1,0 @@
-/usr/bin/c++ -fPIC -flto=auto -shared  -o /home/kevin0923/workspace/quant_platform_HF/python/quant_hft_data_feed.cpython-312-x86_64-linux-gnu.so CMakeFiles/quant_hft_data_feed.dir/src/binding/data_feed_wrapper.cpp.o  libquant_hft_core.a -lpthread -ldl 

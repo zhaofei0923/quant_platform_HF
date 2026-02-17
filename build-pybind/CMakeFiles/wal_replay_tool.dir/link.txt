@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/wal_replay_tool.dir/src/apps/wal_replay_main.cpp.o -o wal_replay_tool  libquant_hft_core.a -lpthread -ldl 

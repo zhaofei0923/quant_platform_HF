@@ -13,7 +13,7 @@
 
 - `ILiveStrategy` / `StrategyRegistry` / `StrategyEngine` implemented.
 - `core_engine` switched to in-process strategy dispatch.
-- Legacy bridge components removed (`python_callback_dispatcher`, `strategy_intent_*`).
+- Legacy bridge components removed (`callback_dispatcher`, `strategy_intent_*`).
 
 ### Phase B: Backtest and SimNow
 

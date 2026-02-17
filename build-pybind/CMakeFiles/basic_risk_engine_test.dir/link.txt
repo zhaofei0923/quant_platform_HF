@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/basic_risk_engine_test.dir/tests/unit/services/basic_risk_engine_test.cpp.o -o basic_risk_engine_test  libquant_hft_core.a lib/libgtest_main.a -lpthread -ldl lib/libgtest.a 

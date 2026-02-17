@@ -22,33 +22,29 @@ std::string BuildOrderRefString(const std::string& strategy_id, std::uint64_t se
 }
 
 std::shared_ptr<MonitoringGauge> CtpConnectedGauge() {
-    static auto metric = MetricRegistry::Instance().BuildGauge(
-        "quant_hft_ctp_connected", "CTP connected state gauge");
+    static auto metric = MetricRegistry::Instance().BuildGauge("quant_hft_ctp_connected",
+                                                               "CTP connected state gauge");
     return metric;
 }
 
 }  // namespace
 
-CTPTraderAdapter::CTPTraderAdapter(std::size_t query_qps_limit,
-                                   std::size_t dispatcher_workers,
-                                   std::size_t python_queue_size,
-                                   std::int64_t python_critical_wait_ms)
-    : CTPTraderAdapter(std::make_shared<CtpGatewayAdapter>(query_qps_limit),
-                       dispatcher_workers,
-                       python_queue_size,
-                       python_critical_wait_ms) {}
+CTPTraderAdapter::CTPTraderAdapter(std::size_t query_qps_limit, std::size_t dispatcher_workers,
+                                   std::size_t callback_queue_size,
+                                   std::int64_t callback_critical_wait_ms)
+    : CTPTraderAdapter(std::make_shared<CtpGatewayAdapter>(query_qps_limit), dispatcher_workers,
+                       callback_queue_size, callback_critical_wait_ms) {}
 
 CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
-                                   std::size_t dispatcher_workers,
-                                   std::size_t python_queue_size,
-                                   std::int64_t python_critical_wait_ms)
+                                   std::size_t dispatcher_workers, std::size_t callback_queue_size,
+                                   std::int64_t callback_critical_wait_ms)
     : gateway_(std::move(gateway)),
       dispatcher_(dispatcher_workers),
-      python_dispatcher_(python_queue_size, python_critical_wait_ms) {
+      callback_dispatcher_(callback_queue_size, callback_critical_wait_ms) {
     if (gateway_ == nullptr) {
         gateway_ = std::make_shared<CtpGatewayAdapter>(10);
     }
-    python_dispatcher_.Start();
+    callback_dispatcher_.Start();
 
     gateway_->RegisterOrderEventCallback([this](const OrderEvent& event) {
         OrderEvent copied = event;
@@ -64,19 +60,16 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
                     if (!callback) {
                         return;
                     }
-                    if (!python_dispatcher_.Post([callback, copied]() { callback(copied); }, true)) {
-                        const auto stats = python_dispatcher_.GetStats();
+                    if (!callback_dispatcher_.Post([callback, copied]() { callback(copied); },
+                                                   true)) {
+                        const auto stats = callback_dispatcher_.GetStats();
                         EmitStructuredLog(
-                            nullptr,
-                            "ctp_trader_adapter",
-                            "error",
-                            "python_callback_dispatch_failed",
+                            nullptr, "ctp_trader_adapter", "error", "callback_dispatch_failed",
                             {{"is_critical", "true"},
                              {"queue_depth", std::to_string(stats.pending)},
                              {"queue_capacity", std::to_string(stats.max_queue_size)},
                              {"dropped_total", std::to_string(stats.dropped)},
-                             {"critical_timeout_total",
-                              std::to_string(stats.critical_timeout)}});
+                             {"critical_timeout_total", std::to_string(stats.critical_timeout)}});
                         if (breaker) {
                             breaker(true);
                         }
@@ -84,61 +77,53 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
                 },
                 EventPriority::kHigh)) {
             const auto stats = dispatcher_.GetStats();
-            EmitStructuredLog(nullptr,
-                              "ctp_trader_adapter",
-                              "error",
-                              "dispatcher_queue_full",
+            EmitStructuredLog(nullptr, "ctp_trader_adapter", "error", "dispatcher_queue_full",
                               {{"priority", "high"},
                                {"queue_depth", std::to_string(stats.pending_high)},
                                {"dropped_total", std::to_string(stats.dropped_total)}});
         }
     });
 
-    gateway_->RegisterTradingAccountSnapshotCallback([this](const TradingAccountSnapshot& snapshot) {
-        TradingAccountSnapshot copied = snapshot;
-        if (!dispatcher_.Post(
-            [this, copied]() {
-                TradingAccountSnapshotCallback callback;
-                {
-                    std::lock_guard<std::mutex> lock(mutex_);
-                    callback = user_trading_account_callback_;
-                }
-                if (callback) {
-                    callback(copied);
-                }
-            },
-            EventPriority::kNormal)) {
-            const auto stats = dispatcher_.GetStats();
-            EmitStructuredLog(nullptr,
-                              "ctp_trader_adapter",
-                              "warn",
-                              "dispatcher_queue_full",
-                              {{"priority", "normal"},
-                               {"queue_depth", std::to_string(stats.pending_normal)},
-                               {"dropped_total", std::to_string(stats.dropped_total)}});
-        }
-    });
+    gateway_->RegisterTradingAccountSnapshotCallback(
+        [this](const TradingAccountSnapshot& snapshot) {
+            TradingAccountSnapshot copied = snapshot;
+            if (!dispatcher_.Post(
+                    [this, copied]() {
+                        TradingAccountSnapshotCallback callback;
+                        {
+                            std::lock_guard<std::mutex> lock(mutex_);
+                            callback = user_trading_account_callback_;
+                        }
+                        if (callback) {
+                            callback(copied);
+                        }
+                    },
+                    EventPriority::kNormal)) {
+                const auto stats = dispatcher_.GetStats();
+                EmitStructuredLog(nullptr, "ctp_trader_adapter", "warn", "dispatcher_queue_full",
+                                  {{"priority", "normal"},
+                                   {"queue_depth", std::to_string(stats.pending_normal)},
+                                   {"dropped_total", std::to_string(stats.dropped_total)}});
+            }
+        });
 
     gateway_->RegisterInvestorPositionSnapshotCallback(
         [this](const std::vector<InvestorPositionSnapshot>& snapshots) {
             auto copied = snapshots;
             if (!dispatcher_.Post(
-                [this, copied = std::move(copied)]() {
-                    InvestorPositionSnapshotCallback callback;
-                    {
-                        std::lock_guard<std::mutex> lock(mutex_);
-                        callback = user_investor_position_callback_;
-                    }
-                    if (callback) {
-                        callback(copied);
-                    }
-                },
-                EventPriority::kNormal)) {
+                    [this, copied = std::move(copied)]() {
+                        InvestorPositionSnapshotCallback callback;
+                        {
+                            std::lock_guard<std::mutex> lock(mutex_);
+                            callback = user_investor_position_callback_;
+                        }
+                        if (callback) {
+                            callback(copied);
+                        }
+                    },
+                    EventPriority::kNormal)) {
                 const auto stats = dispatcher_.GetStats();
-                EmitStructuredLog(nullptr,
-                                  "ctp_trader_adapter",
-                                  "warn",
-                                  "dispatcher_queue_full",
+                EmitStructuredLog(nullptr, "ctp_trader_adapter", "warn", "dispatcher_queue_full",
                                   {{"priority", "normal"},
                                    {"queue_depth", std::to_string(stats.pending_normal)},
                                    {"dropped_total", std::to_string(stats.dropped_total)}});
@@ -149,22 +134,19 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
         [this](const std::vector<InstrumentMetaSnapshot>& snapshots) {
             auto copied = snapshots;
             if (!dispatcher_.Post(
-                [this, copied = std::move(copied)]() {
-                    InstrumentMetaSnapshotCallback callback;
-                    {
-                        std::lock_guard<std::mutex> lock(mutex_);
-                        callback = user_instrument_meta_callback_;
-                    }
-                    if (callback) {
-                        callback(copied);
-                    }
-                },
-                EventPriority::kNormal)) {
+                    [this, copied = std::move(copied)]() {
+                        InstrumentMetaSnapshotCallback callback;
+                        {
+                            std::lock_guard<std::mutex> lock(mutex_);
+                            callback = user_instrument_meta_callback_;
+                        }
+                        if (callback) {
+                            callback(copied);
+                        }
+                    },
+                    EventPriority::kNormal)) {
                 const auto stats = dispatcher_.GetStats();
-                EmitStructuredLog(nullptr,
-                                  "ctp_trader_adapter",
-                                  "warn",
-                                  "dispatcher_queue_full",
+                EmitStructuredLog(nullptr, "ctp_trader_adapter", "warn", "dispatcher_queue_full",
                                   {{"priority", "normal"},
                                    {"queue_depth", std::to_string(stats.pending_normal)},
                                    {"dropped_total", std::to_string(stats.dropped_total)}});
@@ -175,22 +157,19 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
         [this](const BrokerTradingParamsSnapshot& snapshot) {
             BrokerTradingParamsSnapshot copied = snapshot;
             if (!dispatcher_.Post(
-                [this, copied]() {
-                    BrokerTradingParamsSnapshotCallback callback;
-                    {
-                        std::lock_guard<std::mutex> lock(mutex_);
-                        callback = user_broker_trading_params_callback_;
-                    }
-                    if (callback) {
-                        callback(copied);
-                    }
-                },
-                EventPriority::kNormal)) {
+                    [this, copied]() {
+                        BrokerTradingParamsSnapshotCallback callback;
+                        {
+                            std::lock_guard<std::mutex> lock(mutex_);
+                            callback = user_broker_trading_params_callback_;
+                        }
+                        if (callback) {
+                            callback(copied);
+                        }
+                    },
+                    EventPriority::kNormal)) {
                 const auto stats = dispatcher_.GetStats();
-                EmitStructuredLog(nullptr,
-                                  "ctp_trader_adapter",
-                                  "warn",
-                                  "dispatcher_queue_full",
+                EmitStructuredLog(nullptr, "ctp_trader_adapter", "warn", "dispatcher_queue_full",
                                   {{"priority", "normal"},
                                    {"queue_depth", std::to_string(stats.pending_normal)},
                                    {"dropped_total", std::to_string(stats.dropped_total)}});
@@ -222,19 +201,18 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
         }
     });
 
-    gateway_->RegisterLoginResponseCallback([this](int request_id,
-                                                   int error_code,
-                                                   const std::string& error_msg) {
-        if (error_code == 0) {
-            std::lock_guard<std::mutex> lock(mutex_);
-            state_ = TraderSessionState::kLoggedIn;
-            if (!settlement_confirm_required_) {
-                settlement_confirmed_ = true;
-                state_ = TraderSessionState::kReady;
+    gateway_->RegisterLoginResponseCallback(
+        [this](int request_id, int error_code, const std::string& error_msg) {
+            if (error_code == 0) {
+                std::lock_guard<std::mutex> lock(mutex_);
+                state_ = TraderSessionState::kLoggedIn;
+                if (!settlement_confirm_required_) {
+                    settlement_confirmed_ = true;
+                    state_ = TraderSessionState::kReady;
+                }
             }
-        }
-        ResolveLoginPromise(request_id, error_code, error_msg);
-    });
+            ResolveLoginPromise(request_id, error_code, error_msg);
+        });
 
     gateway_->RegisterQueryCompleteCallback(
         [this](int request_id, const std::string&, bool success) {
@@ -245,29 +223,28 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
             }
         });
 
-    gateway_->RegisterSettlementConfirmCallback([this](int request_id,
-                                                       int error_code,
-                                                       const std::string& error_msg) {
-        if (error_code == 0) {
-            std::lock_guard<std::mutex> lock(mutex_);
-            settlement_confirmed_ = true;
-            state_ = TraderSessionState::kSettlementConfirmed;
-        } else {
-            std::lock_guard<std::mutex> lock(mutex_);
-            settlement_confirmed_ = false;
-        }
-        if (error_code == 0) {
-            ResolveSettlementPromise(request_id);
-        } else {
-            RejectSettlementPromise(request_id, error_msg.empty() ? "confirm settlement failed"
-                                                                  : error_msg);
-        }
-    });
+    gateway_->RegisterSettlementConfirmCallback(
+        [this](int request_id, int error_code, const std::string& error_msg) {
+            if (error_code == 0) {
+                std::lock_guard<std::mutex> lock(mutex_);
+                settlement_confirmed_ = true;
+                state_ = TraderSessionState::kSettlementConfirmed;
+            } else {
+                std::lock_guard<std::mutex> lock(mutex_);
+                settlement_confirmed_ = false;
+            }
+            if (error_code == 0) {
+                ResolveSettlementPromise(request_id);
+            } else {
+                RejectSettlementPromise(
+                    request_id, error_msg.empty() ? "confirm settlement failed" : error_msg);
+            }
+        });
 }
 
 CTPTraderAdapter::~CTPTraderAdapter() {
     Disconnect();
-    python_dispatcher_.Stop();
+    callback_dispatcher_.Stop();
 }
 
 bool CTPTraderAdapter::Connect(const MarketDataConnectConfig& config) {
@@ -420,9 +397,9 @@ bool CTPTraderAdapter::CancelOrder(const std::string& client_order_id,
 }
 
 std::future<std::pair<int, std::string>> CTPTraderAdapter::LoginAsync(const std::string& broker_id,
-                                                                       const std::string& user_id,
-                                                                       const std::string& password,
-                                                                       int timeout_ms) {
+                                                                      const std::string& user_id,
+                                                                      const std::string& password,
+                                                                      int timeout_ms) {
     auto promise = std::make_shared<std::promise<std::pair<int, std::string>>>();
     auto future = promise->get_future();
 
@@ -716,9 +693,8 @@ void CTPTraderAdapter::RejectPromise(int request_id, const std::string& error_ms
         query_promises_.erase(it);
     }
     try {
-        promise->set_exception(
-            std::make_exception_ptr(std::runtime_error(error_msg.empty() ? "query failed"
-                                                                         : error_msg)));
+        promise->set_exception(std::make_exception_ptr(
+            std::runtime_error(error_msg.empty() ? "query failed" : error_msg)));
     } catch (...) {
     }
 }
@@ -752,15 +728,13 @@ void CTPTraderAdapter::RejectSettlementPromise(int request_id, const std::string
         settlement_promises_.erase(it);
     }
     try {
-        promise->set_exception(
-            std::make_exception_ptr(std::runtime_error(error_msg.empty() ? "settlement confirm failed"
-                                                                         : error_msg)));
+        promise->set_exception(std::make_exception_ptr(
+            std::runtime_error(error_msg.empty() ? "settlement confirm failed" : error_msg)));
     } catch (...) {
     }
 }
 
-void CTPTraderAdapter::ResolveLoginPromise(int request_id,
-                                           int error_code,
+void CTPTraderAdapter::ResolveLoginPromise(int request_id, int error_code,
                                            const std::string& error_msg) {
     std::shared_ptr<std::promise<std::pair<int, std::string>>> promise;
     {

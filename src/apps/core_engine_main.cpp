@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cmath>
 #include <csignal>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -13,47 +14,45 @@
 #include <vector>
 
 #include "quant_hft/contracts/types.h"
-#include "quant_hft/core/ctp_config_loader.h"
 #include "quant_hft/core/circuit_breaker.h"
+#include "quant_hft/core/ctp_config_loader.h"
 #include "quant_hft/core/ctp_md_adapter.h"
 #include "quant_hft/core/ctp_trader_adapter.h"
 #include "quant_hft/core/flow_controller.h"
 #include "quant_hft/core/local_wal_regulatory_sink.h"
 #include "quant_hft/core/market_bus_producer.h"
-#include "quant_hft/core/python_callback_dispatcher.h"
-#include "quant_hft/monitoring/exporter.h"
 #include "quant_hft/core/redis_realtime_store_client_adapter.h"
-#include "quant_hft/core/structured_log.h"
 #include "quant_hft/core/storage_client_factory.h"
 #include "quant_hft/core/storage_client_pool.h"
 #include "quant_hft/core/storage_connection_config.h"
 #include "quant_hft/core/storage_retry_policy.h"
-#include "quant_hft/core/strategy_intent_inbox.h"
+#include "quant_hft/core/structured_log.h"
+#include "quant_hft/core/timescale_buffered_event_store.h"
 #include "quant_hft/core/trading_domain_store_client_adapter.h"
 #include "quant_hft/core/trading_ledger_store_client_adapter.h"
-#include "quant_hft/core/timescale_buffered_event_store.h"
 #include "quant_hft/core/wal_replay_loader.h"
+#include "quant_hft/monitoring/exporter.h"
 #include "quant_hft/risk/risk_manager.h"
+#include "quant_hft/services/bar_aggregator.h"
 #include "quant_hft/services/basic_risk_engine.h"
-#include "quant_hft/services/execution_planner.h"
-#include "quant_hft/services/execution_router.h"
-#include "quant_hft/services/execution_engine.h"
-#include "quant_hft/services/order_manager.h"
-#include "quant_hft/services/position_manager.h"
 #include "quant_hft/services/ctp_account_ledger.h"
 #include "quant_hft/services/ctp_position_ledger.h"
+#include "quant_hft/services/execution_engine.h"
+#include "quant_hft/services/execution_planner.h"
+#include "quant_hft/services/execution_router.h"
 #include "quant_hft/services/in_memory_portfolio_ledger.h"
+#include "quant_hft/services/order_manager.h"
 #include "quant_hft/services/order_state_machine.h"
-#include "quant_hft/services/bar_aggregator.h"
+#include "quant_hft/services/position_manager.h"
 #include "quant_hft/services/rule_market_state_engine.h"
+#include "quant_hft/strategy/demo_live_strategy.h"
+#include "quant_hft/strategy/strategy_engine.h"
 
 namespace {
 
 std::atomic<bool> g_stop_requested{false};
 
-void OnSignal(int /*signal*/) {
-    g_stop_requested.store(true);
-}
+void OnSignal(int /*signal*/) { g_stop_requested.store(true); }
 
 bool ParseIntArg(const std::string& raw, int* out) {
     if (out == nullptr) {
@@ -67,10 +66,7 @@ bool ParseIntArg(const std::string& raw, int* out) {
     }
 }
 
-bool ParseArgs(int argc,
-               char** argv,
-               std::string* config_path,
-               int* run_seconds,
+bool ParseArgs(int argc, char** argv, std::string* config_path, int* run_seconds,
                std::string* error) {
     if (config_path == nullptr || run_seconds == nullptr) {
         if (error != nullptr) {
@@ -212,27 +208,6 @@ quant_hft::CtpOrderIntentForLedger BuildCtpLedgerIntent(const quant_hft::OrderIn
     return ledger_intent;
 }
 
-quant_hft::Bar ConvertToBar(const quant_hft::BarSnapshot& snapshot) {
-    quant_hft::Bar bar;
-    bar.symbol = snapshot.instrument_id;
-    bar.exchange = snapshot.exchange_id;
-    bar.timeframe = "1m";
-    bar.ts_ns = snapshot.ts_ns;
-    bar.open = snapshot.open;
-    bar.high = snapshot.high;
-    bar.low = snapshot.low;
-    bar.close = snapshot.close;
-    bar.volume = snapshot.volume;
-    bar.turnover = 0.0;
-    bar.open_interest = 0;
-    return bar;
-}
-
-std::string BuildStrategyBarKey(const std::string& strategy_id,
-                                const std::string& instrument_id) {
-    return "strategy:bar:" + strategy_id + ":" + instrument_id + ":latest";
-}
-
 bool IsTerminalStatus(quant_hft::OrderStatus status) {
     return status == quant_hft::OrderStatus::kFilled ||
            status == quant_hft::OrderStatus::kCanceled ||
@@ -250,10 +225,7 @@ int main(int argc, char** argv) {
     int run_seconds = 0;
     std::string parse_error;
     if (!ParseArgs(argc, argv, &config_path, &run_seconds, &parse_error)) {
-        EmitStructuredLog(&bootstrap_runtime,
-                          "core_engine",
-                          "error",
-                          "invalid_arguments",
+        EmitStructuredLog(&bootstrap_runtime, "core_engine", "error", "invalid_arguments",
                           {{"error", parse_error}});
         return 1;
     }
@@ -261,19 +233,19 @@ int main(int argc, char** argv) {
     CtpFileConfig file_config;
     std::string error;
     if (!CtpConfigLoader::LoadFromYaml(config_path, &file_config, &error)) {
-        EmitStructuredLog(&bootstrap_runtime,
-                          "core_engine",
-                          "error",
-                          "config_load_failed",
+        EmitStructuredLog(&bootstrap_runtime, "core_engine", "error", "config_load_failed",
                           {{"config_path", config_path}, {"error", error}});
         return 1;
     }
     const auto& config = file_config.runtime;
     const auto instruments = ResolveInstruments(file_config);
     const auto strategy_ids = ResolveStrategyIds(file_config);
-    const int poll_interval_ms = std::max(1, file_config.strategy_poll_interval_ms);
-    const std::string account_id = file_config.account_id.empty() ? config.user_id
-                                                                   : file_config.account_id;
+    const std::string strategy_factory =
+        file_config.strategy_factory.empty() ? std::string("demo") : file_config.strategy_factory;
+    const std::size_t strategy_queue_capacity =
+        static_cast<std::size_t>(std::max(1, file_config.strategy_queue_capacity));
+    const std::string account_id =
+        file_config.account_id.empty() ? config.user_id : file_config.account_id;
     const ExecutionConfig execution_config = file_config.execution;
     MetricsExporter metrics_exporter;
     if (config.metrics_enabled) {
@@ -285,13 +257,9 @@ int main(int argc, char** argv) {
     ExecutionPlanner execution_planner;
     ExecutionRouter execution_router;
     auto ctp_trader = std::make_shared<CTPTraderAdapter>(
-        static_cast<std::size_t>(std::max(1, config.query_rate_per_sec)),
-        2);
+        static_cast<std::size_t>(std::max(1, config.query_rate_per_sec)), 2);
     auto ctp_md = std::make_shared<CTPMdAdapter>(
-        static_cast<std::size_t>(std::max(1, config.query_rate_per_sec)),
-        2);
-    PythonCallbackDispatcher strategy_bar_dispatcher(5000, 10);
-    strategy_bar_dispatcher.Start();
+        static_cast<std::size_t>(std::max(1, config.query_rate_per_sec)), 2);
     auto flow_controller = std::make_shared<FlowController>();
     auto breaker_manager = std::make_shared<CircuitBreakerManager>();
     {
@@ -322,7 +290,8 @@ int main(int argc, char** argv) {
     breaker_cfg.failure_threshold = config.breaker_failure_threshold;
     breaker_cfg.timeout_ms = config.breaker_timeout_ms;
     breaker_cfg.half_open_timeout_ms = config.breaker_half_open_timeout_ms;
-    breaker_manager->Configure(BreakerScope::kStrategy, breaker_cfg, config.breaker_strategy_enabled);
+    breaker_manager->Configure(BreakerScope::kStrategy, breaker_cfg,
+                               config.breaker_strategy_enabled);
     breaker_manager->Configure(BreakerScope::kAccount, breaker_cfg, config.breaker_account_enabled);
     breaker_manager->Configure(BreakerScope::kSystem, breaker_cfg, config.breaker_system_enabled);
     InMemoryPortfolioLedger ledger;
@@ -339,12 +308,14 @@ int main(int argc, char** argv) {
     std::unordered_map<std::string, std::vector<MarketSnapshot>> recent_market_history;
     std::mutex cancel_pending_mutex;
     std::unordered_set<std::string> cancel_pending_orders;
-    std::unordered_map<std::string, std::vector<std::string>> strategy_subscriptions_by_instrument;
-    for (const auto& instrument : instruments) {
-        strategy_subscriptions_by_instrument[instrument] = strategy_ids;
-    }
-    std::unordered_map<std::string, std::function<void(const Bar&)>> strategy_bar_callbacks;
-    std::unordered_set<std::string> missing_bar_callback_warned;
+    std::function<void(const SignalIntent&)> process_signal_intent;
+    StrategyEngineConfig strategy_engine_config;
+    strategy_engine_config.queue_capacity = strategy_queue_capacity;
+    StrategyEngine strategy_engine(strategy_engine_config, [&](const SignalIntent& signal) {
+        if (process_signal_intent) {
+            process_signal_intent(signal);
+        }
+    });
     WalReplayLoader replay_loader;
     StorageRetryPolicy storage_retry_policy;
     storage_retry_policy.max_attempts = 3;
@@ -354,64 +325,29 @@ int main(int argc, char** argv) {
     const auto storage_config = StorageConnectionConfig::FromEnvironment();
     auto redis_client = StorageClientFactory::CreateRedisClient(storage_config, &error);
     if (redis_client == nullptr) {
-        EmitStructuredLog(
-            &config, "core_engine", "error", "redis_client_create_failed", {{"error", error}});
+        EmitStructuredLog(&config, "core_engine", "error", "redis_client_create_failed",
+                          {{"error", error}});
         return 5;
     }
     std::string redis_ping_error;
     if (!redis_client->Ping(&redis_ping_error)) {
-        EmitStructuredLog(&config,
-                          "core_engine",
-                          "error",
-                          "redis_client_unhealthy",
+        EmitStructuredLog(&config, "core_engine", "error", "redis_client_unhealthy",
                           {{"error", redis_ping_error}});
         return 5;
     }
     auto pooled_redis = std::make_shared<PooledRedisHashClient>(
         std::vector<std::shared_ptr<IRedisHashClient>>{redis_client});
-    for (const auto& strategy_id : strategy_ids) {
-        strategy_bar_callbacks[strategy_id] =
-            [pooled_redis, strategy_id](const Bar& bar) {
-                if (pooled_redis == nullptr || bar.symbol.empty()) {
-                    return;
-                }
-                const auto key = BuildStrategyBarKey(strategy_id, bar.symbol);
-                std::unordered_map<std::string, std::string> fields{
-                    {"instrument_id", bar.symbol},
-                    {"exchange", bar.exchange},
-                    {"timeframe", bar.timeframe},
-                    {"ts_ns", std::to_string(bar.ts_ns)},
-                    {"open", std::to_string(bar.open)},
-                    {"high", std::to_string(bar.high)},
-                    {"low", std::to_string(bar.low)},
-                    {"close", std::to_string(bar.close)},
-                    {"volume", std::to_string(bar.volume)},
-                    {"turnover", std::to_string(bar.turnover)},
-                    {"open_interest", std::to_string(bar.open_interest)},
-                };
-                std::string ignored_error;
-                (void)pooled_redis->HSet(key, fields, &ignored_error);
-                (void)pooled_redis->Expire(key, 3 * 24 * 60 * 60, &ignored_error);
-            };
-    }
     RedisRealtimeStoreClientAdapter realtime_cache(pooled_redis, storage_retry_policy);
-    StrategyIntentInbox strategy_inbox(pooled_redis);
 
     auto timescale_client = StorageClientFactory::CreateTimescaleClient(storage_config, &error);
     if (timescale_client == nullptr) {
-        EmitStructuredLog(&config,
-                          "core_engine",
-                          "error",
-                          "timescale_client_create_failed",
+        EmitStructuredLog(&config, "core_engine", "error", "timescale_client_create_failed",
                           {{"error", error}});
         return 6;
     }
     std::string timescale_ping_error;
     if (!timescale_client->Ping(&timescale_ping_error)) {
-        EmitStructuredLog(&config,
-                          "core_engine",
-                          "error",
-                          "timescale_client_unhealthy",
+        EmitStructuredLog(&config, "core_engine", "error", "timescale_client_unhealthy",
                           {{"error", timescale_ping_error}});
         return 6;
     }
@@ -421,41 +357,27 @@ int main(int argc, char** argv) {
     buffered_opts.batch_size = 16;
     buffered_opts.flush_interval_ms = 10;
     buffered_opts.schema = storage_config.timescale.analytics_schema;
-    TimescaleBufferedEventStore timeseries_store(pooled_timescale,
-                                                 storage_retry_policy,
+    TimescaleBufferedEventStore timeseries_store(pooled_timescale, storage_retry_policy,
                                                  buffered_opts);
-    TimescaleEventStoreClientAdapter ctp_query_snapshot_store(pooled_timescale,
-                                                              storage_retry_policy,
-                                                              storage_config.timescale.analytics_schema);
-    TradingLedgerStoreClientAdapter trading_ledger_store(pooled_timescale,
-                                                         storage_retry_policy,
+    TimescaleEventStoreClientAdapter ctp_query_snapshot_store(
+        pooled_timescale, storage_retry_policy, storage_config.timescale.analytics_schema);
+    TradingLedgerStoreClientAdapter trading_ledger_store(pooled_timescale, storage_retry_policy,
                                                          storage_config.timescale.trading_schema);
     auto trading_domain_store = std::make_shared<TradingDomainStoreClientAdapter>(
         pooled_timescale, storage_retry_policy, storage_config.timescale.trading_schema);
     auto order_manager = std::make_shared<OrderManager>(trading_domain_store);
-    auto position_manager =
-        std::make_shared<PositionManager>(trading_domain_store, pooled_redis);
-    ExecutionEngine execution_engine(ctp_trader,
-                                     flow_controller,
-                                     breaker_manager,
-                                     order_manager,
-                                     position_manager,
-                                     trading_domain_store,
-                                     1000,
-                                     config.cancel_retry_max,
-                                     config.cancel_retry_base_ms,
-                                     config.cancel_retry_max_delay_ms,
-                                     config.cancel_wait_ack_timeout_ms);
+    auto position_manager = std::make_shared<PositionManager>(trading_domain_store, pooled_redis);
+    ExecutionEngine execution_engine(
+        ctp_trader, flow_controller, breaker_manager, order_manager, position_manager,
+        trading_domain_store, 1000, config.cancel_retry_max, config.cancel_retry_base_ms,
+        config.cancel_retry_max_delay_ms, config.cancel_wait_ack_timeout_ms);
     ctp_trader->SetCircuitBreaker([breaker_manager, &config](bool opened) {
         if (!opened) {
             return;
         }
         breaker_manager->RecordFailure(BreakerScope::kSystem, "__system__");
-        EmitStructuredLog(&config,
-                          "core_engine",
-                          "warn",
-                          "python_callback_breaker_failure_recorded",
-                          {{"scope", "system"}});
+        EmitStructuredLog(&config, "core_engine", "warn",
+                          "callback_dispatcher_breaker_failure_recorded", {{"scope", "system"}});
     });
     auto risk_manager = CreateRiskManager(order_manager, trading_domain_store);
     RiskManagerConfig risk_manager_config;
@@ -468,8 +390,7 @@ int main(int argc, char** argv) {
     (void)risk_manager->Initialize(risk_manager_config);
     execution_engine.SetRiskManager(risk_manager);
     RuleMarketStateEngine market_state(32);
-    MarketBusProducer market_bus_producer(config.kafka_bootstrap_servers,
-                                          config.kafka_topic_ticks);
+    MarketBusProducer market_bus_producer(config.kafka_bootstrap_servers, config.kafka_topic_ticks);
     LocalWalRegulatorySink wal_sink("runtime_events.wal");
     std::atomic<std::uint64_t> wal_write_failures{0};
     std::atomic<std::uint64_t> trading_write_failures{0};
@@ -523,10 +444,7 @@ int main(int argc, char** argv) {
             state_applied = order_state_machine.RecoverFromOrderEvent(event);
         }
         if (!state_applied) {
-            EmitStructuredLog(&config,
-                              "core_engine",
-                              "warn",
-                              "legacy_state_machine_rejected",
+            EmitStructuredLog(&config, "core_engine", "warn", "legacy_state_machine_rejected",
                               {{"client_order_id", event.client_order_id}});
         }
         execution_engine.HandleOrderEvent(event);
@@ -546,20 +464,14 @@ int main(int argc, char** argv) {
             std::lock_guard<std::mutex> lock(ctp_ledger_mutex);
             if (!ctp_position_ledger.ApplyOrderEvent(event, &ctp_ledger_error) &&
                 ctp_ledger_error != "order intent not registered") {
-                EmitStructuredLog(&config,
-                                  "core_engine",
-                                  "warn",
-                                  "ctp_position_ledger_apply_failed",
-                                  {{"client_order_id", event.client_order_id},
-                                   {"error", ctp_ledger_error}});
+                EmitStructuredLog(
+                    &config, "core_engine", "warn", "ctp_position_ledger_apply_failed",
+                    {{"client_order_id", event.client_order_id}, {"error", ctp_ledger_error}});
             }
         }
         if (!wal_sink.AppendOrderEvent(event)) {
             const auto failure_count = wal_write_failures.fetch_add(1) + 1;
-            EmitStructuredLog(&config,
-                              "core_engine",
-                              "error",
-                              "wal_append_order_event_failed",
+            EmitStructuredLog(&config, "core_engine", "error", "wal_append_order_event_failed",
                               {{"client_order_id", event.client_order_id},
                                {"failure_count", std::to_string(failure_count)}});
         }
@@ -567,21 +479,17 @@ int main(int argc, char** argv) {
         std::string trading_error;
         if (!trading_ledger_store.AppendOrderEvent(event, &trading_error)) {
             const auto failure_count = trading_write_failures.fetch_add(1) + 1;
-            EmitStructuredLog(&config,
-                              "core_engine",
-                              "error",
-                              "trading_append_order_event_failed",
+            EmitStructuredLog(&config, "core_engine", "error", "trading_append_order_event_failed",
                               {{"client_order_id", event.client_order_id},
                                {"error", trading_error},
                                {"failure_count", std::to_string(failure_count)}});
         }
-        if ((event.status == OrderStatus::kPartiallyFilled || event.status == OrderStatus::kFilled) &&
+        if ((event.status == OrderStatus::kPartiallyFilled ||
+             event.status == OrderStatus::kFilled) &&
             event.filled_volume > 0) {
             if (!trading_ledger_store.AppendTradeEvent(event, &trading_error)) {
                 const auto failure_count = trading_write_failures.fetch_add(1) + 1;
-                EmitStructuredLog(&config,
-                                  "core_engine",
-                                  "error",
+                EmitStructuredLog(&config, "core_engine", "error",
                                   "trading_append_trade_event_failed",
                                   {{"client_order_id", event.client_order_id},
                                    {"trade_id", event.trade_id},
@@ -592,12 +500,106 @@ int main(int argc, char** argv) {
 
         realtime_cache.UpsertOrderEvent(event);
 
-        realtime_cache.UpsertPositionSnapshot(
-            ledger.GetPositionSnapshot(event.account_id, event.instrument_id, PositionDirection::kLong));
-        realtime_cache.UpsertPositionSnapshot(
-            ledger.GetPositionSnapshot(event.account_id, event.instrument_id, PositionDirection::kShort));
+        realtime_cache.UpsertPositionSnapshot(ledger.GetPositionSnapshot(
+            event.account_id, event.instrument_id, PositionDirection::kLong));
+        realtime_cache.UpsertPositionSnapshot(ledger.GetPositionSnapshot(
+            event.account_id, event.instrument_id, PositionDirection::kShort));
 
         timeseries_store.AppendOrderEvent(event);
+        strategy_engine.EnqueueOrderEvent(event);
+    };
+
+    process_signal_intent = [&](const SignalIntent& signal) {
+        std::vector<MarketSnapshot> recent_market;
+        {
+            std::lock_guard<std::mutex> lock(market_history_mutex);
+            const auto it = recent_market_history.find(signal.instrument_id);
+            if (it != recent_market_history.end()) {
+                recent_market = it->second;
+            }
+        }
+        const auto plans =
+            execution_planner.BuildPlan(signal, account_id, execution_config, recent_market);
+        for (const auto& planned : plans) {
+            const auto& intent = planned.intent;
+            ExecutionMetadata metadata;
+            metadata.execution_algo_id = planned.execution_algo_id;
+            metadata.slice_index = planned.slice_index;
+            metadata.slice_total = planned.slice_total;
+            const std::int64_t observed_market_volume =
+                recent_market.empty() ? 0 : recent_market.back().volume;
+            const auto route =
+                execution_router.Route(planned, execution_config, observed_market_volume);
+            metadata.venue = route.venue;
+            metadata.route_id = route.route_id;
+            metadata.slippage_bps = route.slippage_bps;
+            metadata.impact_cost = route.impact_cost;
+            {
+                std::lock_guard<std::mutex> lock(execution_metadata_mutex);
+                execution_metadata_by_order[intent.client_order_id] = metadata;
+            }
+
+            bool throttle_applied = false;
+            double throttle_ratio = 0.0;
+            if (execution_config.throttle_reject_ratio > 0.0) {
+                std::lock_guard<std::mutex> lock(planner_mutex);
+                throttle_applied =
+                    execution_planner.ShouldThrottle(execution_config.throttle_reject_ratio);
+                throttle_ratio = execution_planner.CurrentRejectRatio();
+            }
+            if (throttle_applied) {
+                RiskDecision throttle_decision;
+                throttle_decision.action = RiskAction::kReject;
+                throttle_decision.rule_id = "policy.execution.throttle.reject_ratio";
+                throttle_decision.rule_group = "execution";
+                throttle_decision.rule_version = "v1";
+                throttle_decision.policy_id = "policy.execution.throttle";
+                throttle_decision.policy_scope = "execution";
+                throttle_decision.observed_value = throttle_ratio;
+                throttle_decision.threshold_value = execution_config.throttle_reject_ratio;
+                throttle_decision.decision_tags = "execution,throttle";
+                throttle_decision.reason = "reject ratio exceeds threshold";
+                throttle_decision.decision_ts_ns = NowEpochNanos();
+                timeseries_store.AppendRiskDecision(intent, throttle_decision);
+
+                metadata.throttle_applied = true;
+                process_order_event(
+                    BuildRejectedEvent(intent, "throttled:reject_ratio_exceeded", metadata));
+                continue;
+            }
+
+            if (!order_state_machine.OnOrderIntent(intent)) {
+                process_order_event(BuildRejectedEvent(
+                    intent, "order_state_reject:duplicate_or_invalid", metadata));
+            } else {
+                std::string ctp_ledger_error;
+                {
+                    const auto ledger_intent = BuildCtpLedgerIntent(intent);
+                    std::lock_guard<std::mutex> lock(ctp_ledger_mutex);
+                    if (!ctp_position_ledger.RegisterOrderIntent(ledger_intent,
+                                                                 &ctp_ledger_error)) {
+                        process_order_event(BuildRejectedEvent(
+                            intent, "position_ledger_reject:" + ctp_ledger_error, metadata));
+                        continue;
+                    }
+                }
+                if (!execution_engine.PlaceOrderAsync(intent).get().success) {
+                    process_order_event(
+                        BuildRejectedEvent(intent, "gateway_reject:place_order_failed", metadata));
+                    continue;
+                }
+                std::lock_guard<std::mutex> lock(planner_mutex);
+                execution_planner.RecordOrderResult(false);
+            }
+
+            const bool is_last_slice = planned.slice_index == planned.slice_total;
+            const bool interval_enabled = execution_config.algo != ExecutionAlgo::kDirect &&
+                                          execution_config.slice_interval_ms > 0;
+            if (!is_last_slice && interval_enabled) {
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(execution_config.slice_interval_ms));
+            }
+        }
     };
 
     auto process_market_snapshot = [&](const MarketSnapshot& raw_snapshot) {
@@ -605,41 +607,7 @@ int main(int argc, char** argv) {
         if (!bar_aggregator.ShouldProcessSnapshot(snapshot)) {
             return;
         }
-        const auto bars = bar_aggregator.OnMarketSnapshot(snapshot);
-        if (!bars.empty()) {
-            for (const auto& bar_snapshot : bars) {
-                const auto bar = ConvertToBar(bar_snapshot);
-                const auto subscriptions_it =
-                    strategy_subscriptions_by_instrument.find(bar_snapshot.instrument_id);
-                if (subscriptions_it == strategy_subscriptions_by_instrument.end()) {
-                    continue;
-                }
-                for (const auto& strategy_id : subscriptions_it->second) {
-                    const auto callback_it = strategy_bar_callbacks.find(strategy_id);
-                    if (callback_it == strategy_bar_callbacks.end() || !callback_it->second) {
-                        if (missing_bar_callback_warned.insert(strategy_id).second) {
-                            EmitStructuredLog(&config,
-                                              "core_engine",
-                                              "warn",
-                                              "strategy_on_bar_callback_missing",
-                                              {{"strategy_id", strategy_id}});
-                        }
-                        continue;
-                    }
-                    const auto callback = callback_it->second;
-                    const bool posted =
-                        strategy_bar_dispatcher.Post([callback, bar]() { callback(bar); }, true);
-                    if (!posted) {
-                        EmitStructuredLog(
-                            &config,
-                            "core_engine",
-                            "error",
-                            "strategy_on_bar_dispatch_failed",
-                            {{"strategy_id", strategy_id}, {"instrument_id", bar_snapshot.instrument_id}});
-                    }
-                }
-            }
-        }
+        (void)bar_aggregator.OnMarketSnapshot(snapshot);
         {
             std::lock_guard<std::mutex> lock(market_history_mutex);
             auto& history = recent_market_history[snapshot.instrument_id];
@@ -653,12 +621,9 @@ int main(int argc, char** argv) {
         market_state.OnMarketSnapshot(snapshot);
         const auto publish_result = market_bus_producer.PublishTick(snapshot);
         if (!publish_result.ok) {
-            EmitStructuredLog(&config,
-                              "core_engine",
-                              "error",
-                              "market_bus_publish_failed",
-                              {{"topic", config.kafka_topic_ticks},
-                               {"reason", publish_result.reason}});
+            EmitStructuredLog(
+                &config, "core_engine", "error", "market_bus_publish_failed",
+                {{"topic", config.kafka_topic_ticks}, {"reason", publish_result.reason}});
         }
     };
 
@@ -666,28 +631,25 @@ int main(int argc, char** argv) {
         [&](const OrderEvent& event) { process_order_event(event); });
     ctp_md->RegisterTickCallback(
         [&](const MarketSnapshot& snapshot) { process_market_snapshot(snapshot); });
-    ctp_trader->RegisterTradingAccountSnapshotCallback(
-        [&](const TradingAccountSnapshot& snapshot) {
-            {
-                std::lock_guard<std::mutex> lock(ctp_ledger_mutex);
-                ctp_account_ledger.ApplyTradingAccountSnapshot(snapshot);
-                if (!snapshot.trading_day.empty()) {
-                    ctp_account_ledger.RollTradingDay(snapshot.trading_day);
-                }
+    ctp_trader->RegisterTradingAccountSnapshotCallback([&](const TradingAccountSnapshot& snapshot) {
+        {
+            std::lock_guard<std::mutex> lock(ctp_ledger_mutex);
+            ctp_account_ledger.ApplyTradingAccountSnapshot(snapshot);
+            if (!snapshot.trading_day.empty()) {
+                ctp_account_ledger.RollTradingDay(snapshot.trading_day);
             }
-            std::string trading_error;
-            if (!trading_ledger_store.AppendAccountSnapshot(snapshot, &trading_error)) {
-                const auto failure_count = trading_write_failures.fetch_add(1) + 1;
-                EmitStructuredLog(&config,
-                                  "core_engine",
-                                  "error",
-                                  "trading_append_account_snapshot_failed",
-                                  {{"account_id", snapshot.account_id},
-                                   {"error", trading_error},
-                                   {"failure_count", std::to_string(failure_count)}});
-            }
-            ctp_query_snapshot_store.AppendTradingAccountSnapshot(snapshot);
-        });
+        }
+        std::string trading_error;
+        if (!trading_ledger_store.AppendAccountSnapshot(snapshot, &trading_error)) {
+            const auto failure_count = trading_write_failures.fetch_add(1) + 1;
+            EmitStructuredLog(&config, "core_engine", "error",
+                              "trading_append_account_snapshot_failed",
+                              {{"account_id", snapshot.account_id},
+                               {"error", trading_error},
+                               {"failure_count", std::to_string(failure_count)}});
+        }
+        ctp_query_snapshot_store.AppendTradingAccountSnapshot(snapshot);
+    });
     ctp_trader->RegisterInvestorPositionSnapshotCallback(
         [&](const std::vector<InvestorPositionSnapshot>& snapshots) {
             std::string ctp_ledger_error;
@@ -696,9 +658,7 @@ int main(int argc, char** argv) {
                     std::lock_guard<std::mutex> lock(ctp_ledger_mutex);
                     if (!ctp_position_ledger.ApplyInvestorPositionSnapshot(snapshot,
                                                                            &ctp_ledger_error)) {
-                        EmitStructuredLog(&config,
-                                          "core_engine",
-                                          "warn",
+                        EmitStructuredLog(&config, "core_engine", "warn",
                                           "ctp_position_snapshot_apply_failed",
                                           {{"instrument_id", snapshot.instrument_id},
                                            {"error", ctp_ledger_error}});
@@ -707,9 +667,7 @@ int main(int argc, char** argv) {
                 std::string trading_error;
                 if (!trading_ledger_store.AppendPositionSnapshot(snapshot, &trading_error)) {
                     const auto failure_count = trading_write_failures.fetch_add(1) + 1;
-                    EmitStructuredLog(&config,
-                                      "core_engine",
-                                      "error",
+                    EmitStructuredLog(&config, "core_engine", "error",
                                       "trading_append_position_snapshot_failed",
                                       {{"account_id", snapshot.account_id},
                                        {"instrument_id", snapshot.instrument_id},
@@ -733,8 +691,27 @@ int main(int argc, char** argv) {
             }
             ctp_query_snapshot_store.AppendBrokerTradingParamsSnapshot(snapshot);
         });
-    market_state.RegisterStateCallback(
-        [&](const StateSnapshot7D& state) { realtime_cache.UpsertStateSnapshot7D(state); });
+    market_state.RegisterStateCallback([&](const StateSnapshot7D& state) {
+        realtime_cache.UpsertStateSnapshot7D(state);
+        strategy_engine.EnqueueState(state);
+    });
+
+    std::string strategy_register_error;
+    if (!RegisterDemoLiveStrategy(&strategy_register_error)) {
+        EmitStructuredLog(&config, "core_engine", "error", "strategy_factory_register_failed",
+                          {{"strategy_factory", "demo"}, {"error", strategy_register_error}});
+        return 7;
+    }
+    StrategyContext strategy_context;
+    strategy_context.account_id = account_id;
+    strategy_context.metadata["strategy_factory"] = strategy_factory;
+    if (!strategy_engine.Start(strategy_ids, strategy_factory, strategy_context,
+                               &strategy_register_error)) {
+        EmitStructuredLog(
+            &config, "core_engine", "error", "strategy_engine_start_failed",
+            {{"strategy_factory", strategy_factory}, {"error", strategy_register_error}});
+        return 7;
+    }
 
     MarketDataConnectConfig connect_cfg;
     connect_cfg.market_front_address = config.md_front;
@@ -761,8 +738,8 @@ int main(int argc, char** argv) {
         EmitStructuredLog(&config, "core_engine", "error", "ctp_trader_connect_failed");
         const auto diagnostic = ctp_trader->GetLastConnectDiagnostic();
         if (!diagnostic.empty()) {
-            EmitStructuredLog(
-                &config, "core_engine", "error", "ctp_connect_diagnostic", {{"detail", diagnostic}});
+            EmitStructuredLog(&config, "core_engine", "error", "ctp_connect_diagnostic",
+                              {{"detail", diagnostic}});
         }
         return 2;
     }
@@ -770,8 +747,8 @@ int main(int argc, char** argv) {
         EmitStructuredLog(&config, "core_engine", "error", "ctp_md_connect_failed");
         const auto diagnostic = ctp_md->GetLastConnectDiagnostic();
         if (!diagnostic.empty()) {
-            EmitStructuredLog(
-                &config, "core_engine", "error", "ctp_connect_diagnostic", {{"detail", diagnostic}});
+            EmitStructuredLog(&config, "core_engine", "error", "ctp_connect_diagnostic",
+                              {{"detail", diagnostic}});
         }
         return 2;
     }
@@ -780,10 +757,7 @@ int main(int argc, char** argv) {
         return 2;
     }
     if (!ctp_md->Subscribe(instruments)) {
-        EmitStructuredLog(&config,
-                          "core_engine",
-                          "error",
-                          "ctp_subscribe_failed",
+        EmitStructuredLog(&config, "core_engine", "error", "ctp_subscribe_failed",
                           {{"instrument_count", std::to_string(instruments.size())}});
         return 2;
     }
@@ -792,9 +766,7 @@ int main(int argc, char** argv) {
     }
 
     std::atomic<int> query_request_id{1};
-    auto next_query_request_id = [&query_request_id]() {
-        return query_request_id.fetch_add(1);
-    };
+    auto next_query_request_id = [&query_request_id]() { return query_request_id.fetch_add(1); };
     if (!ctp_trader->EnqueueUserSessionQuery(next_query_request_id())) {
         EmitStructuredLog(&config, "core_engine", "warn", "initial_user_session_query_failed");
     }
@@ -812,22 +784,17 @@ int main(int argc, char** argv) {
         EmitStructuredLog(&config, "core_engine", "warn", "initial_instrument_query_failed");
     }
     if (!ctp_trader->EnqueueBrokerTradingParamsQuery(next_query_request_id())) {
-        EmitStructuredLog(
-            &config, "core_engine", "warn", "initial_broker_trading_params_query_failed");
+        EmitStructuredLog(&config, "core_engine", "warn",
+                          "initial_broker_trading_params_query_failed");
     }
     for (const auto& instrument_id : instruments) {
         if (!ctp_trader->EnqueueInstrumentMarginRateQuery(next_query_request_id(), instrument_id)) {
-            EmitStructuredLog(&config,
-                              "core_engine",
-                              "warn",
-                              "initial_margin_rate_query_failed",
+            EmitStructuredLog(&config, "core_engine", "warn", "initial_margin_rate_query_failed",
                               {{"instrument_id", instrument_id}});
         }
         if (!ctp_trader->EnqueueInstrumentCommissionRateQuery(next_query_request_id(),
                                                               instrument_id)) {
-            EmitStructuredLog(&config,
-                              "core_engine",
-                              "warn",
+            EmitStructuredLog(&config, "core_engine", "warn",
                               "initial_commission_rate_query_failed",
                               {{"instrument_id", instrument_id}});
         }
@@ -837,8 +804,8 @@ int main(int argc, char** argv) {
     std::signal(SIGTERM, OnSignal);
     g_stop_requested.store(false);
 
-    std::atomic<bool> strategy_loop_stop{false};
     std::atomic<bool> query_loop_stop{false};
+    std::atomic<bool> execution_loop_stop{false};
     std::thread query_poll_thread([&]() {
         auto next_account_query = std::chrono::steady_clock::now();
         auto next_position_query = std::chrono::steady_clock::now();
@@ -850,16 +817,16 @@ int main(int argc, char** argv) {
                     (void)execution_engine.QueryTradingAccountAsync().get();
                 } catch (...) {
                 }
-                next_account_query =
-                    now + std::chrono::milliseconds(std::max(1, file_config.account_query_interval_ms));
+                next_account_query = now + std::chrono::milliseconds(
+                                               std::max(1, file_config.account_query_interval_ms));
             }
             if (now >= next_position_query) {
                 try {
                     (void)execution_engine.QueryInvestorPositionAsync().get();
                 } catch (...) {
                 }
-                next_position_query =
-                    now + std::chrono::milliseconds(std::max(1, file_config.position_query_interval_ms));
+                next_position_query = now + std::chrono::milliseconds(std::max(
+                                                1, file_config.position_query_interval_ms));
             }
             if (now >= next_instrument_query) {
                 (void)ctp_trader->EnqueueInstrumentQuery(next_query_request_id());
@@ -870,129 +837,16 @@ int main(int argc, char** argv) {
                     (void)ctp_trader->EnqueueInstrumentCommissionRateQuery(next_query_request_id(),
                                                                            instrument_id);
                 }
-                next_instrument_query = now + std::chrono::milliseconds(
-                                                  std::max(1, file_config.instrument_query_interval_ms));
+                next_instrument_query = now + std::chrono::milliseconds(std::max(
+                                                  1, file_config.instrument_query_interval_ms));
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
     });
 
-    std::thread strategy_poll_thread([&]() {
+    std::thread execution_maintenance_thread([&]() {
         auto next_cancel_scan = std::chrono::steady_clock::now();
-        while (!strategy_loop_stop.load()) {
-            for (const auto& strategy_id : strategy_ids) {
-                StrategyIntentBatch batch;
-                std::string read_error;
-                if (!strategy_inbox.ReadLatest(strategy_id, &batch, &read_error)) {
-                    if (read_error.find("missing") == std::string::npos) {
-                        EmitStructuredLog(&config,
-                                          "core_engine",
-                                          "warn",
-                                          "strategy_inbox_read_failed",
-                                          {{"strategy_id", strategy_id}, {"error", read_error}});
-                    }
-                    continue;
-                }
-
-                for (const auto& signal : batch.intents) {
-                    std::vector<MarketSnapshot> recent_market;
-                    {
-                        std::lock_guard<std::mutex> lock(market_history_mutex);
-                        const auto it = recent_market_history.find(signal.instrument_id);
-                        if (it != recent_market_history.end()) {
-                            recent_market = it->second;
-                        }
-                    }
-                    const auto plans =
-                        execution_planner.BuildPlan(signal, account_id, execution_config, recent_market);
-                    for (const auto& planned : plans) {
-                        const auto& intent = planned.intent;
-                        ExecutionMetadata metadata;
-                        metadata.execution_algo_id = planned.execution_algo_id;
-                        metadata.slice_index = planned.slice_index;
-                        metadata.slice_total = planned.slice_total;
-                        const std::int64_t observed_market_volume =
-                            recent_market.empty() ? 0 : recent_market.back().volume;
-                        const auto route =
-                            execution_router.Route(planned, execution_config, observed_market_volume);
-                        metadata.venue = route.venue;
-                        metadata.route_id = route.route_id;
-                        metadata.slippage_bps = route.slippage_bps;
-                        metadata.impact_cost = route.impact_cost;
-                        {
-                            std::lock_guard<std::mutex> lock(execution_metadata_mutex);
-                            execution_metadata_by_order[intent.client_order_id] = metadata;
-                        }
-
-                        bool throttle_applied = false;
-                        double throttle_ratio = 0.0;
-                        if (execution_config.throttle_reject_ratio > 0.0) {
-                            std::lock_guard<std::mutex> lock(planner_mutex);
-                            throttle_applied =
-                                execution_planner.ShouldThrottle(execution_config.throttle_reject_ratio);
-                            throttle_ratio = execution_planner.CurrentRejectRatio();
-                        }
-                        if (throttle_applied) {
-                            RiskDecision throttle_decision;
-                            throttle_decision.action = RiskAction::kReject;
-                            throttle_decision.rule_id = "policy.execution.throttle.reject_ratio";
-                            throttle_decision.rule_group = "execution";
-                            throttle_decision.rule_version = "v1";
-                            throttle_decision.policy_id = "policy.execution.throttle";
-                            throttle_decision.policy_scope = "execution";
-                            throttle_decision.observed_value = throttle_ratio;
-                            throttle_decision.threshold_value = execution_config.throttle_reject_ratio;
-                            throttle_decision.decision_tags = "execution,throttle";
-                            throttle_decision.reason = "reject ratio exceeds threshold";
-                            throttle_decision.decision_ts_ns = NowEpochNanos();
-                            timeseries_store.AppendRiskDecision(intent, throttle_decision);
-
-                            metadata.throttle_applied = true;
-                            process_order_event(BuildRejectedEvent(
-                                intent,
-                                "throttled:reject_ratio_exceeded",
-                                metadata));
-                            continue;
-                        }
-
-                        if (!order_state_machine.OnOrderIntent(intent)) {
-                            process_order_event(BuildRejectedEvent(
-                                intent, "order_state_reject:duplicate_or_invalid", metadata));
-                        } else {
-                            std::string ctp_ledger_error;
-                            {
-                                const auto ledger_intent = BuildCtpLedgerIntent(intent);
-                                std::lock_guard<std::mutex> lock(ctp_ledger_mutex);
-                                if (!ctp_position_ledger.RegisterOrderIntent(ledger_intent,
-                                                                             &ctp_ledger_error)) {
-                                    process_order_event(BuildRejectedEvent(
-                                        intent,
-                                        "position_ledger_reject:" + ctp_ledger_error,
-                                        metadata));
-                                    continue;
-                                }
-                            }
-                            if (!execution_engine.PlaceOrderAsync(intent).get().success) {
-                                process_order_event(BuildRejectedEvent(
-                                    intent, "gateway_reject:place_order_failed", metadata));
-                                continue;
-                            }
-                            std::lock_guard<std::mutex> lock(planner_mutex);
-                            execution_planner.RecordOrderResult(false);
-                        }
-
-                        const bool is_last_slice = planned.slice_index == planned.slice_total;
-                        const bool interval_enabled =
-                            execution_config.algo != ExecutionAlgo::kDirect &&
-                            execution_config.slice_interval_ms > 0;
-                        if (!is_last_slice && interval_enabled) {
-                            std::this_thread::sleep_for(
-                                std::chrono::milliseconds(execution_config.slice_interval_ms));
-                        }
-                    }
-                }
-            }
-
+        while (!execution_loop_stop.load()) {
             if (execution_config.cancel_after_ms > 0) {
                 const auto now = std::chrono::steady_clock::now();
                 if (now >= next_cancel_scan) {
@@ -1008,9 +862,7 @@ int main(int argc, char** argv) {
                         bool first_request = false;
                         {
                             std::lock_guard<std::mutex> lock(cancel_pending_mutex);
-                            first_request = cancel_pending_orders
-                                                .insert(order.order_id)
-                                                .second;
+                            first_request = cancel_pending_orders.insert(order.order_id).second;
                         }
                         if (!first_request) {
                             continue;
@@ -1022,13 +874,12 @@ int main(int argc, char** argv) {
                         }
                     }
 
-                    next_cancel_scan =
-                        now + std::chrono::milliseconds(std::max(
-                                  1, execution_config.cancel_check_interval_ms));
+                    next_cancel_scan = now + std::chrono::milliseconds(std::max(
+                                                 1, execution_config.cancel_check_interval_ms));
                 }
             }
 
-            std::this_thread::sleep_for(std::chrono::milliseconds(poll_interval_ms));
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
     });
 
@@ -1068,18 +919,18 @@ int main(int argc, char** argv) {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
 
-    strategy_loop_stop.store(true);
-    if (strategy_poll_thread.joinable()) {
-        strategy_poll_thread.join();
+    execution_loop_stop.store(true);
+    if (execution_maintenance_thread.joinable()) {
+        execution_maintenance_thread.join();
     }
     query_loop_stop.store(true);
     if (query_poll_thread.joinable()) {
         query_poll_thread.join();
     }
 
+    strategy_engine.Stop();
     ctp_md->Disconnect();
     ctp_trader->Disconnect();
-    strategy_bar_dispatcher.Stop();
     metrics_exporter.Stop();
     (void)bar_aggregator.Flush();
     timeseries_store.Flush();

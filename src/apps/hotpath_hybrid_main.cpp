@@ -10,8 +10,8 @@
 #include <thread>
 #include <vector>
 
+#include "quant_hft/core/callback_dispatcher.h"
 #include "quant_hft/core/event_dispatcher.h"
-#include "quant_hft/core/python_callback_dispatcher.h"
 
 namespace {
 
@@ -69,7 +69,7 @@ int main(int argc, char** argv) {
     std::size_t tick_rate = 2000;
     std::size_t order_rate = 20;
     std::int64_t duration_sec = 60;
-    std::size_t python_queue_size = 5000;
+    std::size_t callback_queue_size = 5000;
     std::string output_path = "stats.json";
 
     for (int i = 1; i < argc; ++i) {
@@ -80,17 +80,18 @@ int main(int argc, char** argv) {
             order_rate = static_cast<std::size_t>(std::stoull(argv[++i]));
         } else if (arg == "--duration" && i + 1 < argc) {
             duration_sec = std::max<std::int64_t>(1, std::stoll(argv[++i]));
-        } else if (arg == "--python-queue-size" && i + 1 < argc) {
-            python_queue_size = static_cast<std::size_t>(std::stoull(argv[++i]));
+        } else if ((arg == "--callback-queue-size" || arg == "--python-queue-size") &&
+                   i + 1 < argc) {
+            callback_queue_size = static_cast<std::size_t>(std::stoull(argv[++i]));
         } else if (arg == "--output" && i + 1 < argc) {
             output_path = argv[++i];
         }
     }
 
     quant_hft::EventDispatcher cpp_dispatcher(1, 10000, 20000);
-    quant_hft::PythonCallbackDispatcher python_dispatcher(python_queue_size, 10, 100);
+    quant_hft::CallbackDispatcher callback_dispatcher(callback_queue_size, 10, 100);
     cpp_dispatcher.Start();
-    python_dispatcher.Start();
+    callback_dispatcher.Start();
 
     const auto rss_start_kb = ReadRssKb();
     const auto started = Clock::now();
@@ -98,14 +99,14 @@ int main(int argc, char** argv) {
 
     std::atomic<std::size_t> produced_ticks{0};
     std::atomic<std::size_t> produced_orders{0};
-    std::atomic<std::size_t> python_order_post_failed{0};
-    std::atomic<std::size_t> python_tick_post_failed{0};
+    std::atomic<std::size_t> callback_order_post_failed{0};
+    std::atomic<std::size_t> callback_tick_post_failed{0};
     std::atomic<std::size_t> cpp_post_failed{0};
 
     std::vector<std::int64_t> order_delay_ms_samples;
     std::mutex order_delay_mutex;
 
-    std::atomic<std::size_t> max_python_pending{0};
+    std::atomic<std::size_t> max_callback_pending{0};
     std::atomic<std::size_t> max_cpp_pending{0};
 
     auto tick_producer = std::thread([&]() {
@@ -121,17 +122,17 @@ int main(int argc, char** argv) {
             const auto enqueue_ns = NowNs();
             const bool ok = cpp_dispatcher.Post(
                 [&, enqueue_ns]() {
-                    const bool posted = python_dispatcher.Post(
+                    const bool posted = callback_dispatcher.Post(
                         [enqueue_ns]() {
-                            const auto delay_ms = std::max<std::int64_t>(
-                                0, (NowNs() - enqueue_ns) / 1'000'000);
+                            const auto delay_ms =
+                                std::max<std::int64_t>(0, (NowNs() - enqueue_ns) / 1'000'000);
                             if (delay_ms > 0) {
                                 std::this_thread::sleep_for(std::chrono::microseconds(50));
                             }
                         },
                         false);
                     if (!posted) {
-                        python_tick_post_failed.fetch_add(1, std::memory_order_relaxed);
+                        callback_tick_post_failed.fetch_add(1, std::memory_order_relaxed);
                     }
                 },
                 quant_hft::EventPriority::kNormal);
@@ -156,10 +157,10 @@ int main(int argc, char** argv) {
             const auto enqueue_ns = NowNs();
             const bool ok = cpp_dispatcher.Post(
                 [&, enqueue_ns]() {
-                    const bool posted = python_dispatcher.Post(
+                    const bool posted = callback_dispatcher.Post(
                         [&, enqueue_ns]() {
-                            const auto delay_ms = std::max<std::int64_t>(
-                                0, (NowNs() - enqueue_ns) / 1'000'000);
+                            const auto delay_ms =
+                                std::max<std::int64_t>(0, (NowNs() - enqueue_ns) / 1'000'000);
                             {
                                 std::lock_guard<std::mutex> lock(order_delay_mutex);
                                 order_delay_ms_samples.push_back(delay_ms);
@@ -168,7 +169,7 @@ int main(int argc, char** argv) {
                         },
                         true);
                     if (!posted) {
-                        python_order_post_failed.fetch_add(1, std::memory_order_relaxed);
+                        callback_order_post_failed.fetch_add(1, std::memory_order_relaxed);
                     }
                 },
                 quant_hft::EventPriority::kHigh);
@@ -182,10 +183,10 @@ int main(int argc, char** argv) {
 
     auto sampler = std::thread([&]() {
         while (Clock::now() < deadline) {
-            const auto py = python_dispatcher.GetStats();
+            const auto py = callback_dispatcher.GetStats();
             const auto cpp = cpp_dispatcher.GetStats();
-            max_python_pending.store(
-                std::max(max_python_pending.load(std::memory_order_relaxed), py.pending),
+            max_callback_pending.store(
+                std::max(max_callback_pending.load(std::memory_order_relaxed), py.pending),
                 std::memory_order_relaxed);
             max_cpp_pending.store(
                 std::max(max_cpp_pending.load(std::memory_order_relaxed), cpp.total_pending),
@@ -201,9 +202,9 @@ int main(int argc, char** argv) {
     cpp_dispatcher.WaitUntilDrained(5000);
     cpp_dispatcher.Stop();
 
-    const auto py_before_stop = python_dispatcher.GetStats();
+    const auto py_before_stop = callback_dispatcher.GetStats();
     const auto cpp_final = cpp_dispatcher.GetStats();
-    python_dispatcher.Stop();
+    callback_dispatcher.Stop();
 
     const auto rss_end_kb = ReadRssKb();
     const auto rss_growth_pct = rss_start_kb == 0
@@ -229,29 +230,28 @@ int main(int argc, char** argv) {
     output << "  \"duration_sec\": " << duration_sec << ",\n";
     output << "  \"tick_rate\": " << tick_rate << ",\n";
     output << "  \"order_rate\": " << order_rate << ",\n";
-    output << "  \"python_queue_size\": " << python_queue_size << ",\n";
+    output << "  \"callback_queue_size\": " << callback_queue_size << ",\n";
     output << "  \"produced_ticks\": " << produced_ticks.load(std::memory_order_relaxed) << ",\n";
-    output << "  \"produced_orders\": " << produced_orders.load(std::memory_order_relaxed)
-           << ",\n";
+    output << "  \"produced_orders\": " << produced_orders.load(std::memory_order_relaxed) << ",\n";
     output << "  \"python\": {\n";
     output << "    \"pending\": " << py_before_stop.pending << ",\n";
     output << "    \"max_pending_observed\": "
-           << max_python_pending.load(std::memory_order_relaxed) << ",\n";
+           << max_callback_pending.load(std::memory_order_relaxed) << ",\n";
     output << "    \"dropped_total\": " << py_before_stop.dropped << ",\n";
     output << "    \"critical_timeout_total\": " << py_before_stop.critical_timeout << ",\n";
-    output << "    \"critical_delay_exceeded_total\": "
-           << py_before_stop.critical_delay_exceeded << ",\n";
+    output << "    \"critical_delay_exceeded_total\": " << py_before_stop.critical_delay_exceeded
+           << ",\n";
     output << "    \"last_critical_queue_delay_ms\": "
            << py_before_stop.last_critical_queue_delay_ms << ",\n";
     output << "    \"order_post_failed_total\": "
-           << python_order_post_failed.load(std::memory_order_relaxed) << ",\n";
+           << callback_order_post_failed.load(std::memory_order_relaxed) << ",\n";
     output << "    \"tick_post_failed_total\": "
-           << python_tick_post_failed.load(std::memory_order_relaxed) << "\n";
+           << callback_tick_post_failed.load(std::memory_order_relaxed) << "\n";
     output << "  },\n";
     output << "  \"cpp\": {\n";
     output << "    \"total_pending\": " << cpp_final.total_pending << ",\n";
-    output << "    \"max_pending_observed\": "
-           << max_cpp_pending.load(std::memory_order_relaxed) << ",\n";
+    output << "    \"max_pending_observed\": " << max_cpp_pending.load(std::memory_order_relaxed)
+           << ",\n";
     output << "    \"dropped_total\": " << cpp_final.dropped_total << ",\n";
     output << "    \"post_failed_total\": " << cpp_post_failed.load(std::memory_order_relaxed)
            << "\n";

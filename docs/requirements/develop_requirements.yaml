@@ -11,27 +11,27 @@
     {
       "id": "REQ-00-MATRIX",
       "doc": "develop/00-实现对齐矩阵与缺口总览.md",
-      "description": "实现对齐矩阵必须可由脚本与证据交叉验证。",
+      "description": "实现对齐矩阵必须可由契约与门禁校验工具交叉验证。",
       "code_paths": [
-        "scripts/build/verify_contract_sync.py",
-        "scripts/build/verify_develop_requirements.py"
+        "src/apps/verify_contract_sync_cli_main.cpp",
+        "src/apps/verify_develop_requirements_cli_main.cpp"
       ],
       "test_paths": [
-        "python/tests/test_contract_sync.py",
-        "python/tests/test_verify_develop_requirements_script.py"
+        "tests/unit/apps/ops_cli_test.cpp",
+        "tests/unit/build/quality_gate_scripts_test.cpp"
       ],
       "evidence_paths": [
-        "docs/results/final_capability_acceptance_2026-02-11.md",
-        "docs/results/develop_completion_language_report.json"
+        "docs/results/develop_completion_language_report.json",
+        "docs/results/final_capability_acceptance_2026-02-11.md"
       ]
     },
     {
       "id": "REQ-00-ROADMAP",
       "doc": "develop/00-未完成能力补齐路线图.md",
-      "description": "路线图项必须映射到可执行脚本和演练证据。",
-      "code_paths": ["scripts/ops/rollout_orchestrator.py"],
-      "test_paths": ["python/tests/test_rollout_orchestrator_script.py"],
-      "evidence_paths": ["docs/results/rollout_result.env"]
+      "description": "路线图项必须映射到当前纯 C++ 流水线与验收证据。",
+      "code_paths": [".github/workflows/ci.yml"],
+      "test_paths": ["tests/unit/apps/ops_cli_test.cpp"],
+      "evidence_paths": ["docs/results/final_capability_acceptance_2026-02-11.md"]
     },
     {
       "id": "REQ-01-01-ARCH-STACK",
@@ -52,34 +52,37 @@
     {
       "id": "REQ-01-03-DATAFLOW",
       "doc": "develop/01-系统架构设计/01-03-关键数据流与接口设计.md",
-      "description": "关键数据流需具备跨存储一致性校验能力。",
-      "code_paths": ["scripts/data_pipeline/run_reconcile.py"],
-      "test_paths": ["python/tests/test_data_reconcile.py"],
-      "evidence_paths": ["docs/results/data_reconcile_report.json"]
+      "description": "关键数据流需具备端到端状态分发与执行链路一致性。",
+      "code_paths": [
+        "src/strategy/strategy_engine.cpp",
+        "src/services/order/execution_engine.cpp"
+      ],
+      "test_paths": ["tests/unit/strategy/strategy_engine_test.cpp"],
+      "evidence_paths": ["docs/results/ops_health_report.json"]
     },
     {
       "id": "REQ-02-01-RESEARCH-ENV",
       "doc": "develop/02-策略研究平台设计/02-01-研究环境与数据接口规范.md",
       "description": "研究环境接口规范需有可执行回测入口。",
-      "code_paths": ["scripts/backtest/replay_csv.py"],
-      "test_paths": ["python/tests/test_backtest_replay_cli.py"],
-      "evidence_paths": ["docs/results/final_capability_acceptance_2026-02-11.md"]
+      "code_paths": ["src/apps/backtest_cli_main.cpp"],
+      "test_paths": ["tests/unit/backtest/backtest_data_feed_test.cpp"],
+      "evidence_paths": ["docs/results/backtest_cli_smoke.json"]
     },
     {
       "id": "REQ-02-02-FACTOR-BACKTEST",
       "doc": "develop/02-策略研究平台设计/02-02-因子研究与回测引擎设计.md",
       "description": "因子与回测引擎要求必须映射到回测核心实现。",
-      "code_paths": ["python/quant_hft/backtest/replay.py"],
-      "test_paths": ["python/tests/test_backtest_replay.py"],
-      "evidence_paths": ["docs/results/final_capability_acceptance_2026-02-11.md"]
+      "code_paths": ["src/apps/factor_eval_cli_main.cpp"],
+      "test_paths": ["tests/unit/backtest/performance_test.cpp"],
+      "evidence_paths": ["docs/results/backtest_benchmark_result.json"]
     },
     {
       "id": "REQ-02-03-TEMPLATES-METRICS",
       "doc": "develop/02-策略研究平台设计/02-03-策略模版与绩效分析体系.md",
-      "description": "策略模板与绩效体系必须在研究模块与指标字典中实现。",
-      "code_paths": ["python/quant_hft/research/metric_dictionary.py"],
-      "test_paths": ["python/tests/test_strategy_base.py"],
-      "evidence_paths": ["docs/results/final_capability_acceptance_2026-02-11.md"]
+      "description": "策略模板与绩效体系必须在 C++ 策略接口与样例中实现。",
+      "code_paths": ["include/quant_hft/strategy/live_strategy.h"],
+      "test_paths": ["tests/unit/strategy/demo_live_strategy_test.cpp"],
+      "evidence_paths": ["docs/results/simnow_weekly_stress.json"]
     },
     {
       "id": "REQ-03-01-RISK",
@@ -103,47 +106,36 @@
       "description": "性能组件要求必须具备基准测试与阈值证据。",
       "code_paths": ["src/apps/hotpath_benchmark_main.cpp"],
       "test_paths": ["tests/unit/core/object_pool_test.cpp"],
-      "evidence_paths": ["docs/results/hotpath_bench_result.json"]
+      "evidence_paths": ["docs/results/backtest_benchmark_result.json"]
     },
     {
       "id": "REQ-04-01-OBS",
       "doc": "develop/04-基础设施与运维/04-01-监控、日志与告警体系设计.md",
       "description": "可观测性要求必须形成健康报告与告警报告。",
-      "code_paths": ["python/quant_hft/ops/monitoring.py"],
-      "test_paths": ["python/tests/test_monitoring_observability.py"],
-      "evidence_paths": ["docs/results/reconnect_fault_result.md"]
+      "code_paths": [
+        "src/apps/ops_health_report_cli_main.cpp",
+        "src/apps/ops_alert_report_cli_main.cpp"
+      ],
+      "test_paths": ["tests/unit/apps/ops_cli_test.cpp"],
+      "evidence_paths": [
+        "docs/results/ops_health_report.json",
+        "docs/results/ops_alert_report.json"
+      ]
     },
     {
       "id": "REQ-04-02-DEPLOY-DR",
       "doc": "develop/04-基础设施与运维/04-02-部署、灾备与持续集成方案.md",
-      "description": "部署与灾备能力必须形成回滚和恢复证据链。",
+      "description": "部署与灾备能力必须形成切换与回滚证据链。",
       "code_paths": [
-        "scripts/ops/verify_deploy_rollback_evidence.py",
-        "scripts/ops/failover_orchestrator.py",
-        "scripts/ops/verify_failover_evidence.py",
+        "src/apps/ctp_cutover_orchestrator_cli_main.cpp",
         "scripts/infra/bootstrap_prodlike.sh",
-        "scripts/infra/bootstrap_prodlike_multi_host.sh",
-        "scripts/infra/check_prodlike_health.py",
-        "scripts/infra/check_prodlike_multi_host_health.py",
-        "infra/docker-compose.prodlike.yaml",
-        "infra/docker-compose.prodlike.multi-host.yaml"
+        "scripts/infra/bootstrap_prodlike_multi_host.sh"
       ],
-      "test_paths": [
-        "python/tests/test_verify_deploy_rollback_evidence_script.py",
-        "python/tests/test_failover_orchestrator_script.py",
-        "python/tests/test_verify_failover_evidence_script.py",
-        "python/tests/test_bootstrap_prodlike_script.py",
-        "python/tests/test_bootstrap_prodlike_multi_host_script.py",
-        "python/tests/test_check_prodlike_health_script.py",
-        "python/tests/test_check_prodlike_multi_host_health_script.py",
-        "python/tests/test_prodlike_infra_assets.py",
-        "python/tests/test_prodlike_multi_host_infra_assets.py"
-      ],
+      "test_paths": ["tests/unit/apps/ops_cli_test.cpp"],
       "evidence_paths": [
-        "docs/results/deploy_rollback_result.env",
-        "docs/results/prodlike_bootstrap_result.env",
-        "docs/results/prodlike_health_report.json",
-        "docs/results/failover_result.env"
+        "docs/results/cutover_result.env",
+        "docs/results/rollback_result.env",
+        "docs/results/prodlike_bootstrap_result.env"
       ]
     },
     {
@@ -151,15 +143,15 @@
       "doc": "develop/05-API文档/05-01-C++核心API参考.md",
       "description": "C++ API 文档必须与合约定义同步。",
       "code_paths": ["include/quant_hft/contracts/types.h"],
-      "test_paths": ["python/tests/test_contract_sync.py"],
+      "test_paths": ["tests/unit/apps/ops_cli_test.cpp"],
       "evidence_paths": ["docs/results/final_capability_acceptance_2026-02-11.md"]
     },
     {
       "id": "REQ-05-02-PY-API",
       "doc": "develop/05-API文档/05-02-Python策略API参考.md",
-      "description": "Python API 文档必须与 runtime 合约解析保持一致。",
-      "code_paths": ["python/quant_hft/runtime/redis_schema.py"],
-      "test_paths": ["python/tests/test_strategy_runner.py"],
+      "description": "策略 API 文档已切换到 C++ ILiveStrategy 合约并保持实现一致。",
+      "code_paths": ["include/quant_hft/strategy/live_strategy.h"],
+      "test_paths": ["tests/unit/strategy/strategy_registry_test.cpp"],
       "evidence_paths": ["docs/results/final_capability_acceptance_2026-02-11.md"]
     },
     {
@@ -167,15 +159,15 @@
       "doc": "develop/06-开发者指南/06-01-环境搭建与快速开始.md",
       "description": "快速开始指南必须可由 bootstrap 脚本复现实操。",
       "code_paths": ["scripts/build/bootstrap.sh"],
-      "test_paths": ["python/tests/test_contract_sync.py"],
-      "evidence_paths": ["docs/results/final_capability_acceptance_2026-02-11.md"]
+      "test_paths": ["tests/unit/build/quality_gate_scripts_test.cpp"],
+      "evidence_paths": ["docs/results/backtest_benchmark_result.json"]
     },
     {
       "id": "REQ-06-02-DEVFLOW",
       "doc": "develop/06-开发者指南/06-02-代码结构与开发流程.md",
       "description": "开发流程必须包含自动化校验与测试门禁。",
       "code_paths": [".github/workflows/ci.yml"],
-      "test_paths": ["python/tests/test_contract_sync.py"],
+      "test_paths": ["tests/unit/build/quality_gate_scripts_test.cpp"],
       "evidence_paths": ["docs/results/final_capability_acceptance_2026-02-11.md"]
     },
     {
@@ -183,39 +175,35 @@
       "doc": "develop/06-开发者指南/06-03-文档开发与多会话协作.md",
       "description": "文档协作要求必须落实到开发进度与验收记录。",
       "code_paths": ["docs/IMPLEMENTATION_PROGRESS.md"],
-      "test_paths": ["python/tests/test_verify_develop_requirements_script.py"],
-      "evidence_paths": ["docs/results/final_capability_acceptance_2026-02-11.md"]
+      "test_paths": ["tests/unit/apps/ops_cli_test.cpp"],
+      "evidence_paths": ["docs/results/develop_completion_language_report.json"]
     },
     {
       "id": "REQ-07-01-DEPLOY-RUNBOOK",
       "doc": "develop/07-部署与运维/07-01-系统部署手册.md",
       "description": "部署手册必须对应可执行编排脚本和结果证据。",
-      "code_paths": ["scripts/ops/rollout_orchestrator.py"],
-      "test_paths": ["python/tests/test_rollout_orchestrator_script.py"],
-      "evidence_paths": ["docs/results/rollout_result.env"]
+      "code_paths": ["scripts/ops/run_v3_acceptance.sh"],
+      "test_paths": ["tests/unit/apps/ops_cli_test.cpp"],
+      "evidence_paths": ["docs/results/cutover_result.env"]
     },
     {
       "id": "REQ-07-02-OPS-RUNBOOK",
       "doc": "develop/07-部署与运维/07-02-运维操作手册.md",
       "description": "运维手册必须映射到故障演练与恢复验证脚本。",
       "code_paths": [
-        "scripts/ops/verify_wal_recovery_evidence.py",
-        "scripts/ops/failover_orchestrator.py",
-        "scripts/ops/verify_failover_evidence.py"
+        "scripts/ops/run_memory_diagnosis.sh",
+        "scripts/ops/run_daily_settlement.sh"
       ],
-      "test_paths": [
-        "python/tests/test_verify_wal_recovery_evidence_script.py",
-        "python/tests/test_runbook_failover_commands.py"
-      ],
+      "test_paths": ["tests/unit/apps/ops_cli_test.cpp"],
       "evidence_paths": [
-        "docs/results/wal_recovery_result.env",
-        "docs/results/failover_result.env"
+        "docs/results/reconnect_fault_result.md",
+        "docs/results/rollback_result.env"
       ]
     },
     {
       "id": "REQ-08-01-TEST-STRATEGY",
       "doc": "develop/08-测试与验证/08-01-测试策略与验证方案.md",
-      "description": "测试策略必须覆盖 C++/Python 双栈门禁。",
+      "description": "测试策略必须覆盖当前 C++ 门禁。",
       "code_paths": ["scripts/build/bootstrap.sh"],
       "test_paths": ["tests/unit/services/order_state_machine_test.cpp"],
       "evidence_paths": ["docs/results/final_capability_acceptance_2026-02-11.md"]
@@ -223,10 +211,10 @@
     {
       "id": "REQ-09-01-DATA",
       "doc": "develop/09-数据库设计/09-01-数据库设计.md",
-      "description": "数据库设计必须映射到数据字典、生命周期与对账能力。",
-      "code_paths": ["python/quant_hft/data_pipeline/data_dictionary.py"],
-      "test_paths": ["python/tests/test_data_dictionary.py"],
-      "evidence_paths": ["docs/results/data_lifecycle_report.json"]
+      "description": "数据库设计必须映射到当前存储适配器与校验证据。",
+      "code_paths": ["src/core/storage/timescale_event_store.cpp"],
+      "test_paths": ["tests/unit/core/timescale_event_store_test.cpp"],
+      "evidence_paths": ["docs/results/data_reconcile_report.json"]
     }
   ]
 }

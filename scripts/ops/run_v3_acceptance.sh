@@ -3,16 +3,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 QUANT_ROOT="${QUANT_ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
-
 BUILD_DIR="${BUILD_DIR:-${QUANT_ROOT}/build-gcc}"
-PYTHON_BIN="${PYTHON_BIN:-${QUANT_ROOT}/.venv/bin/python}"
 CC_BIN="${CC_BIN:-/usr/bin/gcc}"
 CXX_BIN="${CXX_BIN:-/usr/bin/g++}"
 MAX_RTO_SECONDS="${MAX_RTO_SECONDS:-10}"
 MAX_RPO_EVENTS="${MAX_RPO_EVENTS:-0}"
 SKIP_CONFIGURE=0
 SKIP_CPP=0
-SKIP_PYTHON=0
 SKIP_EVIDENCE=0
 
 usage() {
@@ -21,14 +18,12 @@ Usage: $0 [options]
 
 Options:
   --build-dir <path>       Build directory (default: ${BUILD_DIR})
-  --python-bin <path>      Python executable (default: ${PYTHON_BIN})
   --cc <path>              C compiler path (default: ${CC_BIN})
   --cxx <path>             C++ compiler path (default: ${CXX_BIN})
   --max-rto-seconds <int>  Max allowed RTO for evidence check (default: ${MAX_RTO_SECONDS})
   --max-rpo-events <int>   Max allowed RPO events for evidence check (default: ${MAX_RPO_EVENTS})
   --skip-configure         Skip CMake configure
   --skip-cpp               Skip C++ build/tests
-  --skip-python            Skip Python replay tests
   --skip-evidence          Skip rollover WAL evidence verification
   -h, --help               Show this help
 USAGE
@@ -36,62 +31,18 @@ USAGE
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --build-dir)
-      BUILD_DIR="$2"
-      shift 2
-      ;;
-    --python-bin)
-      PYTHON_BIN="$2"
-      shift 2
-      ;;
-    --cc)
-      CC_BIN="$2"
-      shift 2
-      ;;
-    --cxx)
-      CXX_BIN="$2"
-      shift 2
-      ;;
-    --max-rto-seconds)
-      MAX_RTO_SECONDS="$2"
-      shift 2
-      ;;
-    --max-rpo-events)
-      MAX_RPO_EVENTS="$2"
-      shift 2
-      ;;
-    --skip-configure)
-      SKIP_CONFIGURE=1
-      shift
-      ;;
-    --skip-cpp)
-      SKIP_CPP=1
-      shift
-      ;;
-    --skip-python)
-      SKIP_PYTHON=1
-      shift
-      ;;
-    --skip-evidence)
-      SKIP_EVIDENCE=1
-      shift
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    *)
-      echo "error: unknown option: $1" >&2
-      usage >&2
-      exit 2
-      ;;
+    --build-dir) BUILD_DIR="$2"; shift 2 ;;
+    --cc) CC_BIN="$2"; shift 2 ;;
+    --cxx) CXX_BIN="$2"; shift 2 ;;
+    --max-rto-seconds) MAX_RTO_SECONDS="$2"; shift 2 ;;
+    --max-rpo-events) MAX_RPO_EVENTS="$2"; shift 2 ;;
+    --skip-configure) SKIP_CONFIGURE=1; shift ;;
+    --skip-cpp) SKIP_CPP=1; shift ;;
+    --skip-evidence) SKIP_EVIDENCE=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "error: unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
-
-if [[ ! -x "${PYTHON_BIN}" ]]; then
-  echo "error: python executable not found: ${PYTHON_BIN}" >&2
-  exit 2
-fi
 
 if [[ ${SKIP_CONFIGURE} -eq 0 ]]; then
   cmake -S "${QUANT_ROOT}" -B "${BUILD_DIR}" \
@@ -108,13 +59,6 @@ if [[ ${SKIP_CPP} -eq 0 ]]; then
   "${BUILD_DIR}/wal_replay_loader_test"
   "${BUILD_DIR}/order_state_machine_test"
   "${BUILD_DIR}/in_memory_portfolio_ledger_test"
-fi
-
-if [[ ${SKIP_PYTHON} -eq 0 ]]; then
-  "${PYTHON_BIN}" -m pytest \
-    "${QUANT_ROOT}/python/tests/test_backtest_replay.py" \
-    "${QUANT_ROOT}/python/tests/test_backtest_replay_cli.py" \
-    -q
 fi
 
 if [[ ${SKIP_EVIDENCE} -eq 0 ]]; then
@@ -142,10 +86,17 @@ if [[ ${SKIP_EVIDENCE} -eq 0 ]]; then
     "notes=${replay_output}" \
     > "${evidence_env}"
 
-  "${PYTHON_BIN}" "${QUANT_ROOT}/scripts/ops/verify_wal_recovery_evidence.py" \
-    --evidence-file "${evidence_env}" \
-    --max-rto-seconds "${MAX_RTO_SECONDS}" \
-    --max-rpo-events "${MAX_RPO_EVENTS}"
+  # Pure C++ acceptance mode: keep evidence check in bash without Python.
+  actual_rto="$(grep '^rto_seconds=' "${evidence_env}" | cut -d= -f2)"
+  actual_rpo="$(grep '^rpo_events=' "${evidence_env}" | cut -d= -f2)"
+  if (( actual_rto > MAX_RTO_SECONDS )); then
+    echo "error: RTO gate failed (${actual_rto} > ${MAX_RTO_SECONDS})" >&2
+    exit 1
+  fi
+  if (( actual_rpo > MAX_RPO_EVENTS )); then
+    echo "error: RPO gate failed (${actual_rpo} > ${MAX_RPO_EVENTS})" >&2
+    exit 1
+  fi
 
   echo "v3 acceptance evidence: ${evidence_env}"
 fi

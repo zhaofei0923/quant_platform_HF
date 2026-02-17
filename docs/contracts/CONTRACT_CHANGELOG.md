@@ -19,8 +19,8 @@
 
 ### Contract Sync Gate
 
-- Added `scripts/build/verify_contract_sync.py`
-- Added CI gate to fail when C++ / proto / Python contract fields drift
+- Added `verify_contract_sync_cli` (C++)
+- Added CI gate to fail when C++ / proto contract fields drift
 
 ## 2026-02-11 M0+ Interface Extension
 
@@ -42,5 +42,4 @@
 ### Execution and Governance
 
 - Added `ExecutionRouter` for route id / slippage / impact estimation
-- Added `scripts/build/verify_develop_requirements.py` and
-  `docs/requirements/develop_requirements.yaml` for `develop/` requirement traceability
+- Added `verify_develop_requirements_cli` and `docs/requirements/develop_requirements.yaml` for `develop/` requirement traceability

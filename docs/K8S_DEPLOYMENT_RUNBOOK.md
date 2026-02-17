@@ -1,195 +1,45 @@
-# Kubernetes Deployment Runbook (Non-Hotpath Components)
-
-Current production acceptance profile:
-- single-node cluster or single cloud environment baseline
-- non-hotpath deployment validation and rollback drill
-- multi-node backup/failover scenarios are scheduled for a later phase
-
-## 0) Verify release bundle integrity (if deploying from package)
-
-```bash
-python3 scripts/build/verify_nonhotpath_release.py \
-  --bundle dist/quant-hft-nonhotpath-v0.2.0.tar.gz \
-  --checksum dist/quant-hft-nonhotpath-v0.2.0.tar.gz.sha256 \
-  --expect-version v0.2.0
-
-python3 scripts/build/release_audit_summary.py \
-  --bundle dist/quant-hft-nonhotpath-v0.2.0.tar.gz \
-  --checksum dist/quant-hft-nonhotpath-v0.2.0.tar.gz.sha256 \
-  --output docs/results/release_audit_summary.md \
-  --json-output docs/results/release_audit_summary.json
-
-python3 scripts/build/verify_release_audit_summary.py \
-  --summary-json docs/results/release_audit_summary.json \
-  --expect-version v0.2.0
-```
+# Kubernetes Deployment Runbook (Pure C++)
 
 ## Scope
 
-- This runbook targets non-hotpath components only.
-- Current manifest bundle deploys `data_pipeline` to Kubernetes.
-- `core_engine` remains recommended on bare metal/systemd for low-latency path.
+Non-hotpath deployment validation for pure C++ binaries and evidence chain.
 
-## 1) Render manifests
+## Build Artifacts
 
 ```bash
-.venv/bin/python scripts/ops/render_k8s_manifests.py \
-  --repo-root . \
-  --output-dir deploy/k8s \
-  --namespace quant-hft \
-  --image-repository ghcr.io/<org>/quant-hft \
-  --image-tag v0.1.0
+cmake -S . -B build -DQUANT_HFT_BUILD_TESTS=ON
+cmake --build build -j$(nproc)
 ```
 
-Generated files:
-- `deploy/k8s/namespace.yaml`
-- `deploy/k8s/configmap-data-pipeline.yaml`
-- `deploy/k8s/secret-archive.example.yaml`
-- `deploy/k8s/persistentvolumeclaim-runtime.yaml`
-- `deploy/k8s/deployment-data-pipeline.yaml`
-- `deploy/k8s/kustomization.yaml`
-
-## 2) Prepare archive secret
+## Core Readiness
 
 ```bash
-cp deploy/k8s/secret-archive.example.yaml deploy/k8s/secret-archive.yaml
+./build/reconnect_evidence_cli \
+  --report_file docs/results/reconnect_fault_result.md \
+  --health_json_file docs/results/ops_health_report.json \
+  --health_markdown_file docs/results/ops_health_report.md \
+  --alert_json_file docs/results/ops_alert_report.json \
+  --alert_markdown_file docs/results/ops_alert_report.md
 ```
 
-Fill:
-- `QUANT_HFT_ARCHIVE_ACCESS_KEY`
-- `QUANT_HFT_ARCHIVE_SECRET_KEY`
-
-Then update `deploy/k8s/kustomization.yaml` to reference `secret-archive.yaml`.
-
-## 3) Apply manifests
+## Cutover/Rollback Evidence
 
 ```bash
-kubectl apply -k deploy/k8s
-kubectl -n quant-hft get pods
+./build/ctp_cutover_orchestrator_cli \
+  --cutover_env docs/results/cutover_result.env \
+  --rollback_env docs/results/rollback_result.env
 ```
 
-## 4) Validate runtime
+## CI-aligned Checks
 
 ```bash
-kubectl -n quant-hft logs deploy/quant-hft-data-pipeline --tail=200
-kubectl -n quant-hft get pvc quant-hft-runtime
+bash scripts/build/dependency_audit.sh --build-dir build
+bash scripts/build/repo_purity_check.sh --repo-root .
 ```
 
-## Notes
+## Required Output
 
-- Default archive endpoint is `minio:9000`; adjust in ConfigMap for your cluster.
-- Default storage request is `20Gi`; tune `--runtime-pvc-size` when rendering.
-- Use release bundle script for reproducible packaging:
-  - `scripts/build/package_nonhotpath_release.sh`
-
-## Rollback Drill
-
-1. Record current revision:
-
-```bash
-kubectl -n quant-hft rollout history deploy/quant-hft-data-pipeline
-```
-
-2. Deploy new image/manifests and confirm rollout:
-
-```bash
-kubectl -n quant-hft rollout status deploy/quant-hft-data-pipeline --timeout=180s
-```
-
-3. Simulate failure and rollback:
-
-```bash
-kubectl -n quant-hft rollout undo deploy/quant-hft-data-pipeline
-kubectl -n quant-hft rollout status deploy/quant-hft-data-pipeline --timeout=180s
-```
-
-4. Validate:
-
-```bash
-kubectl -n quant-hft get pods -l app.kubernetes.io/name=quant-hft-data-pipeline
-kubectl -n quant-hft logs deploy/quant-hft-data-pipeline --tail=200
-```
-
-Acceptance:
-- rollback completes without stuck rollout
-- pipeline pod returns to Ready and resumes periodic export logs
-
-Evidence template:
-- `docs/templates/DEPLOY_ROLLBACK_RESULT.md`
-
-Machine verification:
-
-```bash
-python3 scripts/ops/verify_deploy_rollback_evidence.py \
-  --evidence-file docs/results/deploy_rollback_result.env \
-  --max-rollback-seconds 180
-```
-
-## Repository Rollout Orchestrator (Staging Profile)
-
-Run a staging-profile dry-run orchestration and verify evidence:
-
-```bash
-python3 scripts/ops/rollout_orchestrator.py \
-  --env-config configs/deploy/environments/staging.yaml \
-  --inject-fault \
-  --output-file docs/results/rollout_result.env
-
-python3 scripts/ops/verify_rollout_evidence.py \
-  --evidence-file docs/results/rollout_result.env \
-  --require-fault-step
-```
-
-Production-like execution requires explicit `--execute`.
-
-## Repository Prodlike Infra Bootstrap
-
-Before staging profile rollout, validate the repository-local prodlike dependencies:
-
-```bash
-bash scripts/infra/bootstrap_prodlike.sh \
-  --compose-file infra/docker-compose.prodlike.yaml \
-  --project-name quant-hft-prodlike \
-  --dry-run \
-  --output-file docs/results/prodlike_bootstrap_result.env
-
-python3 scripts/infra/check_prodlike_health.py \
-  --ps-json-file docs/results/prodlike_ps_snapshot.json \
-  --report-json docs/results/prodlike_health_report.json
-```
-
-Use `--execute` only when the host has Docker/Compose runtime available.
-
-## Repository Multi-Host Failover Drill
-
-Validate primary/standby failover steps and evidence contract:
-
-```bash
-bash scripts/infra/bootstrap_prodlike_multi_host.sh \
-  --compose-file infra/docker-compose.prodlike.multi-host.yaml \
-  --project-name quant-hft-prodlike-multi-host \
-  --dry-run \
-  --output-file docs/results/prodlike_multi_host_bootstrap_result.env
-
-python3 scripts/ops/failover_orchestrator.py \
-  --env-config configs/deploy/environments/prodlike_multi_host.yaml \
-  --output-file docs/results/failover_result.env
-
-python3 scripts/ops/verify_failover_evidence.py \
-  --evidence-file docs/results/failover_result.env \
-  --max-failover-seconds 300 \
-  --max-data-lag-events 0
-```
-
-## M2 Data Plane Dependencies (Single-Host Baseline)
-
-Current Kubernetes runbook still deploys non-hotpath pipeline only. For M2 Kafka/ClickHouse/CDC flows,
-bootstrap the repository single-host M2 stack first, then connect k8s pipeline jobs to the same object-storage
-and evidence chain outputs.
-
-```bash
-bash scripts/infra/bootstrap_prodlike.sh --profile single-host-m2 --execute
-python3 scripts/infra/check_debezium_connectors.py --output-json docs/results/debezium_connectors_health_report.json
-python3 scripts/data_pipeline/export_parquet_partitions.py --execute --report-json docs/results/parquet_partitions_report.json
-python3 scripts/data_pipeline/run_lifecycle.py --mode object-store --execute --report-json docs/results/data_lifecycle_report.json
-```
+- `docs/results/ops_health_report.json`
+- `docs/results/ops_alert_report.json`
+- `docs/results/cutover_result.env`
+- `docs/results/rollback_result.env`

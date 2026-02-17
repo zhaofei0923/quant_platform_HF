@@ -9,7 +9,7 @@ STANDBY_ENV_FILE="infra/env/prodlike-standby.env"
 OUTPUT_FILE="docs/results/prodlike_multi_host_bootstrap_result.env"
 HEALTH_REPORT="docs/results/prodlike_multi_host_health_report.json"
 DOCKER_BIN="docker"
-HEALTH_CHECK_SCRIPT="scripts/infra/check_prodlike_multi_host_health.py"
+HEALTH_CHECK_SCRIPT="build/ops_health_report_cli"
 KAFKA_INIT_SCRIPT="scripts/infra/init_kafka_topics.sh"
 DEBEZIUM_INIT_SCRIPT="scripts/infra/init_debezium_connectors.sh"
 CLICKHOUSE_INIT_SCRIPT="scripts/infra/init_clickhouse_schema.sh"
@@ -40,7 +40,7 @@ Options:
   --output-file <path>              Evidence env output path
   --health-report <path>            Health report JSON output path
   --docker-bin <path>               Docker binary (default: docker)
-  --health-check-script <path>      Health checker script path
+  --health-check-script <path>      Health checker CLI path
   --kafka-init-script <path>        Kafka topic initializer script path
   --debezium-init-script <path>     Debezium connector initializer script path
   --clickhouse-init-script <path>   ClickHouse schema initializer script path
@@ -255,7 +255,7 @@ if [[ "$ACTION" == "up" ]]; then
     steps_cmd+=("bash $CLICKHOUSE_INIT_SCRIPT --compose-file $COMPOSE_FILE --project-name $PROJECT_NAME --env-file $PRIMARY_ENV_FILE --schema-dir $CLICKHOUSE_SCHEMA_DIR --clickhouse-service $CLICKHOUSE_SERVICE --clickhouse-db $CLICKHOUSE_DB --docker-bin $DOCKER_BIN --output-file $CLICKHOUSE_EVIDENCE --execute")
   fi
   steps_name+=("health_check")
-  steps_cmd+=("python3 $HEALTH_CHECK_SCRIPT --compose-file $COMPOSE_FILE --project-name $PROJECT_NAME --docker-bin $DOCKER_BIN --report-json $HEALTH_REPORT")
+  steps_cmd+=("$HEALTH_CHECK_SCRIPT --output_json $HEALTH_REPORT --output_md ${HEALTH_REPORT%.json}.md")
 elif [[ "$ACTION" == "down" ]]; then
   steps_name+=("compose_down")
   steps_cmd+=("${compose_base[*]} down --remove-orphans")
@@ -264,7 +264,7 @@ elif [[ "$ACTION" == "status" ]]; then
   steps_cmd+=("${compose_base[*]} ps --format json")
 else
   steps_name+=("health_check")
-  steps_cmd+=("python3 $HEALTH_CHECK_SCRIPT --compose-file $COMPOSE_FILE --project-name $PROJECT_NAME --docker-bin $DOCKER_BIN --report-json $HEALTH_REPORT")
+  steps_cmd+=("$HEALTH_CHECK_SCRIPT --output_json $HEALTH_REPORT --output_md ${HEALTH_REPORT%.json}.md")
 fi
 
 failed_step=""

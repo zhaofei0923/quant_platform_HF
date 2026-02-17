@@ -7,13 +7,12 @@
 
 namespace quant_hft {
 
-CTPMdAdapter::CTPMdAdapter(std::size_t query_qps_limit,
-                           std::size_t dispatcher_workers,
-                           std::size_t python_queue_size)
+CTPMdAdapter::CTPMdAdapter(std::size_t query_qps_limit, std::size_t dispatcher_workers,
+                           std::size_t callback_queue_size)
     : gateway_(query_qps_limit),
       dispatcher_(dispatcher_workers),
-      python_dispatcher_(python_queue_size) {
-    python_dispatcher_.Start();
+      callback_dispatcher_(callback_queue_size) {
+    callback_dispatcher_.Start();
     gateway_.RegisterMarketDataCallback([this](const MarketSnapshot& snapshot) {
         MarketSnapshot copied = snapshot;
         if (!dispatcher_.Post(
@@ -26,25 +25,19 @@ CTPMdAdapter::CTPMdAdapter(std::size_t query_qps_limit,
                     if (!callback) {
                         return;
                     }
-                    if (!python_dispatcher_.Post([callback, copied]() { callback(copied); }, false)) {
-                        const auto stats = python_dispatcher_.GetStats();
-                        EmitStructuredLog(
-                            nullptr,
-                            "ctp_md_adapter",
-                            "warn",
-                            "python_callback_dropped",
-                            {{"is_critical", "false"},
-                             {"queue_depth", std::to_string(stats.pending)},
-                             {"queue_capacity", std::to_string(stats.max_queue_size)},
-                             {"dropped_total", std::to_string(stats.dropped)}});
+                    if (!callback_dispatcher_.Post([callback, copied]() { callback(copied); },
+                                                   false)) {
+                        const auto stats = callback_dispatcher_.GetStats();
+                        EmitStructuredLog(nullptr, "ctp_md_adapter", "warn", "callback_dropped",
+                                          {{"is_critical", "false"},
+                                           {"queue_depth", std::to_string(stats.pending)},
+                                           {"queue_capacity", std::to_string(stats.max_queue_size)},
+                                           {"dropped_total", std::to_string(stats.dropped)}});
                     }
                 },
                 EventPriority::kHigh)) {
             const auto stats = dispatcher_.GetStats();
-            EmitStructuredLog(nullptr,
-                              "ctp_md_adapter",
-                              "error",
-                              "dispatcher_queue_full",
+            EmitStructuredLog(nullptr, "ctp_md_adapter", "error", "dispatcher_queue_full",
                               {{"priority", "high"},
                                {"queue_depth", std::to_string(stats.pending_high)},
                                {"dropped_total", std::to_string(stats.dropped_total)}});
@@ -54,7 +47,7 @@ CTPMdAdapter::CTPMdAdapter(std::size_t query_qps_limit,
 
 CTPMdAdapter::~CTPMdAdapter() {
     Disconnect();
-    python_dispatcher_.Stop();
+    callback_dispatcher_.Stop();
 }
 
 bool CTPMdAdapter::Connect(const MarketDataConnectConfig& config) {

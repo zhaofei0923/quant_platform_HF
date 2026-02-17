@@ -1,6 +1,7 @@
 # Reconnect Fault Injection Result
 
 ## Metadata
+
 - Date:
 - Operator:
 - Host:
@@ -9,6 +10,7 @@
 - Interface:
 
 ## Scenario Matrix
+
 | Scenario | Parameters | Start Time | End Time | Recovered | Recovery Seconds | Notes |
 |---|---|---|---|---|---:|---|
 | disconnect | duration=20s |  |  |  |  |  |
@@ -17,6 +19,7 @@
 | combined | delay=200ms,jitter=40ms,loss=3%,duration=30s |  |  |  |  |  |
 
 ## Acceptance
+
 - [ ] unhealthy state observed during fault
 - [ ] auto-reconnect observed after clear
 - [ ] P99 recovery `< 10s`
@@ -24,11 +27,12 @@
 - [ ] no stuck state after repeated runs
 
 ## Logs and Evidence
+
 - Probe log file:
-- Fault events file:
 - Core engine log file:
 - Command log:
 - Incident notes:
 
 ## Auto Report
-- Generated markdown report (from `scripts/ops/reconnect_slo_report.py`):
+
+Generated markdown report comes from `reconnect_evidence_cli` output file.

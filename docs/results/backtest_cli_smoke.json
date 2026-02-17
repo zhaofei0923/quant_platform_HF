@@ -1,0 +1,25 @@
+{
+  "run_id": "smoke-run",
+  "mode": "csv",
+  "spec": {
+    "csv_path": "backtest_data/rb.csv",
+    "dataset_root": "",
+    "engine_mode": "csv",
+    "rollover_mode": "strict",
+    "rollover_price_mode": "bbo",
+    "rollover_slippage_bps": 0.0,
+    "start_date": "",
+    "end_date": "",
+    "max_ticks": 0,
+    "deterministic_fills": true,
+    "wal_path": "",
+    "account_id": "",
+    "run_id": "smoke-run",
+    "emit_state_snapshots": false
+  },
+  "input_signature": "58aca0b6b4dd4c17",
+  "data_signature": "553e93901e462a6e",
+  "replay": {"ticks": 0, "bars": 0},
+  "deterministic": {"fills": true},
+  "summary": {"intents_emitted": 0, "order_events": 0, "total_pnl": 0.0, "max_drawdown": 0.0}
+}

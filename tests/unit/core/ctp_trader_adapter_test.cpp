@@ -360,7 +360,7 @@ TEST(CTPTraderAdapterTest, PlaceOrderWithRefReturnsNonEmptyString) {
     EXPECT_EQ(fake_gateway->last_order_intent().client_order_id, client_order_id);
 }
 
-TEST(CTPTraderAdapterTest, PythonCriticalDispatchTimeoutTriggersCircuitBreakerCallback) {
+TEST(CTPTraderAdapterTest, CriticalDispatchTimeoutTriggersCircuitBreakerCallback) {
     auto fake_gateway = std::make_shared<FakeGateway>();
     CTPTraderAdapter adapter(fake_gateway, 1, 1, 5);
     ASSERT_TRUE(adapter.Connect(BuildSimConfig()));

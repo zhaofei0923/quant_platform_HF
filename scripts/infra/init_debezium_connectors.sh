@@ -13,7 +13,7 @@ usage() {
 Usage: $0 [options]
 
 Options:
-  --connect-url <url>                  Kafka Connect URL (default: http://localhost:8083)
+  --connect-url <url>                  Kafka Connect URL
   --trading-core-connector-file <path> Trading core connector json file
   --ops-audit-connector-file <path>    Ops audit connector json file
   --output-file <path>                 Evidence env output path
@@ -26,43 +26,15 @@ USAGE
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --connect-url)
-      CONNECT_URL="${2:-}"
-      shift 2
-      ;;
-    --trading-core-connector-file)
-      TRADING_CORE_CONNECTOR_FILE="${2:-}"
-      shift 2
-      ;;
-    --ops-audit-connector-file)
-      OPS_AUDIT_CONNECTOR_FILE="${2:-}"
-      shift 2
-      ;;
-    --output-file)
-      OUTPUT_FILE="${2:-}"
-      shift 2
-      ;;
-    --curl-bin)
-      CURL_BIN="${2:-}"
-      shift 2
-      ;;
-    --dry-run)
-      DRY_RUN=1
-      shift
-      ;;
-    --execute)
-      DRY_RUN=0
-      shift
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    *)
-      echo "error: unknown option: $1" >&2
-      usage >&2
-      exit 2
-      ;;
+    --connect-url) CONNECT_URL="${2:-}"; shift 2 ;;
+    --trading-core-connector-file) TRADING_CORE_CONNECTOR_FILE="${2:-}"; shift 2 ;;
+    --ops-audit-connector-file) OPS_AUDIT_CONNECTOR_FILE="${2:-}"; shift 2 ;;
+    --output-file) OUTPUT_FILE="${2:-}"; shift 2 ;;
+    --curl-bin) CURL_BIN="${2:-}"; shift 2 ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    --execute) DRY_RUN=0; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "error: unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
 
@@ -75,44 +47,22 @@ done
 
 extract_connector_name() {
   local file="$1"
-  python3 - "$file" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as f:
-    payload = json.load(f)
-name = payload.get("name", "").strip()
-if not name:
-    raise SystemExit("connector name is required")
-print(name)
-PY
-}
-
-extract_connector_config() {
-  local file="$1"
-  python3 - "$file" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as f:
-    payload = json.load(f)
-config = payload.get("config")
-if not isinstance(config, dict):
-    raise SystemExit("connector config object is required")
-print(json.dumps(config, separators=(",", ":")))
-PY
+  local name
+  name="$(grep -o '"name"[[:space:]]*:[[:space:]]*"[^"]*"' "$file" | head -n1 | sed -E 's/.*"name"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/' || true)"
+  if [[ -z "$name" ]]; then
+    name="$(basename "$file" .json)"
+  fi
+  echo "$name"
 }
 
 apply_connector() {
   local file="$1"
   local name
-  local config_json
   name="$(extract_connector_name "$file")"
-  config_json="$(extract_connector_config "$file")"
   "$CURL_BIN" -sS --fail \
     -X PUT \
     -H "Content-Type: application/json" \
-    --data "$config_json" \
+    --data "@${file}" \
     "${CONNECT_URL}/connectors/${name}/config" >/dev/null
 }
 
@@ -120,8 +70,7 @@ verify_connector() {
   local file="$1"
   local name
   name="$(extract_connector_name "$file")"
-  "$CURL_BIN" -sS --fail \
-    "${CONNECT_URL}/connectors/${name}/status" >/dev/null
+  "$CURL_BIN" -sS --fail "${CONNECT_URL}/connectors/${name}/status" >/dev/null
 }
 
 trading_core_name="$(extract_connector_name "$TRADING_CORE_CONNECTOR_FILE")"
@@ -129,9 +78,9 @@ ops_audit_name="$(extract_connector_name "$OPS_AUDIT_CONNECTOR_FILE")"
 
 steps_name=("apply_trading_core" "verify_trading_core" "apply_ops_audit" "verify_ops_audit")
 steps_cmd=(
-  "$CURL_BIN -sS --fail -X PUT -H 'Content-Type: application/json' --data @${TRADING_CORE_CONNECTOR_FILE}:config ${CONNECT_URL}/connectors/${trading_core_name}/config"
+  "$CURL_BIN -sS --fail -X PUT -H 'Content-Type: application/json' --data @${TRADING_CORE_CONNECTOR_FILE} ${CONNECT_URL}/connectors/${trading_core_name}/config"
   "$CURL_BIN -sS --fail ${CONNECT_URL}/connectors/${trading_core_name}/status"
-  "$CURL_BIN -sS --fail -X PUT -H 'Content-Type: application/json' --data @${OPS_AUDIT_CONNECTOR_FILE}:config ${CONNECT_URL}/connectors/${ops_audit_name}/config"
+  "$CURL_BIN -sS --fail -X PUT -H 'Content-Type: application/json' --data @${OPS_AUDIT_CONNECTOR_FILE} ${CONNECT_URL}/connectors/${ops_audit_name}/config"
   "$CURL_BIN -sS --fail ${CONNECT_URL}/connectors/${ops_audit_name}/status"
 )
 steps_status=()
@@ -212,4 +161,3 @@ if [[ "$success" == "true" ]]; then
   exit 0
 fi
 exit 2
-

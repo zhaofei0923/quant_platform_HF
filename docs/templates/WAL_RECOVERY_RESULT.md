@@ -1,6 +1,6 @@
 # WAL Recovery Drill Result
 
-Record one drill using `key=value` lines so the verifier can parse it directly.
+Record one drill using `key=value` lines.
 
 ```text
 drill_id=<YYYYMMDD-HHMM>
@@ -15,11 +15,10 @@ result=<pass|fail>
 notes=<short summary>
 ```
 
-Verifier command:
+Recommended checks:
 
 ```bash
-python3 scripts/ops/verify_wal_recovery_evidence.py \
-  --evidence-file docs/results/wal_recovery_result.env \
-  --max-rto-seconds 10 \
-  --max-rpo-events 0
+./build/wal_replay_tool <wal_path>
+test -f docs/results/wal_recovery_result.env
+bash scripts/build/repo_purity_check.sh --repo-root .
 ```

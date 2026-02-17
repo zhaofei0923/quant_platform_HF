@@ -1,0 +1,68 @@
+{
+  "run_id": "backtest-consistency-gate",
+  "mode": "deterministic",
+  "data_source": "csv",
+  "engine_mode": "csv",
+  "rollover_mode": "strict",
+  "metric_keys": ["total_pnl", "max_drawdown", "win_rate", "fill_rate", "capital_efficiency"],
+  "spec": {
+    "csv_path": "runtime/benchmarks/backtest/rb_ci_sample.csv",
+    "dataset_root": "",
+    "engine_mode": "csv",
+    "rollover_mode": "strict",
+    "rollover_price_mode": "bbo",
+    "rollover_slippage_bps": 0,
+    "start_date": "",
+    "end_date": "",
+    "max_ticks": 4,
+    "deterministic_fills": true,
+    "wal_path": "",
+    "account_id": "sim-account",
+    "run_id": "backtest-consistency-gate",
+    "emit_state_snapshots": false
+  },
+  "input_signature": "34d784bda0101149",
+  "data_signature": "fb3fb9c3bf398313",
+  "attribution": {},
+  "risk_decomposition": {},
+  "replay": {
+    "ticks_read": 4,
+    "bars_emitted": 1,
+    "intents_emitted": 1,
+    "first_instrument": "rb2405",
+    "last_instrument": "rb2405",
+    "instrument_count": 1,
+    "instrument_universe": ["rb2405"],
+    "first_ts_ns": 1704067200000000000,
+    "last_ts_ns": 1704067203000000000
+  },
+  "deterministic": {
+    "intents_processed": 1,
+    "order_events_emitted": 2,
+    "wal_records": 0,
+    "instrument_bars": {"rb2405": 1},
+    "instrument_pnl": {"rb2405": {"net_position": 1, "avg_open_price": 102, "realized_pnl": 0, "unrealized_pnl": 0, "last_price": 102}},
+    "total_realized_pnl": 0,
+    "total_unrealized_pnl": 0,
+    "performance": {
+      "total_realized_pnl": 0,
+      "total_unrealized_pnl": 0,
+      "total_pnl": 0,
+      "max_equity": 0,
+      "min_equity": 0,
+      "max_drawdown": 0,
+      "order_status_counts": {"ACCEPTED": 1, "FILLED": 1}
+    },
+    "invariant_violations": [],
+    "rollover_events": [],
+    "rollover_actions": [],
+    "rollover_slippage_cost": 0,
+    "rollover_canceled_orders": 0
+  },
+  "summary": {
+    "intents_emitted": 1,
+    "order_events": 2,
+    "total_pnl": 0,
+    "max_drawdown": 0
+  }
+}

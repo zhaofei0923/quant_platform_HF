@@ -15,7 +15,8 @@ struct CtpFileConfig {
     int instrument_query_interval_ms{30000};
     std::vector<std::string> instruments;
     std::vector<std::string> strategy_ids;
-    int strategy_poll_interval_ms{200};
+    std::string strategy_factory{"demo"};
+    int strategy_queue_capacity{8192};
     std::string account_id;
     ExecutionConfig execution;
     RiskConfig risk;

@@ -9,7 +9,7 @@ ENV_FILE="infra/env/prodlike.env"
 OUTPUT_FILE="docs/results/prodlike_bootstrap_result.env"
 HEALTH_REPORT="docs/results/prodlike_health_report.json"
 DOCKER_BIN="docker"
-HEALTH_CHECK_SCRIPT="scripts/infra/check_prodlike_health.py"
+HEALTH_CHECK_SCRIPT="build/ops_health_report_cli"
 SCHEMA_INIT_SCRIPT="scripts/infra/init_timescale_schema.sh"
 KAFKA_INIT_SCRIPT="scripts/infra/init_kafka_topics.sh"
 DEBEZIUM_INIT_SCRIPT="scripts/infra/init_debezium_connectors.sh"
@@ -49,7 +49,7 @@ Options:
   --output-file <path>           Evidence env output path
   --health-report <path>         Health report JSON output path
   --docker-bin <path>            Docker binary (default: docker)
-  --health-check-script <path>   Health checker script path
+  --health-check-script <path>   Health checker CLI path
   --schema-init-script <path>    Timescale schema initializer script path
   --kafka-init-script <path>     Kafka topic initializer script path
   --debezium-init-script <path>  Debezium connector initializer script path
@@ -350,7 +350,7 @@ if [[ "$ACTION" == "up" ]]; then
     steps_cmd+=("bash $CLICKHOUSE_INIT_SCRIPT --compose-file $COMPOSE_FILE --project-name $PROJECT_NAME --env-file $ENV_FILE --schema-dir $CLICKHOUSE_SCHEMA_DIR --clickhouse-service $CLICKHOUSE_SERVICE --clickhouse-db $CLICKHOUSE_DB --docker-bin $DOCKER_BIN --output-file $CLICKHOUSE_EVIDENCE --execute")
   fi
   steps_name+=("health_check")
-  steps_cmd+=("python3 $HEALTH_CHECK_SCRIPT --compose-file $COMPOSE_FILE --project-name $PROJECT_NAME --docker-bin $DOCKER_BIN --report-json $HEALTH_REPORT (timeout=${HEALTH_WAIT_TIMEOUT_SEC}s interval=${HEALTH_WAIT_POLL_INTERVAL_SEC}s)")
+  steps_cmd+=("$HEALTH_CHECK_SCRIPT --output_json $HEALTH_REPORT --output_md ${HEALTH_REPORT%.json}.md (timeout=${HEALTH_WAIT_TIMEOUT_SEC}s interval=${HEALTH_WAIT_POLL_INTERVAL_SEC}s)")
 elif [[ "$ACTION" == "down" ]]; then
   steps_name+=("compose_down")
   steps_cmd+=("${compose_base[*]} down --remove-orphans")
@@ -359,17 +359,15 @@ elif [[ "$ACTION" == "ps" ]]; then
   steps_cmd+=("${compose_base[*]} ps")
 else
   steps_name+=("health_check")
-  steps_cmd+=("python3 $HEALTH_CHECK_SCRIPT --compose-file $COMPOSE_FILE --project-name $PROJECT_NAME --docker-bin $DOCKER_BIN --report-json $HEALTH_REPORT (timeout=${HEALTH_WAIT_TIMEOUT_SEC}s interval=${HEALTH_WAIT_POLL_INTERVAL_SEC}s)")
+  steps_cmd+=("$HEALTH_CHECK_SCRIPT --output_json $HEALTH_REPORT --output_md ${HEALTH_REPORT%.json}.md (timeout=${HEALTH_WAIT_TIMEOUT_SEC}s interval=${HEALTH_WAIT_POLL_INTERVAL_SEC}s)")
 fi
 
 run_step_health_check() {
   local elapsed=0
   while (( elapsed <= HEALTH_WAIT_TIMEOUT_SEC )); do
-    if python3 "$HEALTH_CHECK_SCRIPT" \
-      --compose-file "$COMPOSE_FILE" \
-      --project-name "$PROJECT_NAME" \
-      --docker-bin "$DOCKER_BIN" \
-      --report-json "$HEALTH_REPORT"; then
+    if "$HEALTH_CHECK_SCRIPT" \
+      --output_json "$HEALTH_REPORT" \
+      --output_md "${HEALTH_REPORT%.json}.md"; then
       return 0
     fi
     sleep "$HEALTH_WAIT_POLL_INTERVAL_SEC"

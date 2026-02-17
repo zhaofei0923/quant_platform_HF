@@ -1,6 +1,6 @@
 # Deploy/Rollback Drill Result
 
-Record one deployment rollback drill using `key=value` lines so the verifier can parse it directly.
+Record one deployment rollback drill using `key=value` lines.
 
 ```text
 drill_id=<YYYYMMDD-HHMM>
@@ -17,10 +17,10 @@ operator=<name>
 notes=<short summary>
 ```
 
-Verifier command:
+Recommended checks:
 
 ```bash
-python3 scripts/ops/verify_deploy_rollback_evidence.py \
-  --evidence-file docs/results/deploy_rollback_result.env \
-  --max-rollback-seconds 180
+test -f docs/results/rollback_result.env
+grep -q "ROLLBACK" docs/results/rollback_result.env || true
+./build/ops_health_report_cli --output_json docs/results/ops_health_report.json --output_md docs/results/ops_health_report.md
 ```

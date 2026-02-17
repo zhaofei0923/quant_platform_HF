@@ -1,0 +1,66 @@
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <string>
+
+#include <gtest/gtest.h>
+
+namespace {
+
+std::string EscapePathForShell(const std::filesystem::path& path) {
+    std::string text = path.string();
+    std::string escaped;
+    escaped.reserve(text.size() + 8);
+    for (const char ch : text) {
+        if (ch == '\'' ) {
+            escaped += "'\\''";
+        } else {
+            escaped.push_back(ch);
+        }
+    }
+    return escaped;
+}
+
+int RunCommand(const std::string& command) {
+    return std::system(command.c_str());
+}
+
+std::filesystem::path MakeTempDir(const std::string& suffix) {
+    const auto path = std::filesystem::temp_directory_path() /
+                      ("quant_hft_quality_gate_test_" + suffix);
+    std::filesystem::remove_all(path);
+    std::filesystem::create_directories(path);
+    return path;
+}
+
+void WriteFile(const std::filesystem::path& path, const std::string& payload) {
+    if (!path.parent_path().empty()) {
+        std::filesystem::create_directories(path.parent_path());
+    }
+    std::ofstream out(path);
+    out << payload;
+}
+
+TEST(QualityGateScriptsTest, RepoPurityCheckPassesCurrentRepository) {
+    const int rc = RunCommand("bash scripts/build/repo_purity_check.sh --repo-root .");
+    EXPECT_EQ(rc, 0);
+}
+
+TEST(QualityGateScriptsTest, RepoPurityCheckFailsWhenPythonAssetExists) {
+    const auto root = MakeTempDir("purity_fail");
+    WriteFile(root / "README.md", "# sample\n");
+    WriteFile(root / "sample.py", "print('x')\n");
+
+    const std::string cmd = "bash scripts/build/repo_purity_check.sh --repo-root '" +
+                            EscapePathForShell(root) + "'";
+    const int rc = RunCommand(cmd);
+    EXPECT_NE(rc, 0);
+}
+
+TEST(QualityGateScriptsTest, DependencyAuditPassesCurrentBuild) {
+    const int rc = RunCommand("bash scripts/build/dependency_audit.sh --build-dir build");
+    EXPECT_EQ(rc, 0);
+}
+
+}  // namespace

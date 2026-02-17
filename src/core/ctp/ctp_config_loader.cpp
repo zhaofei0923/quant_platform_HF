@@ -896,10 +896,25 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
 
     loaded.instruments = SplitCsvList(get_value("instruments"));
     loaded.strategy_ids = SplitCsvList(get_value("strategy_ids"));
-    loaded.strategy_poll_interval_ms = 200;
+    const auto strategy_factory_it = kv.find("strategy_factory");
+    loaded.strategy_factory =
+        strategy_factory_it == kv.end() ? "demo" : Trim(strategy_factory_it->second);
+    if (loaded.strategy_factory.empty()) {
+        if (error != nullptr) {
+            *error = "strategy_factory must not be empty";
+        }
+        return false;
+    }
+    if (kv.find("strategy_poll_interval_ms") != kv.end()) {
+        if (error != nullptr) {
+            *error = "strategy_poll_interval_ms is removed; use strategy_queue_capacity";
+        }
+        return false;
+    }
+    loaded.strategy_queue_capacity = 8192;
     SetOptionalInt(kv,
-                   "strategy_poll_interval_ms",
-                   &loaded.strategy_poll_interval_ms,
+                   "strategy_queue_capacity",
+                   &loaded.strategy_queue_capacity,
                    &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
@@ -907,9 +922,9 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         }
         return false;
     }
-    if (loaded.strategy_poll_interval_ms <= 0) {
+    if (loaded.strategy_queue_capacity <= 0) {
         if (error != nullptr) {
-            *error = "strategy_poll_interval_ms must be > 0";
+            *error = "strategy_queue_capacity must be > 0";
         }
         return false;
     }

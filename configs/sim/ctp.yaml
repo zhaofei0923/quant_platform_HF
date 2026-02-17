@@ -47,7 +47,8 @@ ctp:
   audit_cold_days: 180
   instruments: "SHFE.ag2406,SHFE.rb2405"
   strategy_ids: "demo"
-  strategy_poll_interval_ms: 200
+  strategy_factory: "demo"
+  strategy_queue_capacity: 8192
   account_id: "sim-account"
   execution_mode: "direct"   # direct | sliced
   execution_algo: "direct"   # direct | sliced | twap | vwap_lite

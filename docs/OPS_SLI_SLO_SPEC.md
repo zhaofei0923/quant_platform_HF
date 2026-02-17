@@ -1,35 +1,27 @@
-# Ops SLI/SLO Specification
+# Ops SLI/SLO Spec (Pure C++)
 
-## Scope
+## Primary SLI Keys
 
-This document defines the minimum SLI/SLO contract for repository-level ops evidence.
+- `quant_hft_core_process_alive`
+- `quant_hft_strategy_engine_latency_p99_ms`
+- `quant_hft_strategy_engine_chain_integrity`
+- `quant_hft_storage_redis_health`
+- `quant_hft_storage_timescale_health`
+- `quant_hft_storage_postgres_health`
 
-## Naming Convention
+## Artifact Producers
 
-- All SLI names must use the `quant_hft_` prefix.
-- Canonical names are defined in `python/quant_hft/ops/sli_catalog.py`.
+- Health report: `ops_health_report_cli`
+- Alert report: `ops_alert_report_cli`
+- Reconnect evidence: `reconnect_evidence_cli`
 
-## Minimum SLI Set
+## Validation Commands
 
-1. `quant_hft_core_process_alive`
-2. `quant_hft_strategy_bridge_latency_p99_ms`
-3. `quant_hft_strategy_bridge_chain_integrity`
-4. `quant_hft_storage_redis_health`
-5. `quant_hft_storage_timescale_health`
+```bash
+./build/ops_health_report_cli --output_json docs/results/ops_health_report.json --output_md docs/results/ops_health_report.md
+./build/ops_alert_report_cli --health-json-file docs/results/ops_health_report.json --output_json docs/results/ops_alert_report.json --output_md docs/results/ops_alert_report.md
+```
 
-## Alert Policy
+## Acceptance Rule
 
-- `info`: all SLI healthy.
-- `warn`: non-critical SLI unhealthy.
-- `critical`: `core_process_alive`, chain integrity, or storage health unhealthy.
-
-Reference implementation:
-- `python/quant_hft/ops/alert_policy.py`
-- `scripts/ops/render_alert_report.py`
-
-## Evidence Artifacts
-
-- Health JSON: `docs/results/ops_health_report.json`
-- Health Markdown: `docs/results/ops_health_report.md`
-- Alert JSON: `docs/results/ops_alert_report.json`
-- Alert Markdown: `docs/results/ops_alert_report.md`
+Critical alerts must be empty for readiness sign-off.

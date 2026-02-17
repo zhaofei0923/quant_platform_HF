@@ -13,9 +13,9 @@
 #include <vector>
 
 #include "quant_hft/contracts/types.h"
+#include "quant_hft/core/callback_dispatcher.h"
 #include "quant_hft/core/ctp_gateway_adapter.h"
 #include "quant_hft/core/event_dispatcher.h"
-#include "quant_hft/core/python_callback_dispatcher.h"
 #include "quant_hft/interfaces/market_data_gateway.h"
 #include "quant_hft/interfaces/order_gateway.h"
 
@@ -31,25 +31,21 @@ enum class TraderSessionState {
 };
 
 class CTPTraderAdapter {
-public:
+   public:
     using OrderEventCallback = IOrderGateway::OrderEventCallback;
-    using TradingAccountSnapshotCallback =
-        CtpGatewayAdapter::TradingAccountSnapshotCallback;
-    using InvestorPositionSnapshotCallback =
-        CtpGatewayAdapter::InvestorPositionSnapshotCallback;
-    using InstrumentMetaSnapshotCallback =
-        CtpGatewayAdapter::InstrumentMetaSnapshotCallback;
+    using TradingAccountSnapshotCallback = CtpGatewayAdapter::TradingAccountSnapshotCallback;
+    using InvestorPositionSnapshotCallback = CtpGatewayAdapter::InvestorPositionSnapshotCallback;
+    using InstrumentMetaSnapshotCallback = CtpGatewayAdapter::InstrumentMetaSnapshotCallback;
     using BrokerTradingParamsSnapshotCallback =
         CtpGatewayAdapter::BrokerTradingParamsSnapshotCallback;
 
-    explicit CTPTraderAdapter(std::size_t query_qps_limit = 10,
-                              std::size_t dispatcher_workers = 1,
-                              std::size_t python_queue_size = 5000,
-                              std::int64_t python_critical_wait_ms = 10);
+    explicit CTPTraderAdapter(std::size_t query_qps_limit = 10, std::size_t dispatcher_workers = 1,
+                              std::size_t callback_queue_size = 5000,
+                              std::int64_t callback_critical_wait_ms = 10);
     explicit CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
                               std::size_t dispatcher_workers = 1,
-                              std::size_t python_queue_size = 5000,
-                              std::int64_t python_critical_wait_ms = 10);
+                              std::size_t callback_queue_size = 5000,
+                              std::int64_t callback_critical_wait_ms = 10);
     ~CTPTraderAdapter();
 
     CTPTraderAdapter(const CTPTraderAdapter&) = delete;
@@ -102,7 +98,7 @@ public:
     std::string GetLastConnectDiagnostic() const;
     std::string BuildOrderRef(const std::string& strategy_id) const;
 
-private:
+   private:
     static constexpr int kMaxReconnectAttempts = 10;
     static constexpr int kBaseReconnectDelayMs = 1000;
 
@@ -120,7 +116,7 @@ private:
     mutable std::mutex mutex_;
     std::shared_ptr<CtpGatewayAdapter> gateway_;
     EventDispatcher dispatcher_;
-    PythonCallbackDispatcher python_dispatcher_;
+    CallbackDispatcher callback_dispatcher_;
     OrderEventCallback user_order_event_callback_;
     TradingAccountSnapshotCallback user_trading_account_callback_;
     InvestorPositionSnapshotCallback user_investor_position_callback_;
@@ -138,7 +134,8 @@ private:
     mutable std::mutex promise_map_mutex_;
     std::unordered_map<int, std::shared_ptr<std::promise<void>>> query_promises_;
     std::unordered_map<int, std::shared_ptr<std::promise<void>>> settlement_promises_;
-    std::unordered_map<int, std::shared_ptr<std::promise<std::pair<int, std::string>>>> login_promises_;
+    std::unordered_map<int, std::shared_ptr<std::promise<std::pair<int, std::string>>>>
+        login_promises_;
     mutable std::uint64_t order_ref_seq_{0};
     std::function<void(bool)> circuit_breaker_callback_;
 };

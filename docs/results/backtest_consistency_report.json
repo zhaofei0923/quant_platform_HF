@@ -1,0 +1,11 @@
+{
+  "status": "pass",
+  "reason": "outputs_identical",
+  "csv_path": "runtime/benchmarks/backtest/rb_ci_sample.csv",
+  "run_id": "backtest-consistency-gate",
+  "files_equal": true,
+  "sha256_a": "4f285309810a9b465fa352c625048416ea7ef313f4ff34a1be18f3c4f13a5eee",
+  "sha256_b": "4f285309810a9b465fa352c625048416ea7ef313f4ff34a1be18f3c4f13a5eee",
+  "json_a": "docs/results/backtest_consistency_a.json",
+  "json_b": "docs/results/backtest_consistency_b.json"
+}

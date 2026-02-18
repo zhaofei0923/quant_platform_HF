@@ -29,6 +29,12 @@ TEST(RuleMarketStateEngineTest, BuildsStateAfterSnapshots) {
     EXPECT_GT(state.trend.confidence, 0.0);
     EXPECT_GE(state.volatility.score, 0.0);
     EXPECT_LE(state.liquidity.score, 1.0);
+    EXPECT_TRUE(state.has_bar);
+    EXPECT_DOUBLE_EQ(state.bar_open, 100.0);
+    EXPECT_DOUBLE_EQ(state.bar_high, 101.0);
+    EXPECT_DOUBLE_EQ(state.bar_low, 100.0);
+    EXPECT_DOUBLE_EQ(state.bar_close, 101.0);
+    EXPECT_DOUBLE_EQ(state.bar_volume, 20.0);
 }
 
 }  // namespace quant_hft

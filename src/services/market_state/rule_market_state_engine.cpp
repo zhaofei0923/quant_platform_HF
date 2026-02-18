@@ -60,6 +60,25 @@ StateSnapshot7D RuleMarketStateEngine::BuildState(const std::string& instrument_
     StateSnapshot7D out;
     out.instrument_id = instrument_id;
     out.ts_ns = snapshot.recv_ts_ns == 0 ? NowEpochNanos() : snapshot.recv_ts_ns;
+    out.bar_open = snapshot.last_price;
+    out.bar_high = snapshot.last_price;
+    out.bar_low = snapshot.last_price;
+    out.bar_close = snapshot.last_price;
+    out.bar_volume = 0.0;
+    out.has_bar = false;
+
+    if (!buffer.prices.empty()) {
+        out.bar_open = buffer.prices.front();
+        out.bar_close = buffer.prices.back();
+        out.bar_high = *std::max_element(buffer.prices.begin(), buffer.prices.end());
+        out.bar_low = *std::min_element(buffer.prices.begin(), buffer.prices.end());
+    }
+    if (buffer.volumes.size() >= 2) {
+        const std::int64_t volume_delta =
+            std::max<std::int64_t>(0, buffer.volumes.back() - buffer.volumes.front());
+        out.bar_volume = static_cast<double>(volume_delta);
+        out.has_bar = true;
+    }
 
     if (buffer.prices.size() < 2) {
         out.trend = {0.0, 0.0};

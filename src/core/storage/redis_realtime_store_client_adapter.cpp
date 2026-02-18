@@ -129,6 +129,12 @@ void RedisRealtimeStoreClientAdapter::UpsertStateSnapshot7D(
         {"pattern_confidence", ToString(snapshot.pattern.confidence)},
         {"event_drive_score", ToString(snapshot.event_drive.score)},
         {"event_drive_confidence", ToString(snapshot.event_drive.confidence)},
+        {"bar_open", ToString(snapshot.bar_open)},
+        {"bar_high", ToString(snapshot.bar_high)},
+        {"bar_low", ToString(snapshot.bar_low)},
+        {"bar_close", ToString(snapshot.bar_close)},
+        {"bar_volume", ToString(snapshot.bar_volume)},
+        {"has_bar", snapshot.has_bar ? "1" : "0"},
         {"ts_ns", ToString(snapshot.ts_ns)},
     };
     if (WriteWithRetry(key, fields)) {
@@ -326,6 +332,16 @@ bool RedisRealtimeStoreClientAdapter::GetStateSnapshot7D(const std::string& inst
     }
     if (!parse_dimension("event_drive", &snapshot.event_drive)) {
         return false;
+    }
+    (void)ParseDouble(row, "bar_open", &snapshot.bar_open);
+    (void)ParseDouble(row, "bar_high", &snapshot.bar_high);
+    (void)ParseDouble(row, "bar_low", &snapshot.bar_low);
+    (void)ParseDouble(row, "bar_close", &snapshot.bar_close);
+    (void)ParseDouble(row, "bar_volume", &snapshot.bar_volume);
+    const std::string has_bar_text = GetOrEmpty(row, "has_bar");
+    if (!has_bar_text.empty()) {
+        snapshot.has_bar =
+            (has_bar_text == "1" || has_bar_text == "true" || has_bar_text == "TRUE");
     }
     if (!ParseInt64(row, "ts_ns", &snapshot.ts_ns)) {
         return false;

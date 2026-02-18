@@ -1484,6 +1484,12 @@ inline StateSnapshot7D BuildStateSnapshotFromBar(const ReplayTick& first, const 
     state.pattern = {close_price > open_price ? 1.0 : (close_price < open_price ? -1.0 : 0.0),
                      close_price == open_price ? 0.2 : 0.7};
     state.event_drive = {0.0, 0.1};
+    state.bar_open = open_price;
+    state.bar_high = high;
+    state.bar_low = low;
+    state.bar_close = close_price;
+    state.bar_volume = static_cast<double>(volume_delta);
+    state.has_bar = true;
     state.ts_ns = ts_ns;
     return state;
 }

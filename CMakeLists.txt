@@ -40,6 +40,11 @@ add_library(quant_hft_core STATIC
     src/backtest/engine.cpp
     src/backtest/performance.cpp
     src/backtest/live_data_feed.cpp
+    src/indicators/adx.cpp
+    src/indicators/atr.cpp
+    src/indicators/ema.cpp
+    src/indicators/kama.cpp
+    src/indicators/sma.cpp
     src/strategy/base_strategy.cpp
     src/strategy/strategy_registry.cpp
     src/strategy/strategy_engine.cpp
@@ -420,6 +425,24 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(demo_live_strategy_test tests/unit/strategy/demo_live_strategy_test.cpp)
     target_link_libraries(demo_live_strategy_test PRIVATE quant_hft_core GTest::gtest_main)
 
+    add_executable(sma_test tests/unit/indicators/sma_test.cpp)
+    target_link_libraries(sma_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(ema_test tests/unit/indicators/ema_test.cpp)
+    target_link_libraries(ema_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(atr_test tests/unit/indicators/atr_test.cpp)
+    target_link_libraries(atr_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(kama_test tests/unit/indicators/kama_test.cpp)
+    target_link_libraries(kama_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(adx_test tests/unit/indicators/adx_test.cpp)
+    target_link_libraries(adx_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(backtest_replay_support_test tests/unit/apps/backtest_replay_support_test.cpp)
+    target_link_libraries(backtest_replay_support_test PRIVATE quant_hft_core GTest::gtest_main)
+
     add_executable(ops_cli_test tests/unit/apps/ops_cli_test.cpp)
     target_link_libraries(ops_cli_test PRIVATE GTest::gtest_main)
     target_compile_definitions(ops_cli_test PRIVATE QUANT_HFT_BUILD_DIR="${CMAKE_BINARY_DIR}")
@@ -497,6 +520,12 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(strategy_registry_test)
     gtest_discover_tests(strategy_engine_test)
     gtest_discover_tests(demo_live_strategy_test)
+    gtest_discover_tests(sma_test)
+    gtest_discover_tests(ema_test)
+    gtest_discover_tests(atr_test)
+    gtest_discover_tests(kama_test)
+    gtest_discover_tests(adx_test)
+    gtest_discover_tests(backtest_replay_support_test)
     gtest_discover_tests(ops_cli_test)
     gtest_discover_tests(quality_gate_scripts_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(consistency_gate_script_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

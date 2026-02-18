@@ -211,6 +211,12 @@ struct StateSnapshot7D {
     StateDimension seasonality;
     StateDimension pattern;
     StateDimension event_drive;
+    double bar_open{0.0};
+    double bar_high{0.0};
+    double bar_low{0.0};
+    double bar_close{0.0};
+    double bar_volume{0.0};
+    bool has_bar{false};
     EpochNanos ts_ns{0};
 };
 

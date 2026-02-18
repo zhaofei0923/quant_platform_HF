@@ -176,6 +176,12 @@ TEST(RedisRealtimeStoreClientAdapterTest, RoundTripsStateSnapshot7D) {
     state.seasonality = {0.0, 0.2};
     state.pattern = {0.1, 0.3};
     state.event_drive = {0.0, 0.2};
+    state.bar_open = 4510.0;
+    state.bar_high = 4530.0;
+    state.bar_low = 4500.0;
+    state.bar_close = 4520.0;
+    state.bar_volume = 123.0;
+    state.has_bar = true;
     state.ts_ns = 123;
 
     store.UpsertStateSnapshot7D(state);
@@ -185,7 +191,49 @@ TEST(RedisRealtimeStoreClientAdapterTest, RoundTripsStateSnapshot7D) {
     EXPECT_EQ(got.instrument_id, "SHFE.ag2406");
     EXPECT_DOUBLE_EQ(got.trend.score, 0.12);
     EXPECT_DOUBLE_EQ(got.trend.confidence, 0.9);
+    EXPECT_DOUBLE_EQ(got.bar_open, 4510.0);
+    EXPECT_DOUBLE_EQ(got.bar_high, 4530.0);
+    EXPECT_DOUBLE_EQ(got.bar_low, 4500.0);
+    EXPECT_DOUBLE_EQ(got.bar_close, 4520.0);
+    EXPECT_DOUBLE_EQ(got.bar_volume, 123.0);
+    EXPECT_TRUE(got.has_bar);
     EXPECT_EQ(got.ts_ns, 123);
+}
+
+TEST(RedisRealtimeStoreClientAdapterTest, ReadsLegacyStateSnapshotWithoutBarFields) {
+    auto client = std::make_shared<InMemoryRedisHashClient>();
+    RedisRealtimeStoreClientAdapter store(client, StorageRetryPolicy{});
+
+    std::string error;
+    ASSERT_TRUE(client->HSet(
+        RedisKeyBuilder::StateSnapshot7DLatest("SHFE.ag2406"),
+        {{"instrument_id", "SHFE.ag2406"},
+         {"trend_score", "0.1"},
+         {"trend_confidence", "0.9"},
+         {"volatility_score", "0.2"},
+         {"volatility_confidence", "0.8"},
+         {"liquidity_score", "0.3"},
+         {"liquidity_confidence", "0.7"},
+         {"sentiment_score", "0.4"},
+         {"sentiment_confidence", "0.6"},
+         {"seasonality_score", "0.0"},
+         {"seasonality_confidence", "0.2"},
+         {"pattern_score", "0.1"},
+         {"pattern_confidence", "0.3"},
+         {"event_drive_score", "0.0"},
+         {"event_drive_confidence", "0.2"},
+         {"ts_ns", "100"}},
+        &error))
+        << error;
+
+    StateSnapshot7D got;
+    ASSERT_TRUE(store.GetStateSnapshot7D("SHFE.ag2406", &got));
+    EXPECT_DOUBLE_EQ(got.bar_open, 0.0);
+    EXPECT_DOUBLE_EQ(got.bar_high, 0.0);
+    EXPECT_DOUBLE_EQ(got.bar_low, 0.0);
+    EXPECT_DOUBLE_EQ(got.bar_close, 0.0);
+    EXPECT_DOUBLE_EQ(got.bar_volume, 0.0);
+    EXPECT_FALSE(got.has_bar);
 }
 
 TEST(RedisRealtimeStoreClientAdapterTest, RetriesTransientWriteFailure) {

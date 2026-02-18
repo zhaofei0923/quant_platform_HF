@@ -151,6 +151,13 @@ message StateSnapshot7D {
   StateDimension pattern = 7;
   StateDimension event_drive = 8;
   int64 ts_ns = 9;
+  double bar_open = 10;
+  double bar_high = 11;
+  double bar_low = 12;
+  double bar_close = 13;
+  double bar_volume = 14;
+  bool has_bar = 15;
+  uint32 market_regime = 16;
 }
 
 message SignalIntent {
@@ -162,6 +169,7 @@ message SignalIntent {
   double limit_price = 6;
   int64 ts_ns = 7;
   string trace_id = 8;
+  uint32 signal_type = 9;
 }
 
 message OrderIntent {

@@ -21,6 +21,7 @@ std::vector<SignalIntent> DemoLiveStrategy::OnState(const StateSnapshot7D& state
     SignalIntent intent;
     intent.strategy_id = strategy_id_;
     intent.instrument_id = state.instrument_id;
+    intent.signal_type = SignalType::kOpen;
     intent.side = state.trend.score >= 0.0 ? Side::kBuy : Side::kSell;
     intent.offset = OffsetFlag::kOpen;
     intent.volume = 1;

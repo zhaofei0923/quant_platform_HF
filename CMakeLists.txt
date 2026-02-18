@@ -49,6 +49,14 @@ add_library(quant_hft_core STATIC
     src/strategy/strategy_registry.cpp
     src/strategy/strategy_engine.cpp
     src/strategy/demo_live_strategy.cpp
+    src/strategy/atomic_factory.cpp
+    src/strategy/composite_config_loader.cpp
+    src/strategy/composite_strategy.cpp
+    src/strategy/atomic/trend_opening.cpp
+    src/strategy/atomic/atr_stop_loss.cpp
+    src/strategy/atomic/atr_take_profit.cpp
+    src/strategy/atomic/time_filter.cpp
+    src/strategy/atomic/max_position_risk_control.cpp
     src/core/backtest/parquet_data_feed.cpp
     src/core/common/callback_dispatcher.cpp
     src/core/common/event_dispatcher.cpp
@@ -103,6 +111,7 @@ add_library(quant_hft_core STATIC
     src/services/portfolio/position_manager.cpp
     src/services/portfolio/in_memory_portfolio_ledger.cpp
     src/services/market_state/bar_aggregator.cpp
+    src/services/market_state/market_state_detector.cpp
     src/services/market_state/rule_market_state_engine.cpp
 )
 
@@ -392,6 +401,9 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(rule_market_state_engine_test tests/unit/services/rule_market_state_engine_test.cpp)
     target_link_libraries(rule_market_state_engine_test PRIVATE quant_hft_core GTest::gtest_main)
 
+    add_executable(market_state_detector_test tests/unit/services/market_state_detector_test.cpp)
+    target_link_libraries(market_state_detector_test PRIVATE quant_hft_core GTest::gtest_main)
+
     add_executable(metric_registry_test tests/unit/monitoring/metric_registry_test.cpp)
     target_link_libraries(metric_registry_test PRIVATE quant_hft_core GTest::gtest_main)
 
@@ -416,6 +428,12 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(base_strategy_test tests/unit/strategy/base_strategy_test.cpp)
     target_link_libraries(base_strategy_test PRIVATE quant_hft_core GTest::gtest_main)
 
+    add_executable(atomic_strategy_interface_test tests/unit/strategy/atomic_strategy_interface_test.cpp)
+    target_link_libraries(atomic_strategy_interface_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(atomic_factory_test tests/unit/strategy/atomic_factory_test.cpp)
+    target_link_libraries(atomic_factory_test PRIVATE quant_hft_core GTest::gtest_main)
+
     add_executable(strategy_registry_test tests/unit/strategy/strategy_registry_test.cpp)
     target_link_libraries(strategy_registry_test PRIVATE quant_hft_core GTest::gtest_main)
 
@@ -424,6 +442,15 @@ if(QUANT_HFT_BUILD_TESTS)
 
     add_executable(demo_live_strategy_test tests/unit/strategy/demo_live_strategy_test.cpp)
     target_link_libraries(demo_live_strategy_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(composite_config_loader_test tests/unit/strategy/composite_config_loader_test.cpp)
+    target_link_libraries(composite_config_loader_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(composite_strategy_test tests/unit/strategy/composite_strategy_test.cpp)
+    target_link_libraries(composite_strategy_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(atomic_strategies_test tests/unit/strategy/atomic_strategies_test.cpp)
+    target_link_libraries(atomic_strategies_test PRIVATE quant_hft_core GTest::gtest_main)
 
     add_executable(sma_test tests/unit/indicators/sma_test.cpp)
     target_link_libraries(sma_test PRIVATE quant_hft_core GTest::gtest_main)
@@ -509,6 +536,7 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(settlement_price_provider_test)
     gtest_discover_tests(daily_settlement_service_test)
     gtest_discover_tests(rule_market_state_engine_test)
+    gtest_discover_tests(market_state_detector_test)
     gtest_discover_tests(metric_registry_test)
     gtest_discover_tests(parquet_data_feed_test)
     gtest_discover_tests(backtest_data_feed_test)
@@ -517,9 +545,14 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(engine_test)
     gtest_discover_tests(performance_test)
     gtest_discover_tests(base_strategy_test)
+    gtest_discover_tests(atomic_strategy_interface_test)
+    gtest_discover_tests(atomic_factory_test)
     gtest_discover_tests(strategy_registry_test)
     gtest_discover_tests(strategy_engine_test)
     gtest_discover_tests(demo_live_strategy_test)
+    gtest_discover_tests(composite_config_loader_test)
+    gtest_discover_tests(composite_strategy_test)
+    gtest_discover_tests(atomic_strategies_test)
     gtest_discover_tests(sma_test)
     gtest_discover_tests(ema_test)
     gtest_discover_tests(atr_test)

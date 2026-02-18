@@ -1,20 +1,19 @@
+#include "quant_hft/core/ctp_config_loader.h"
+
+#include <gtest/gtest.h>
+
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
 
-#include <gtest/gtest.h>
-
-#include "quant_hft/core/ctp_config_loader.h"
-
 namespace quant_hft {
 namespace {
 
 class ScopedEnvVar {
-public:
-    ScopedEnvVar(std::string key, const char* value)
-        : key_(std::move(key)) {
+   public:
+    ScopedEnvVar(std::string key, const char* value) : key_(std::move(key)) {
         const char* previous = std::getenv(key_.c_str());
         if (previous != nullptr) {
             had_previous_ = true;
@@ -35,15 +34,14 @@ public:
         unsetenv(key_.c_str());
     }
 
-private:
+   private:
     std::string key_;
     bool had_previous_{false};
     std::string previous_value_;
 };
 
 std::filesystem::path WriteTempConfig(const std::string& body) {
-    const auto token = std::to_string(
-        std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto token = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     const auto path = std::filesystem::temp_directory_path() /
                       ("quant_hft_ctp_config_loader_test_" + token + ".yaml");
     std::ofstream out(path);
@@ -114,8 +112,7 @@ TEST(CtpConfigLoaderTest, LoadsValidSimConfigWithPasswordEnv) {
 
     CtpFileConfig config;
     std::string error;
-    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error))
-        << error;
+    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error)) << error;
 
     EXPECT_EQ(config.runtime.environment, CtpEnvironment::kSimNow);
     EXPECT_FALSE(config.runtime.is_production_mode);
@@ -166,8 +163,7 @@ TEST(CtpConfigLoaderTest, SupportsDisablingTerminalAuthInNonProduction) {
 
     CtpFileConfig config;
     std::string error;
-    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error))
-        << error;
+    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error)) << error;
     EXPECT_TRUE(config.runtime.enable_real_api);
     EXPECT_FALSE(config.runtime.enable_terminal_auth);
 
@@ -239,8 +235,7 @@ TEST(CtpConfigLoaderTest, LoadsStrategyEngineKeysAndSplitsLists) {
 
     CtpFileConfig config;
     std::string error;
-    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error))
-        << error;
+    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error)) << error;
 
     ASSERT_EQ(config.instruments.size(), 2U);
     EXPECT_EQ(config.instruments[0], "SHFE.ag2406");
@@ -253,6 +248,63 @@ TEST(CtpConfigLoaderTest, LoadsStrategyEngineKeysAndSplitsLists) {
     EXPECT_EQ(config.account_id, "sim-account");
 
     std::filesystem::remove(config_path);
+}
+
+TEST(CtpConfigLoaderTest, RequiresCompositeConfigPathWhenFactoryIsComposite) {
+    const auto config_path = WriteTempConfig(
+        "ctp:\n"
+        "  environment: sim\n"
+        "  is_production_mode: false\n"
+        "  broker_id: \"9999\"\n"
+        "  user_id: \"191202\"\n"
+        "  investor_id: \"191202\"\n"
+        "  market_front: \"tcp://127.0.0.1:40011\"\n"
+        "  trader_front: \"tcp://127.0.0.1:40001\"\n"
+        "  password: \"plain-secret\"\n"
+        "  strategy_factory: \"composite\"\n");
+
+    CtpFileConfig config;
+    std::string error;
+    EXPECT_FALSE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error));
+    EXPECT_NE(error.find("strategy_composite_config"), std::string::npos);
+
+    std::filesystem::remove(config_path);
+}
+
+TEST(CtpConfigLoaderTest, ResolvesRelativeCompositeConfigPathFromYamlDirectory) {
+    const auto token = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto temp_dir =
+        std::filesystem::temp_directory_path() / ("quant_hft_ctp_loader_composite_" + token);
+    const auto nested_dir = temp_dir / "configs";
+    const auto strategy_dir = temp_dir / "strategies";
+    std::filesystem::create_directories(nested_dir);
+    std::filesystem::create_directories(strategy_dir);
+
+    const auto config_path = nested_dir / "ctp.yaml";
+    {
+        std::ofstream out(config_path);
+        out << "ctp:\n"
+               "  environment: sim\n"
+               "  is_production_mode: false\n"
+               "  broker_id: \"9999\"\n"
+               "  user_id: \"191202\"\n"
+               "  investor_id: \"191202\"\n"
+               "  market_front: \"tcp://127.0.0.1:40011\"\n"
+               "  trader_front: \"tcp://127.0.0.1:40001\"\n"
+               "  password: \"plain-secret\"\n"
+               "  strategy_factory: \"composite\"\n"
+               "  strategy_composite_config: \"../strategies/composite_strategy.yaml\"\n";
+    }
+
+    CtpFileConfig config;
+    std::string error;
+    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error)) << error;
+
+    const std::filesystem::path expected =
+        (nested_dir / "../strategies/composite_strategy.yaml").lexically_normal();
+    EXPECT_EQ(std::filesystem::path(config.strategy_composite_config), expected);
+
+    std::filesystem::remove_all(temp_dir);
 }
 
 TEST(CtpConfigLoaderTest, RejectsDeprecatedStrategyPollIntervalSetting) {
@@ -330,8 +382,7 @@ TEST(CtpConfigLoaderTest, LoadsExecutionAndRiskRuleConfigs) {
 
     CtpFileConfig config;
     std::string error;
-    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error))
-        << error;
+    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error)) << error;
 
     EXPECT_EQ(config.execution.mode, ExecutionMode::kSliced);
     EXPECT_EQ(config.execution.algo, ExecutionAlgo::kTwap);
@@ -394,8 +445,7 @@ TEST(CtpConfigLoaderTest, DefaultsAccountIdToUserIdWhenNotConfigured) {
 
     CtpFileConfig config;
     std::string error;
-    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error))
-        << error;
+    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error)) << error;
 
     EXPECT_EQ(config.account_id, "191202");
 
@@ -417,8 +467,7 @@ TEST(CtpConfigLoaderTest, RejectsInvalidCancelExecutionConfigs) {
 
     CtpFileConfig config;
     std::string error;
-    EXPECT_FALSE(
-        CtpConfigLoader::LoadFromYaml(negative_cancel_after.string(), &config, &error));
+    EXPECT_FALSE(CtpConfigLoader::LoadFromYaml(negative_cancel_after.string(), &config, &error));
     EXPECT_NE(error.find("cancel_after_ms"), std::string::npos);
     std::filesystem::remove(negative_cancel_after);
 
@@ -434,8 +483,7 @@ TEST(CtpConfigLoaderTest, RejectsInvalidCancelExecutionConfigs) {
         "  password: \"plain-secret\"\n"
         "  cancel_check_interval_ms: 0\n");
     error.clear();
-    EXPECT_FALSE(
-        CtpConfigLoader::LoadFromYaml(invalid_scan_interval.string(), &config, &error));
+    EXPECT_FALSE(CtpConfigLoader::LoadFromYaml(invalid_scan_interval.string(), &config, &error));
     EXPECT_NE(error.find("cancel_check_interval_ms"), std::string::npos);
     std::filesystem::remove(invalid_scan_interval);
 
@@ -490,8 +538,7 @@ TEST(CtpConfigLoaderTest, LoadsAndValidatesCtpQueryIntervals) {
 
     CtpFileConfig config;
     std::string error;
-    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error))
-        << error;
+    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error)) << error;
 
     EXPECT_EQ(config.account_query_interval_ms, 1500);
     EXPECT_EQ(config.position_query_interval_ms, 1700);
@@ -551,8 +598,7 @@ TEST(CtpConfigLoaderTest, LoadsFlowBreakerAndAuditSettings) {
 
     CtpFileConfig config;
     std::string error;
-    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error))
-        << error;
+    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error)) << error;
 
     EXPECT_TRUE(config.runtime.settlement_confirm_required);
     EXPECT_TRUE(config.runtime.metrics_enabled);
@@ -593,8 +639,7 @@ TEST(CtpConfigLoaderTest, LoadsAndValidatesLoggingSettings) {
 
     CtpFileConfig config;
     std::string error;
-    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error))
-        << error;
+    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error)) << error;
     EXPECT_EQ(config.runtime.log_level, "warn");
     EXPECT_EQ(config.runtime.log_sink, "stdout");
     std::filesystem::remove(config_path);
@@ -630,6 +675,91 @@ TEST(CtpConfigLoaderTest, LoadsAndValidatesLoggingSettings) {
     EXPECT_FALSE(CtpConfigLoader::LoadFromYaml(invalid_sink.string(), &config, &error));
     EXPECT_NE(error.find("log_sink"), std::string::npos);
     std::filesystem::remove(invalid_sink);
+}
+
+TEST(CtpConfigLoaderTest, LoadsNestedMarketStateDetectorConfig) {
+    const auto config_path = WriteTempConfig(
+        "ctp:\n"
+        "  environment: sim\n"
+        "  is_production_mode: false\n"
+        "  broker_id: \"9999\"\n"
+        "  user_id: \"191202\"\n"
+        "  investor_id: \"191202\"\n"
+        "  market_front: \"tcp://127.0.0.1:40011\"\n"
+        "  trader_front: \"tcp://127.0.0.1:40001\"\n"
+        "  password: \"plain-secret\"\n"
+        "  market_state_detector:\n"
+        "    adx_period: 7\n"
+        "    adx_strong_threshold: 45\n"
+        "    adx_weak_lower: 20\n"
+        "    adx_weak_upper: 35\n"
+        "    kama_er_period: 8\n"
+        "    kama_fast_period: 2\n"
+        "    kama_slow_period: 21\n"
+        "    kama_er_strong: 0.7\n"
+        "    kama_er_weak_lower: 0.25\n"
+        "    atr_period: 9\n"
+        "    atr_flat_ratio: 0.002\n"
+        "    require_adx_for_trend: false\n"
+        "    use_kama_er: true\n"
+        "    min_bars_for_flat: 12\n");
+
+    CtpFileConfig config;
+    std::string error;
+    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error)) << error;
+    EXPECT_EQ(config.market_state_detector.adx_period, 7);
+    EXPECT_DOUBLE_EQ(config.market_state_detector.adx_strong_threshold, 45.0);
+    EXPECT_EQ(config.market_state_detector.kama_er_period, 8);
+    EXPECT_DOUBLE_EQ(config.market_state_detector.atr_flat_ratio, 0.002);
+    EXPECT_FALSE(config.market_state_detector.require_adx_for_trend);
+    EXPECT_EQ(config.market_state_detector.min_bars_for_flat, 12);
+    std::filesystem::remove(config_path);
+}
+
+TEST(CtpConfigLoaderTest, NestedMarketStateDetectorKeysOverrideLegacyFlatKeys) {
+    const auto config_path = WriteTempConfig(
+        "ctp:\n"
+        "  environment: sim\n"
+        "  is_production_mode: false\n"
+        "  broker_id: \"9999\"\n"
+        "  user_id: \"191202\"\n"
+        "  investor_id: \"191202\"\n"
+        "  market_front: \"tcp://127.0.0.1:40011\"\n"
+        "  trader_front: \"tcp://127.0.0.1:40001\"\n"
+        "  password: \"plain-secret\"\n"
+        "  adx_period: 6\n"
+        "  atr_flat_ratio: 0.003\n"
+        "  market_state_detector:\n"
+        "    adx_period: 11\n"
+        "    atr_flat_ratio: 0.0015\n");
+
+    CtpFileConfig config;
+    std::string error;
+    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error)) << error;
+    EXPECT_EQ(config.market_state_detector.adx_period, 11);
+    EXPECT_DOUBLE_EQ(config.market_state_detector.atr_flat_ratio, 0.0015);
+    std::filesystem::remove(config_path);
+}
+
+TEST(CtpConfigLoaderTest, RejectsInvalidMarketStateDetectorConfig) {
+    const auto invalid_period = WriteTempConfig(
+        "ctp:\n"
+        "  environment: sim\n"
+        "  is_production_mode: false\n"
+        "  broker_id: \"9999\"\n"
+        "  user_id: \"191202\"\n"
+        "  investor_id: \"191202\"\n"
+        "  market_front: \"tcp://127.0.0.1:40011\"\n"
+        "  trader_front: \"tcp://127.0.0.1:40001\"\n"
+        "  password: \"plain-secret\"\n"
+        "  market_state_detector:\n"
+        "    adx_period: 0\n");
+
+    CtpFileConfig config;
+    std::string error;
+    EXPECT_FALSE(CtpConfigLoader::LoadFromYaml(invalid_period.string(), &config, &error));
+    EXPECT_NE(error.find("market_state_detector"), std::string::npos);
+    std::filesystem::remove(invalid_period);
 }
 
 }  // namespace

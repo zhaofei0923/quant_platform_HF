@@ -23,6 +23,7 @@ TEST(DemoLiveStrategyTest, EmitsBuyIntentWhenTrendScoreIsNonNegative) {
     EXPECT_EQ(intent.instrument_id, "SHFE.ag2406");
     EXPECT_EQ(intent.side, Side::kBuy);
     EXPECT_EQ(intent.offset, OffsetFlag::kOpen);
+    EXPECT_EQ(intent.signal_type, SignalType::kOpen);
     EXPECT_EQ(intent.volume, 1);
     EXPECT_DOUBLE_EQ(intent.limit_price, 4500.0);
     EXPECT_EQ(intent.ts_ns, 101);
@@ -51,6 +52,7 @@ TEST(DemoLiveStrategyTest, EmitsSellIntentWhenTrendScoreIsNegativeAndIncrementsT
     const auto intents = strategy.OnState(second_state);
     ASSERT_EQ(intents.size(), 1U);
     EXPECT_EQ(intents.front().side, Side::kSell);
+    EXPECT_EQ(intents.front().signal_type, SignalType::kOpen);
     EXPECT_EQ(intents.front().trace_id, "demo-beta-SHFE.rb2405-202-2");
 
     strategy.Shutdown();

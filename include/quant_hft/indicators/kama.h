@@ -13,6 +13,7 @@ class KAMA : public Indicator {
 
     void Update(double high, double low, double close, double volume = 0.0) override;
     std::optional<double> Value() const override;
+    std::optional<double> EfficiencyRatio() const;
     bool IsReady() const override;
     void Reset() override;
 
@@ -25,6 +26,8 @@ class KAMA : public Indicator {
     bool initialized_{false};
     std::deque<double> closes_;
     double volatility_sum_{0.0};
+    bool has_efficiency_ratio_{false};
+    double efficiency_ratio_{0.0};
     double kama_{0.0};
 };
 

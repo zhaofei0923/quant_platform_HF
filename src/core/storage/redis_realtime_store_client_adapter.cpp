@@ -11,6 +11,23 @@ namespace {
 constexpr int kTtlMarketStateSeconds = 3 * 24 * 60 * 60;
 constexpr int kTtlOrderSeconds = 7 * 24 * 60 * 60;
 
+MarketRegime ParseMarketRegimeValue(std::int32_t value) {
+    switch (value) {
+        case static_cast<std::int32_t>(MarketRegime::kUnknown):
+            return MarketRegime::kUnknown;
+        case static_cast<std::int32_t>(MarketRegime::kStrongTrend):
+            return MarketRegime::kStrongTrend;
+        case static_cast<std::int32_t>(MarketRegime::kWeakTrend):
+            return MarketRegime::kWeakTrend;
+        case static_cast<std::int32_t>(MarketRegime::kRanging):
+            return MarketRegime::kRanging;
+        case static_cast<std::int32_t>(MarketRegime::kFlat):
+            return MarketRegime::kFlat;
+        default:
+            return MarketRegime::kUnknown;
+    }
+}
+
 }  // namespace
 
 RedisRealtimeStoreClientAdapter::RedisRealtimeStoreClientAdapter(
@@ -135,6 +152,7 @@ void RedisRealtimeStoreClientAdapter::UpsertStateSnapshot7D(
         {"bar_close", ToString(snapshot.bar_close)},
         {"bar_volume", ToString(snapshot.bar_volume)},
         {"has_bar", snapshot.has_bar ? "1" : "0"},
+        {"market_regime", ToString(static_cast<std::int32_t>(snapshot.market_regime))},
         {"ts_ns", ToString(snapshot.ts_ns)},
     };
     if (WriteWithRetry(key, fields)) {
@@ -342,6 +360,10 @@ bool RedisRealtimeStoreClientAdapter::GetStateSnapshot7D(const std::string& inst
     if (!has_bar_text.empty()) {
         snapshot.has_bar =
             (has_bar_text == "1" || has_bar_text == "true" || has_bar_text == "TRUE");
+    }
+    std::int32_t market_regime_value = 0;
+    if (ParseInt32(row, "market_regime", &market_regime_value)) {
+        snapshot.market_regime = ParseMarketRegimeValue(market_regime_value);
     }
     if (!ParseInt64(row, "ts_ns", &snapshot.ts_ns)) {
         return false;

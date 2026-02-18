@@ -7,8 +7,9 @@
 
 namespace quant_hft {
 
-RuleMarketStateEngine::RuleMarketStateEngine(std::size_t lookback_window)
-    : lookback_window_(lookback_window) {}
+RuleMarketStateEngine::RuleMarketStateEngine(std::size_t lookback_window,
+                                             MarketStateDetectorConfig detector_config)
+    : lookback_window_(lookback_window), detector_config_(std::move(detector_config)) {}
 
 void RuleMarketStateEngine::OnMarketSnapshot(const MarketSnapshot& snapshot) {
     StateCallback callback_copy;
@@ -25,6 +26,25 @@ void RuleMarketStateEngine::OnMarketSnapshot(const MarketSnapshot& snapshot) {
         }
         while (buffer.volumes.size() > lookback_window_) {
             buffer.volumes.pop_front();
+        }
+
+        if (buffer.detector == nullptr) {
+            buffer.detector = std::make_unique<MarketStateDetector>(detector_config_);
+        }
+
+        bool should_update_detector = true;
+        if (snapshot.recv_ts_ns > 0 && buffer.last_detector_ts_ns > 0 &&
+            snapshot.recv_ts_ns < buffer.last_detector_ts_ns) {
+            should_update_detector = false;
+        }
+        if (should_update_detector) {
+            const double high = *std::max_element(buffer.prices.begin(), buffer.prices.end());
+            const double low = *std::min_element(buffer.prices.begin(), buffer.prices.end());
+            const double close = buffer.prices.back();
+            buffer.detector->Update(high, low, close);
+            if (snapshot.recv_ts_ns > 0) {
+                buffer.last_detector_ts_ns = snapshot.recv_ts_ns;
+            }
         }
 
         buffer.latest = BuildState(snapshot.instrument_id, buffer, snapshot);
@@ -66,6 +86,7 @@ StateSnapshot7D RuleMarketStateEngine::BuildState(const std::string& instrument_
     out.bar_close = snapshot.last_price;
     out.bar_volume = 0.0;
     out.has_bar = false;
+    out.market_regime = MarketRegime::kUnknown;
 
     if (!buffer.prices.empty()) {
         out.bar_open = buffer.prices.front();
@@ -78,6 +99,9 @@ StateSnapshot7D RuleMarketStateEngine::BuildState(const std::string& instrument_
             std::max<std::int64_t>(0, buffer.volumes.back() - buffer.volumes.front());
         out.bar_volume = static_cast<double>(volume_delta);
         out.has_bar = true;
+    }
+    if (buffer.detector != nullptr) {
+        out.market_regime = buffer.detector->GetRegime();
     }
 
     if (buffer.prices.size() < 2) {

@@ -42,7 +42,26 @@ ctp:
   clickhouse_dsn: "${CLICKHOUSE_DSN}"
   audit_hot_days: 7
   audit_cold_days: 180
+  strategy_factory: "demo"
+  # strategy_composite_config: "../strategies/composite_strategy.yaml"  # required when strategy_factory=composite
   connect_timeout_ms: 10000
   reconnect_max_attempts: 8
   reconnect_initial_backoff_ms: 500
   reconnect_max_backoff_ms: 8000
+
+  # market_state_detector.* nested keys take precedence over legacy flat keys.
+  market_state_detector:
+    adx_period: 14
+    adx_strong_threshold: 40.0
+    adx_weak_lower: 25.0
+    adx_weak_upper: 40.0
+    kama_er_period: 10
+    kama_fast_period: 2
+    kama_slow_period: 30
+    kama_er_strong: 0.6
+    kama_er_weak_lower: 0.3
+    atr_period: 14
+    atr_flat_ratio: 0.001
+    require_adx_for_trend: true
+    use_kama_er: true
+    min_bars_for_flat: 20

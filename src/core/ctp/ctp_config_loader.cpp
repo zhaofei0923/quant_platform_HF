@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -23,9 +25,7 @@ std::string Trim(std::string value) {
 }
 
 std::string Lowercase(std::string value) {
-    std::transform(value.begin(),
-                   value.end(),
-                   value.begin(),
+    std::transform(value.begin(), value.end(), value.begin(),
                    [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     return value;
 }
@@ -42,25 +42,44 @@ std::unordered_map<std::string, std::string> LoadSimpleYaml(const std::string& p
     }
 
     std::string line;
+    std::string active_section;
+    std::size_t active_section_indent = 0;
     while (std::getline(in, line)) {
         const auto hash = line.find('#');
         if (hash != std::string::npos) {
             line = line.substr(0, hash);
         }
-        line = Trim(line);
-        if (line.empty() || line == "ctp:") {
+        const auto first_non_space = line.find_first_not_of(" \t");
+        if (first_non_space == std::string::npos) {
+            continue;
+        }
+        const std::size_t indent = first_non_space;
+        const std::string trimmed = Trim(line);
+        if (trimmed.empty() || trimmed == "ctp:") {
             continue;
         }
 
-        const auto pos = line.find(':');
+        const auto pos = trimmed.find(':');
         if (pos == std::string::npos) {
             continue;
         }
 
-        const auto key = Trim(line.substr(0, pos));
-        auto value = Trim(line.substr(pos + 1));
+        const auto key = Trim(trimmed.substr(0, pos));
+        const bool is_section = !trimmed.empty() && trimmed.back() == ':';
+        if (is_section) {
+            active_section = key;
+            active_section_indent = indent;
+            continue;
+        }
+
+        auto value = Trim(trimmed.substr(pos + 1));
         if (!key.empty()) {
-            kv[key] = ResolveEnvVars(value);
+            if (!active_section.empty() && indent > active_section_indent) {
+                kv[active_section + "." + key] = ResolveEnvVars(value);
+            } else {
+                active_section.clear();
+                kv[key] = ResolveEnvVars(value);
+            }
         }
     }
     return kv;
@@ -117,10 +136,8 @@ bool IsValidLogSink(const std::string& value) {
     return normalized == "stdout" || normalized == "stderr";
 }
 
-void SetOptionalInt(const std::unordered_map<std::string, std::string>& kv,
-                    const char* key,
-                    int* target,
-                    std::string* error) {
+void SetOptionalInt(const std::unordered_map<std::string, std::string>& kv, const char* key,
+                    int* target, std::string* error) {
     const auto it = kv.find(key);
     if (it == kv.end()) {
         return;
@@ -135,10 +152,8 @@ void SetOptionalInt(const std::unordered_map<std::string, std::string>& kv,
     *target = parsed;
 }
 
-void SetOptionalDouble(const std::unordered_map<std::string, std::string>& kv,
-                       const char* key,
-                       double* target,
-                       std::string* error) {
+void SetOptionalDouble(const std::unordered_map<std::string, std::string>& kv, const char* key,
+                       double* target, std::string* error) {
     const auto it = kv.find(key);
     if (it == kv.end()) {
         return;
@@ -166,7 +181,8 @@ std::vector<std::string> SplitCsvList(const std::string& raw) {
     std::size_t start = 0;
     while (start <= raw.size()) {
         const auto end = raw.find(',', start);
-        const auto item = end == std::string::npos ? raw.substr(start) : raw.substr(start, end - start);
+        const auto item =
+            end == std::string::npos ? raw.substr(start) : raw.substr(start, end - start);
         const auto trimmed = Trim(item);
         if (!trimmed.empty()) {
             values.push_back(trimmed);
@@ -221,8 +237,7 @@ bool ParseExecutionAlgo(const std::string& raw, ExecutionAlgo* out) {
 
 }  // namespace
 
-bool CtpConfigLoader::LoadFromYaml(const std::string& path,
-                                   CtpFileConfig* config,
+bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* config,
                                    std::string* error) {
     if (config == nullptr) {
         if (error != nullptr) {
@@ -344,8 +359,8 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
     if (loaded.runtime.td_front.empty()) {
         loaded.runtime.td_front = get_value("td_front");
     }
-    loaded.runtime.flow_path = get_value("flow_path").empty() ? loaded.runtime.flow_path
-                                                               : get_value("flow_path");
+    loaded.runtime.flow_path =
+        get_value("flow_path").empty() ? loaded.runtime.flow_path : get_value("flow_path");
     loaded.runtime.broker_id = get_value("broker_id");
     loaded.runtime.user_id = get_value("user_id");
     loaded.runtime.investor_id = get_value("investor_id");
@@ -388,9 +403,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         }
         return false;
     }
-    SetOptionalInt(kv,
-                   "reconnect_max_attempts",
-                   &loaded.runtime.reconnect_max_attempts,
+    SetOptionalInt(kv, "reconnect_max_attempts", &loaded.runtime.reconnect_max_attempts,
                    &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
@@ -398,9 +411,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         }
         return false;
     }
-    SetOptionalInt(kv,
-                   "reconnect_initial_backoff_ms",
-                   &loaded.runtime.reconnect_initial_backoff_ms,
+    SetOptionalInt(kv, "reconnect_initial_backoff_ms", &loaded.runtime.reconnect_initial_backoff_ms,
                    &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
@@ -408,9 +419,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         }
         return false;
     }
-    SetOptionalInt(kv,
-                   "reconnect_max_backoff_ms",
-                   &loaded.runtime.reconnect_max_backoff_ms,
+    SetOptionalInt(kv, "reconnect_max_backoff_ms", &loaded.runtime.reconnect_max_backoff_ms,
                    &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
@@ -418,9 +427,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         }
         return false;
     }
-    SetOptionalInt(kv,
-                   "recovery_quiet_period_ms",
-                   &loaded.runtime.recovery_quiet_period_ms,
+    SetOptionalInt(kv, "recovery_quiet_period_ms", &loaded.runtime.recovery_quiet_period_ms,
                    &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
@@ -438,10 +445,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         return false;
     }
     loaded.runtime.query_rate_per_sec = loaded.query_rate_limit_qps;
-    SetOptionalInt(kv,
-                   "query_rate_per_sec",
-                   &loaded.runtime.query_rate_per_sec,
-                   &load_error);
+    SetOptionalInt(kv, "query_rate_per_sec", &loaded.runtime.query_rate_per_sec, &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
             *error = load_error;
@@ -457,10 +461,8 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
     loaded.query_rate_limit_qps = loaded.runtime.query_rate_per_sec;
 
     loaded.runtime.settlement_query_rate_per_sec = 2;
-    SetOptionalInt(kv,
-                   "settlement_query_rate_per_sec",
-                   &loaded.runtime.settlement_query_rate_per_sec,
-                   &load_error);
+    SetOptionalInt(kv, "settlement_query_rate_per_sec",
+                   &loaded.runtime.settlement_query_rate_per_sec, &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
             *error = load_error;
@@ -475,9 +477,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
     }
 
     loaded.runtime.order_insert_rate_per_sec = 50;
-    SetOptionalInt(kv,
-                   "order_insert_rate_per_sec",
-                   &loaded.runtime.order_insert_rate_per_sec,
+    SetOptionalInt(kv, "order_insert_rate_per_sec", &loaded.runtime.order_insert_rate_per_sec,
                    &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
@@ -493,9 +493,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
     }
 
     loaded.runtime.order_cancel_rate_per_sec = 50;
-    SetOptionalInt(kv,
-                   "order_cancel_rate_per_sec",
-                   &loaded.runtime.order_cancel_rate_per_sec,
+    SetOptionalInt(kv, "order_cancel_rate_per_sec", &loaded.runtime.order_cancel_rate_per_sec,
                    &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
@@ -511,10 +509,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
     }
 
     loaded.runtime.order_bucket_capacity = 20;
-    SetOptionalInt(kv,
-                   "order_bucket_capacity",
-                   &loaded.runtime.order_bucket_capacity,
-                   &load_error);
+    SetOptionalInt(kv, "order_bucket_capacity", &loaded.runtime.order_bucket_capacity, &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
             *error = load_error;
@@ -529,9 +524,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
     }
 
     loaded.runtime.cancel_bucket_capacity = 20;
-    SetOptionalInt(kv,
-                   "cancel_bucket_capacity",
-                   &loaded.runtime.cancel_bucket_capacity,
+    SetOptionalInt(kv, "cancel_bucket_capacity", &loaded.runtime.cancel_bucket_capacity,
                    &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
@@ -547,10 +540,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
     }
 
     loaded.runtime.query_bucket_capacity = 5;
-    SetOptionalInt(kv,
-                   "query_bucket_capacity",
-                   &loaded.runtime.query_bucket_capacity,
-                   &load_error);
+    SetOptionalInt(kv, "query_bucket_capacity", &loaded.runtime.query_bucket_capacity, &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
             *error = load_error;
@@ -565,10 +555,8 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
     }
 
     loaded.runtime.settlement_query_bucket_capacity = 2;
-    SetOptionalInt(kv,
-                   "settlement_query_bucket_capacity",
-                   &loaded.runtime.settlement_query_bucket_capacity,
-                   &load_error);
+    SetOptionalInt(kv, "settlement_query_bucket_capacity",
+                   &loaded.runtime.settlement_query_bucket_capacity, &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
             *error = load_error;
@@ -583,10 +571,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
     }
 
     loaded.runtime.settlement_retry_max = 3;
-    SetOptionalInt(kv,
-                   "settlement_retry_max",
-                   &loaded.runtime.settlement_retry_max,
-                   &load_error);
+    SetOptionalInt(kv, "settlement_retry_max", &loaded.runtime.settlement_retry_max, &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
             *error = load_error;
@@ -601,10 +586,8 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
     }
 
     loaded.runtime.settlement_retry_backoff_initial_ms = 1000;
-    SetOptionalInt(kv,
-                   "settlement_retry_backoff_initial_ms",
-                   &loaded.runtime.settlement_retry_backoff_initial_ms,
-                   &load_error);
+    SetOptionalInt(kv, "settlement_retry_backoff_initial_ms",
+                   &loaded.runtime.settlement_retry_backoff_initial_ms, &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
             *error = load_error;
@@ -619,10 +602,8 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
     }
 
     loaded.runtime.settlement_retry_backoff_max_ms = 5000;
-    SetOptionalInt(kv,
-                   "settlement_retry_backoff_max_ms",
-                   &loaded.runtime.settlement_retry_backoff_max_ms,
-                   &load_error);
+    SetOptionalInt(kv, "settlement_retry_backoff_max_ms",
+                   &loaded.runtime.settlement_retry_backoff_max_ms, &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
             *error = load_error;
@@ -632,16 +613,15 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
     if (loaded.runtime.settlement_retry_backoff_max_ms <
         loaded.runtime.settlement_retry_backoff_initial_ms) {
         if (error != nullptr) {
-            *error = "settlement_retry_backoff_max_ms must be >= settlement_retry_backoff_initial_ms";
+            *error =
+                "settlement_retry_backoff_max_ms must be >= settlement_retry_backoff_initial_ms";
         }
         return false;
     }
 
     loaded.runtime.settlement_running_stale_timeout_ms = 300000;
-    SetOptionalInt(kv,
-                   "settlement_running_stale_timeout_ms",
-                   &loaded.runtime.settlement_running_stale_timeout_ms,
-                   &load_error);
+    SetOptionalInt(kv, "settlement_running_stale_timeout_ms",
+                   &loaded.runtime.settlement_running_stale_timeout_ms, &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
             *error = load_error;
@@ -698,9 +678,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
     }
 
     loaded.runtime.cancel_retry_max_delay_ms = 5000;
-    SetOptionalInt(kv,
-                   "cancel_retry_max_delay_ms",
-                   &loaded.runtime.cancel_retry_max_delay_ms,
+    SetOptionalInt(kv, "cancel_retry_max_delay_ms", &loaded.runtime.cancel_retry_max_delay_ms,
                    &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
@@ -716,9 +694,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
     }
 
     loaded.runtime.cancel_wait_ack_timeout_ms = 1200;
-    SetOptionalInt(kv,
-                   "cancel_wait_ack_timeout_ms",
-                   &loaded.runtime.cancel_wait_ack_timeout_ms,
+    SetOptionalInt(kv, "cancel_wait_ack_timeout_ms", &loaded.runtime.cancel_wait_ack_timeout_ms,
                    &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
@@ -734,9 +710,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
     }
 
     loaded.runtime.breaker_failure_threshold = 5;
-    SetOptionalInt(kv,
-                   "breaker_failure_threshold",
-                   &loaded.runtime.breaker_failure_threshold,
+    SetOptionalInt(kv, "breaker_failure_threshold", &loaded.runtime.breaker_failure_threshold,
                    &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
@@ -753,9 +727,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         return false;
     }
     loaded.runtime.breaker_half_open_timeout_ms = 5000;
-    SetOptionalInt(kv,
-                   "breaker_half_open_timeout_ms",
-                   &loaded.runtime.breaker_half_open_timeout_ms,
+    SetOptionalInt(kv, "breaker_half_open_timeout_ms", &loaded.runtime.breaker_half_open_timeout_ms,
                    &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
@@ -766,7 +738,8 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
 
     if (const auto strategy_breaker_it = kv.find("breaker_strategy_enabled");
         strategy_breaker_it != kv.end()) {
-        if (!ParseBoolValue(strategy_breaker_it->second, &loaded.runtime.breaker_strategy_enabled)) {
+        if (!ParseBoolValue(strategy_breaker_it->second,
+                            &loaded.runtime.breaker_strategy_enabled)) {
             if (error != nullptr) {
                 *error = "invalid bool value for breaker_strategy_enabled";
             }
@@ -823,10 +796,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
     }
 
     loaded.account_query_interval_ms = 2000;
-    SetOptionalInt(kv,
-                   "account_query_interval_ms",
-                   &loaded.account_query_interval_ms,
-                   &load_error);
+    SetOptionalInt(kv, "account_query_interval_ms", &loaded.account_query_interval_ms, &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
             *error = load_error;
@@ -841,9 +811,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
     }
 
     loaded.position_query_interval_ms = 2000;
-    SetOptionalInt(kv,
-                   "position_query_interval_ms",
-                   &loaded.position_query_interval_ms,
+    SetOptionalInt(kv, "position_query_interval_ms", &loaded.position_query_interval_ms,
                    &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
@@ -859,9 +827,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
     }
 
     loaded.instrument_query_interval_ms = 30000;
-    SetOptionalInt(kv,
-                   "instrument_query_interval_ms",
-                   &loaded.instrument_query_interval_ms,
+    SetOptionalInt(kv, "instrument_query_interval_ms", &loaded.instrument_query_interval_ms,
                    &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
@@ -877,9 +843,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
     }
 
     loaded.runtime.query_retry_backoff_ms = 200;
-    SetOptionalInt(kv,
-                   "query_retry_backoff_ms",
-                   &loaded.runtime.query_retry_backoff_ms,
+    SetOptionalInt(kv, "query_retry_backoff_ms", &loaded.runtime.query_retry_backoff_ms,
                    &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
@@ -905,6 +869,25 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         }
         return false;
     }
+    const auto strategy_composite_config_it = kv.find("strategy_composite_config");
+    loaded.strategy_composite_config = strategy_composite_config_it == kv.end()
+                                           ? std::string()
+                                           : Trim(strategy_composite_config_it->second);
+    if (!loaded.strategy_composite_config.empty()) {
+        std::filesystem::path composite_path(loaded.strategy_composite_config);
+        if (composite_path.is_relative()) {
+            const std::filesystem::path config_dir = std::filesystem::path(path).parent_path();
+            composite_path = config_dir / composite_path;
+        }
+        loaded.strategy_composite_config = composite_path.lexically_normal().string();
+    }
+    if (Lowercase(loaded.strategy_factory) == "composite" &&
+        loaded.strategy_composite_config.empty()) {
+        if (error != nullptr) {
+            *error = "strategy_composite_config is required when strategy_factory=composite";
+        }
+        return false;
+    }
     if (kv.find("strategy_poll_interval_ms") != kv.end()) {
         if (error != nullptr) {
             *error = "strategy_poll_interval_ms is removed; use strategy_queue_capacity";
@@ -912,10 +895,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         return false;
     }
     loaded.strategy_queue_capacity = 8192;
-    SetOptionalInt(kv,
-                   "strategy_queue_capacity",
-                   &loaded.strategy_queue_capacity,
-                   &load_error);
+    SetOptionalInt(kv, "strategy_queue_capacity", &loaded.strategy_queue_capacity, &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
             *error = load_error;
@@ -1008,9 +988,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         return false;
     }
     loaded.execution.throttle_reject_ratio = 0.0;
-    SetOptionalDouble(kv,
-                      "throttle_reject_ratio",
-                      &loaded.execution.throttle_reject_ratio,
+    SetOptionalDouble(kv, "throttle_reject_ratio", &loaded.execution.throttle_reject_ratio,
                       &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
@@ -1033,9 +1011,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         loaded.execution.preferred_venue = "SIM";
     }
     loaded.execution.participation_rate_limit = 1.0;
-    SetOptionalDouble(kv,
-                      "participation_rate_limit",
-                      &loaded.execution.participation_rate_limit,
+    SetOptionalDouble(kv, "participation_rate_limit", &loaded.execution.participation_rate_limit,
                       &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
@@ -1079,9 +1055,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         return false;
     }
     loaded.execution.cancel_check_interval_ms = 200;
-    SetOptionalInt(kv,
-                   "cancel_check_interval_ms",
-                   &loaded.execution.cancel_check_interval_ms,
+    SetOptionalInt(kv, "cancel_check_interval_ms", &loaded.execution.cancel_check_interval_ms,
                    &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
@@ -1097,9 +1071,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
     }
 
     loaded.risk.default_max_order_volume = 200;
-    SetOptionalInt(kv,
-                   "risk_default_max_order_volume",
-                   &loaded.risk.default_max_order_volume,
+    SetOptionalInt(kv, "risk_default_max_order_volume", &loaded.risk.default_max_order_volume,
                    &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
@@ -1114,10 +1086,8 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         return false;
     }
     loaded.risk.default_max_order_notional = 1'000'000.0;
-    SetOptionalDouble(kv,
-                      "risk_default_max_order_notional",
-                      &loaded.risk.default_max_order_notional,
-                      &load_error);
+    SetOptionalDouble(kv, "risk_default_max_order_notional",
+                      &loaded.risk.default_max_order_notional, &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
             *error = load_error;
@@ -1131,9 +1101,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         return false;
     }
     loaded.risk.default_max_active_orders = 0;
-    SetOptionalInt(kv,
-                   "risk_default_max_active_orders",
-                   &loaded.risk.default_max_active_orders,
+    SetOptionalInt(kv, "risk_default_max_active_orders", &loaded.risk.default_max_active_orders,
                    &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
@@ -1148,10 +1116,8 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         return false;
     }
     loaded.risk.default_max_position_notional = 0.0;
-    SetOptionalDouble(kv,
-                      "risk_default_max_position_notional",
-                      &loaded.risk.default_max_position_notional,
-                      &load_error);
+    SetOptionalDouble(kv, "risk_default_max_position_notional",
+                      &loaded.risk.default_max_position_notional, &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
             *error = load_error;
@@ -1165,9 +1131,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         return false;
     }
     loaded.risk.default_max_cancel_count = 0;
-    SetOptionalInt(kv,
-                   "risk_default_max_cancel_count",
-                   &loaded.risk.default_max_cancel_count,
+    SetOptionalInt(kv, "risk_default_max_cancel_count", &loaded.risk.default_max_cancel_count,
                    &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
@@ -1182,9 +1146,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         return false;
     }
     loaded.risk.default_max_cancel_ratio = 0.0;
-    SetOptionalDouble(kv,
-                      "risk_default_max_cancel_ratio",
-                      &loaded.risk.default_max_cancel_ratio,
+    SetOptionalDouble(kv, "risk_default_max_cancel_ratio", &loaded.risk.default_max_cancel_ratio,
                       &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
@@ -1324,8 +1286,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         } else {
             rule.max_position_notional = loaded.risk.default_max_position_notional;
         }
-        const auto max_cancel_count =
-            get_value("risk_rule_" + group + "_max_cancel_count");
+        const auto max_cancel_count = get_value("risk_rule_" + group + "_max_cancel_count");
         if (!max_cancel_count.empty()) {
             if (!ParseIntValue(max_cancel_count, &rule.max_cancel_count) ||
                 rule.max_cancel_count < 0) {
@@ -1337,8 +1298,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         } else {
             rule.max_cancel_count = loaded.risk.default_max_cancel_count;
         }
-        const auto max_cancel_ratio =
-            get_value("risk_rule_" + group + "_max_cancel_ratio");
+        const auto max_cancel_ratio = get_value("risk_rule_" + group + "_max_cancel_ratio");
         if (!max_cancel_ratio.empty()) {
             if (!ParseDoubleValue(max_cancel_ratio, &rule.max_cancel_ratio) ||
                 rule.max_cancel_ratio < 0.0) {
@@ -1354,6 +1314,83 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         loaded.risk.rules.push_back(std::move(rule));
     }
 
+    {
+        MarketStateDetectorConfig detector = loaded.market_state_detector;
+        const auto get_detector_value = [&](const std::string& key) -> std::string {
+            const auto nested = get_value("market_state_detector." + key);
+            if (!nested.empty()) {
+                return nested;
+            }
+            return get_value(key);
+        };
+        const auto parse_int = [&](const char* key, int* target) -> bool {
+            const auto raw = get_detector_value(key);
+            if (raw.empty()) {
+                return true;
+            }
+            if (!ParseIntValue(raw, target)) {
+                if (error != nullptr) {
+                    *error = std::string("invalid integer for key: market_state_detector.") + key;
+                }
+                return false;
+            }
+            return true;
+        };
+        const auto parse_double = [&](const char* key, double* target) -> bool {
+            const auto raw = get_detector_value(key);
+            if (raw.empty()) {
+                return true;
+            }
+            if (!ParseDoubleValue(raw, target)) {
+                if (error != nullptr) {
+                    *error = std::string("invalid double for key: market_state_detector.") + key;
+                }
+                return false;
+            }
+            return true;
+        };
+        const auto parse_bool = [&](const char* key, bool* target) -> bool {
+            const auto raw = get_detector_value(key);
+            if (raw.empty()) {
+                return true;
+            }
+            if (!ParseBoolValue(raw, target)) {
+                if (error != nullptr) {
+                    *error = std::string("invalid bool for key: market_state_detector.") + key;
+                }
+                return false;
+            }
+            return true;
+        };
+
+        if (!parse_int("adx_period", &detector.adx_period) ||
+            !parse_double("adx_strong_threshold", &detector.adx_strong_threshold) ||
+            !parse_double("adx_weak_lower", &detector.adx_weak_lower) ||
+            !parse_double("adx_weak_upper", &detector.adx_weak_upper) ||
+            !parse_int("kama_er_period", &detector.kama_er_period) ||
+            !parse_int("kama_fast_period", &detector.kama_fast_period) ||
+            !parse_int("kama_slow_period", &detector.kama_slow_period) ||
+            !parse_double("kama_er_strong", &detector.kama_er_strong) ||
+            !parse_double("kama_er_weak_lower", &detector.kama_er_weak_lower) ||
+            !parse_int("atr_period", &detector.atr_period) ||
+            !parse_double("atr_flat_ratio", &detector.atr_flat_ratio) ||
+            !parse_bool("require_adx_for_trend", &detector.require_adx_for_trend) ||
+            !parse_bool("use_kama_er", &detector.use_kama_er) ||
+            !parse_int("min_bars_for_flat", &detector.min_bars_for_flat)) {
+            return false;
+        }
+
+        try {
+            (void)MarketStateDetector(detector);
+        } catch (const std::invalid_argument& ex) {
+            if (error != nullptr) {
+                *error = std::string("invalid market_state_detector config: ") + ex.what();
+            }
+            return false;
+        }
+        loaded.market_state_detector = detector;
+    }
+
     loaded.runtime.password = get_value("password");
     if (loaded.runtime.password.empty()) {
         std::string password_env = get_value("password_env");
@@ -1366,8 +1403,8 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path,
         }
         if (loaded.runtime.password.empty()) {
             if (error != nullptr) {
-                *error = "password is missing; set password or environment variable " +
-                         password_env;
+                *error =
+                    "password is missing; set password or environment variable " + password_env;
             }
             return false;
         }

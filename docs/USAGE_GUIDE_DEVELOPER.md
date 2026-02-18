@@ -42,6 +42,7 @@ mkdir -p docs/results
 ./build/backtest_cli \
   --engine_mode csv \
   --csv_path backtest_data/rb.csv \
+  --detector_config configs/sim/ctp.yaml \
   --max_ticks 5000 \
   --output_json docs/results/backtest_cli_smoke.json \
   --output_md docs/results/backtest_cli_smoke.md

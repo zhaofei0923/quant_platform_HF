@@ -14,6 +14,8 @@ namespace {
 
 std::filesystem::path BuildDir() { return std::filesystem::path(QUANT_HFT_BUILD_DIR); }
 
+std::filesystem::path RepoRoot() { return BuildDir().parent_path(); }
+
 std::filesystem::path BinaryPath(const std::string& name) { return BuildDir() / name; }
 
 std::string ReadFile(const std::filesystem::path& path) {
@@ -224,6 +226,11 @@ TEST(OpsCli, VerifyContractSyncCliReportsSuccessOnRepositoryContracts) {
 
     const std::string output = ReadFile(stdout_log);
     EXPECT_NE(output.find("contract sync verification passed"), std::string::npos);
+
+    const auto cpp_contract_path = RepoRoot() / "include/quant_hft/contracts/types.h";
+    const auto proto_contract_path = RepoRoot() / "proto/quant_hft/v1/contracts.proto";
+    EXPECT_NE(ReadFile(cpp_contract_path).find("signal_type"), std::string::npos);
+    EXPECT_NE(ReadFile(proto_contract_path).find("signal_type"), std::string::npos);
 }
 
 TEST(OpsCli, VerifyDevelopRequirementsCliRejectsMissingPath) {
@@ -376,6 +383,50 @@ TEST(OpsCli, CsvParquetCompareSupportsSymbolsFilter) {
     const std::string payload = ReadFile(compare_json);
     EXPECT_NE(payload.find("\"ticks_read_min\": 2"), std::string::npos);
     EXPECT_NE(payload.find("\"ticks_read_max\": 2"), std::string::npos);
+}
+
+TEST(OpsCli, FactorEvalCliIncludesDetectorConfigInOutputJson) {
+    const auto dir = MakeTempDir("factor_eval_detector");
+    const auto input_csv = dir / "rb_sample.csv";
+    const auto detector_yaml = dir / "detector.yaml";
+    const auto output_jsonl = dir / "tracker.jsonl";
+    const auto output_json = dir / "factor_eval.json";
+    const auto stdout_log = dir / "factor_eval_stdout.log";
+
+    WriteFile(input_csv,
+              "TradingDay,InstrumentID,UpdateTime,UpdateMillisec,LastPrice,Volume,BidPrice1,"
+              "BidVolume1,AskPrice1,AskVolume1,AveragePrice,Turnover,OpenInterest\n"
+              "20230103,rb2305,08:59:00,500,4100.0,100,4099.0,3,4101.0,4,41000.0,1234500.0,1000\n"
+              "20230103,rb2305,09:00:00,0,4102.0,101,4101.0,3,4103.0,4,41020.0,1239900.0,1001\n"
+              "20230103,rb2305,09:00:01,0,4103.0,102,4102.0,3,4104.0,4,41030.0,1245300.0,1002\n");
+    WriteFile(detector_yaml,
+              "market_state_detector:\n"
+              "  adx_period: 7\n"
+              "  atr_period: 5\n");
+
+    const std::string command = "\"" + BinaryPath("factor_eval_cli").string() +
+                                "\" --factor_id factor-test --template trend"
+                                " --csv_path \"" +
+                                input_csv.string() + "\" --detector_config \"" +
+                                detector_yaml.string() + "\" --max_ticks 100 --output_jsonl \"" +
+                                output_jsonl.string() + "\" --output_json \"" +
+                                output_json.string() + "\"";
+    const int rc = RunCommandCapture(command, stdout_log);
+    EXPECT_EQ(rc, 0);
+
+    const std::string payload = ReadFile(output_json);
+    EXPECT_NE(payload.find("\"detector_config\": \"" + detector_yaml.string() + "\""),
+              std::string::npos);
+    EXPECT_NE(payload.find("\"market_state_detector\""), std::string::npos);
+    EXPECT_NE(payload.find("\"adx_period\": 7"), std::string::npos);
+    EXPECT_NE(payload.find("\"atr_period\": 5"), std::string::npos);
+
+    const std::string tracker_payload = ReadFile(output_jsonl);
+    EXPECT_NE(tracker_payload.find("\"detector_config\":\"" + detector_yaml.string() + "\""),
+              std::string::npos);
+    EXPECT_NE(tracker_payload.find("\"market_state_detector\":{\"adx_period\":7"),
+              std::string::npos);
+    EXPECT_NE(tracker_payload.find("\"atr_period\":5"), std::string::npos);
 }
 
 }  // namespace

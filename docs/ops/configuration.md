@@ -13,6 +13,47 @@
 3. YAML 中 `${VAR}` 占位符解析
 4. 代码默认值（仅本地兜底）
 
+## 市场状态检测器配置
+
+- 配置块：`ctp.market_state_detector`
+- 默认平缓阈值：`atr_flat_ratio: 0.001`（0.1%）
+- 兼容策略：同时支持历史平铺键（如 `adx_period`），但若同时配置，嵌套键优先。
+
+示例：
+
+```yaml
+ctp:
+  market_state_detector:
+    adx_period: 14
+    adx_strong_threshold: 40.0
+    adx_weak_lower: 25.0
+    adx_weak_upper: 40.0
+    kama_er_period: 10
+    kama_fast_period: 2
+    kama_slow_period: 30
+    kama_er_strong: 0.6
+    kama_er_weak_lower: 0.3
+    atr_period: 14
+    atr_flat_ratio: 0.001
+    require_adx_for_trend: true
+    use_kama_er: true
+    min_bars_for_flat: 20
+```
+
+## Composite 策略插件配置
+
+- `ctp.strategy_factory`: 选择策略工厂。默认 `demo`。
+- `ctp.strategy_composite_config`: 仅当 `strategy_factory: composite` 时必填。
+- 路径解析规则：相对路径按 `ctp.yaml` 所在目录解析，启动时会转换为规范路径。
+
+示例：
+
+```yaml
+ctp:
+  strategy_factory: "composite"
+  strategy_composite_config: "../strategies/composite_strategy.yaml"
+```
+
 ## 核心环境变量
 
 ### 路径与运行

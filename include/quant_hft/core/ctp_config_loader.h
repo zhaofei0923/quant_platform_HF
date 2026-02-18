@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "quant_hft/core/ctp_config.h"
+#include "quant_hft/services/market_state_detector.h"
 
 namespace quant_hft {
 
@@ -16,10 +17,12 @@ struct CtpFileConfig {
     std::vector<std::string> instruments;
     std::vector<std::string> strategy_ids;
     std::string strategy_factory{"demo"};
+    std::string strategy_composite_config;
     int strategy_queue_capacity{8192};
     std::string account_id;
     ExecutionConfig execution;
     RiskConfig risk;
+    MarketStateDetectorConfig market_state_detector;
 };
 
 class CtpConfigLoader {

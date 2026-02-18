@@ -42,6 +42,11 @@ void KAMA::Update(double high, double low, double close, double volume) {
         return;
     }
 
+    const double change = std::fabs(closes_.back() - closes_.front());
+    const double er = volatility_sum_ > 0.0 ? change / volatility_sum_ : 0.0;
+    efficiency_ratio_ = er;
+    has_efficiency_ratio_ = true;
+
     if (!initialized_) {
         double seed_sum = 0.0;
         for (double value : closes_) {
@@ -52,8 +57,6 @@ void KAMA::Update(double high, double low, double close, double volume) {
         return;
     }
 
-    const double change = std::fabs(closes_.back() - closes_.front());
-    const double er = volatility_sum_ > 0.0 ? change / volatility_sum_ : 0.0;
     const double smoothing = std::pow(er * (fast_sc_ - slow_sc_) + slow_sc_, 2.0);
     kama_ = kama_ + smoothing * (close - kama_);
 }
@@ -65,12 +68,21 @@ std::optional<double> KAMA::Value() const {
     return kama_;
 }
 
+std::optional<double> KAMA::EfficiencyRatio() const {
+    if (!has_efficiency_ratio_) {
+        return std::nullopt;
+    }
+    return efficiency_ratio_;
+}
+
 bool KAMA::IsReady() const { return initialized_; }
 
 void KAMA::Reset() {
     initialized_ = false;
     closes_.clear();
     volatility_sum_ = 0.0;
+    has_efficiency_ratio_ = false;
+    efficiency_ratio_ = 0.0;
     kama_ = 0.0;
 }
 

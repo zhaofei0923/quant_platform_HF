@@ -27,6 +27,7 @@ mkdir -p docs/results
 ./build/backtest_cli \
   --engine_mode csv \
   --csv_path backtest_data/rb.csv \
+  --detector_config configs/sim/ctp.yaml \
   --max_ticks 5000 \
   --output_json docs/results/backtest_cli_smoke.json \
   --output_md docs/results/backtest_cli_smoke.md
@@ -78,6 +79,14 @@ mkdir -p docs/results
 ```
 
 Check `equal=true` and inspect `summary.parquet.scan_rows/scan_row_groups/io_bytes/early_stop_hit`.
+
+## Optional Detector Config
+
+`--detector_config` accepts a YAML file with detector keys. Supported layouts:
+
+- top-level keys (for dedicated files), e.g. `adx_period: 14`
+- nested keys under `market_state_detector`
+- nested keys under `ctp.market_state_detector` (for shared CTP config fragments)
 
 ## CI Speedup Gate
 

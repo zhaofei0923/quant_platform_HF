@@ -57,6 +57,14 @@ enum class PositionDirection {
     kShort,
 };
 
+enum class SignalType : std::uint8_t {
+    kOpen = 0,
+    kClose = 1,
+    kStopLoss = 2,
+    kTakeProfit = 3,
+    kForceClose = 4,
+};
+
 enum class RiskAction {
     kAllow,
     kReject,
@@ -66,6 +74,14 @@ enum class RiskAction {
 struct StateDimension {
     double score{0.0};
     double confidence{0.0};
+};
+
+enum class MarketRegime : std::uint8_t {
+    kUnknown = 0,
+    kStrongTrend = 1,
+    kWeakTrend = 2,
+    kRanging = 3,
+    kFlat = 4,
 };
 
 struct Exchange {
@@ -217,12 +233,14 @@ struct StateSnapshot7D {
     double bar_close{0.0};
     double bar_volume{0.0};
     bool has_bar{false};
+    MarketRegime market_regime{MarketRegime::kUnknown};
     EpochNanos ts_ns{0};
 };
 
 struct SignalIntent {
     std::string strategy_id;
     std::string instrument_id;
+    SignalType signal_type{SignalType::kOpen};
     Side side{Side::kBuy};
     OffsetFlag offset{OffsetFlag::kOpen};
     std::int32_t volume{0};

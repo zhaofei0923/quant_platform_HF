@@ -1,0 +1,29 @@
+#pragma once
+
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "quant_hft/indicators/atr.h"
+#include "quant_hft/strategy/atomic_strategy.h"
+
+namespace quant_hft {
+
+class ATRStopLoss : public IStopLossStrategy {
+   public:
+    ATRStopLoss() = default;
+
+    void Init(const AtomicParams& params) override;
+    std::string GetId() const override;
+    void Reset() override;
+    std::vector<SignalIntent> OnState(const StateSnapshot7D& state,
+                                      const AtomicStrategyContext& ctx) override;
+
+   private:
+    std::string id_{"ATRStopLoss"};
+    int atr_period_{14};
+    double atr_multiplier_{2.0};
+    std::unique_ptr<ATR> atr_;
+};
+
+}  // namespace quant_hft

@@ -45,6 +45,7 @@
 #include "quant_hft/services/order_state_machine.h"
 #include "quant_hft/services/position_manager.h"
 #include "quant_hft/services/rule_market_state_engine.h"
+#include "quant_hft/strategy/composite_strategy.h"
 #include "quant_hft/strategy/demo_live_strategy.h"
 #include "quant_hft/strategy/strategy_engine.h"
 
@@ -391,7 +392,7 @@ int main(int argc, char** argv) {
     risk_manager_config.enable_dynamic_reload = true;
     (void)risk_manager->Initialize(risk_manager_config);
     execution_engine.SetRiskManager(risk_manager);
-    RuleMarketStateEngine market_state(32);
+    RuleMarketStateEngine market_state(32, file_config.market_state_detector);
     MarketBusProducer market_bus_producer(config.kafka_bootstrap_servers, config.kafka_topic_ticks);
     LocalWalRegulatorySink wal_sink("runtime_events.wal");
     std::atomic<std::uint64_t> wal_write_failures{0};
@@ -714,9 +715,17 @@ int main(int argc, char** argv) {
                           {{"strategy_factory", "demo"}, {"error", strategy_register_error}});
         return 7;
     }
+    if (!RegisterCompositeStrategy(&strategy_register_error)) {
+        EmitStructuredLog(&config, "core_engine", "error", "strategy_factory_register_failed",
+                          {{"strategy_factory", "composite"}, {"error", strategy_register_error}});
+        return 7;
+    }
     StrategyContext strategy_context;
     strategy_context.account_id = account_id;
     strategy_context.metadata["strategy_factory"] = strategy_factory;
+    if (strategy_factory == "composite") {
+        strategy_context.metadata["composite_config_path"] = file_config.strategy_composite_config;
+    }
     if (!strategy_engine.Start(strategy_ids, strategy_factory, strategy_context,
                                &strategy_register_error)) {
         EmitStructuredLog(

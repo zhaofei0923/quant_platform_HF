@@ -9,7 +9,7 @@
 
 namespace quant_hft {
 
-class TrendOpening : public IOpeningStrategy {
+class TrendOpening : public IOpeningStrategy, public IAtomicIndicatorTraceProvider {
    public:
     TrendOpening() = default;
 
@@ -18,6 +18,7 @@ class TrendOpening : public IOpeningStrategy {
     void Reset() override;
     std::vector<SignalIntent> OnState(const StateSnapshot7D& state,
                                       const AtomicStrategyContext& ctx) override;
+    std::optional<AtomicIndicatorSnapshot> IndicatorSnapshot() const override;
 
    private:
     std::string id_{"TrendOpening"};

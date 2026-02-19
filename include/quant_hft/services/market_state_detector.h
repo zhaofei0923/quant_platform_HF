@@ -36,6 +36,8 @@ class MarketStateDetector {
     void Update(double high, double low, double close);
 
     MarketRegime GetRegime() const;
+    std::optional<double> GetKAMA() const;
+    std::optional<double> GetATR() const;
     std::optional<double> GetADX() const;
     std::optional<double> GetKAMAER() const;
     std::optional<double> GetATRRatio() const;

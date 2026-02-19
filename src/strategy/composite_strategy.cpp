@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
@@ -16,10 +17,11 @@ namespace quant_hft {
 namespace {
 
 template <typename T>
-std::vector<T*> BuildTypedStrategies(const std::vector<AtomicStrategyDefinition>& definitions,
-                                     AtomicFactory* factory,
-                                     std::vector<std::unique_ptr<IAtomicStrategy>>* owned,
-                                     std::vector<IAtomicOrderAware*>* order_aware) {
+std::vector<T*> BuildTypedStrategies(
+    const std::vector<AtomicStrategyDefinition>& definitions, AtomicFactory* factory,
+    std::vector<std::unique_ptr<IAtomicStrategy>>* owned,
+    std::vector<IAtomicOrderAware*>* order_aware,
+    const std::function<void(const AtomicStrategyDefinition&, IAtomicStrategy*)>& on_strategy) {
     std::vector<T*> result;
     result.reserve(definitions.size());
     for (const auto& definition : definitions) {
@@ -37,6 +39,9 @@ std::vector<T*> BuildTypedStrategies(const std::vector<AtomicStrategyDefinition>
         if (auto* order_aware_strategy = dynamic_cast<IAtomicOrderAware*>(strategy.get());
             order_aware_strategy != nullptr) {
             order_aware->push_back(order_aware_strategy);
+        }
+        if (on_strategy) {
+            on_strategy(definition, strategy.get());
         }
         result.push_back(typed);
         owned->push_back(std::move(strategy));
@@ -60,6 +65,11 @@ void CompositeStrategy::Initialize(const StrategyContext& ctx) {
 
     if (factory_ == nullptr) {
         factory_ = &AtomicFactory::Instance();
+        std::string error;
+        if (!RegisterBuiltinAtomicStrategies(&error)) {
+            throw std::runtime_error(error.empty() ? "failed to register builtin atomic strategies"
+                                                   : error);
+        }
     }
 
     if (!has_embedded_definition_) {
@@ -172,6 +182,28 @@ std::vector<SignalIntent> CompositeStrategy::OnTimer(EpochNanos now_ns) {
     return {};
 }
 
+std::vector<CompositeAtomicTraceRow> CompositeStrategy::CollectAtomicIndicatorTrace() const {
+    std::vector<CompositeAtomicTraceRow> rows;
+    rows.reserve(trace_providers_.size());
+    for (const auto& slot : trace_providers_) {
+        if (slot.provider == nullptr) {
+            continue;
+        }
+        CompositeAtomicTraceRow row;
+        row.strategy_id = slot.strategy_id;
+        row.strategy_type = slot.strategy_type;
+        const std::optional<AtomicIndicatorSnapshot> snapshot = slot.provider->IndicatorSnapshot();
+        if (snapshot.has_value()) {
+            row.kama = snapshot->kama;
+            row.atr = snapshot->atr;
+            row.adx = snapshot->adx;
+            row.er = snapshot->er;
+        }
+        rows.push_back(std::move(row));
+    }
+    return rows;
+}
+
 void CompositeStrategy::Shutdown() {
     for (auto& strategy : owned_atomic_strategies_) {
         strategy->Reset();
@@ -182,6 +214,7 @@ void CompositeStrategy::Shutdown() {
     time_filters_.clear();
     risk_control_strategies_.clear();
     order_aware_strategies_.clear();
+    trace_providers_.clear();
     owned_atomic_strategies_.clear();
     atomic_context_.net_positions.clear();
     atomic_context_.avg_open_prices.clear();
@@ -275,23 +308,37 @@ void CompositeStrategy::BuildAtomicStrategies() {
     time_filters_.clear();
     risk_control_strategies_.clear();
     order_aware_strategies_.clear();
+    trace_providers_.clear();
     owned_atomic_strategies_.clear();
+
+    const auto on_atomic_strategy = [&](const AtomicStrategyDefinition& definition,
+                                        IAtomicStrategy* strategy) {
+        if (auto* trace_provider = dynamic_cast<IAtomicIndicatorTraceProvider*>(strategy);
+            trace_provider != nullptr) {
+            AtomicTraceSlot slot;
+            slot.strategy_id = definition.id;
+            slot.strategy_type = definition.type;
+            slot.provider = trace_provider;
+            trace_providers_.push_back(std::move(slot));
+        }
+    };
 
     risk_control_strategies_ = BuildTypedStrategies<IRiskControlStrategy>(
         definition_.risk_control_strategies, factory_, &owned_atomic_strategies_,
-        &order_aware_strategies_);
+        &order_aware_strategies_, on_atomic_strategy);
     stop_loss_strategies_ = BuildTypedStrategies<IStopLossStrategy>(
         definition_.stop_loss_strategies, factory_, &owned_atomic_strategies_,
-        &order_aware_strategies_);
+        &order_aware_strategies_, on_atomic_strategy);
     take_profit_strategies_ = BuildTypedStrategies<ITakeProfitStrategy>(
         definition_.take_profit_strategies, factory_, &owned_atomic_strategies_,
-        &order_aware_strategies_);
+        &order_aware_strategies_, on_atomic_strategy);
     time_filters_ = BuildTypedStrategies<ITimeFilterStrategy>(
-        definition_.time_filters, factory_, &owned_atomic_strategies_, &order_aware_strategies_);
+        definition_.time_filters, factory_, &owned_atomic_strategies_, &order_aware_strategies_,
+        on_atomic_strategy);
 
-    std::vector<IOpeningStrategy*> opening =
-        BuildTypedStrategies<IOpeningStrategy>(definition_.opening_strategies, factory_,
-                                               &owned_atomic_strategies_, &order_aware_strategies_);
+    std::vector<IOpeningStrategy*> opening = BuildTypedStrategies<IOpeningStrategy>(
+        definition_.opening_strategies, factory_, &owned_atomic_strategies_,
+        &order_aware_strategies_, on_atomic_strategy);
     opening_strategies_.reserve(opening.size());
     for (std::size_t i = 0; i < opening.size(); ++i) {
         OpeningSlot slot;

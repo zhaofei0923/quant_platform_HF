@@ -9,7 +9,7 @@
 
 namespace quant_hft {
 
-class ATRStopLoss : public IStopLossStrategy {
+class ATRStopLoss : public IStopLossStrategy, public IAtomicIndicatorTraceProvider {
    public:
     ATRStopLoss() = default;
 
@@ -18,6 +18,7 @@ class ATRStopLoss : public IStopLossStrategy {
     void Reset() override;
     std::vector<SignalIntent> OnState(const StateSnapshot7D& state,
                                       const AtomicStrategyContext& ctx) override;
+    std::optional<AtomicIndicatorSnapshot> IndicatorSnapshot() const override;
 
    private:
     std::string id_{"ATRStopLoss"};

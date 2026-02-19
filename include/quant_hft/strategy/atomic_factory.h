@@ -27,6 +27,8 @@ class AtomicFactory {
     std::unordered_map<std::string, Creator> creators_;
 };
 
+bool RegisterBuiltinAtomicStrategies(std::string* error = nullptr);
+
 #define QUANT_HFT_REGISTER_ATOMIC_STRATEGY(TYPE_NAME, STRATEGY_CLASS)                 \
     namespace {                                                                       \
     [[maybe_unused]] const bool kRegisteredAtomicStrategy_##STRATEGY_CLASS = []() {   \

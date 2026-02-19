@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -15,6 +16,13 @@ struct AtomicStrategyContext {
     std::string account_id;
     std::unordered_map<std::string, std::int32_t> net_positions;
     std::unordered_map<std::string, double> avg_open_prices;
+};
+
+struct AtomicIndicatorSnapshot {
+    std::optional<double> kama;
+    std::optional<double> atr;
+    std::optional<double> adx;
+    std::optional<double> er;
 };
 
 class IAtomicStrategy {
@@ -64,6 +72,12 @@ class IAtomicOrderAware {
    public:
     virtual ~IAtomicOrderAware() = default;
     virtual void OnOrderEvent(const OrderEvent& event, const AtomicStrategyContext& ctx) = 0;
+};
+
+class IAtomicIndicatorTraceProvider {
+   public:
+    virtual ~IAtomicIndicatorTraceProvider() = default;
+    virtual std::optional<AtomicIndicatorSnapshot> IndicatorSnapshot() const = 0;
 };
 
 }  // namespace quant_hft

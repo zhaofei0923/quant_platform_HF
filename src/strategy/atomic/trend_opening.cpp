@@ -84,6 +84,16 @@ std::vector<SignalIntent> TrendOpening::OnState(const StateSnapshot7D& state,
     return {signal};
 }
 
+std::optional<AtomicIndicatorSnapshot> TrendOpening::IndicatorSnapshot() const {
+    if (kama_ == nullptr || !kama_->IsReady()) {
+        return std::nullopt;
+    }
+    AtomicIndicatorSnapshot snapshot;
+    snapshot.kama = kama_->Value();
+    snapshot.er = kama_->EfficiencyRatio();
+    return snapshot;
+}
+
 QUANT_HFT_REGISTER_ATOMIC_STRATEGY("TrendOpening", TrendOpening);
 
 }  // namespace quant_hft

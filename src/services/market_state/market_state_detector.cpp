@@ -31,6 +31,10 @@ void MarketStateDetector::Update(double high, double low, double close) {
 
 MarketRegime MarketStateDetector::GetRegime() const { return current_regime_; }
 
+std::optional<double> MarketStateDetector::GetKAMA() const { return kama_.Value(); }
+
+std::optional<double> MarketStateDetector::GetATR() const { return atr_.Value(); }
+
 std::optional<double> MarketStateDetector::GetADX() const { return adx_.Value(); }
 
 std::optional<double> MarketStateDetector::GetKAMAER() const { return kama_.EfficiencyRatio(); }

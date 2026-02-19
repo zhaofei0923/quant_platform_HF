@@ -85,6 +85,15 @@ std::vector<SignalIntent> ATRStopLoss::OnState(const StateSnapshot7D& state,
     return {signal};
 }
 
+std::optional<AtomicIndicatorSnapshot> ATRStopLoss::IndicatorSnapshot() const {
+    if (atr_ == nullptr || !atr_->IsReady()) {
+        return std::nullopt;
+    }
+    AtomicIndicatorSnapshot snapshot;
+    snapshot.atr = atr_->Value();
+    return snapshot;
+}
+
 QUANT_HFT_REGISTER_ATOMIC_STRATEGY("ATRStopLoss", ATRStopLoss);
 
 }  // namespace quant_hft

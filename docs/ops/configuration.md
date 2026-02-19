@@ -54,6 +54,51 @@ ctp:
   strategy_composite_config: "../strategies/composite_strategy.yaml"
 ```
 
+## 研究回放指标轨迹落盘
+
+- 作用范围：仅 `backtest/factor_eval` 研究回放链路。
+- 输出格式：Parquet（单 run 单文件）。
+- 默认关闭：需显式开启对应开关。
+- 市场状态指标默认输出路径：`runtime/research/indicator_trace/<run_id>.parquet`。
+- 子策略指标默认输出路径：`runtime/research/sub_strategy_indicator_trace/<run_id>.parquet`。
+- 覆盖策略：目标文件已存在时直接报错退出（fail-fast）。
+
+支持参数：
+
+- `emit_indicator_trace` / `emit-indicator-trace`
+- `indicator_trace_path` / `indicator-trace-path`
+- `strategy_factory` / `strategy-factory`（默认 `demo`，子策略 trace 需 `composite`）
+- `strategy_composite_config` / `strategy-composite-config`（`strategy_factory=composite` 时必填）
+- `emit_sub_strategy_indicator_trace` / `emit-sub-strategy-indicator-trace`
+- `sub_strategy_indicator_trace_path` / `sub-strategy-indicator-trace-path`
+
+落盘字段（每根 bar 一行）：
+
+- `instrument_id`, `ts_ns`
+- `bar_open`, `bar_high`, `bar_low`, `bar_close`, `bar_volume`
+- `kama`, `atr`, `adx`, `er`
+- `market_regime`
+
+子策略 trace 额外字段（每根 bar × 每个子策略一行）：
+
+- `strategy_id`, `strategy_type`
+- `kama`, `atr`, `adx`, `er`（不可用字段为 `NULL`）
+
+示例：
+
+```bash
+./build/factor_eval_cli \
+  --factor_id trend_kama \
+  --csv_path runtime/benchmarks/backtest/rb_ci_sample.csv \
+  --run_id exp-kama-atr-adx \
+  --strategy_factory composite \
+  --strategy_composite_config configs/strategies/composite_strategy.yaml \
+  --emit_indicator_trace true \
+  --indicator_trace_path runtime/research/indicator_trace/exp-kama-atr-adx.parquet \
+  --emit_sub_strategy_indicator_trace true \
+  --sub_strategy_indicator_trace_path runtime/research/sub_strategy_indicator_trace/exp-kama-atr-adx.parquet
+```
+
 ## 核心环境变量
 
 ### 路径与运行

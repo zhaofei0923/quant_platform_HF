@@ -24,10 +24,14 @@
 #include <vector>
 
 #include "quant_hft/apps/cli_support.h"
+#include "quant_hft/backtest/indicator_trace_parquet_writer.h"
 #include "quant_hft/backtest/parquet_data_feed.h"
+#include "quant_hft/backtest/sub_strategy_indicator_trace_parquet_writer.h"
 #include "quant_hft/common/timestamp.h"
 #include "quant_hft/services/market_state_detector.h"
+#include "quant_hft/strategy/composite_strategy.h"
 #include "quant_hft/strategy/demo_live_strategy.h"
+#include "quant_hft/strategy/strategy_registry.h"
 
 namespace quant_hft::apps {
 
@@ -703,7 +707,13 @@ struct BacktestCliSpec {
     std::string wal_path;
     std::string account_id{"sim-account"};
     std::string run_id;
+    std::string strategy_factory{"demo"};
+    std::string strategy_composite_config;
     bool emit_state_snapshots{false};
+    bool emit_indicator_trace{false};
+    std::string indicator_trace_path;
+    bool emit_sub_strategy_indicator_trace{false};
+    std::string sub_strategy_indicator_trace_path;
     MarketStateDetectorConfig detector_config{};
 };
 
@@ -811,6 +821,12 @@ struct BacktestCliResult {
     BacktestCliSpec spec;
     std::string input_signature;
     std::string data_signature;
+    bool indicator_trace_enabled{false};
+    std::string indicator_trace_path;
+    std::int64_t indicator_trace_rows{0};
+    bool sub_strategy_indicator_trace_enabled{false};
+    std::string sub_strategy_indicator_trace_path;
+    std::int64_t sub_strategy_indicator_trace_rows{0};
     ReplayReport replay;
     bool has_deterministic{false};
     DeterministicReplayReport deterministic;
@@ -860,6 +876,10 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
     spec.account_id = detail::GetArgAny(args, {"account_id", "account-id"}, "sim-account");
     spec.run_id = detail::GetArgAny(args, {"run_id", "run-id"},
                                     "backtest-" + std::to_string(UnixEpochMillisNow()));
+    spec.strategy_factory =
+        detail::ToLower(detail::GetArgAny(args, {"strategy_factory", "strategy-factory"}, "demo"));
+    spec.strategy_composite_config =
+        detail::GetArgAny(args, {"strategy_composite_config", "strategy-composite-config"});
     spec.symbols = detail::SplitCommaList(detail::GetArgAny(args, {"symbols", "symbol"}));
 
     {
@@ -922,6 +942,35 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
         spec.emit_state_snapshots = parsed;
     }
     {
+        const std::string raw_emit =
+            detail::GetArgAny(args, {"emit_indicator_trace", "emit-indicator-trace"}, "false");
+        bool parsed = false;
+        if (!detail::ParseBool(raw_emit, &parsed)) {
+            if (error != nullptr) {
+                *error = "invalid emit_indicator_trace: " + raw_emit;
+            }
+            return false;
+        }
+        spec.emit_indicator_trace = parsed;
+    }
+    spec.indicator_trace_path =
+        detail::GetArgAny(args, {"indicator_trace_path", "indicator-trace-path"});
+    {
+        const std::string raw_emit = detail::GetArgAny(
+            args, {"emit_sub_strategy_indicator_trace", "emit-sub-strategy-indicator-trace"},
+            "false");
+        bool parsed = false;
+        if (!detail::ParseBool(raw_emit, &parsed)) {
+            if (error != nullptr) {
+                *error = "invalid emit_sub_strategy_indicator_trace: " + raw_emit;
+            }
+            return false;
+        }
+        spec.emit_sub_strategy_indicator_trace = parsed;
+    }
+    spec.sub_strategy_indicator_trace_path = detail::GetArgAny(
+        args, {"sub_strategy_indicator_trace_path", "sub-strategy-indicator-trace-path"});
+    {
         const std::string raw_streaming =
             detail::GetArgAny(args, {"streaming", "streaming_mode", "streaming-mode"}, "true");
         bool parsed = true;
@@ -969,6 +1018,18 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
     if (spec.rollover_slippage_bps < 0.0) {
         if (error != nullptr) {
             *error = "rollover_slippage_bps must be non-negative";
+        }
+        return false;
+    }
+    if (spec.strategy_factory != "demo" && spec.strategy_factory != "composite") {
+        if (error != nullptr) {
+            *error = "unsupported strategy_factory: " + spec.strategy_factory;
+        }
+        return false;
+    }
+    if (spec.strategy_factory == "composite" && spec.strategy_composite_config.empty()) {
+        if (error != nullptr) {
+            *error = "strategy_composite_config is required when strategy_factory=composite";
         }
         return false;
     }
@@ -1051,8 +1112,14 @@ inline std::string BuildInputSignature(const BacktestCliSpec& spec) {
         << (spec.max_ticks.has_value() ? std::to_string(spec.max_ticks.value()) : "null") << ';'
         << "deterministic_fills=" << (spec.deterministic_fills ? "true" : "false") << ';'
         << "wal_path=" << spec.wal_path << ';' << "account_id=" << spec.account_id << ';'
-        << "run_id=" << spec.run_id << ';'
-        << "emit_state_snapshots=" << (spec.emit_state_snapshots ? "true" : "false") << ';';
+        << "run_id=" << spec.run_id << ';' << "strategy_factory=" << spec.strategy_factory << ';'
+        << "strategy_composite_config=" << spec.strategy_composite_config << ';'
+        << "emit_state_snapshots=" << (spec.emit_state_snapshots ? "true" : "false") << ';'
+        << "emit_indicator_trace=" << (spec.emit_indicator_trace ? "true" : "false") << ';'
+        << "indicator_trace_path=" << spec.indicator_trace_path << ';'
+        << "emit_sub_strategy_indicator_trace="
+        << (spec.emit_sub_strategy_indicator_trace ? "true" : "false") << ';'
+        << "sub_strategy_indicator_trace_path=" << spec.sub_strategy_indicator_trace_path << ';';
     return detail::StableDigest(oss.str());
 }
 
@@ -1858,6 +1925,18 @@ inline std::vector<std::string> ValidateInvariants(
 
 inline std::string SideToString(Side side) { return side == Side::kBuy ? "BUY" : "SELL"; }
 
+inline std::string BuildDefaultIndicatorTracePath(const std::string& run_id) {
+    return (std::filesystem::path("runtime") / "research" / "indicator_trace" /
+            (run_id + ".parquet"))
+        .string();
+}
+
+inline std::string BuildDefaultSubStrategyIndicatorTracePath(const std::string& run_id) {
+    return (std::filesystem::path("runtime") / "research" / "sub_strategy_indicator_trace" /
+            (run_id + ".parquet"))
+        .string();
+}
+
 inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                             std::string* error) {
     if (out == nullptr) {
@@ -1881,12 +1960,51 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         }
         return false;
     }
+    if (!RegisterCompositeStrategy(&register_error)) {
+        if (error != nullptr) {
+            *error = "failed to register composite strategy: " + register_error;
+        }
+        return false;
+    }
 
-    DemoLiveStrategy strategy;
+    std::unique_ptr<ILiveStrategy> strategy =
+        StrategyRegistry::Instance().Create(spec.strategy_factory);
+    if (strategy == nullptr) {
+        if (error != nullptr) {
+            *error = "strategy_factory not found: " + spec.strategy_factory;
+        }
+        return false;
+    }
     StrategyContext strategy_ctx;
-    strategy_ctx.strategy_id = "demo";
+    strategy_ctx.strategy_id = spec.strategy_factory;
     strategy_ctx.account_id = spec.account_id;
-    strategy.Initialize(strategy_ctx);
+    strategy_ctx.metadata["strategy_factory"] = spec.strategy_factory;
+    if (spec.strategy_factory == "composite") {
+        strategy_ctx.metadata["composite_config_path"] = spec.strategy_composite_config;
+    }
+    try {
+        strategy->Initialize(strategy_ctx);
+    } catch (const std::exception& ex) {
+        if (error != nullptr) {
+            *error = std::string("strategy initialize failed: ") + ex.what();
+        }
+        return false;
+    } catch (...) {
+        if (error != nullptr) {
+            *error = "strategy initialize failed: unknown exception";
+        }
+        return false;
+    }
+
+    CompositeStrategy* composite_strategy = dynamic_cast<CompositeStrategy*>(strategy.get());
+    if (spec.emit_sub_strategy_indicator_trace && composite_strategy == nullptr) {
+        if (error != nullptr) {
+            *error =
+                "emit_sub_strategy_indicator_trace requires strategy_factory=composite and a "
+                "CompositeStrategy instance";
+        }
+        return false;
+    }
 
     std::set<std::string> instrument_universe;
 
@@ -1916,6 +2034,28 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             if (error != nullptr) {
                 *error = "unable to open wal file: " + spec.wal_path;
             }
+            return false;
+        }
+    }
+
+    std::string indicator_trace_path = spec.indicator_trace_path;
+    IndicatorTraceParquetWriter indicator_trace_writer;
+    if (spec.emit_indicator_trace) {
+        if (indicator_trace_path.empty()) {
+            indicator_trace_path = BuildDefaultIndicatorTracePath(spec.run_id);
+        }
+        if (!indicator_trace_writer.Open(indicator_trace_path, error)) {
+            return false;
+        }
+    }
+    std::string sub_strategy_indicator_trace_path = spec.sub_strategy_indicator_trace_path;
+    SubStrategyIndicatorTraceParquetWriter sub_strategy_indicator_trace_writer;
+    if (spec.emit_sub_strategy_indicator_trace) {
+        if (sub_strategy_indicator_trace_path.empty()) {
+            sub_strategy_indicator_trace_path =
+                BuildDefaultSubStrategyIndicatorTracePath(spec.run_id);
+        }
+        if (!sub_strategy_indicator_trace_writer.Open(sub_strategy_indicator_trace_path, error)) {
             return false;
         }
     }
@@ -2088,9 +2228,9 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     std::string active_instrument;
     std::int64_t active_minute = -1;
 
-    auto process_bucket = [&]() {
+    auto process_bucket = [&]() -> bool {
         if (bucket.empty()) {
-            return;
+            return true;
         }
 
         const ReplayTick& first = bucket.front();
@@ -2112,7 +2252,59 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         (void)inserted;
         const StateSnapshot7D state = BuildStateSnapshotFromBar(
             first, last, high, low, volume_delta, last.ts_ns, &detector_it->second);
-        std::vector<SignalIntent> intents = strategy.OnState(state);
+
+        if (spec.emit_indicator_trace) {
+            IndicatorTraceRow row;
+            row.instrument_id = state.instrument_id;
+            row.ts_ns = state.ts_ns;
+            row.bar_open = state.bar_open;
+            row.bar_high = state.bar_high;
+            row.bar_low = state.bar_low;
+            row.bar_close = state.bar_close;
+            row.bar_volume = state.bar_volume;
+            row.kama = detector_it->second.GetKAMA();
+            row.atr = detector_it->second.GetATR();
+            row.adx = detector_it->second.GetADX();
+            row.er = detector_it->second.GetKAMAER();
+            row.market_regime = state.market_regime;
+            if (!indicator_trace_writer.Append(row, error)) {
+                return false;
+            }
+        }
+
+        std::vector<SignalIntent> intents = strategy->OnState(state);
+
+        if (spec.emit_sub_strategy_indicator_trace) {
+            if (composite_strategy == nullptr) {
+                if (error != nullptr) {
+                    *error =
+                        "emit_sub_strategy_indicator_trace requires strategy_factory=composite";
+                }
+                return false;
+            }
+            const std::vector<CompositeAtomicTraceRow> atomic_trace_rows =
+                composite_strategy->CollectAtomicIndicatorTrace();
+            for (const auto& atomic_trace : atomic_trace_rows) {
+                SubStrategyIndicatorTraceRow row;
+                row.instrument_id = state.instrument_id;
+                row.ts_ns = state.ts_ns;
+                row.strategy_id = atomic_trace.strategy_id;
+                row.strategy_type = atomic_trace.strategy_type;
+                row.bar_open = state.bar_open;
+                row.bar_high = state.bar_high;
+                row.bar_low = state.bar_low;
+                row.bar_close = state.bar_close;
+                row.bar_volume = state.bar_volume;
+                row.kama = atomic_trace.kama;
+                row.atr = atomic_trace.atr;
+                row.adx = atomic_trace.adx;
+                row.er = atomic_trace.er;
+                row.market_regime = state.market_regime;
+                if (!sub_strategy_indicator_trace_writer.Append(row, error)) {
+                    return false;
+                }
+            }
+        }
 
         replay.intents_emitted += static_cast<std::int64_t>(intents.size());
 
@@ -2153,6 +2345,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
 
             equity_points.push_back(ComputeTotalEquity(position_state, mark_price));
         }
+        return true;
     };
 
     for (const ReplayTick& tick : ticks) {
@@ -2182,19 +2375,31 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             continue;
         }
 
-        process_bucket();
+        if (!process_bucket()) {
+            return false;
+        }
         bucket.clear();
         bucket.push_back(tick);
         active_instrument = tick.instrument_id;
         active_minute = minute_bucket;
     }
 
-    process_bucket();
+    if (!process_bucket()) {
+        return false;
+    }
+
+    if (spec.emit_indicator_trace && !indicator_trace_writer.Close(error)) {
+        return false;
+    }
+    if (spec.emit_sub_strategy_indicator_trace &&
+        !sub_strategy_indicator_trace_writer.Close(error)) {
+        return false;
+    }
 
     replay.instrument_count = static_cast<std::int64_t>(instrument_universe.size());
     replay.instrument_universe.assign(instrument_universe.begin(), instrument_universe.end());
 
-    strategy.Shutdown();
+    strategy->Shutdown();
 
     BacktestCliResult result;
     result.run_id = spec.run_id;
@@ -2203,7 +2408,20 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     result.engine_mode = spec.engine_mode;
     result.rollover_mode = spec.rollover_mode;
     result.spec = spec;
-    result.input_signature = BuildInputSignature(spec);
+    result.spec.strategy_factory = spec.strategy_factory;
+    result.spec.strategy_composite_config = spec.strategy_composite_config;
+    result.spec.indicator_trace_path = indicator_trace_path;
+    result.spec.sub_strategy_indicator_trace_path = sub_strategy_indicator_trace_path;
+    BacktestCliSpec signature_spec = spec;
+    signature_spec.indicator_trace_path = indicator_trace_path;
+    signature_spec.sub_strategy_indicator_trace_path = sub_strategy_indicator_trace_path;
+    result.input_signature = BuildInputSignature(signature_spec);
+    result.indicator_trace_enabled = spec.emit_indicator_trace;
+    result.indicator_trace_path = indicator_trace_path;
+    result.indicator_trace_rows = indicator_trace_writer.rows_written();
+    result.sub_strategy_indicator_trace_enabled = spec.emit_sub_strategy_indicator_trace;
+    result.sub_strategy_indicator_trace_path = sub_strategy_indicator_trace_path;
+    result.sub_strategy_indicator_trace_rows = sub_strategy_indicator_trace_writer.rows_written();
 
     if (data_source == "csv") {
         result.data_signature = ComputeFileDigest(spec.csv_path, error);
@@ -2387,6 +2605,9 @@ inline std::string RenderBacktestJson(const BacktestCliResult& result) {
          << "    \"wal_path\": \"" << JsonEscape(result.spec.wal_path) << "\",\n"
          << "    \"account_id\": \"" << JsonEscape(result.spec.account_id) << "\",\n"
          << "    \"run_id\": \"" << JsonEscape(result.spec.run_id) << "\",\n"
+         << "    \"strategy_factory\": \"" << JsonEscape(result.spec.strategy_factory) << "\",\n"
+         << "    \"strategy_composite_config\": \""
+         << JsonEscape(result.spec.strategy_composite_config) << "\",\n"
          << "    \"market_state_detector\": {\n"
          << "      \"adx_period\": " << result.spec.detector_config.adx_period << ",\n"
          << "      \"adx_strong_threshold\": "
@@ -2412,7 +2633,15 @@ inline std::string RenderBacktestJson(const BacktestCliResult& result) {
          << "      \"min_bars_for_flat\": " << result.spec.detector_config.min_bars_for_flat << "\n"
          << "    },\n"
          << "    \"emit_state_snapshots\": "
-         << (result.spec.emit_state_snapshots ? "true" : "false") << "\n"
+         << (result.spec.emit_state_snapshots ? "true" : "false") << ",\n"
+         << "    \"emit_indicator_trace\": "
+         << (result.spec.emit_indicator_trace ? "true" : "false") << ",\n"
+         << "    \"indicator_trace_path\": \"" << JsonEscape(result.spec.indicator_trace_path)
+         << "\",\n"
+         << "    \"emit_sub_strategy_indicator_trace\": "
+         << (result.spec.emit_sub_strategy_indicator_trace ? "true" : "false") << ",\n"
+         << "    \"sub_strategy_indicator_trace_path\": \""
+         << JsonEscape(result.spec.sub_strategy_indicator_trace_path) << "\"\n"
          << "  },\n"
          << "  \"input_signature\": \"" << JsonEscape(result.input_signature) << "\",\n"
          << "  \"data_signature\": \"" << JsonEscape(result.data_signature) << "\",\n"
@@ -2441,6 +2670,17 @@ inline std::string RenderBacktestJson(const BacktestCliResult& result) {
     json << "],\n"
          << "    \"first_ts_ns\": " << result.replay.first_ts_ns << ",\n"
          << "    \"last_ts_ns\": " << result.replay.last_ts_ns << "\n"
+         << "  },\n"
+         << "  \"indicator_trace\": {\n"
+         << "    \"enabled\": " << (result.indicator_trace_enabled ? "true" : "false") << ",\n"
+         << "    \"path\": \"" << JsonEscape(result.indicator_trace_path) << "\",\n"
+         << "    \"rows\": " << result.indicator_trace_rows << "\n"
+         << "  },\n"
+         << "  \"sub_strategy_indicator_trace\": {\n"
+         << "    \"enabled\": " << (result.sub_strategy_indicator_trace_enabled ? "true" : "false")
+         << ",\n"
+         << "    \"path\": \"" << JsonEscape(result.sub_strategy_indicator_trace_path) << "\",\n"
+         << "    \"rows\": " << result.sub_strategy_indicator_trace_rows << "\n"
          << "  }";
 
     if (result.has_deterministic) {

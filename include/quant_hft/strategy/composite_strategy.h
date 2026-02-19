@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -34,6 +35,15 @@ struct CompositeStrategyDefinition {
     std::vector<AtomicStrategyDefinition> risk_control_strategies;
 };
 
+struct CompositeAtomicTraceRow {
+    std::string strategy_id;
+    std::string strategy_type;
+    std::optional<double> kama;
+    std::optional<double> atr;
+    std::optional<double> adx;
+    std::optional<double> er;
+};
+
 class CompositeStrategy : public ILiveStrategy {
    public:
     CompositeStrategy();
@@ -46,11 +56,18 @@ class CompositeStrategy : public ILiveStrategy {
     void OnOrderEvent(const OrderEvent& event) override;
     std::vector<SignalIntent> OnTimer(EpochNanos now_ns) override;
     void Shutdown() override;
+    std::vector<CompositeAtomicTraceRow> CollectAtomicIndicatorTrace() const;
 
    private:
     struct OpeningSlot {
         IOpeningStrategy* strategy{nullptr};
         std::vector<MarketRegime> market_regimes;
+    };
+
+    struct AtomicTraceSlot {
+        std::string strategy_id;
+        std::string strategy_type;
+        IAtomicIndicatorTraceProvider* provider{nullptr};
     };
 
     bool IsOpeningAllowedByRegime(const OpeningSlot& slot, MarketRegime regime) const;
@@ -73,6 +90,7 @@ class CompositeStrategy : public ILiveStrategy {
     std::vector<ITimeFilterStrategy*> time_filters_;
     std::vector<IRiskControlStrategy*> risk_control_strategies_;
     std::vector<IAtomicOrderAware*> order_aware_strategies_;
+    std::vector<AtomicTraceSlot> trace_providers_;
     std::unordered_map<std::string, std::int32_t> last_filled_volume_by_order_;
 };
 

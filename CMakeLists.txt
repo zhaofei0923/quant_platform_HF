@@ -57,6 +57,9 @@ add_library(quant_hft_core STATIC
     src/strategy/atomic/atr_take_profit.cpp
     src/strategy/atomic/time_filter.cpp
     src/strategy/atomic/max_position_risk_control.cpp
+    src/strategy/atomic/register_builtin_atomic_strategies.cpp
+    src/core/backtest/indicator_trace_parquet_writer.cpp
+    src/core/backtest/sub_strategy_indicator_trace_parquet_writer.cpp
     src/core/backtest/parquet_data_feed.cpp
     src/core/common/callback_dispatcher.cpp
     src/core/common/event_dispatcher.cpp
@@ -410,6 +413,15 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(parquet_data_feed_test tests/unit/backtest/parquet_data_feed_test.cpp)
     target_link_libraries(parquet_data_feed_test PRIVATE quant_hft_core GTest::gtest_main)
 
+    add_executable(indicator_trace_parquet_writer_test
+                   tests/unit/backtest/indicator_trace_parquet_writer_test.cpp)
+    target_link_libraries(indicator_trace_parquet_writer_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(sub_strategy_indicator_trace_parquet_writer_test
+                   tests/unit/backtest/sub_strategy_indicator_trace_parquet_writer_test.cpp)
+    target_link_libraries(sub_strategy_indicator_trace_parquet_writer_test
+                          PRIVATE quant_hft_core GTest::gtest_main)
+
     add_executable(backtest_data_feed_test tests/unit/backtest/backtest_data_feed_test.cpp)
     target_link_libraries(backtest_data_feed_test PRIVATE quant_hft_core GTest::gtest_main)
 
@@ -539,6 +551,8 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(market_state_detector_test)
     gtest_discover_tests(metric_registry_test)
     gtest_discover_tests(parquet_data_feed_test)
+    gtest_discover_tests(indicator_trace_parquet_writer_test)
+    gtest_discover_tests(sub_strategy_indicator_trace_parquet_writer_test)
     gtest_discover_tests(backtest_data_feed_test)
     gtest_discover_tests(live_data_feed_test)
     gtest_discover_tests(broker_test)

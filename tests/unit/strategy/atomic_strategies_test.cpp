@@ -138,6 +138,93 @@ TEST(AtomicStrategiesTest, ATRTakeProfitReadinessTriggerAndReset) {
     EXPECT_TRUE(take_profit.OnState(MakeBarState("IF2406", 101.0, 99.0, 100.0), ctx).empty());
 }
 
+TEST(AtomicStrategiesTest, TrendOpeningExposesIndicatorSnapshotWhenReady) {
+    TrendOpening opening;
+    opening.Init({
+        {"id", "trend_open"},
+        {"instrument_id", "IF2406"},
+        {"er_period", "2"},
+        {"fast_period", "2"},
+        {"slow_period", "4"},
+        {"volume", "1"},
+    });
+
+    auto* provider = dynamic_cast<IAtomicIndicatorTraceProvider*>(&opening);
+    ASSERT_NE(provider, nullptr);
+    EXPECT_FALSE(provider->IndicatorSnapshot().has_value());
+
+    AtomicStrategyContext ctx = MakeContext("acct");
+    opening.OnState(MakeBarState("IF2406", 100.0, 99.0, 100.0), ctx);
+    opening.OnState(MakeBarState("IF2406", 101.0, 100.0, 101.0), ctx);
+    opening.OnState(MakeBarState("IF2406", 102.0, 101.0, 103.0), ctx);
+
+    const auto snapshot = provider->IndicatorSnapshot();
+    ASSERT_TRUE(snapshot.has_value());
+    ASSERT_TRUE(snapshot->kama.has_value());
+    ASSERT_TRUE(snapshot->er.has_value());
+    EXPECT_FALSE(snapshot->atr.has_value());
+    EXPECT_FALSE(snapshot->adx.has_value());
+
+    opening.Reset();
+    EXPECT_FALSE(provider->IndicatorSnapshot().has_value());
+}
+
+TEST(AtomicStrategiesTest, ATRStopLossExposesIndicatorSnapshotWhenReady) {
+    ATRStopLoss stop_loss;
+    stop_loss.Init({
+        {"id", "atr_sl"},
+        {"atr_period", "3"},
+        {"atr_multiplier", "2.0"},
+    });
+
+    auto* provider = dynamic_cast<IAtomicIndicatorTraceProvider*>(&stop_loss);
+    ASSERT_NE(provider, nullptr);
+    EXPECT_FALSE(provider->IndicatorSnapshot().has_value());
+
+    AtomicStrategyContext ctx = MakeContext("acct");
+    stop_loss.OnState(MakeBarState("IF2406", 101.0, 99.0, 100.0), ctx);
+    stop_loss.OnState(MakeBarState("IF2406", 102.0, 98.0, 100.0), ctx);
+    stop_loss.OnState(MakeBarState("IF2406", 101.0, 97.0, 98.0), ctx);
+
+    const auto snapshot = provider->IndicatorSnapshot();
+    ASSERT_TRUE(snapshot.has_value());
+    ASSERT_TRUE(snapshot->atr.has_value());
+    EXPECT_FALSE(snapshot->kama.has_value());
+    EXPECT_FALSE(snapshot->adx.has_value());
+    EXPECT_FALSE(snapshot->er.has_value());
+
+    stop_loss.Reset();
+    EXPECT_FALSE(provider->IndicatorSnapshot().has_value());
+}
+
+TEST(AtomicStrategiesTest, ATRTakeProfitExposesIndicatorSnapshotWhenReady) {
+    ATRTakeProfit take_profit;
+    take_profit.Init({
+        {"id", "atr_tp"},
+        {"atr_period", "3"},
+        {"atr_multiplier", "2.0"},
+    });
+
+    auto* provider = dynamic_cast<IAtomicIndicatorTraceProvider*>(&take_profit);
+    ASSERT_NE(provider, nullptr);
+    EXPECT_FALSE(provider->IndicatorSnapshot().has_value());
+
+    AtomicStrategyContext ctx = MakeContext("acct");
+    take_profit.OnState(MakeBarState("IF2406", 101.0, 99.0, 100.0), ctx);
+    take_profit.OnState(MakeBarState("IF2406", 102.0, 98.0, 100.0), ctx);
+    take_profit.OnState(MakeBarState("IF2406", 104.0, 100.0, 98.0), ctx);
+
+    const auto snapshot = provider->IndicatorSnapshot();
+    ASSERT_TRUE(snapshot.has_value());
+    ASSERT_TRUE(snapshot->atr.has_value());
+    EXPECT_FALSE(snapshot->kama.has_value());
+    EXPECT_FALSE(snapshot->adx.has_value());
+    EXPECT_FALSE(snapshot->er.has_value());
+
+    take_profit.Reset();
+    EXPECT_FALSE(provider->IndicatorSnapshot().has_value());
+}
+
 TEST(AtomicStrategiesTest, TimeFilterCrossMidnightAndTimezone) {
     TimeFilter filter;
     filter.Init({

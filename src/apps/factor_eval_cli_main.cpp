@@ -48,10 +48,16 @@ void ApplySpecJsonToArgs(const std::string& json, quant_hft::apps::ArgMap* args)
     apply_string("wal_path");
     apply_string("account_id");
     apply_string("run_id");
+    apply_string("strategy_factory");
+    apply_string("strategy_composite_config");
+    apply_string("indicator_trace_path");
+    apply_string("sub_strategy_indicator_trace_path");
     apply_number("rollover_slippage_bps");
     apply_number("max_ticks");
     apply_bool("deterministic_fills");
     apply_bool("emit_state_snapshots");
+    apply_bool("emit_indicator_trace");
+    apply_bool("emit_sub_strategy_indicator_trace");
 }
 
 bool IsAllowedTemplate(const std::string& value) {

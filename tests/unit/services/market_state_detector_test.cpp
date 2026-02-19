@@ -105,8 +105,36 @@ TEST(MarketStateDetectorTest, IgnoresNonFiniteInputAndSupportsReset) {
     detector.Reset();
     EXPECT_EQ(detector.GetRegime(), MarketRegime::kUnknown);
     EXPECT_FALSE(detector.GetADX().has_value());
+    EXPECT_FALSE(detector.GetKAMA().has_value());
+    EXPECT_FALSE(detector.GetATR().has_value());
     EXPECT_FALSE(detector.GetKAMAER().has_value());
     EXPECT_FALSE(detector.GetATRRatio().has_value());
+}
+
+TEST(MarketStateDetectorTest, ExposesKamaAndAtrWhenReady) {
+    MarketStateDetectorConfig config;
+    config.adx_period = 3;
+    config.atr_period = 3;
+    config.kama_er_period = 3;
+    config.min_bars_for_flat = 1;
+
+    MarketStateDetector detector(config);
+    EXPECT_FALSE(detector.GetKAMA().has_value());
+    EXPECT_FALSE(detector.GetATR().has_value());
+
+    for (int i = 0; i < 8; ++i) {
+        const double close = 100.0 + static_cast<double>(i);
+        detector.Update(close + 1.0, close - 1.0, close);
+    }
+
+    ASSERT_TRUE(detector.GetKAMA().has_value());
+    ASSERT_TRUE(detector.GetATR().has_value());
+    EXPECT_GT(*detector.GetKAMA(), 0.0);
+    EXPECT_GT(*detector.GetATR(), 0.0);
+
+    detector.Reset();
+    EXPECT_FALSE(detector.GetKAMA().has_value());
+    EXPECT_FALSE(detector.GetATR().has_value());
 }
 
 }  // namespace

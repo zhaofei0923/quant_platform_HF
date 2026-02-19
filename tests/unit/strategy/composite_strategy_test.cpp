@@ -222,6 +222,28 @@ class ContextCaptureOpening final : public IOpeningStrategy {
     std::string id_;
 };
 
+class TraceProviderOpening final : public IOpeningStrategy, public IAtomicIndicatorTraceProvider {
+   public:
+    void Init(const AtomicParams& params) override { id_ = GetOrDefault(params, "id", "trace"); }
+    std::string GetId() const override { return id_; }
+    void Reset() override { snapshot_.reset(); }
+    std::vector<SignalIntent> OnState(const StateSnapshot7D& state,
+                                      const AtomicStrategyContext& ctx) override {
+        (void)ctx;
+        AtomicIndicatorSnapshot snapshot;
+        snapshot.kama = state.bar_close;
+        snapshot.atr = state.bar_high - state.bar_low;
+        snapshot.er = 0.5;
+        snapshot_ = snapshot;
+        return {};
+    }
+    std::optional<AtomicIndicatorSnapshot> IndicatorSnapshot() const override { return snapshot_; }
+
+   private:
+    std::string id_;
+    std::optional<AtomicIndicatorSnapshot> snapshot_;
+};
+
 std::string UniqueType(const std::string& prefix) {
     static std::atomic<int> seq{0};
     return prefix + "_" + std::to_string(seq.fetch_add(1));
@@ -638,6 +660,63 @@ TEST(CompositeStrategyTest, OrderEventsHandleReverseAndFlattingToZero) {
 
     ASSERT_EQ(captured_positions["IF2406"], 0);
     EXPECT_TRUE(captured_avg_prices.find("IF2406") == captured_avg_prices.end());
+}
+
+TEST(CompositeStrategyTest, CollectAtomicIndicatorTraceExposesProviderSnapshot) {
+    AtomicFactory factory;
+    std::string error;
+    const std::string risk_type = UniqueType("risk");
+    const std::string stop_type = UniqueType("stop");
+    const std::string take_type = UniqueType("take");
+    const std::string time_type = UniqueType("time");
+    const std::string trace_type = UniqueType("trace");
+
+    ASSERT_TRUE(factory.Register(
+        risk_type, []() { return std::make_unique<TestRiskControl>(); }, &error))
+        << error;
+    ASSERT_TRUE(factory.Register(
+        stop_type, []() { return std::make_unique<TestStopLoss>(); }, &error))
+        << error;
+    ASSERT_TRUE(factory.Register(
+        take_type, []() { return std::make_unique<TestTakeProfit>(); }, &error))
+        << error;
+    ASSERT_TRUE(factory.Register(
+        time_type, []() { return std::make_unique<TestTimeFilter>(); }, &error))
+        << error;
+    ASSERT_TRUE(factory.Register(
+        trace_type, []() { return std::make_unique<TraceProviderOpening>(); }, &error))
+        << error;
+
+    AtomicStrategyDefinition trace_open;
+    trace_open.id = "trace_open";
+    trace_open.type = trace_type;
+    trace_open.params = {{"id", "trace_open"}};
+    CompositeStrategyDefinition definition =
+        MakeDefinition(risk_type, stop_type, take_type, time_type, {trace_open});
+
+    CompositeStrategy strategy(definition, &factory);
+    StrategyContext ctx;
+    ctx.strategy_id = "composite";
+    ctx.account_id = "acct";
+    strategy.Initialize(ctx);
+
+    StateSnapshot7D state = MakeState();
+    state.bar_high = 103.0;
+    state.bar_low = 101.0;
+    state.bar_close = 102.0;
+    strategy.OnState(state);
+
+    const auto traces = strategy.CollectAtomicIndicatorTrace();
+    ASSERT_EQ(traces.size(), 1u);
+    EXPECT_EQ(traces[0].strategy_id, "trace_open");
+    EXPECT_EQ(traces[0].strategy_type, trace_type);
+    ASSERT_TRUE(traces[0].kama.has_value());
+    ASSERT_TRUE(traces[0].atr.has_value());
+    ASSERT_TRUE(traces[0].er.has_value());
+    EXPECT_FALSE(traces[0].adx.has_value());
+    EXPECT_DOUBLE_EQ(*traces[0].kama, 102.0);
+    EXPECT_DOUBLE_EQ(*traces[0].atr, 2.0);
+    EXPECT_DOUBLE_EQ(*traces[0].er, 0.5);
 }
 
 }  // namespace quant_hft

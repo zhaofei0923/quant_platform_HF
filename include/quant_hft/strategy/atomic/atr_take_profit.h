@@ -9,7 +9,7 @@
 
 namespace quant_hft {
 
-class ATRTakeProfit : public ITakeProfitStrategy {
+class ATRTakeProfit : public ITakeProfitStrategy, public IAtomicIndicatorTraceProvider {
    public:
     ATRTakeProfit() = default;
 
@@ -18,6 +18,7 @@ class ATRTakeProfit : public ITakeProfitStrategy {
     void Reset() override;
     std::vector<SignalIntent> OnState(const StateSnapshot7D& state,
                                       const AtomicStrategyContext& ctx) override;
+    std::optional<AtomicIndicatorSnapshot> IndicatorSnapshot() const override;
 
    private:
     std::string id_{"ATRTakeProfit"};

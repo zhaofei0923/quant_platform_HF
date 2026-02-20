@@ -1,3 +1,11 @@
+# CONFIG DOC
+# Purpose: 交易时段配置（按交易所/品种前缀匹配）。
+# Consumer: 交易时段过滤与相关回测/实盘时间判定模块。
+# Field dictionary: docs/ops/config_catalog.md (`configs/trading_sessions.yaml`)
+# Notes:
+#   1) `night: null` 表示无夜盘。
+#   2) 若同交易所既有通用规则又有品种规则，品种规则优先。
+
 sessions:
   # 上海期货交易所
   - exchange: SHFE

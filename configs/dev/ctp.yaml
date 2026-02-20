@@ -1,9 +1,20 @@
+# CONFIG DOC
+# Purpose: 开发环境 CTP 运行配置（仿真）。
+# Consumer: core_engine / CtpConfigLoader
+# Field dictionary: docs/ops/config_catalog.md (`configs/dev/ctp.yaml`)
+# Notes:
+#   1) 生产凭据不要写入仓库，优先使用环境变量占位符。
+#   2) strategy_factory=composite 时必须同时设置 strategy_composite_config。
+
 ctp:
+  # --- identity & runtime mode ---
   profile: "dev"
   environment: sim
+  run_type: sim
   is_production_mode: false
   enable_real_api: false
 
+  # --- connection & auth ---
   broker_id: "${CTP_DEV_BROKER_ID}"
   user_id: "${CTP_DEV_USER_ID}"
   investor_id: "${CTP_DEV_INVESTOR_ID}"
@@ -14,6 +25,7 @@ ctp:
   auth_code: "${CTP_DEV_AUTH_CODE}"
   app_id: "${CTP_DEV_APP_ID}"
 
+  # --- rate limit & retries ---
   query_rate_limit_qps: 10
   query_rate_per_sec: 5
   order_insert_rate_per_sec: 50
@@ -26,6 +38,8 @@ ctp:
   cancel_retry_max_delay_ms: 5000
   cancel_wait_ack_timeout_ms: 1200
   settlement_confirm_required: true
+
+  # --- observability & breaker ---
   metrics_enabled: false
   metrics_port: 8080
   log_level: "info"
@@ -37,11 +51,15 @@ ctp:
   breaker_account_enabled: true
   breaker_system_enabled: true
   recovery_quiet_period_ms: 3000
+
+  # --- storage & audit ---
   kafka_bootstrap_servers: "${KAFKA_BOOTSTRAP_SERVERS}"
   kafka_topic_ticks: "market.ticks.v1"
   clickhouse_dsn: "${CLICKHOUSE_DSN}"
   audit_hot_days: 7
   audit_cold_days: 180
+
+  # --- strategy factory ---
   strategy_factory: "demo"
   # strategy_composite_config: "../strategies/composite_strategy.yaml"  # required when strategy_factory=composite
   connect_timeout_ms: 10000

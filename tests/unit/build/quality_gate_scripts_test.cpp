@@ -130,4 +130,82 @@ TEST(QualityGateScriptsTest, CsvParquetSpeedupGatePassesWhenSpeedupMeetsThreshol
     EXPECT_EQ(rc, 0);
 }
 
+TEST(QualityGateScriptsTest, ProductsInfoSyncCheckPassesCurrentRepository) {
+    const int rc = RunCommand(
+        "python3 scripts/build/verify_products_info_sync.py "
+        "--instrument-json configs/strategies/instrument_info.json "
+        "--products-yaml configs/strategies/products_info.yaml");
+    EXPECT_EQ(rc, 0);
+}
+
+TEST(QualityGateScriptsTest, ProductsInfoSyncCheckFailsWhenFilesDrift) {
+    const auto root = MakeTempDir("products_info_sync_fail");
+    const auto instrument_json = root / "instrument_info.json";
+    const auto products_yaml = root / "products_info.yaml";
+    WriteFile(instrument_json,
+              "{\n"
+              "  \"RB\": {\n"
+              "    \"product\": \"RB\",\n"
+              "    \"volume_multiple\": 10,\n"
+              "    \"long_margin_ratio\": 0.16,\n"
+              "    \"short_margin_ratio\": 0.16,\n"
+              "    \"trading_sessions\": [\"21:00:00-23:00:00\"],\n"
+              "    \"commission\": {\n"
+              "      \"open_ratio_by_money\": 0.0001,\n"
+              "      \"open_ratio_by_volume\": 0,\n"
+              "      \"close_ratio_by_money\": 0.0001,\n"
+              "      \"close_ratio_by_volume\": 0,\n"
+              "      \"close_today_ratio_by_money\": 0.0001,\n"
+              "      \"close_today_ratio_by_volume\": 0\n"
+              "    }\n"
+              "  }\n"
+              "}\n");
+    WriteFile(products_yaml,
+              "products:\n"
+              "  RB:\n"
+              "    product: RB\n"
+              "    volume_multiple: 9\n"
+              "    long_margin_ratio: 0.16\n"
+              "    short_margin_ratio: 0.16\n"
+              "    trading_sessions:\n"
+              "      - \"21:00:00-23:00:00\"\n"
+              "    commission:\n"
+              "      open_ratio_by_money: 0.0001\n"
+              "      open_ratio_by_volume: 0\n"
+              "      close_ratio_by_money: 0.0001\n"
+              "      close_ratio_by_volume: 0\n"
+              "      close_today_ratio_by_money: 0.0001\n"
+              "      close_today_ratio_by_volume: 0\n");
+
+    const std::string cmd =
+        "python3 scripts/build/verify_products_info_sync.py --instrument-json '" +
+        EscapePathForShell(instrument_json) + "' --products-yaml '" +
+        EscapePathForShell(products_yaml) + "'";
+    const int rc = RunCommand(cmd);
+    EXPECT_NE(rc, 0);
+}
+
+TEST(QualityGateScriptsTest, ConfigDocsCoverageCheckPassesCurrentRepository) {
+    const int rc = RunCommand(
+        "python3 scripts/build/verify_config_docs_coverage.py "
+        "--repo-root . "
+        "--catalog docs/ops/config_catalog.md");
+    EXPECT_EQ(rc, 0);
+}
+
+TEST(QualityGateScriptsTest, ConfigDocsCoverageCheckFailsWhenCatalogMissingEntry) {
+    const auto root = MakeTempDir("config_docs_coverage_fail");
+    WriteFile(root / "configs/sim/ctp.yaml", "ctp:\n  profile: sim\n");
+    WriteFile(root / "configs/strategies/instrument_info.json", "{}\n");
+    WriteFile(root / "docs/ops/config_catalog.md",
+              "# Config Catalog\n\n"
+              "## `configs/sim/ctp.yaml`\n");
+
+    const std::string cmd = "python3 scripts/build/verify_config_docs_coverage.py --repo-root '" +
+                            EscapePathForShell(root) + "' --catalog '" +
+                            EscapePathForShell(root / "docs/ops/config_catalog.md") + "'";
+    const int rc = RunCommand(cmd);
+    EXPECT_NE(rc, 0);
+}
+
 }  // namespace

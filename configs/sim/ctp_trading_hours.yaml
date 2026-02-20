@@ -1,4 +1,13 @@
+# CONFIG DOC
+# Purpose: SimNow 交易时段前置（组1）配置。
+# Consumer: simnow_probe / core_engine
+# Field dictionary: docs/ops/config_catalog.md (`configs/sim/ctp_trading_hours.yaml`)
+# Notes:
+#   1) 使用 password_env 读取凭据，避免明文密码落盘。
+#   2) 组2/组3文件仅前置地址不同。
+
 ctp:
+  # --- identity & runtime mode ---
   profile: "simnow_trading_hours"
   environment: sim
   # Official trading-hours front_se uses monitoring-center production secret key (CTP v6.7.11+).
@@ -6,6 +15,7 @@ ctp:
   enable_real_api: false
   enable_terminal_auth: true
 
+  # --- connection & auth ---
   # SimNow trading-hours-aligned environment (官网 2025-06 调整后前置)
   broker_id: "${CTP_SIM_BROKER_ID}"
   user_id: "${CTP_SIM_USER_ID}"
@@ -20,6 +30,7 @@ ctp:
   auth_code: "${CTP_SIM_AUTH_CODE}"
   app_id: "${CTP_SIM_APP_ID}"
 
+  # --- basic rate limit & reconnect ---
   query_rate_limit_qps: 10
   connect_timeout_ms: 10000
   reconnect_max_attempts: 8

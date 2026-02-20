@@ -108,5 +108,7 @@ bash scripts/build/run_preprod_rehearsal_gate.sh --build-dir "${BUILD_DIR}" --re
 "${BUILD_DIR}/verify_develop_requirements_cli"
 
 bash scripts/build/repo_purity_check.sh --repo-root .
+python3 scripts/build/verify_products_info_sync.py
+python3 scripts/build/verify_config_docs_coverage.py
 
 echo "bootstrap completed"

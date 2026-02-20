@@ -16,6 +16,7 @@ struct CtpFileConfig {
     int instrument_query_interval_ms{30000};
     std::vector<std::string> instruments;
     std::vector<std::string> strategy_ids;
+    std::string run_type{"live"};
     std::string strategy_factory{"demo"};
     std::string strategy_composite_config;
     int strategy_queue_capacity{8192};
@@ -26,10 +27,8 @@ struct CtpFileConfig {
 };
 
 class CtpConfigLoader {
-public:
-    static bool LoadFromYaml(const std::string& path,
-                             CtpFileConfig* config,
-                             std::string* error);
+   public:
+    static bool LoadFromYaml(const std::string& path, CtpFileConfig* config, std::string* error);
 };
 
 }  // namespace quant_hft

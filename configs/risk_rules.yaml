@@ -1,3 +1,11 @@
+# CONFIG DOC
+# Purpose: 风控阈值规则配置（全局 + 策略级覆盖）。
+# Consumer: 风控规则加载模块。
+# Field dictionary: docs/ops/config_catalog.md (`configs/risk_rules.yaml`)
+# Notes:
+#   1) strategies[].id 必须与策略 ID 对齐。
+#   2) 策略级字段缺失时回退 global。
+
 global:
   max_loss_per_order: 5000
   max_order_volume: 100

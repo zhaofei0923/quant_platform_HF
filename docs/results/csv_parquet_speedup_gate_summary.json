@@ -1,0 +1,11 @@
+{
+  "status": "pass",
+  "reason": "ok",
+  "min_speedup": 5.0,
+  "actual_speedup": 6.2,
+  "require_equal": true,
+  "actual_equal": true,
+  "focus_symbol": "rb2405",
+  "symbol_count": 20,
+  "compare_json": "/tmp/quant_hft_quality_gate_test_speedup_gate_pass/compare.json"
+}

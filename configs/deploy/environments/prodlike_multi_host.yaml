@@ -1,3 +1,8 @@
+# CONFIG DOC
+# Purpose: 多主机拟生产故障切换命令模板。
+# Consumer: failover_orchestrator.py
+# Field dictionary: docs/ops/config_catalog.md (`configs/deploy/environments/prodlike_multi_host.yaml`)
+
 environment: prodlike-multi-host
 deploy_target: prodlike-multi-host
 precheck_cmd: "echo precheck_prodlike_multi_host"

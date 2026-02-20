@@ -860,6 +860,16 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* confi
 
     loaded.instruments = SplitCsvList(get_value("instruments"));
     loaded.strategy_ids = SplitCsvList(get_value("strategy_ids"));
+    loaded.run_type = loaded.runtime.environment == CtpEnvironment::kSimNow ? "sim" : "live";
+    if (const auto run_type_it = kv.find("run_type"); run_type_it != kv.end()) {
+        loaded.run_type = Lowercase(Trim(run_type_it->second));
+    }
+    if (loaded.run_type != "live" && loaded.run_type != "sim" && loaded.run_type != "backtest") {
+        if (error != nullptr) {
+            *error = "run_type must be one of: live|sim|backtest";
+        }
+        return false;
+    }
     const auto strategy_factory_it = kv.find("strategy_factory");
     loaded.strategy_factory =
         strategy_factory_it == kv.end() ? "demo" : Trim(strategy_factory_it->second);

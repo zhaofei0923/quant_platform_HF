@@ -1,10 +1,21 @@
+# CONFIG DOC
+# Purpose: 生产环境 CTP 运行配置。
+# Consumer: core_engine / CtpConfigLoader
+# Field dictionary: docs/ops/config_catalog.md (`configs/prod/ctp.yaml`)
+# Notes:
+#   1) run_type=live + enable_real_api=true 表示实盘链路，修改需走变更审批。
+#   2) strategy_factory=composite 时必须配置 strategy_composite_config。
+
 ctp:
+  # --- identity & runtime mode ---
   profile: "prod"
   environment: prod
+  run_type: live
   is_production_mode: true
   enable_real_api: true
   enable_terminal_auth: true
 
+  # --- connection & auth ---
   # SimNow trading-hours fronts (look-through, production key mode)
   # Primary group (configured): TD=30001, MD=30011
   # Auto-failover: runtime will automatically try
@@ -20,6 +31,7 @@ ctp:
   auth_code: "${CTP_PROD_AUTH_CODE}"
   app_id: "${CTP_PROD_APP_ID}"
 
+  # --- rate limit & retries ---
   query_rate_limit_qps: 10
   query_rate_per_sec: 5
   settlement_query_rate_per_sec: 2
@@ -39,6 +51,8 @@ ctp:
   cancel_retry_max_delay_ms: 5000
   cancel_wait_ack_timeout_ms: 1200
   settlement_confirm_required: true
+
+  # --- observability & breaker ---
   metrics_enabled: true
   metrics_port: 8080
   log_level: "info"
@@ -50,11 +64,15 @@ ctp:
   breaker_account_enabled: true
   breaker_system_enabled: true
   recovery_quiet_period_ms: 3000
+
+  # --- storage & audit ---
   kafka_bootstrap_servers: "${KAFKA_BOOTSTRAP_SERVERS}"
   kafka_topic_ticks: "market.ticks.v1"
   clickhouse_dsn: "${CLICKHOUSE_DSN}"
   audit_hot_days: 7
   audit_cold_days: 180
+
+  # --- strategy factory ---
   strategy_factory: "demo"
   # strategy_composite_config: "../strategies/composite_strategy.yaml"  # required when strategy_factory=composite
   connect_timeout_ms: 10000

@@ -245,6 +245,14 @@ int main(int argc, char** argv) {
     const auto strategy_ids = ResolveStrategyIds(file_config);
     const std::string strategy_factory =
         file_config.strategy_factory.empty() ? std::string("demo") : file_config.strategy_factory;
+    const std::string run_type =
+        file_config.run_type.empty() ? std::string("live") : file_config.run_type;
+    if (run_type == "backtest") {
+        EmitStructuredLog(
+            &config, "core_engine", "error", "invalid_run_type",
+            {{"run_type", run_type}, {"error", "core_engine does not support run_type=backtest"}});
+        return 1;
+    }
     const std::size_t strategy_queue_capacity =
         static_cast<std::size_t>(std::max(1, file_config.strategy_queue_capacity));
     const std::string account_id =
@@ -722,6 +730,7 @@ int main(int argc, char** argv) {
     }
     StrategyContext strategy_context;
     strategy_context.account_id = account_id;
+    strategy_context.metadata["run_type"] = run_type;
     strategy_context.metadata["strategy_factory"] = strategy_factory;
     if (strategy_factory == "composite") {
         strategy_context.metadata["composite_config_path"] = file_config.strategy_composite_config;

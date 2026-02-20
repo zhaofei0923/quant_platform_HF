@@ -1,0 +1,182 @@
+{
+  "C": {
+    "commission": {
+      "close_ratio_by_money": 0.0,
+      "close_ratio_by_volume": 0.2,
+      "close_today_ratio_by_money": 0.0,
+      "close_today_ratio_by_volume": 0.0,
+      "open_ratio_by_money": 0.0,
+      "open_ratio_by_volume": 0.2
+    },
+    "long_margin_ratio": 0.15,
+    "product": "C",
+    "trading_sessions": [
+      "21:00:00-23:00:00",
+      "09:00:00-10:15:00",
+      "10:30:00-11:30:00",
+      "13:30:00-15:00:00"
+    ],
+    "short_margin_ratio": 0.15,
+    "volume_multiple": 10
+  },
+  "EG": {
+    "commission": {
+      "close_ratio_by_money": 0.0,
+      "close_ratio_by_volume": 4.0,
+      "close_today_ratio_by_money": 0.0,
+      "close_today_ratio_by_volume": 2.0,
+      "open_ratio_by_money": 0.0,
+      "open_ratio_by_volume": 4.0
+    },
+    "long_margin_ratio": 0.18,
+    "product": "EG",
+    "trading_sessions": [
+      "21:00:00-23:00:00",
+      "09:00:00-10:15:00",
+      "10:30:00-11:30:00",
+      "13:30:00-15:00:00"
+    ],
+    "short_margin_ratio": 0.18,
+    "volume_multiple": 10
+  },
+  "HC": {
+    "commission": {
+      "close_ratio_by_money": 0.0001,
+      "close_ratio_by_volume": 0.0,
+      "close_today_ratio_by_money": 0.0001,
+      "close_today_ratio_by_volume": 0.0,
+      "open_ratio_by_money": 0.0001,
+      "open_ratio_by_volume": 0.0
+    },
+    "long_margin_ratio": 0.16,
+    "product": "HC",
+    "trading_sessions": [
+      "21:00:00-23:00:00",
+      "09:00:00-10:15:00",
+      "10:30:00-11:30:00",
+      "13:30:00-15:00:00"
+    ],
+    "short_margin_ratio": 0.16,
+    "volume_multiple": 10
+  },
+  "M": {
+    "commission": {
+      "close_ratio_by_money": 0.0,
+      "close_ratio_by_volume": 0.2,
+      "close_today_ratio_by_money": 0.0,
+      "close_today_ratio_by_volume": 0.1,
+      "open_ratio_by_money": 0.0,
+      "open_ratio_by_volume": 0.2
+    },
+    "long_margin_ratio": 0.14,
+    "product": "M",
+    "trading_sessions": [
+      "21:00:00-23:00:00",
+      "09:00:00-10:15:00",
+      "10:30:00-11:30:00",
+      "13:30:00-15:00:00"
+    ],
+    "short_margin_ratio": 0.14,
+    "volume_multiple": 10
+  },
+  "MA": {
+    "commission": {
+      "close_ratio_by_money": 0.0001,
+      "close_ratio_by_volume": 0.0,
+      "close_today_ratio_by_money": 0.0001,
+      "close_today_ratio_by_volume": 0.0,
+      "open_ratio_by_money": 0.0001,
+      "open_ratio_by_volume": 0.0
+    },
+    "long_margin_ratio": 0.16,
+    "product": "MA",
+    "trading_sessions": [
+      "21:00:00-23:00:00",
+      "09:00:00-10:15:00",
+      "10:30:00-11:30:00",
+      "13:30:00-15:00:00"
+    ],
+    "short_margin_ratio": 0.16,
+    "volume_multiple": 10
+  },
+  "PP": {
+    "commission": {
+      "close_ratio_by_money": 0.0,
+      "close_ratio_by_volume": 1.0,
+      "close_today_ratio_by_money": 0.0,
+      "close_today_ratio_by_volume": 1.0,
+      "open_ratio_by_money": 0.0,
+      "open_ratio_by_volume": 1.0
+    },
+    "long_margin_ratio": 0.18,
+    "product": "PP",
+    "trading_sessions": [
+      "21:00:00-23:00:00",
+      "09:00:00-10:15:00",
+      "10:30:00-11:30:00",
+      "13:30:00-15:00:00"
+    ],
+    "short_margin_ratio": 0.18,
+    "volume_multiple": 5
+  },
+  "RB": {
+    "commission": {
+      "close_ratio_by_money": 0.0001,
+      "close_ratio_by_volume": 0.0,
+      "close_today_ratio_by_money": 0.0001,
+      "close_today_ratio_by_volume": 0.0,
+      "open_ratio_by_money": 0.0001,
+      "open_ratio_by_volume": 0.0
+    },
+    "long_margin_ratio": 0.16,
+    "product": "RB",
+    "trading_sessions": [
+      "21:00:00-23:00:00",
+      "09:00:00-10:15:00",
+      "10:30:00-11:30:00",
+      "13:30:00-15:00:00"
+    ],
+    "short_margin_ratio": 0.16,
+    "volume_multiple": 10
+  },
+  "TA": {
+    "commission": {
+      "close_ratio_by_money": 0.0,
+      "close_ratio_by_volume": 4.0,
+      "close_today_ratio_by_money": 0.0,
+      "close_today_ratio_by_volume": 4.0,
+      "open_ratio_by_money": 0.0,
+      "open_ratio_by_volume": 4.0
+    },
+    "long_margin_ratio": 0.14,
+    "product": "TA",
+    "trading_sessions": [
+      "21:00:00-23:00:00",
+      "09:00:00-10:15:00",
+      "10:30:00-11:30:00",
+      "13:30:00-15:00:00"
+    ],
+    "short_margin_ratio": 0.14,
+    "volume_multiple": 5
+  },
+  "V": {
+    "commission": {
+      "close_ratio_by_money": 0.0,
+      "close_ratio_by_volume": 2.0,
+      "close_today_ratio_by_money": 0.0,
+      "close_today_ratio_by_volume": 0.0,
+      "open_ratio_by_money": 0.0,
+      "open_ratio_by_volume": 2.0
+    },
+    "long_margin_ratio": 0.18,
+    "product": "V",
+    "trading_sessions": [
+      "21:00:00-23:00:00",
+      "09:00:00-10:15:00",
+      "10:30:00-11:30:00",
+      "13:30:00-15:00:00"
+    ],
+    "short_margin_ratio": 0.18,
+    "volume_multiple": 5
+  }
+}

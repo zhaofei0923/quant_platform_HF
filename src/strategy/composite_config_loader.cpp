@@ -161,6 +161,22 @@ bool ParseBoolText(const std::string& value, bool* out) {
     return false;
 }
 
+AtomicParams* SelectOverrideParams(SubStrategyDefinition* strategy, const std::string& run_mode) {
+    if (strategy == nullptr) {
+        return nullptr;
+    }
+    if (run_mode == "backtest") {
+        return &strategy->overrides.backtest_params;
+    }
+    if (run_mode == "sim") {
+        return &strategy->overrides.sim_params;
+    }
+    if (run_mode == "live") {
+        return &strategy->overrides.live_params;
+    }
+    return nullptr;
+}
+
 std::string FormatLineError(int line_no, const std::string& reason) {
     std::ostringstream oss;
     oss << "line " << line_no << ": " << reason;
@@ -447,10 +463,22 @@ bool LoadCompositeYaml(const std::filesystem::path& path, CompositeStrategyDefin
     int current_strategy_line = 0;
     bool in_params = false;
     int params_indent = 0;
+    bool in_overrides = false;
+    int overrides_indent = 0;
+    std::string overrides_run_mode;
+    int overrides_mode_indent = 0;
+    bool in_override_params = false;
+    int override_params_indent = 0;
 
     auto reset_item_state = [&]() {
         in_params = false;
         params_indent = 0;
+        in_overrides = false;
+        overrides_indent = 0;
+        overrides_run_mode.clear();
+        overrides_mode_indent = 0;
+        in_override_params = false;
+        override_params_indent = 0;
     };
     auto reset_section_state = [&]() {
         active_section = nullptr;
@@ -499,8 +527,25 @@ bool LoadCompositeYaml(const std::filesystem::path& path, CompositeStrategyDefin
         }
         if (indent <= 2) {
             reset_section_state();
-        } else if (in_params && indent <= params_indent) {
-            in_params = false;
+        } else {
+            if (in_params && indent <= params_indent) {
+                in_params = false;
+            }
+            if (in_override_params && indent <= override_params_indent) {
+                in_override_params = false;
+            }
+            if (!overrides_run_mode.empty() && indent <= overrides_mode_indent) {
+                overrides_run_mode.clear();
+                overrides_mode_indent = 0;
+            }
+            if (in_overrides && indent <= overrides_indent) {
+                in_overrides = false;
+                overrides_indent = 0;
+                overrides_run_mode.clear();
+                overrides_mode_indent = 0;
+                in_override_params = false;
+                override_params_indent = 0;
+            }
         }
 
         if (indent == 2) {
@@ -529,6 +574,17 @@ bool LoadCompositeYaml(const std::filesystem::path& path, CompositeStrategyDefin
                     return false;
                 }
                 definition.run_type = value;
+                continue;
+            }
+            if (key == "enable_non_backtest") {
+                bool parsed = false;
+                if (!ParseBoolText(value, &parsed)) {
+                    if (error != nullptr) {
+                        *error = FormatLineError(line_no, "invalid enable_non_backtest bool");
+                    }
+                    return false;
+                }
+                definition.enable_non_backtest = parsed;
                 continue;
             }
             if (key == "market_state_mode") {
@@ -593,6 +649,72 @@ bool LoadCompositeYaml(const std::filesystem::path& path, CompositeStrategyDefin
             continue;
         }
 
+        if (in_override_params) {
+            std::string key;
+            std::string value;
+            if (!ParseKeyValue(text, &key, &value)) {
+                if (error != nullptr) {
+                    *error = FormatLineError(line_no, "invalid overrides params entry");
+                }
+                return false;
+            }
+            AtomicParams* override_params = SelectOverrideParams(current_strategy, overrides_run_mode);
+            if (override_params == nullptr) {
+                if (error != nullptr) {
+                    *error = FormatLineError(line_no, "unsupported overrides run mode: " +
+                                                          overrides_run_mode);
+                }
+                return false;
+            }
+            (*override_params)[key] = value;
+            continue;
+        }
+
+        if (in_overrides) {
+            std::string key;
+            std::string value;
+            if (!ParseKeyValue(text, &key, &value)) {
+                if (error != nullptr) {
+                    *error = FormatLineError(line_no, "invalid overrides entry");
+                }
+                return false;
+            }
+            if (overrides_run_mode.empty()) {
+                if (!value.empty()) {
+                    if (error != nullptr) {
+                        *error = FormatLineError(line_no, "overrides run_mode must be a YAML section");
+                    }
+                    return false;
+                }
+                if (SelectOverrideParams(current_strategy, key) == nullptr) {
+                    if (error != nullptr) {
+                        *error = FormatLineError(
+                            line_no, "unsupported overrides key: " + key +
+                                         " (allowed: backtest|sim|live)");
+                    }
+                    return false;
+                }
+                overrides_run_mode = key;
+                overrides_mode_indent = indent;
+                continue;
+            }
+            if (key != "params") {
+                if (error != nullptr) {
+                    *error = FormatLineError(line_no, "unsupported overrides field: " + key);
+                }
+                return false;
+            }
+            if (!value.empty()) {
+                if (error != nullptr) {
+                    *error = FormatLineError(line_no, "overrides params must be a YAML section");
+                }
+                return false;
+            }
+            in_override_params = true;
+            override_params_indent = indent;
+            continue;
+        }
+
         if (text.rfind("- ", 0) == 0) {
             if (!ValidateCurrentStrategy(current_strategy, current_strategy_line, error)) {
                 return false;
@@ -625,6 +747,21 @@ bool LoadCompositeYaml(const std::filesystem::path& path, CompositeStrategyDefin
                 params_indent = indent;
                 continue;
             }
+            if (key == "overrides") {
+                if (!value.empty()) {
+                    if (error != nullptr) {
+                        *error = FormatLineError(line_no, "overrides must be a YAML section");
+                    }
+                    return false;
+                }
+                in_overrides = true;
+                overrides_indent = indent;
+                overrides_run_mode.clear();
+                overrides_mode_indent = 0;
+                in_override_params = false;
+                override_params_indent = 0;
+                continue;
+            }
             if (!ApplyStrategyField(current_strategy, key, value, line_no, error)) {
                 return false;
             }
@@ -655,6 +792,21 @@ bool LoadCompositeYaml(const std::filesystem::path& path, CompositeStrategyDefin
             }
             in_params = true;
             params_indent = indent;
+            continue;
+        }
+        if (key == "overrides") {
+            if (!value.empty()) {
+                if (error != nullptr) {
+                    *error = FormatLineError(line_no, "overrides must be a YAML section");
+                }
+                return false;
+            }
+            in_overrides = true;
+            overrides_indent = indent;
+            overrides_run_mode.clear();
+            overrides_mode_indent = 0;
+            in_override_params = false;
+            override_params_indent = 0;
             continue;
         }
         if (!ApplyStrategyField(current_strategy, key, value, line_no, error)) {
@@ -722,6 +874,60 @@ bool ParseMarketRegimeJsonArray(const simple_json::Value& array_value,
             return false;
         }
         out->push_back(regime);
+    }
+    return true;
+}
+
+bool ParseStrategyOverridesJsonObject(const simple_json::Value& value, SubStrategyDefinition* out,
+                                      std::string* error) {
+    if (out == nullptr) {
+        return false;
+    }
+    if (!value.IsObject()) {
+        if (error != nullptr) {
+            *error = "strategy overrides must be object";
+        }
+        return false;
+    }
+
+    for (const auto& [run_mode, override_item] : value.object_value) {
+        AtomicParams* override_params = SelectOverrideParams(out, run_mode);
+        if (override_params == nullptr) {
+            if (error != nullptr) {
+                *error = "unsupported overrides key: " + run_mode +
+                         " (allowed: backtest|sim|live)";
+            }
+            return false;
+        }
+        if (!override_item.IsObject()) {
+            if (error != nullptr) {
+                *error = "strategy overrides item must be object";
+            }
+            return false;
+        }
+        for (const auto& [override_key, override_value] : override_item.object_value) {
+            if (override_key != "params") {
+                if (error != nullptr) {
+                    *error = "unsupported overrides field: " + override_key;
+                }
+                return false;
+            }
+            if (!override_value.IsObject()) {
+                if (error != nullptr) {
+                    *error = "strategy overrides params must be object";
+                }
+                return false;
+            }
+            for (const auto& [param_key, param_value] : override_value.object_value) {
+                if (param_value.IsObject() || param_value.IsArray()) {
+                    if (error != nullptr) {
+                        *error = "strategy overrides param `" + param_key + "` must be scalar";
+                    }
+                    return false;
+                }
+                (*override_params)[param_key] = param_value.ToString();
+            }
+        }
     }
     return true;
 }
@@ -820,6 +1026,12 @@ bool ParseStrategyJsonObject(const simple_json::Value& item, SubStrategyDefiniti
                     return false;
                 }
                 parsed.params[param_key] = param_value.ToString();
+            }
+            continue;
+        }
+        if (key == "overrides") {
+            if (!ParseStrategyOverridesJsonObject(value, &parsed, error)) {
+                return false;
             }
             continue;
         }
@@ -925,6 +1137,16 @@ bool LoadCompositeJson(const std::filesystem::path& path, CompositeStrategyDefin
                 return false;
             }
             definition.run_type = value.string_value;
+            continue;
+        }
+        if (key == "enable_non_backtest") {
+            if (!value.IsBool()) {
+                if (error != nullptr) {
+                    *error = "enable_non_backtest must be bool";
+                }
+                return false;
+            }
+            definition.enable_non_backtest = value.bool_value;
             continue;
         }
         if (key == "market_state_mode") {

@@ -11,6 +11,35 @@
 namespace quant_hft {
 
 using AtomicParams = std::unordered_map<std::string, std::string>;
+using AtomicState = std::unordered_map<std::string, std::string>;
+
+enum class RunMode : std::uint8_t {
+    kBacktest = 0,
+    kSim = 1,
+    kLive = 2,
+};
+
+inline const char* RunModeToString(RunMode mode) {
+    switch (mode) {
+        case RunMode::kBacktest:
+            return "backtest";
+        case RunMode::kSim:
+            return "sim";
+        case RunMode::kLive:
+        default:
+            return "live";
+    }
+}
+
+inline RunMode RunModeFromString(const std::string& run_type) {
+    if (run_type == "backtest") {
+        return RunMode::kBacktest;
+    }
+    if (run_type == "sim") {
+        return RunMode::kSim;
+    }
+    return RunMode::kLive;
+}
 
 struct AtomicStrategyContext {
     std::string account_id;
@@ -20,6 +49,11 @@ struct AtomicStrategyContext {
     double account_equity{0.0};
     double total_pnl_after_cost{0.0};
     std::string run_type{"live"};
+    double margin_used{0.0};
+    double available{0.0};
+    MarketRegime market_regime{MarketRegime::kUnknown};
+    std::unordered_map<std::string, double> risk_limits;
+    RunMode run_mode{RunMode::kLive};
 };
 
 struct AtomicIndicatorSnapshot {
@@ -85,6 +119,13 @@ class IAtomicOrderAware {
    public:
     virtual ~IAtomicOrderAware() = default;
     virtual void OnOrderEvent(const OrderEvent& event, const AtomicStrategyContext& ctx) = 0;
+};
+
+class IAtomicStateSerializable {
+   public:
+    virtual ~IAtomicStateSerializable() = default;
+    virtual bool SaveState(AtomicState* out, std::string* error) const = 0;
+    virtual bool LoadState(const AtomicState& state, std::string* error) = 0;
 };
 
 class IAtomicIndicatorTraceProvider {

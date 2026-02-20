@@ -52,11 +52,15 @@ add_library(quant_hft_core STATIC
     src/strategy/strategy_engine.cpp
     src/strategy/demo_live_strategy.cpp
     src/strategy/atomic_factory.cpp
+    src/strategy/signal_merger.cpp
+    src/strategy/state_persistence.cpp
     src/strategy/composite_config_loader.cpp
     src/strategy/strategy_main_config_loader.cpp
     src/strategy/composite_strategy.cpp
     src/strategy/atomic/kama_trend_strategy.cpp
     src/strategy/atomic/trend_strategy.cpp
+    src/strategy/atomic/time_filter.cpp
+    src/strategy/atomic/max_position_risk_control.cpp
     src/strategy/atomic/register_builtin_atomic_strategies.cpp
     src/core/backtest/indicator_trace_parquet_writer.cpp
     src/core/backtest/product_fee_config_loader.cpp
@@ -460,6 +464,12 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(strategy_engine_test tests/unit/strategy/strategy_engine_test.cpp)
     target_link_libraries(strategy_engine_test PRIVATE quant_hft_core GTest::gtest_main)
 
+    add_executable(signal_merger_test tests/unit/strategy/signal_merger_test.cpp)
+    target_link_libraries(signal_merger_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(state_persistence_test tests/unit/strategy/state_persistence_test.cpp)
+    target_link_libraries(state_persistence_test PRIVATE quant_hft_core GTest::gtest_main)
+
     add_executable(demo_live_strategy_test tests/unit/strategy/demo_live_strategy_test.cpp)
     target_link_libraries(demo_live_strategy_test PRIVATE quant_hft_core GTest::gtest_main)
 
@@ -577,6 +587,8 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(atomic_factory_test)
     gtest_discover_tests(strategy_registry_test)
     gtest_discover_tests(strategy_engine_test)
+    gtest_discover_tests(signal_merger_test)
+    gtest_discover_tests(state_persistence_test)
     gtest_discover_tests(demo_live_strategy_test)
     gtest_discover_tests(composite_config_loader_test)
     gtest_discover_tests(strategy_main_config_loader_test)

@@ -23,6 +23,12 @@ StrategyEngine::StrategyEngine(StrategyEngineConfig config, IntentSink intent_si
     if (config_.timer_interval_ns <= 0) {
         config_.timer_interval_ns = kDefaultTimerIntervalNs;
     }
+    if (config_.state_snapshot_interval_ns < 0) {
+        config_.state_snapshot_interval_ns = 0;
+    }
+    if (config_.metrics_collect_interval_ns < 0) {
+        config_.metrics_collect_interval_ns = 0;
+    }
 }
 
 StrategyEngine::~StrategyEngine() {
@@ -85,11 +91,39 @@ bool StrategyEngine::Start(const std::vector<std::string>& strategy_ids,
         return false;
     }
 
+    if (config_.state_persistence != nullptr && config_.load_state_on_start &&
+        !base_context.account_id.empty()) {
+        for (auto& entry : initialized) {
+            StrategyState loaded_state;
+            std::string load_error;
+            if (!config_.state_persistence->LoadStrategyState(base_context.account_id,
+                                                              entry.strategy_id, &loaded_state,
+                                                              &load_error)) {
+                continue;
+            }
+            std::string apply_error;
+            if (!entry.strategy->LoadState(loaded_state, &apply_error)) {
+                if (error != nullptr) {
+                    *error = "failed to load strategy state for `" + entry.strategy_id +
+                             "`: " + apply_error;
+                }
+                for (auto& shutdown_entry : initialized) {
+                    shutdown_entry.strategy->Shutdown();
+                }
+                return false;
+            }
+        }
+    }
+
     {
         std::lock_guard<std::mutex> lock(mutex_);
         queue_.clear();
         strategies_ = std::move(initialized);
+        cached_metrics_.clear();
+        account_id_ = base_context.account_id;
         stats_ = {};
+        last_state_snapshot_ns_ = 0;
+        last_metrics_collect_ns_ = 0;
         running_ = true;
         stop_requested_ = false;
     }
@@ -117,8 +151,12 @@ void StrategyEngine::Stop() {
         std::lock_guard<std::mutex> lock(mutex_);
         strategies_to_shutdown = std::move(strategies_);
         queue_.clear();
+        cached_metrics_.clear();
+        account_id_.clear();
         running_ = false;
         stop_requested_ = false;
+        last_state_snapshot_ns_ = 0;
+        last_metrics_collect_ns_ = 0;
     }
 
     for (auto& entry : strategies_to_shutdown) {
@@ -141,6 +179,18 @@ void StrategyEngine::EnqueueOrderEvent(const OrderEvent& event) {
     engine_event.type = EventType::kOrderEvent;
     engine_event.order_event = event;
     EnqueueEvent(std::move(engine_event));
+}
+
+void StrategyEngine::EnqueueAccountSnapshot(const TradingAccountSnapshot& snapshot) {
+    EngineEvent event;
+    event.type = EventType::kAccountSnapshot;
+    event.account_snapshot = snapshot;
+    EnqueueEvent(std::move(event));
+}
+
+std::vector<StrategyMetric> StrategyEngine::CollectAllMetrics() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return cached_metrics_;
 }
 
 StrategyEngine::Stats StrategyEngine::GetStats() const {
@@ -191,8 +241,10 @@ void StrategyEngine::WorkerLoop() {
         if (has_event) {
             if (event.type == EventType::kState) {
                 DispatchState(event.state);
-            } else {
+            } else if (event.type == EventType::kOrderEvent) {
                 DispatchOrderEvent(event.order_event);
+            } else {
+                DispatchAccountSnapshot(event.account_snapshot);
             }
             continue;
         }
@@ -248,6 +300,17 @@ void StrategyEngine::DispatchOrderEvent(const OrderEvent& event) {
     }
 }
 
+void StrategyEngine::DispatchAccountSnapshot(const TradingAccountSnapshot& snapshot) {
+    for (auto& entry : strategies_) {
+        try {
+            entry.strategy->OnAccountSnapshot(snapshot);
+        } catch (...) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            ++stats_.strategy_callback_exceptions;
+        }
+    }
+}
+
 void StrategyEngine::DispatchTimer(EpochNanos now_ns) {
     std::vector<SignalIntent> intents;
     for (auto& entry : strategies_) {
@@ -258,6 +321,75 @@ void StrategyEngine::DispatchTimer(EpochNanos now_ns) {
             std::lock_guard<std::mutex> lock(mutex_);
             ++stats_.strategy_callback_exceptions;
         }
+    }
+    MaybeCollectMetrics(now_ns);
+    MaybeSnapshotStates(now_ns);
+}
+
+void StrategyEngine::MaybeSnapshotStates(EpochNanos now_ns) {
+    if (config_.state_persistence == nullptr || config_.state_snapshot_interval_ns <= 0 ||
+        account_id_.empty()) {
+        return;
+    }
+    if (last_state_snapshot_ns_ > 0 &&
+        (now_ns - last_state_snapshot_ns_) < config_.state_snapshot_interval_ns) {
+        return;
+    }
+    last_state_snapshot_ns_ = now_ns;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ++stats_.state_snapshot_runs;
+    }
+
+    std::uint64_t failures = 0;
+    for (auto& entry : strategies_) {
+        StrategyState state;
+        std::string state_error;
+        if (!entry.strategy->SaveState(&state, &state_error)) {
+            ++failures;
+            continue;
+        }
+        if (!config_.state_persistence->SaveStrategyState(account_id_, entry.strategy_id, state,
+                                                          &state_error)) {
+            ++failures;
+            continue;
+        }
+    }
+    if (failures > 0) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        stats_.state_snapshot_failures += failures;
+    }
+}
+
+void StrategyEngine::MaybeCollectMetrics(EpochNanos now_ns) {
+    if (config_.metrics_collect_interval_ns <= 0) {
+        return;
+    }
+    if (last_metrics_collect_ns_ > 0 &&
+        (now_ns - last_metrics_collect_ns_) < config_.metrics_collect_interval_ns) {
+        return;
+    }
+    last_metrics_collect_ns_ = now_ns;
+
+    std::vector<StrategyMetric> collected;
+    for (auto& entry : strategies_) {
+        try {
+            std::vector<StrategyMetric> strategy_metrics = entry.strategy->CollectMetrics();
+            for (auto& metric : strategy_metrics) {
+                if (metric.labels.find("strategy_id") == metric.labels.end()) {
+                    metric.labels["strategy_id"] = entry.strategy_id;
+                }
+                collected.push_back(std::move(metric));
+            }
+        } catch (...) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            ++stats_.strategy_callback_exceptions;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        cached_metrics_ = std::move(collected);
+        ++stats_.metrics_collection_runs;
     }
 }
 

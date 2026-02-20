@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -23,6 +24,7 @@ struct Probe {
     std::vector<std::string> initialized_strategy_ids;
     std::vector<EpochNanos> observed_state_ts;
     std::vector<std::string> observed_order_events;
+    std::vector<std::string> observed_account_snapshots;
     std::vector<std::string> observed_timer_strategies;
 };
 
@@ -107,7 +109,8 @@ public:
         intent.volume = 1;
         intent.limit_price = 1.0;
         intent.ts_ns = state.ts_ns;
-        intent.trace_id = strategy_id_ + "-" + std::to_string(state.ts_ns);
+        intent.trace_id = strategy_id_ + "-" + std::to_string(state.ts_ns) +
+                          (loaded_from_state_ ? "-loaded" : "-fresh");
         return {intent};
     }
 
@@ -118,6 +121,14 @@ public:
         if (g_probe != nullptr) {
             std::lock_guard<std::mutex> lock(g_probe->mutex);
             g_probe->observed_order_events.push_back(strategy_id_ + ":" + event.client_order_id);
+        }
+    }
+
+    void OnAccountSnapshot(const TradingAccountSnapshot& snapshot) override {
+        if (g_probe != nullptr) {
+            std::lock_guard<std::mutex> lock(g_probe->mutex);
+            g_probe->observed_account_snapshots.push_back(strategy_id_ + ":" +
+                                                          std::to_string(snapshot.balance));
         }
     }
 
@@ -134,10 +145,86 @@ public:
         return {};
     }
 
+    std::vector<StrategyMetric> CollectMetrics() const override {
+        return {StrategyMetric{"strategy_engine_test_metric", loaded_from_state_ ? 1.0 : 0.0,
+                               {{"strategy_id", strategy_id_}}}};
+    }
+
+    bool SaveState(StrategyState* out, std::string* error) const override {
+        (void)error;
+        if (out == nullptr) {
+            return false;
+        }
+        (*out)["loaded"] = loaded_from_state_ ? "1" : "0";
+        return true;
+    }
+
+    bool LoadState(const StrategyState& state, std::string* error) override {
+        (void)error;
+        const auto it = state.find("loaded");
+        loaded_from_state_ = (it != state.end() && it->second == "1");
+        return true;
+    }
+
     void Shutdown() override {}
 
 private:
     std::string strategy_id_;
+    bool loaded_from_state_{false};
+};
+
+class TestStatePersistence final : public IStrategyStatePersistence {
+public:
+    bool SaveStrategyState(const std::string& account_id, const std::string& strategy_id,
+                           const StrategyState& state, std::string* error) override {
+        (void)error;
+        std::lock_guard<std::mutex> lock(mutex_);
+        ++save_calls_;
+        storage_[account_id + ":" + strategy_id] = state;
+        return true;
+    }
+
+    bool LoadStrategyState(const std::string& account_id, const std::string& strategy_id,
+                           StrategyState* state, std::string* error) const override {
+        if (state == nullptr) {
+            if (error != nullptr) {
+                *error = "state out is null";
+            }
+            return false;
+        }
+        std::lock_guard<std::mutex> lock(mutex_);
+        ++load_calls_;
+        const auto it = storage_.find(account_id + ":" + strategy_id);
+        if (it == storage_.end()) {
+            if (error != nullptr) {
+                *error = "not found";
+            }
+            return false;
+        }
+        *state = it->second;
+        return true;
+    }
+
+    void Seed(const std::string& key, const StrategyState& state) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        storage_[key] = state;
+    }
+
+    std::uint64_t save_calls() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return save_calls_;
+    }
+
+    std::uint64_t load_calls() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return load_calls_;
+    }
+
+private:
+    mutable std::mutex mutex_;
+    mutable std::uint64_t load_calls_{0};
+    std::uint64_t save_calls_{0};
+    std::unordered_map<std::string, StrategyState> storage_;
 };
 
 TEST(StrategyEngineTest, DispatchesStateAndOrderEventsToAllStrategies) {
@@ -373,6 +460,128 @@ TEST(StrategyEngineTest, TriggersTimerCallbacks) {
 
     std::lock_guard<std::mutex> lock(probe.mutex);
     EXPECT_FALSE(probe.observed_timer_strategies.empty());
+}
+
+TEST(StrategyEngineTest, DispatchesAccountSnapshotsToAllStrategies) {
+    Probe probe;
+    g_probe = &probe;
+    ResetThrowingBehavior();
+
+    std::string error;
+    const auto factory_name = UniqueFactoryName();
+    ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
+        factory_name,
+        []() { return std::make_unique<RecordingStrategy>(); },
+        &error))
+        << error;
+
+    StrategyEngineConfig cfg;
+    cfg.queue_capacity = 64;
+    cfg.timer_interval_ns = 1000 * 1000 * 1000;
+    StrategyEngine engine(cfg, nullptr);
+
+    StrategyContext base_context;
+    ASSERT_TRUE(engine.Start({"alpha", "beta"}, factory_name, base_context, &error)) << error;
+
+    TradingAccountSnapshot snapshot;
+    snapshot.balance = 123.0;
+    engine.EnqueueAccountSnapshot(snapshot);
+
+    ASSERT_TRUE(WaitUntil(
+        [&]() {
+            std::lock_guard<std::mutex> lock(probe.mutex);
+            return probe.observed_account_snapshots.size() >= 2;
+        },
+        std::chrono::milliseconds(500)));
+
+    engine.Stop();
+    g_probe = nullptr;
+
+    std::lock_guard<std::mutex> lock(probe.mutex);
+    EXPECT_TRUE(ContainsEvent(probe.observed_account_snapshots, "alpha:123.000000"));
+    EXPECT_TRUE(ContainsEvent(probe.observed_account_snapshots, "beta:123.000000"));
+}
+
+TEST(StrategyEngineTest, CollectAllMetricsReturnsCachedMetrics) {
+    Probe probe;
+    g_probe = &probe;
+    ResetThrowingBehavior();
+
+    std::string error;
+    const auto factory_name = UniqueFactoryName();
+    ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
+        factory_name,
+        []() { return std::make_unique<RecordingStrategy>(); },
+        &error))
+        << error;
+
+    StrategyEngineConfig cfg;
+    cfg.queue_capacity = 64;
+    cfg.timer_interval_ns = 5 * 1000 * 1000;
+    cfg.metrics_collect_interval_ns = 5 * 1000 * 1000;
+    StrategyEngine engine(cfg, nullptr);
+
+    StrategyContext base_context;
+    ASSERT_TRUE(engine.Start({"alpha"}, factory_name, base_context, &error)) << error;
+
+    ASSERT_TRUE(WaitUntil(
+        [&]() {
+            const auto metrics = engine.CollectAllMetrics();
+            return !metrics.empty();
+        },
+        std::chrono::milliseconds(500)));
+
+    const std::vector<StrategyMetric> metrics = engine.CollectAllMetrics();
+    ASSERT_FALSE(metrics.empty());
+    EXPECT_EQ(metrics.front().name, "strategy_engine_test_metric");
+
+    engine.Stop();
+    g_probe = nullptr;
+}
+
+TEST(StrategyEngineTest, LoadsAndSnapshotsStateWithPersistenceHook) {
+    Probe probe;
+    g_probe = &probe;
+    ResetThrowingBehavior();
+
+    std::string error;
+    const auto factory_name = UniqueFactoryName();
+    ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
+        factory_name,
+        []() { return std::make_unique<RecordingStrategy>(); },
+        &error))
+        << error;
+
+    auto persistence = std::make_shared<TestStatePersistence>();
+    persistence->Seed("sim-account:alpha", StrategyState{{"loaded", "1"}});
+
+    StrategyEngineConfig cfg;
+    cfg.queue_capacity = 64;
+    cfg.timer_interval_ns = 5 * 1000 * 1000;
+    cfg.state_persistence = persistence;
+    cfg.load_state_on_start = true;
+    cfg.state_snapshot_interval_ns = 5 * 1000 * 1000;
+    StrategyEngine engine(cfg, nullptr);
+
+    StrategyContext base_context;
+    base_context.account_id = "sim-account";
+    ASSERT_TRUE(engine.Start({"alpha"}, factory_name, base_context, &error)) << error;
+
+    StateSnapshot7D state;
+    state.instrument_id = "SHFE.ag2406";
+    state.ts_ns = 42;
+    engine.EnqueueState(state);
+
+    ASSERT_TRUE(WaitUntil(
+        [&]() {
+            const auto stats = engine.GetStats();
+            return stats.state_snapshot_runs > 0 && persistence->load_calls() > 0 &&
+                   persistence->save_calls() > 0;
+        },
+        std::chrono::milliseconds(800)));
+
+    engine.Stop();
+    g_probe = nullptr;
 }
 
 TEST(StrategyEngineTest, DropsOldestEventsWhenQueueIsFull) {

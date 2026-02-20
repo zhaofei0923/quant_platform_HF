@@ -247,7 +247,62 @@ TEST(CtpConfigLoaderTest, LoadsStrategyEngineKeysAndSplitsLists) {
     EXPECT_EQ(config.run_type, "sim");
     EXPECT_EQ(config.strategy_factory, "demo");
     EXPECT_EQ(config.strategy_queue_capacity, 4096);
+    EXPECT_FALSE(config.strategy_state_persist_enabled);
+    EXPECT_EQ(config.strategy_state_snapshot_interval_ms, 60000);
+    EXPECT_EQ(config.strategy_state_ttl_seconds, 86400);
+    EXPECT_EQ(config.strategy_state_key_prefix, "strategy_state");
+    EXPECT_EQ(config.strategy_metrics_emit_interval_ms, 1000);
     EXPECT_EQ(config.account_id, "sim-account");
+
+    std::filesystem::remove(config_path);
+}
+
+TEST(CtpConfigLoaderTest, LoadsStrategyStateAndMetricsConfigKeys) {
+    const auto config_path = WriteTempConfig(
+        "ctp:\n"
+        "  environment: sim\n"
+        "  is_production_mode: false\n"
+        "  broker_id: \"9999\"\n"
+        "  user_id: \"191202\"\n"
+        "  investor_id: \"191202\"\n"
+        "  market_front: \"tcp://127.0.0.1:40011\"\n"
+        "  trader_front: \"tcp://127.0.0.1:40001\"\n"
+        "  password: \"plain-secret\"\n"
+        "  strategy_state_persist_enabled: true\n"
+        "  strategy_state_snapshot_interval_ms: 5000\n"
+        "  strategy_state_ttl_seconds: 3600\n"
+        "  strategy_state_key_prefix: \"hf_strategy_state\"\n"
+        "  strategy_metrics_emit_interval_ms: 2000\n");
+
+    CtpFileConfig config;
+    std::string error;
+    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error)) << error;
+    EXPECT_TRUE(config.strategy_state_persist_enabled);
+    EXPECT_EQ(config.strategy_state_snapshot_interval_ms, 5000);
+    EXPECT_EQ(config.strategy_state_ttl_seconds, 3600);
+    EXPECT_EQ(config.strategy_state_key_prefix, "hf_strategy_state");
+    EXPECT_EQ(config.strategy_metrics_emit_interval_ms, 2000);
+
+    std::filesystem::remove(config_path);
+}
+
+TEST(CtpConfigLoaderTest, RejectsNegativeStrategyMetricsEmitInterval) {
+    const auto config_path = WriteTempConfig(
+        "ctp:\n"
+        "  environment: sim\n"
+        "  is_production_mode: false\n"
+        "  broker_id: \"9999\"\n"
+        "  user_id: \"191202\"\n"
+        "  investor_id: \"191202\"\n"
+        "  market_front: \"tcp://127.0.0.1:40011\"\n"
+        "  trader_front: \"tcp://127.0.0.1:40001\"\n"
+        "  password: \"plain-secret\"\n"
+        "  strategy_metrics_emit_interval_ms: -1\n");
+
+    CtpFileConfig config;
+    std::string error;
+    EXPECT_FALSE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error));
+    EXPECT_NE(error.find("strategy_metrics_emit_interval_ms"), std::string::npos);
 
     std::filesystem::remove(config_path);
 }

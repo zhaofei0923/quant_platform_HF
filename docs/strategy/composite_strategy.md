@@ -8,9 +8,10 @@
 - 主策略只负责：
   - 子策略启停调度（`enabled`）
   - 开仓市场状态门控（`entry_market_regimes`，仅影响 `kOpen`）
+  - 时间过滤器链（`ITimeFilterStrategy`）与风控策略链（`IRiskControlStrategy`）
   - 信号合并与持仓归属/反手两步门控
   - 回测上下文注入（权益、合约乘数）
-- V2 仅支持 `run_type=backtest`，`sim/live + composite` 会直接报错。
+- 默认仅允许 `run_type=backtest`；若配置 `enable_non_backtest: true`，才允许 `sim/live`。
 
 ## 主配置示例
 
@@ -29,12 +30,20 @@ backtest:
 
 composite:
   merge_rule: kPriority
+  enable_non_backtest: false
   sub_strategies:
     - id: kama_trend_1
       enabled: true
       type: KamaTrendStrategy
       config_path: ./sub/kama_trend_1.yaml
       entry_market_regimes: [kStrongTrend, kWeakTrend]
+      overrides:
+        backtest:
+          params:
+            take_profit_atr_multiplier: 20.0
+        sim:
+          params:
+            default_volume: 2
     - id: trend_1
       enabled: false
       type: TrendStrategy
@@ -69,6 +78,22 @@ params:
 - 优先级：`ForceClose > StopLoss > TakeProfit > Close > Open`
 - 同级 tie-break：`volume desc -> ts_ns desc -> trace_id asc`
 - 反手两步：先发平仓，仓位归零后的下一根 Bar 再发反向开仓。
+- 合并器当前实现：`kPriority`（可插拔，后续可扩展其它规则）。
+
+## overrides 规则
+
+- `sub_strategies[].overrides` 支持三层：`backtest`、`sim`、`live`。
+- 每层仅支持 `params`，并且值必须是标量。
+- 初始化时参数合并顺序：`base params + overrides[run_mode].params`（后者覆盖前者）。
+- 非法 run_mode 键会 fail-fast（仅允许 `backtest|sim|live`）。
+
+## 持久化与指标
+
+- `CompositeStrategy` 支持 `SaveState/LoadState`：
+  - 组合层上下文（仓位、均价、权益、乘数、归属）会持久化。
+  - 子策略若实现 `IAtomicStateSerializable`，可一并保存原子状态。
+- 支持 `CollectMetrics()`：
+  - 子策略数量、过滤器数量、持仓维度、权益/保证金/可用资金等指标。
 
 ## 破坏性变更
 

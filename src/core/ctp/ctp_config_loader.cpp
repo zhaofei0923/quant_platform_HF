@@ -918,6 +918,70 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* confi
         }
         return false;
     }
+    loaded.strategy_state_persist_enabled = false;
+    if (const auto it = kv.find("strategy_state_persist_enabled"); it != kv.end()) {
+        if (!ParseBoolValue(it->second, &loaded.strategy_state_persist_enabled)) {
+            if (error != nullptr) {
+                *error = "strategy_state_persist_enabled must be bool";
+            }
+            return false;
+        }
+    }
+    loaded.strategy_state_snapshot_interval_ms = 60'000;
+    SetOptionalInt(kv, "strategy_state_snapshot_interval_ms",
+                   &loaded.strategy_state_snapshot_interval_ms, &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.strategy_state_snapshot_interval_ms < 0) {
+        if (error != nullptr) {
+            *error = "strategy_state_snapshot_interval_ms must be >= 0";
+        }
+        return false;
+    }
+    loaded.strategy_state_ttl_seconds = 86'400;
+    SetOptionalInt(kv, "strategy_state_ttl_seconds", &loaded.strategy_state_ttl_seconds,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.strategy_state_ttl_seconds < 0) {
+        if (error != nullptr) {
+            *error = "strategy_state_ttl_seconds must be >= 0";
+        }
+        return false;
+    }
+    loaded.strategy_state_key_prefix = "strategy_state";
+    if (const auto it = kv.find("strategy_state_key_prefix"); it != kv.end()) {
+        loaded.strategy_state_key_prefix = Trim(it->second);
+        if (loaded.strategy_state_key_prefix.empty()) {
+            if (error != nullptr) {
+                *error = "strategy_state_key_prefix must not be empty";
+            }
+            return false;
+        }
+    }
+    loaded.strategy_metrics_emit_interval_ms = 1'000;
+    SetOptionalInt(kv, "strategy_metrics_emit_interval_ms", &loaded.strategy_metrics_emit_interval_ms,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.strategy_metrics_emit_interval_ms < 0) {
+        if (error != nullptr) {
+            *error = "strategy_metrics_emit_interval_ms must be >= 0";
+        }
+        return false;
+    }
     loaded.account_id = get_value("account_id");
     if (loaded.account_id.empty()) {
         loaded.account_id = loaded.runtime.user_id;

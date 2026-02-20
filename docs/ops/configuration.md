@@ -61,6 +61,27 @@ ctp:
   strategy_composite_config: "../strategies/composite_strategy.yaml"
 ```
 
+### 策略状态持久化与指标采集
+
+新增配置项（均为可选）：
+
+- `ctp.strategy_state_persist_enabled`：是否开启策略状态快照（默认 `false`）
+- `ctp.strategy_state_snapshot_interval_ms`：快照周期（默认 `60000`，`0` 表示关闭周期保存）
+- `ctp.strategy_state_ttl_seconds`：状态 TTL（默认 `86400`，`0` 表示不设置 TTL）
+- `ctp.strategy_state_key_prefix`：Redis key 前缀（默认 `strategy_state`）
+- `ctp.strategy_metrics_emit_interval_ms`：主循环输出策略指标周期（默认 `1000`，`0` 表示关闭）
+
+示例：
+
+```yaml
+ctp:
+  strategy_state_persist_enabled: true
+  strategy_state_snapshot_interval_ms: 5000
+  strategy_state_ttl_seconds: 3600
+  strategy_state_key_prefix: "hf_strategy_state"
+  strategy_metrics_emit_interval_ms: 2000
+```
+
 ## 回测主策略与资金配置
 
 回测支持三层配置：

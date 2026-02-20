@@ -384,6 +384,92 @@ TEST(CompositeStrategyTest, RejectsNonBacktestRunType) {
     EXPECT_THROW(strategy.Initialize(ctx), std::runtime_error);
 }
 
+TEST(CompositeStrategyTest, AllowsNonBacktestRunTypeWhenEnabled) {
+    const std::string sub_type = UniqueType("run_type_enabled");
+    RegisterScriptedType(sub_type);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "sim";
+    definition.enable_non_backtest = true;
+    definition.sub_strategies = {MakeSubStrategy("s1", sub_type, {{"id", "s1"}, {"emit_open", "1"}})};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    StrategyContext ctx = MakeStrategyContext();
+    ctx.metadata["run_type"] = "sim";
+    EXPECT_NO_THROW(strategy.Initialize(ctx));
+}
+
+TEST(CompositeStrategyTest, AppliesRunModeOverridesBeforeAtomicInit) {
+    const std::string sub_type = UniqueType("override_mode");
+    RegisterScriptedType(sub_type);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "sim";
+    definition.enable_non_backtest = true;
+    SubStrategyDefinition sub =
+        MakeSubStrategy("s1", sub_type, {{"id", "s1"}, {"emit_open", "1"}, {"volume", "1"}});
+    sub.overrides.sim_params["volume"] = "5";
+    definition.sub_strategies = {sub};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    StrategyContext ctx = MakeStrategyContext();
+    ctx.metadata["run_type"] = "sim";
+    strategy.Initialize(ctx);
+
+    const std::vector<SignalIntent> signals = strategy.OnState(MakeState("rb2405", 70));
+    ASSERT_EQ(signals.size(), 1U);
+    EXPECT_EQ(signals.front().volume, 5);
+}
+
+TEST(CompositeStrategyTest, TimeFilterStrategiesCanBlockOpenSignals) {
+    const std::string open_type = UniqueType("open_time_filter");
+    RegisterScriptedType(open_type);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {
+        MakeSubStrategy("open", open_type, {{"id", "open"}, {"emit_open", "1"}}),
+        MakeSubStrategy("time_filter", "TimeFilter",
+                        {{"id", "time_filter"},
+                         {"start_hour", "0"},
+                         {"end_hour", "23"},
+                         {"timezone", "UTC"}}),
+    };
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+
+    const std::vector<SignalIntent> blocked = strategy.OnState(MakeState("rb2405", 0));
+    EXPECT_TRUE(blocked.empty());
+}
+
+TEST(CompositeStrategyTest, SaveAndLoadStateRestoresPositionGate) {
+    const std::string sub_type = UniqueType("state_round_trip");
+    RegisterScriptedType(sub_type);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {
+        MakeSubStrategy("capture", sub_type,
+                        {{"id", "capture"}, {"emit_close", "1"}, {"close_side", "sell"}})};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+    strategy.OnOrderEvent(MakeOrderEvent("capture", "rb2405", Side::kBuy, OffsetFlag::kOpen, 2, 100.0,
+                                         "state-open"));
+
+    StrategyState snapshot;
+    std::string error;
+    ASSERT_TRUE(strategy.SaveState(&snapshot, &error)) << error;
+
+    CompositeStrategy restored(definition, &AtomicFactory::Instance());
+    restored.Initialize(MakeStrategyContext());
+    ASSERT_TRUE(restored.LoadState(snapshot, &error)) << error;
+    const std::vector<SignalIntent> signals = restored.OnState(MakeState("rb2405", 80));
+    ASSERT_EQ(signals.size(), 1U);
+    EXPECT_EQ(signals.front().signal_type, SignalType::kClose);
+}
+
 TEST(CompositeStrategyTest, PropagatesBacktestSnapshotIntoAtomicContext) {
     const std::string sub_type = UniqueType("ctx");
     RegisterScriptedType(sub_type);

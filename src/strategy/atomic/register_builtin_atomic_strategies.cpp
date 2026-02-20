@@ -2,6 +2,8 @@
 #include <string>
 
 #include "quant_hft/strategy/atomic/kama_trend_strategy.h"
+#include "quant_hft/strategy/atomic/max_position_risk_control.h"
+#include "quant_hft/strategy/atomic/time_filter.h"
 #include "quant_hft/strategy/atomic/trend_strategy.h"
 #include "quant_hft/strategy/atomic_factory.h"
 
@@ -31,6 +33,15 @@ bool RegisterBuiltinAtomicStrategies(std::string* error) {
         if (!RegisterOne(
                 "TrendStrategy", []() { return std::make_unique<TrendStrategy>(); },
                 &register_error)) {
+            return;
+        }
+        if (!RegisterOne("TimeFilter", []() { return std::make_unique<TimeFilter>(); },
+                         &register_error)) {
+            return;
+        }
+        if (!RegisterOne("MaxPositionRiskControl",
+                         []() { return std::make_unique<MaxPositionRiskControl>(); },
+                         &register_error)) {
             return;
         }
         registered = true;

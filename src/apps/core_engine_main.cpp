@@ -32,6 +32,7 @@
 #include "quant_hft/core/trading_ledger_store_client_adapter.h"
 #include "quant_hft/core/wal_replay_loader.h"
 #include "quant_hft/monitoring/exporter.h"
+#include "quant_hft/monitoring/metric_registry.h"
 #include "quant_hft/risk/risk_manager.h"
 #include "quant_hft/services/bar_aggregator.h"
 #include "quant_hft/services/basic_risk_engine.h"
@@ -48,6 +49,7 @@
 #include "quant_hft/strategy/composite_strategy.h"
 #include "quant_hft/strategy/demo_live_strategy.h"
 #include "quant_hft/strategy/strategy_engine.h"
+#include "quant_hft/strategy/state_persistence.h"
 
 namespace {
 
@@ -320,13 +322,7 @@ int main(int argc, char** argv) {
     std::mutex cancel_pending_mutex;
     std::unordered_set<std::string> cancel_pending_orders;
     std::function<void(const SignalIntent&)> process_signal_intent;
-    StrategyEngineConfig strategy_engine_config;
-    strategy_engine_config.queue_capacity = strategy_queue_capacity;
-    StrategyEngine strategy_engine(strategy_engine_config, [&](const SignalIntent& signal) {
-        if (process_signal_intent) {
-            process_signal_intent(signal);
-        }
-    });
+    std::unique_ptr<StrategyEngine> strategy_engine;
     WalReplayLoader replay_loader;
     StorageRetryPolicy storage_retry_policy;
     storage_retry_policy.max_attempts = 3;
@@ -349,6 +345,26 @@ int main(int argc, char** argv) {
     auto pooled_redis = std::make_shared<PooledRedisHashClient>(
         std::vector<std::shared_ptr<IRedisHashClient>>{redis_client});
     RedisRealtimeStoreClientAdapter realtime_cache(pooled_redis, storage_retry_policy);
+
+    std::shared_ptr<IStrategyStatePersistence> strategy_state_persistence;
+    if (file_config.strategy_state_persist_enabled) {
+        strategy_state_persistence = std::make_shared<RedisStrategyStatePersistence>(
+            pooled_redis, file_config.strategy_state_key_prefix, file_config.strategy_state_ttl_seconds);
+    }
+    StrategyEngineConfig strategy_engine_config;
+    strategy_engine_config.queue_capacity = strategy_queue_capacity;
+    strategy_engine_config.state_persistence = strategy_state_persistence;
+    strategy_engine_config.load_state_on_start = file_config.strategy_state_persist_enabled;
+    strategy_engine_config.state_snapshot_interval_ns =
+        static_cast<EpochNanos>(file_config.strategy_state_snapshot_interval_ms) * 1'000'000;
+    strategy_engine_config.metrics_collect_interval_ns =
+        static_cast<EpochNanos>(file_config.strategy_metrics_emit_interval_ms) * 1'000'000;
+    strategy_engine = std::make_unique<StrategyEngine>(strategy_engine_config,
+                                                       [&](const SignalIntent& signal) {
+                                                           if (process_signal_intent) {
+                                                               process_signal_intent(signal);
+                                                           }
+                                                       });
 
     auto timescale_client = StorageClientFactory::CreateTimescaleClient(storage_config, &error);
     if (timescale_client == nullptr) {
@@ -526,7 +542,9 @@ int main(int argc, char** argv) {
             event.account_id, event.instrument_id, PositionDirection::kShort));
 
         timeseries_store.AppendOrderEvent(event);
-        strategy_engine.EnqueueOrderEvent(event);
+        if (strategy_engine != nullptr) {
+            strategy_engine->EnqueueOrderEvent(event);
+        }
     };
 
     process_signal_intent = [&](const SignalIntent& signal) {
@@ -670,6 +688,9 @@ int main(int argc, char** argv) {
                                {"failure_count", std::to_string(failure_count)}});
         }
         ctp_query_snapshot_store.AppendTradingAccountSnapshot(snapshot);
+        if (strategy_engine != nullptr) {
+            strategy_engine->EnqueueAccountSnapshot(snapshot);
+        }
     });
     ctp_trader->RegisterInvestorPositionSnapshotCallback(
         [&](const std::vector<InvestorPositionSnapshot>& snapshots) {
@@ -714,7 +735,9 @@ int main(int argc, char** argv) {
         });
     market_state.RegisterStateCallback([&](const StateSnapshot7D& state) {
         realtime_cache.UpsertStateSnapshot7D(state);
-        strategy_engine.EnqueueState(state);
+        if (strategy_engine != nullptr) {
+            strategy_engine->EnqueueState(state);
+        }
     });
 
     std::string strategy_register_error;
@@ -735,8 +758,9 @@ int main(int argc, char** argv) {
     if (strategy_factory == "composite") {
         strategy_context.metadata["composite_config_path"] = file_config.strategy_composite_config;
     }
-    if (!strategy_engine.Start(strategy_ids, strategy_factory, strategy_context,
-                               &strategy_register_error)) {
+    if (strategy_engine == nullptr ||
+        !strategy_engine->Start(strategy_ids, strategy_factory, strategy_context,
+                                &strategy_register_error)) {
         EmitStructuredLog(
             &config, "core_engine", "error", "strategy_engine_start_failed",
             {{"strategy_factory", strategy_factory}, {"error", strategy_register_error}});
@@ -914,6 +938,7 @@ int main(int argc, char** argv) {
     });
 
     const auto start = std::chrono::steady_clock::now();
+    auto next_strategy_metrics_emit = std::chrono::steady_clock::now();
     std::size_t synthetic_tick = 0;
     while (!g_stop_requested.load()) {
         if (run_seconds > 0) {
@@ -922,6 +947,35 @@ int main(int argc, char** argv) {
             if (elapsed.count() >= run_seconds) {
                 break;
             }
+        }
+
+        if (file_config.strategy_metrics_emit_interval_ms > 0 &&
+            std::chrono::steady_clock::now() >= next_strategy_metrics_emit &&
+            strategy_engine != nullptr) {
+            const std::vector<StrategyMetric> metrics = strategy_engine->CollectAllMetrics();
+            for (const auto& metric : metrics) {
+                std::string strategy_id = "";
+                if (const auto it = metric.labels.find("strategy_id"); it != metric.labels.end()) {
+                    strategy_id = it->second;
+                }
+                EmitStructuredLog(&config, "core_engine", "info", "strategy_metric",
+                                  {{"name", metric.name},
+                                   {"value", std::to_string(metric.value)},
+                                   {"strategy_id", strategy_id}});
+                if (config.metrics_enabled) {
+                    MetricLabels gauge_labels;
+                    for (const auto& [label_key, label_value] : metric.labels) {
+                        gauge_labels[label_key] = label_value;
+                    }
+                    auto gauge =
+                        MetricRegistry::Instance().BuildGauge(metric.name, "strategy metric",
+                                                              gauge_labels);
+                    gauge->Set(metric.value);
+                }
+            }
+            next_strategy_metrics_emit =
+                std::chrono::steady_clock::now() +
+                std::chrono::milliseconds(file_config.strategy_metrics_emit_interval_ms);
         }
 
         if (!config.enable_real_api) {
@@ -958,7 +1012,9 @@ int main(int argc, char** argv) {
         query_poll_thread.join();
     }
 
-    strategy_engine.Stop();
+    if (strategy_engine != nullptr) {
+        strategy_engine->Stop();
+    }
     ctp_md->Disconnect();
     ctp_trader->Disconnect();
     metrics_exporter.Stop();

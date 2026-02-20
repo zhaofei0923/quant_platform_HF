@@ -26,12 +26,18 @@ int main(int argc, char** argv) {
     const std::string output_json =
         detail::GetArgAny(args, {"output_json", "result_json", "report_json"});
     const std::string output_md = detail::GetArgAny(args, {"output_md", "report_md"});
+    const std::string export_csv_dir =
+        detail::GetArgAny(args, {"export_csv_dir", "export-csv-dir"});
 
     if (!WriteTextFile(output_json, json, &error)) {
         std::cerr << "backtest_cli: " << error << '\n';
         return 1;
     }
     if (!WriteTextFile(output_md, markdown, &error)) {
+        std::cerr << "backtest_cli: " << error << '\n';
+        return 1;
+    }
+    if (!ExportBacktestCsv(result, export_csv_dir, &error)) {
         std::cerr << "backtest_cli: " << error << '\n';
         return 1;
     }

@@ -354,6 +354,22 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecParsesIndicatorTraceFlags) {
     EXPECT_EQ(spec.indicator_trace_path, "runtime/research/indicator_trace/test.parquet");
 }
 
+TEST(BacktestReplaySupportTest, ParseBacktestCliSpecParsesDetailEmissionFlags) {
+    ArgMap args;
+    args["engine_mode"] = "csv";
+    args["csv_path"] = "backtest_data/rb.csv";
+    args["emit_trades"] = "false";
+    args["emit_orders"] = "false";
+    args["emit_position_history"] = "true";
+
+    BacktestCliSpec spec;
+    std::string error;
+    EXPECT_TRUE(ParseBacktestCliSpec(args, &spec, &error)) << error;
+    EXPECT_FALSE(spec.emit_trades);
+    EXPECT_FALSE(spec.emit_orders);
+    EXPECT_TRUE(spec.emit_position_history);
+}
+
 TEST(BacktestReplaySupportTest, ParseBacktestCliSpecParsesCapitalAndConfigFields) {
     const std::filesystem::path open_cfg = WriteTempAtomicStrategyConfig();
     const std::filesystem::path main_cfg = WriteTempMainStrategyConfig(open_cfg);
@@ -777,6 +793,37 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecDeterministicFillFeedsOrderEventT
     ASSERT_TRUE(RunBacktestSpec(spec, &result, &error)) << error;
     ASSERT_TRUE(result.has_deterministic);
     EXPECT_EQ(result.deterministic.intents_processed, 1);
+    EXPECT_FALSE(result.trades.empty());
+    EXPECT_FALSE(result.orders.empty());
+    EXPECT_TRUE(result.position_history.empty());
+    EXPECT_EQ(result.parameters.engine_mode, "csv");
+
+    std::error_code ec;
+    std::filesystem::remove(csv_path, ec);
+    std::filesystem::remove(composite_path, ec);
+}
+
+TEST(BacktestReplaySupportTest, RunBacktestSpecRespectsDetailEmissionFlags) {
+    const std::filesystem::path csv_path = WriteMultiMinuteReplayCsv("quant_hft_detail_flags");
+    const std::filesystem::path composite_path = WriteTempCompositeConfig();
+
+    BacktestCliSpec spec;
+    spec.engine_mode = "csv";
+    spec.csv_path = csv_path.string();
+    spec.run_id = "detail-flags-test";
+    spec.strategy_factory = "composite";
+    spec.strategy_composite_config = composite_path.string();
+    spec.emit_trades = false;
+    spec.emit_orders = false;
+    spec.emit_position_history = true;
+
+    BacktestCliResult result;
+    std::string error;
+    ASSERT_TRUE(RunBacktestSpec(spec, &result, &error)) << error;
+    ASSERT_TRUE(result.has_deterministic);
+    EXPECT_TRUE(result.trades.empty());
+    EXPECT_TRUE(result.orders.empty());
+    EXPECT_FALSE(result.position_history.empty());
 
     std::error_code ec;
     std::filesystem::remove(csv_path, ec);

@@ -39,7 +39,9 @@ add_library(quant_hft_core STATIC
     src/backtest/backtest_data_feed.cpp
     src/backtest/engine.cpp
     src/backtest/performance.cpp
+    src/backtest/backtest_metrics.cpp
     src/backtest/live_data_feed.cpp
+    src/apps/backtest_result_export.cpp
     src/indicators/adx.cpp
     src/indicators/atr.cpp
     src/indicators/ema.cpp
@@ -440,6 +442,9 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(performance_test tests/unit/backtest/performance_test.cpp)
     target_link_libraries(performance_test PRIVATE quant_hft_core GTest::gtest_main)
 
+    add_executable(backtest_metrics_test tests/unit/apps/backtest_metrics_test.cpp)
+    target_link_libraries(backtest_metrics_test PRIVATE quant_hft_core GTest::gtest_main)
+
     add_executable(base_strategy_test tests/unit/strategy/base_strategy_test.cpp)
     target_link_libraries(base_strategy_test PRIVATE quant_hft_core GTest::gtest_main)
 
@@ -566,6 +571,7 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(broker_test)
     gtest_discover_tests(engine_test)
     gtest_discover_tests(performance_test)
+    gtest_discover_tests(backtest_metrics_test)
     gtest_discover_tests(base_strategy_test)
     gtest_discover_tests(atomic_strategy_interface_test)
     gtest_discover_tests(atomic_factory_test)

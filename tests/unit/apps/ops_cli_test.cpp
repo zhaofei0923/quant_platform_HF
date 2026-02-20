@@ -385,6 +385,42 @@ TEST(OpsCli, CsvParquetCompareSupportsSymbolsFilter) {
     EXPECT_NE(payload.find("\"ticks_read_max\": 2"), std::string::npos);
 }
 
+TEST(OpsCli, BacktestCliExportsCsvArtifactsWithDetailFlags) {
+    const auto dir = MakeTempDir("backtest_csv_export");
+    const auto input_csv = dir / "rb_sample.csv";
+    const auto output_json = dir / "backtest.json";
+    const auto output_md = dir / "backtest.md";
+    const auto output_csv_dir = dir / "csv";
+    const auto stdout_log = dir / "backtest_stdout.log";
+
+    WriteFile(input_csv,
+              "TradingDay,InstrumentID,UpdateTime,UpdateMillisec,LastPrice,Volume,BidPrice1,"
+              "BidVolume1,AskPrice1,AskVolume1,AveragePrice,Turnover,OpenInterest\n"
+              "20230103,rb2305,08:59:00,500,4100.0,100,4099.0,3,4101.0,4,41000.0,1234500.0,1000\n"
+              "20230103,rb2305,09:00:00,0,4102.0,101,4101.0,3,4103.0,4,41020.0,1239900.0,1001\n"
+              "20230103,rb2305,09:00:01,0,4103.0,102,4102.0,3,4104.0,4,41030.0,1245300.0,1002\n");
+
+    const std::string command = "\"" + BinaryPath("backtest_cli").string() +
+                                "\" --engine_mode csv --csv_path \"" + input_csv.string() +
+                                "\" --max_ticks 100 --emit_position_history true"
+                                " --output_json \"" +
+                                output_json.string() + "\" --output_md \"" + output_md.string() +
+                                "\" --export-csv-dir \"" + output_csv_dir.string() + "\"";
+    const int rc = RunCommandCapture(command, stdout_log);
+    EXPECT_EQ(rc, 0);
+
+    EXPECT_TRUE(std::filesystem::exists(output_json));
+    EXPECT_TRUE(std::filesystem::exists(output_md));
+    EXPECT_TRUE(std::filesystem::exists(output_csv_dir / "daily_equity.csv"));
+    EXPECT_TRUE(std::filesystem::exists(output_csv_dir / "trades.csv"));
+    EXPECT_TRUE(std::filesystem::exists(output_csv_dir / "orders.csv"));
+    EXPECT_TRUE(std::filesystem::exists(output_csv_dir / "position_history.csv"));
+
+    const std::string payload = ReadFile(output_json);
+    EXPECT_NE(payload.find("\"hf_standard\""), std::string::npos);
+    EXPECT_NE(payload.find("\"emit_position_history\": true"), std::string::npos);
+}
+
 TEST(OpsCli, FactorEvalCliIncludesDetectorConfigInOutputJson) {
     const auto dir = MakeTempDir("factor_eval_detector");
     const auto input_csv = dir / "rb_sample.csv";

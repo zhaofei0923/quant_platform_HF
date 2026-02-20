@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "quant_hft/apps/cli_support.h"
+#include "quant_hft/apps/backtest_metrics.h"
 #include "quant_hft/backtest/indicator_trace_parquet_writer.h"
 #include "quant_hft/backtest/parquet_data_feed.h"
 #include "quant_hft/backtest/product_fee_config_loader.h"
@@ -729,6 +730,9 @@ struct BacktestCliSpec {
     std::string indicator_trace_path;
     bool emit_sub_strategy_indicator_trace{false};
     std::string sub_strategy_indicator_trace_path;
+    bool emit_trades{true};
+    bool emit_orders{true};
+    bool emit_position_history{false};
     MarketStateDetectorConfig detector_config{};
 };
 
@@ -855,6 +859,19 @@ struct BacktestCliResult {
     ReplayReport replay;
     bool has_deterministic{false};
     DeterministicReplayReport deterministic;
+    std::string version{"2.0"};
+    Parameters parameters;
+    AdvancedSummary advanced_summary;
+    std::vector<DailyPerformance> daily;
+    std::vector<TradeRecord> trades;
+    std::vector<OrderRecord> orders;
+    std::vector<RegimePerformance> regime_performance;
+    std::vector<PositionSnapshot> position_history;
+    ExecutionQuality execution_quality;
+    RiskMetrics risk_metrics;
+    RollingMetrics rolling_metrics;
+    MonteCarloResult monte_carlo;
+    std::vector<FactorExposure> factor_exposure;
 };
 
 struct BacktestSummary {
@@ -863,6 +880,9 @@ struct BacktestSummary {
     double total_pnl{0.0};
     double max_drawdown{0.0};
 };
+
+bool ExportBacktestCsv(const BacktestCliResult& result, const std::string& out_dir,
+                       std::string* error);
 
 inline bool IsApproxEqual(double left, double right, double abs_tol = 1e-8, double rel_tol = 1e-6) {
     const double diff = std::fabs(left - right);
@@ -1032,6 +1052,42 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
     }
     spec.sub_strategy_indicator_trace_path = detail::GetArgAny(
         args, {"sub_strategy_indicator_trace_path", "sub-strategy-indicator-trace-path"});
+    {
+        const std::string raw_emit =
+            detail::GetArgAny(args, {"emit_trades", "emit-trades"}, "true");
+        bool parsed = true;
+        if (!detail::ParseBool(raw_emit, &parsed)) {
+            if (error != nullptr) {
+                *error = "invalid emit_trades: " + raw_emit;
+            }
+            return false;
+        }
+        spec.emit_trades = parsed;
+    }
+    {
+        const std::string raw_emit =
+            detail::GetArgAny(args, {"emit_orders", "emit-orders"}, "true");
+        bool parsed = true;
+        if (!detail::ParseBool(raw_emit, &parsed)) {
+            if (error != nullptr) {
+                *error = "invalid emit_orders: " + raw_emit;
+            }
+            return false;
+        }
+        spec.emit_orders = parsed;
+    }
+    {
+        const std::string raw_emit = detail::GetArgAny(
+            args, {"emit_position_history", "emit-position-history"}, "false");
+        bool parsed = false;
+        if (!detail::ParseBool(raw_emit, &parsed)) {
+            if (error != nullptr) {
+                *error = "invalid emit_position_history: " + raw_emit;
+            }
+            return false;
+        }
+        spec.emit_position_history = parsed;
+    }
     {
         const std::string raw_streaming =
             detail::GetArgAny(args, {"streaming", "streaming_mode", "streaming-mode"}, "true");
@@ -1224,7 +1280,10 @@ inline std::string BuildInputSignature(const BacktestCliSpec& spec) {
         << "indicator_trace_path=" << spec.indicator_trace_path << ';'
         << "emit_sub_strategy_indicator_trace="
         << (spec.emit_sub_strategy_indicator_trace ? "true" : "false") << ';'
-        << "sub_strategy_indicator_trace_path=" << spec.sub_strategy_indicator_trace_path << ';';
+        << "sub_strategy_indicator_trace_path=" << spec.sub_strategy_indicator_trace_path << ';'
+        << "emit_trades=" << (spec.emit_trades ? "true" : "false") << ';'
+        << "emit_orders=" << (spec.emit_orders ? "true" : "false") << ';'
+        << "emit_position_history=" << (spec.emit_position_history ? "true" : "false") << ';';
     return detail::StableDigest(oss.str());
 }
 
@@ -2168,6 +2227,86 @@ inline std::vector<std::string> ValidateInvariants(
 
 inline std::string SideToString(Side side) { return side == Side::kBuy ? "BUY" : "SELL"; }
 
+inline std::string SideToTitleString(Side side) { return side == Side::kBuy ? "Buy" : "Sell"; }
+
+inline std::string OffsetFlagToString(OffsetFlag offset) {
+    switch (offset) {
+        case OffsetFlag::kOpen:
+            return "OPEN";
+        case OffsetFlag::kClose:
+            return "CLOSE";
+        case OffsetFlag::kCloseToday:
+            return "CLOSE_TODAY";
+        case OffsetFlag::kCloseYesterday:
+            return "CLOSE_YESTERDAY";
+    }
+    return "OPEN";
+}
+
+inline std::string OffsetFlagToTitleString(OffsetFlag offset) {
+    switch (offset) {
+        case OffsetFlag::kOpen:
+            return "Open";
+        case OffsetFlag::kClose:
+            return "Close";
+        case OffsetFlag::kCloseToday:
+            return "CloseToday";
+        case OffsetFlag::kCloseYesterday:
+            return "CloseYesterday";
+    }
+    return "Open";
+}
+
+inline std::string OrderStatusToString(OrderStatus status) {
+    switch (status) {
+        case OrderStatus::kNew:
+            return "NEW";
+        case OrderStatus::kAccepted:
+            return "ACCEPTED";
+        case OrderStatus::kPartiallyFilled:
+            return "PARTIALLY_FILLED";
+        case OrderStatus::kFilled:
+            return "FILLED";
+        case OrderStatus::kCanceled:
+            return "CANCELED";
+        case OrderStatus::kRejected:
+            return "REJECTED";
+    }
+    return "REJECTED";
+}
+
+inline std::string SignalTypeToString(SignalType signal_type) {
+    switch (signal_type) {
+        case SignalType::kOpen:
+            return "kOpen";
+        case SignalType::kClose:
+            return "kClose";
+        case SignalType::kStopLoss:
+            return "kStopLoss";
+        case SignalType::kTakeProfit:
+            return "kTakeProfit";
+        case SignalType::kForceClose:
+            return "kForceClose";
+    }
+    return "kOpen";
+}
+
+inline std::string MarketRegimeToString(MarketRegime regime) {
+    switch (regime) {
+        case MarketRegime::kUnknown:
+            return "kUnknown";
+        case MarketRegime::kStrongTrend:
+            return "kStrongTrend";
+        case MarketRegime::kWeakTrend:
+            return "kWeakTrend";
+        case MarketRegime::kRanging:
+            return "kRanging";
+        case MarketRegime::kFlat:
+            return "kFlat";
+    }
+    return "kUnknown";
+}
+
 inline std::string BuildDefaultIndicatorTracePath(const std::string& run_id) {
     return (std::filesystem::path("runtime") / "research" / "indicator_trace" /
             (run_id + ".parquet"))
@@ -2258,6 +2397,12 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     std::map<std::string, std::int64_t> instrument_bars;
     std::map<std::string, std::int64_t> order_status_counts;
     std::vector<double> equity_points;
+    std::vector<EquitySample> equity_history;
+    std::vector<TradeRecord> trades;
+    std::vector<OrderRecord> orders;
+    std::vector<PositionSnapshot> position_history;
+    std::int64_t trade_seq = 0;
+    std::int64_t order_seq = 0;
     double total_commission = 0.0;
     double used_margin_total = 0.0;
     double max_margin_used = 0.0;
@@ -2265,6 +2410,18 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     std::int64_t margin_rejected_orders = 0;
     if (spec.deterministic_fills) {
         equity_points.push_back(spec.initial_equity);
+        if (!ticks.empty()) {
+            EquitySample seed;
+            seed.ts_ns = ticks.front().ts_ns;
+            seed.trading_day = detail::NormalizeTradingDay(ticks.front().trading_day);
+            if (seed.trading_day.empty()) {
+                seed.trading_day = detail::TradingDayFromEpochNs(seed.ts_ns);
+            }
+            seed.equity = spec.initial_equity;
+            seed.position_value = 0.0;
+            seed.market_regime = "kUnknown";
+            equity_history.push_back(std::move(seed));
+        }
     }
 
     ProductFeeBook product_fee_book;
@@ -2331,6 +2488,43 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
 
     const bool enable_rollover = spec.deterministic_fills && spec.engine_mode == "core_sim";
 
+    auto compute_position_value = [&]() {
+        double total = 0.0;
+        for (const auto& [instrument_id, state] : position_state) {
+            if (state.net_position == 0) {
+                continue;
+            }
+            const auto mark_it = mark_price.find(instrument_id);
+            const double last_price =
+                mark_it != mark_price.end() ? mark_it->second : state.avg_open_price;
+            total += std::fabs(static_cast<double>(state.net_position)) * last_price;
+        }
+        return total;
+    };
+
+    auto record_position_snapshot = [&](const std::string& instrument_id, EpochNanos ts_ns) {
+        if (!spec.emit_position_history) {
+            return;
+        }
+        const auto state_it = position_state.find(instrument_id);
+        if (state_it == position_state.end()) {
+            return;
+        }
+        const PositionState& state = state_it->second;
+        const auto mark_it = mark_price.find(instrument_id);
+        const double last_price =
+            mark_it != mark_price.end() ? mark_it->second : state.avg_open_price;
+
+        PositionSnapshot snapshot;
+        snapshot.timestamp_ns = ts_ns;
+        snapshot.symbol = instrument_id;
+        snapshot.net_position = state.net_position;
+        snapshot.avg_price = state.avg_open_price;
+        snapshot.unrealized_pnl =
+            ComputeUnrealized(state.net_position, state.avg_open_price, last_price);
+        position_history.push_back(std::move(snapshot));
+    };
+
     auto handle_rollover = [&](const ReplayTick& tick) {
         const std::string symbol = detail::InstrumentSymbolPrefix(tick.instrument_id);
         if (symbol.empty()) {
@@ -2382,10 +2576,91 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             from_price = close_price;
             to_price = open_price;
 
+            const double prev_realized_before = previous_state.realized_pnl;
+            const double next_realized_before = next_state.realized_pnl;
             ApplyTrade(&previous_state, close_side, previous_position, close_price);
             ApplyTrade(&next_state, open_side, previous_position, open_price);
             rollover_slippage_cost +=
                 (close_slip + open_slip) * static_cast<double>(previous_position);
+            const double close_realized_pnl = previous_state.realized_pnl - prev_realized_before;
+            const double open_realized_pnl = next_state.realized_pnl - next_realized_before;
+
+            if (spec.emit_orders) {
+                OrderRecord close_order;
+                close_order.order_id = "rollover-order-" + std::to_string(++order_seq);
+                close_order.client_order_id = close_order.order_id;
+                close_order.symbol = previous_contract;
+                close_order.type = "Market";
+                close_order.side = SideToTitleString(close_side);
+                close_order.offset = "Close";
+                close_order.price = close_price;
+                close_order.volume = previous_position;
+                close_order.status = "Filled";
+                close_order.filled_volume = previous_position;
+                close_order.avg_fill_price = close_price;
+                close_order.created_at_ns = tick.ts_ns;
+                close_order.last_update_ns = tick.ts_ns;
+                close_order.strategy_id = "rollover";
+                orders.push_back(std::move(close_order));
+
+                OrderRecord open_order;
+                open_order.order_id = "rollover-order-" + std::to_string(++order_seq);
+                open_order.client_order_id = open_order.order_id;
+                open_order.symbol = current_contract;
+                open_order.type = "Market";
+                open_order.side = SideToTitleString(open_side);
+                open_order.offset = "Open";
+                open_order.price = open_price;
+                open_order.volume = previous_position;
+                open_order.status = "Filled";
+                open_order.filled_volume = previous_position;
+                open_order.avg_fill_price = open_price;
+                open_order.created_at_ns = tick.ts_ns;
+                open_order.last_update_ns = tick.ts_ns;
+                open_order.strategy_id = "rollover";
+                orders.push_back(std::move(open_order));
+            }
+
+            if (spec.emit_trades) {
+                TradeRecord close_trade;
+                close_trade.trade_id = "rollover-trade-" + std::to_string(++trade_seq);
+                close_trade.order_id = "rollover-order-close-" + std::to_string(trade_seq);
+                close_trade.symbol = previous_contract;
+                close_trade.exchange = "";
+                close_trade.side = SideToTitleString(close_side);
+                close_trade.offset = "Close";
+                close_trade.volume = previous_position;
+                close_trade.price = close_price;
+                close_trade.timestamp_ns = tick.ts_ns;
+                close_trade.commission = 0.0;
+                close_trade.slippage = close_slip;
+                close_trade.realized_pnl = close_realized_pnl;
+                close_trade.strategy_id = "rollover";
+                close_trade.signal_type = "rollover_close";
+                close_trade.regime_at_entry = "rollover";
+                trades.push_back(std::move(close_trade));
+
+                TradeRecord open_trade;
+                open_trade.trade_id = "rollover-trade-" + std::to_string(++trade_seq);
+                open_trade.order_id = "rollover-order-open-" + std::to_string(trade_seq);
+                open_trade.symbol = current_contract;
+                open_trade.exchange = "";
+                open_trade.side = SideToTitleString(open_side);
+                open_trade.offset = "Open";
+                open_trade.volume = previous_position;
+                open_trade.price = open_price;
+                open_trade.timestamp_ns = tick.ts_ns;
+                open_trade.commission = 0.0;
+                open_trade.slippage = open_slip;
+                open_trade.realized_pnl = open_realized_pnl;
+                open_trade.strategy_id = "rollover";
+                open_trade.signal_type = "rollover_open";
+                open_trade.regime_at_entry = "rollover";
+                trades.push_back(std::move(open_trade));
+            }
+
+            record_position_snapshot(previous_contract, tick.ts_ns);
+            record_position_snapshot(current_contract, tick.ts_ns);
 
             RolloverAction close_action;
             close_action.symbol = symbol;
@@ -2600,6 +2875,12 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             intents_processed += static_cast<std::int64_t>(intents.size());
             for (const SignalIntent& intent : intents) {
                 const double fill_price = last.last_price;
+                const std::string client_order_id =
+                    intent.trace_id.empty()
+                        ? ("det-order-" + std::to_string(intents_processed) + "-" +
+                           intent.instrument_id + "-" + std::to_string(intent.ts_ns))
+                        : intent.trace_id;
+                const std::string order_id = "order-" + std::to_string(++order_seq);
                 const ProductFeeEntry* fee_entry = nullptr;
                 if (has_product_fee) {
                     fee_entry = product_fee_book.Find(intent.instrument_id);
@@ -2636,6 +2917,25 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                         ++margin_rejected_orders;
                         ++order_events;
                         order_status_counts["REJECTED"] += 1;
+                        if (spec.emit_orders) {
+                            OrderRecord rejected_order;
+                            rejected_order.order_id = order_id;
+                            rejected_order.client_order_id = client_order_id;
+                            rejected_order.symbol = intent.instrument_id;
+                            rejected_order.type = "Market";
+                            rejected_order.side = SideToTitleString(intent.side);
+                            rejected_order.offset = OffsetFlagToTitleString(intent.offset);
+                            rejected_order.price = fill_price;
+                            rejected_order.volume = intent.volume;
+                            rejected_order.status = "Rejected";
+                            rejected_order.filled_volume = 0;
+                            rejected_order.avg_fill_price = 0.0;
+                            rejected_order.created_at_ns = intent.ts_ns;
+                            rejected_order.last_update_ns = intent.ts_ns;
+                            rejected_order.strategy_id = intent.strategy_id;
+                            rejected_order.cancel_reason = "margin_rejected";
+                            orders.push_back(std::move(rejected_order));
+                        }
                         continue;
                     }
                 }
@@ -2645,7 +2945,9 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 }
 
                 PositionState& pnl_state = position_state[intent.instrument_id];
+                const double realized_before = pnl_state.realized_pnl;
                 ApplyTrade(&pnl_state, intent.side, exec_volume, fill_price);
+                const double realized_delta = pnl_state.realized_pnl - realized_before;
 
                 double commission = 0.0;
                 if (fee_entry != nullptr) {
@@ -2666,11 +2968,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 OrderEvent filled_event;
                 filled_event.account_id = spec.account_id;
                 filled_event.strategy_id = intent.strategy_id;
-                filled_event.client_order_id =
-                    intent.trace_id.empty()
-                        ? ("det-order-" + std::to_string(intents_processed) + "-" +
-                           intent.instrument_id + "-" + std::to_string(intent.ts_ns))
-                        : intent.trace_id;
+                filled_event.client_order_id = client_order_id;
                 filled_event.instrument_id = intent.instrument_id;
                 filled_event.side = intent.side;
                 filled_event.offset = intent.offset;
@@ -2681,18 +2979,64 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 filled_event.ts_ns = intent.ts_ns;
                 strategy->OnOrderEvent(filled_event);
 
+                if (spec.emit_orders) {
+                    OrderRecord order;
+                    order.order_id = order_id;
+                    order.client_order_id = client_order_id;
+                    order.symbol = intent.instrument_id;
+                    order.type = "Market";
+                    order.side = SideToTitleString(intent.side);
+                    order.offset = OffsetFlagToTitleString(intent.offset);
+                    order.price = fill_price;
+                    order.volume = exec_volume;
+                    order.status = "Filled";
+                    order.filled_volume = exec_volume;
+                    order.avg_fill_price = fill_price;
+                    order.created_at_ns = intent.ts_ns;
+                    order.last_update_ns = intent.ts_ns;
+                    order.strategy_id = intent.strategy_id;
+                    orders.push_back(std::move(order));
+                }
+                if (spec.emit_trades) {
+                    double slippage = 0.0;
+                    if (intent.limit_price > 0.0) {
+                        slippage = intent.side == Side::kBuy ? fill_price - intent.limit_price
+                                                             : intent.limit_price - fill_price;
+                    }
+
+                    TradeRecord trade;
+                    trade.trade_id = "trade-" + std::to_string(++trade_seq);
+                    trade.order_id = order_id;
+                    trade.symbol = intent.instrument_id;
+                    trade.exchange = "";
+                    trade.side = SideToTitleString(intent.side);
+                    trade.offset = OffsetFlagToTitleString(intent.offset);
+                    trade.volume = exec_volume;
+                    trade.price = fill_price;
+                    trade.timestamp_ns = intent.ts_ns;
+                    trade.commission = commission;
+                    trade.slippage = slippage;
+                    trade.realized_pnl = realized_delta;
+                    trade.strategy_id = intent.strategy_id;
+                    trade.signal_type = SignalTypeToString(intent.signal_type);
+                    trade.regime_at_entry = MarketRegimeToString(state.market_regime);
+                    trades.push_back(std::move(trade));
+                }
+
+                record_position_snapshot(intent.instrument_id, intent.ts_ns);
+
                 if (wal_out.is_open()) {
                     const std::string accepted_line =
                         "{\"seq\":" + std::to_string(wal_seq++) +
                         ",\"kind\":\"order\",\"status\":1,\"instrument_id\":\"" +
                         JsonEscape(intent.instrument_id) + "\",\"trace_id\":\"" +
-                        JsonEscape(intent.trace_id) +
+                        JsonEscape(client_order_id) +
                         "\",\"ts_ns\":" + std::to_string(intent.ts_ns) + "}";
                     const std::string filled_line =
                         "{\"seq\":" + std::to_string(wal_seq++) +
                         ",\"kind\":\"trade\",\"status\":3,\"instrument_id\":\"" +
                         JsonEscape(intent.instrument_id) + "\",\"trace_id\":\"" +
-                        JsonEscape(intent.trace_id) +
+                        JsonEscape(client_order_id) +
                         "\",\"ts_ns\":" + std::to_string(intent.ts_ns) +
                         ",\"price\":" + detail::FormatDouble(fill_price) +
                         ",\"filled_volume\":" + std::to_string(exec_volume) + "}";
@@ -2705,8 +3049,19 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 }
             }
 
-            equity_points.push_back(ComputeTotalEquity(spec.initial_equity, position_state,
-                                                       mark_price, total_commission));
+            const double current_equity =
+                ComputeTotalEquity(spec.initial_equity, position_state, mark_price, total_commission);
+            equity_points.push_back(current_equity);
+            EquitySample sample;
+            sample.ts_ns = state.ts_ns;
+            sample.trading_day = detail::NormalizeTradingDay(last.trading_day);
+            if (sample.trading_day.empty()) {
+                sample.trading_day = detail::TradingDayFromEpochNs(state.ts_ns);
+            }
+            sample.equity = current_equity;
+            sample.position_value = compute_position_value();
+            sample.market_regime = MarketRegimeToString(state.market_regime);
+            equity_history.push_back(std::move(sample));
         }
         return true;
     };
@@ -2797,6 +3152,29 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     if (result.data_signature.empty()) {
         return false;
     }
+
+    result.parameters.start_date = spec.start_date;
+    result.parameters.end_date = spec.end_date;
+    result.parameters.initial_capital = spec.initial_equity;
+    result.parameters.engine_mode = spec.engine_mode;
+    result.parameters.rollover_mode = spec.rollover_mode;
+    result.parameters.strategy_factory = spec.strategy_factory;
+    if (spec.emit_trades) {
+        result.trades = trades;
+    }
+    if (spec.emit_orders) {
+        result.orders = orders;
+    }
+    if (spec.emit_position_history) {
+        result.position_history = position_history;
+    }
+    result.daily = ComputeDailyMetrics(equity_history, result.trades, spec.initial_equity);
+    result.risk_metrics = ComputeRiskMetrics(result.daily);
+    result.execution_quality = ComputeExecutionQuality(result.orders, result.trades);
+    result.rolling_metrics = ComputeRollingMetrics(result.daily, 63);
+    result.regime_performance = ComputeRegimePerformance(result.trades);
+    result.advanced_summary =
+        ComputeAdvancedSummary(result.daily, result.trades, result.risk_metrics);
 
     if (!spec.deterministic_fills) {
         result.replay = replay;
@@ -2933,6 +3311,24 @@ inline std::string RenderBacktestMarkdown(const BacktestCliResult& result) {
            << "- Max Drawdown: `"
            << detail::FormatDouble(result.deterministic.performance.max_drawdown) << "`\n";
     }
+
+    md << "\n## HF Standard Summary\n"
+       << "- Version: `" << result.version << "`\n"
+       << "- Daily Rows: `" << result.daily.size() << "`\n"
+       << "- Trades Rows: `" << result.trades.size() << "`\n"
+       << "- Orders Rows: `" << result.orders.size() << "`\n"
+       << "- Position Snapshot Rows: `" << result.position_history.size() << "`\n"
+       << "- Emit Trades: `" << (result.spec.emit_trades ? "true" : "false") << "`\n"
+       << "- Emit Orders: `" << (result.spec.emit_orders ? "true" : "false") << "`\n"
+       << "- Emit Position History: `" << (result.spec.emit_position_history ? "true" : "false")
+       << "`\n"
+       << "- VaR95 (%): `" << detail::FormatDouble(result.risk_metrics.var_95) << "`\n"
+       << "- ES95 (%): `" << detail::FormatDouble(result.risk_metrics.expected_shortfall_95)
+       << "`\n"
+       << "- Fill Rate: `"
+       << detail::FormatDouble(result.execution_quality.limit_order_fill_rate) << "`\n"
+       << "- Cancel Rate: `" << detail::FormatDouble(result.execution_quality.cancel_rate)
+       << "`\n";
     return md.str();
 }
 
@@ -3026,7 +3422,11 @@ inline std::string RenderBacktestJson(const BacktestCliResult& result) {
          << "    \"emit_sub_strategy_indicator_trace\": "
          << (result.spec.emit_sub_strategy_indicator_trace ? "true" : "false") << ",\n"
          << "    \"sub_strategy_indicator_trace_path\": \""
-         << JsonEscape(result.spec.sub_strategy_indicator_trace_path) << "\"\n"
+         << JsonEscape(result.spec.sub_strategy_indicator_trace_path) << "\",\n"
+         << "    \"emit_trades\": " << (result.spec.emit_trades ? "true" : "false") << ",\n"
+         << "    \"emit_orders\": " << (result.spec.emit_orders ? "true" : "false") << ",\n"
+         << "    \"emit_position_history\": "
+         << (result.spec.emit_position_history ? "true" : "false") << "\n"
          << "  },\n"
          << "  \"input_signature\": \"" << JsonEscape(result.input_signature) << "\",\n"
          << "  \"data_signature\": \"" << JsonEscape(result.data_signature) << "\",\n"
@@ -3218,6 +3618,197 @@ inline std::string RenderBacktestJson(const BacktestCliResult& result) {
          << "    \"order_events\": " << summary.order_events << ",\n"
          << "    \"total_pnl\": " << detail::FormatDouble(summary.total_pnl) << ",\n"
          << "    \"max_drawdown\": " << detail::FormatDouble(summary.max_drawdown) << "\n"
+         << "  },\n"
+         << "  \"hf_standard\": {\n"
+         << "    \"version\": \"" << JsonEscape(result.version) << "\",\n"
+         << "    \"parameters\": {\n"
+         << "      \"start_date\": \"" << JsonEscape(result.parameters.start_date) << "\",\n"
+         << "      \"end_date\": \"" << JsonEscape(result.parameters.end_date) << "\",\n"
+         << "      \"initial_capital\": "
+         << detail::FormatDouble(result.parameters.initial_capital) << ",\n"
+         << "      \"engine_mode\": \"" << JsonEscape(result.parameters.engine_mode) << "\",\n"
+         << "      \"rollover_mode\": \"" << JsonEscape(result.parameters.rollover_mode) << "\",\n"
+         << "      \"strategy_factory\": \""
+         << JsonEscape(result.parameters.strategy_factory) << "\"\n"
+         << "    },\n"
+         << "    \"metadata\": {\n"
+         << "      \"emit_trades\": " << (result.spec.emit_trades ? "true" : "false") << ",\n"
+         << "      \"emit_orders\": " << (result.spec.emit_orders ? "true" : "false") << ",\n"
+         << "      \"emit_position_history\": "
+         << (result.spec.emit_position_history ? "true" : "false") << ",\n"
+         << "      \"position_sampling\": \"on_trade\"\n"
+         << "    },\n"
+         << "    \"advanced_summary\": {\n"
+         << "      \"rolling_sharpe_3m_last\": "
+         << detail::FormatDouble(result.advanced_summary.rolling_sharpe_3m_last) << ",\n"
+         << "      \"rolling_max_dd_3m_last\": "
+         << detail::FormatDouble(result.advanced_summary.rolling_max_dd_3m_last) << ",\n"
+         << "      \"information_ratio\": "
+         << detail::FormatDouble(result.advanced_summary.information_ratio) << ",\n"
+         << "      \"beta\": " << detail::FormatDouble(result.advanced_summary.beta) << ",\n"
+         << "      \"alpha\": " << detail::FormatDouble(result.advanced_summary.alpha) << ",\n"
+         << "      \"tail_ratio\": "
+         << detail::FormatDouble(result.advanced_summary.tail_ratio) << ",\n"
+         << "      \"gain_to_pain_ratio\": "
+         << detail::FormatDouble(result.advanced_summary.gain_to_pain_ratio) << ",\n"
+         << "      \"avg_win_loss_duration_ratio\": "
+         << detail::FormatDouble(result.advanced_summary.avg_win_loss_duration_ratio) << ",\n"
+         << "      \"profit_factor\": "
+         << detail::FormatDouble(result.advanced_summary.profit_factor) << "\n"
+         << "    },\n"
+         << "    \"execution_quality\": {\n"
+         << "      \"limit_order_fill_rate\": "
+         << detail::FormatDouble(result.execution_quality.limit_order_fill_rate) << ",\n"
+         << "      \"avg_wait_time_ms\": "
+         << detail::FormatDouble(result.execution_quality.avg_wait_time_ms) << ",\n"
+         << "      \"cancel_rate\": "
+         << detail::FormatDouble(result.execution_quality.cancel_rate) << ",\n"
+         << "      \"slippage_mean\": "
+         << detail::FormatDouble(result.execution_quality.slippage_mean) << ",\n"
+         << "      \"slippage_std\": "
+         << detail::FormatDouble(result.execution_quality.slippage_std) << ",\n"
+         << "      \"slippage_percentiles\": [";
+    for (std::size_t i = 0; i < result.execution_quality.slippage_percentiles.size(); ++i) {
+        if (i > 0) {
+            json << ", ";
+        }
+        json << detail::FormatDouble(result.execution_quality.slippage_percentiles[i]);
+    }
+    json << "]\n"
+         << "    },\n"
+         << "    \"risk_metrics\": {\n"
+         << "      \"var_95\": " << detail::FormatDouble(result.risk_metrics.var_95) << ",\n"
+         << "      \"expected_shortfall_95\": "
+         << detail::FormatDouble(result.risk_metrics.expected_shortfall_95) << ",\n"
+         << "      \"ulcer_index\": " << detail::FormatDouble(result.risk_metrics.ulcer_index)
+         << ",\n"
+         << "      \"recovery_factor\": "
+         << detail::FormatDouble(result.risk_metrics.recovery_factor) << ",\n"
+         << "      \"tail_loss\": " << detail::FormatDouble(result.risk_metrics.tail_loss) << "\n"
+         << "    },\n"
+         << "    \"rolling_metrics\": {\n"
+         << "      \"rolling_sharpe_3m\": [";
+    for (std::size_t i = 0; i < result.rolling_metrics.rolling_sharpe_3m.size(); ++i) {
+        if (i > 0) {
+            json << ", ";
+        }
+        json << detail::FormatDouble(result.rolling_metrics.rolling_sharpe_3m[i]);
+    }
+    json << "],\n"
+         << "      \"rolling_max_dd_3m\": [";
+    for (std::size_t i = 0; i < result.rolling_metrics.rolling_max_dd_3m.size(); ++i) {
+        if (i > 0) {
+            json << ", ";
+        }
+        json << detail::FormatDouble(result.rolling_metrics.rolling_max_dd_3m[i]);
+    }
+    json << "]\n"
+         << "    },\n"
+         << "    \"daily\": [";
+    for (std::size_t i = 0; i < result.daily.size(); ++i) {
+        if (i > 0) {
+            json << ", ";
+        }
+        const DailyPerformance& row = result.daily[i];
+        json << "{\"date\":\"" << JsonEscape(row.date) << "\",\"capital\":"
+             << detail::FormatDouble(row.capital) << ",\"daily_return_pct\":"
+             << detail::FormatDouble(row.daily_return_pct) << ",\"cumulative_return_pct\":"
+             << detail::FormatDouble(row.cumulative_return_pct) << ",\"drawdown_pct\":"
+             << detail::FormatDouble(row.drawdown_pct) << ",\"position_value\":"
+             << detail::FormatDouble(row.position_value) << ",\"trades_count\":" << row.trades_count
+             << ",\"turnover\":" << detail::FormatDouble(row.turnover) << ",\"market_regime\":\""
+             << JsonEscape(row.market_regime) << "\"}";
+    }
+    json << "],\n"
+         << "    \"trades\": [";
+    for (std::size_t i = 0; i < result.trades.size(); ++i) {
+        if (i > 0) {
+            json << ", ";
+        }
+        const TradeRecord& row = result.trades[i];
+        json << "{\"trade_id\":\"" << JsonEscape(row.trade_id) << "\",\"order_id\":\""
+             << JsonEscape(row.order_id) << "\",\"symbol\":\"" << JsonEscape(row.symbol)
+             << "\",\"exchange\":\"" << JsonEscape(row.exchange) << "\",\"side\":\""
+             << JsonEscape(row.side) << "\",\"offset\":\"" << JsonEscape(row.offset)
+             << "\",\"volume\":" << row.volume << ",\"price\":"
+             << detail::FormatDouble(row.price) << ",\"timestamp_ns\":" << row.timestamp_ns
+             << ",\"commission\":" << detail::FormatDouble(row.commission) << ",\"slippage\":"
+             << detail::FormatDouble(row.slippage) << ",\"realized_pnl\":"
+             << detail::FormatDouble(row.realized_pnl) << ",\"strategy_id\":\""
+             << JsonEscape(row.strategy_id) << "\",\"signal_type\":\""
+             << JsonEscape(row.signal_type) << "\",\"regime_at_entry\":\""
+             << JsonEscape(row.regime_at_entry) << "\"}";
+    }
+    json << "],\n"
+         << "    \"orders\": [";
+    for (std::size_t i = 0; i < result.orders.size(); ++i) {
+        if (i > 0) {
+            json << ", ";
+        }
+        const OrderRecord& row = result.orders[i];
+        json << "{\"order_id\":\"" << JsonEscape(row.order_id) << "\",\"client_order_id\":\""
+             << JsonEscape(row.client_order_id) << "\",\"symbol\":\"" << JsonEscape(row.symbol)
+             << "\",\"type\":\"" << JsonEscape(row.type) << "\",\"side\":\""
+             << JsonEscape(row.side) << "\",\"offset\":\"" << JsonEscape(row.offset)
+             << "\",\"price\":" << detail::FormatDouble(row.price) << ",\"volume\":" << row.volume
+             << ",\"status\":\"" << JsonEscape(row.status) << "\",\"filled_volume\":"
+             << row.filled_volume << ",\"avg_fill_price\":"
+             << detail::FormatDouble(row.avg_fill_price) << ",\"created_at_ns\":"
+             << row.created_at_ns << ",\"last_update_ns\":" << row.last_update_ns
+             << ",\"strategy_id\":\"" << JsonEscape(row.strategy_id) << "\",\"cancel_reason\":\""
+             << JsonEscape(row.cancel_reason) << "\"}";
+    }
+    json << "],\n"
+         << "    \"regime_performance\": [";
+    for (std::size_t i = 0; i < result.regime_performance.size(); ++i) {
+        if (i > 0) {
+            json << ", ";
+        }
+        const RegimePerformance& row = result.regime_performance[i];
+        json << "{\"regime\":\"" << JsonEscape(row.regime) << "\",\"total_days\":"
+             << row.total_days << ",\"trades_count\":" << row.trades_count << ",\"win_rate\":"
+             << detail::FormatDouble(row.win_rate) << ",\"average_return_pct\":"
+             << detail::FormatDouble(row.average_return_pct) << ",\"total_pnl\":"
+             << detail::FormatDouble(row.total_pnl) << ",\"sharpe\":"
+             << detail::FormatDouble(row.sharpe) << ",\"max_drawdown_pct\":"
+             << detail::FormatDouble(row.max_drawdown_pct) << "}";
+    }
+    json << "],\n"
+         << "    \"position_history\": [";
+    for (std::size_t i = 0; i < result.position_history.size(); ++i) {
+        if (i > 0) {
+            json << ", ";
+        }
+        const PositionSnapshot& row = result.position_history[i];
+        json << "{\"timestamp_ns\":" << row.timestamp_ns << ",\"symbol\":\""
+             << JsonEscape(row.symbol) << "\",\"net_position\":" << row.net_position
+             << ",\"avg_price\":" << detail::FormatDouble(row.avg_price)
+             << ",\"unrealized_pnl\":" << detail::FormatDouble(row.unrealized_pnl) << "}";
+    }
+    json << "],\n"
+         << "    \"monte_carlo\": {\n"
+         << "      \"simulations\": " << result.monte_carlo.simulations << ",\n"
+         << "      \"mean_final_capital\": "
+         << detail::FormatDouble(result.monte_carlo.mean_final_capital) << ",\n"
+         << "      \"ci_95_lower\": " << detail::FormatDouble(result.monte_carlo.ci_95_lower)
+         << ",\n"
+         << "      \"ci_95_upper\": " << detail::FormatDouble(result.monte_carlo.ci_95_upper)
+         << ",\n"
+         << "      \"prob_loss\": " << detail::FormatDouble(result.monte_carlo.prob_loss) << ",\n"
+         << "      \"max_drawdown_95\": "
+         << detail::FormatDouble(result.monte_carlo.max_drawdown_95) << "\n"
+         << "    },\n"
+         << "    \"factor_exposure\": [";
+    for (std::size_t i = 0; i < result.factor_exposure.size(); ++i) {
+        if (i > 0) {
+            json << ", ";
+        }
+        const FactorExposure& row = result.factor_exposure[i];
+        json << "{\"factor\":\"" << JsonEscape(row.factor) << "\",\"exposure\":"
+             << detail::FormatDouble(row.exposure) << ",\"t_stat\":"
+             << detail::FormatDouble(row.t_stat) << "}";
+    }
+    json << "]\n"
          << "  }\n"
          << "}\n";
     return json.str();

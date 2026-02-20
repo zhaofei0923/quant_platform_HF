@@ -364,6 +364,26 @@ std::int64_t ReadInt64ArrayValue(const std::shared_ptr<arrow::Array>& values, st
     }
 }
 
+template <typename ReaderPtr>
+auto OpenParquetReader(const std::shared_ptr<arrow::io::RandomAccessFile>& input,
+                       ReaderPtr* reader, int)
+    -> decltype(parquet::arrow::OpenFile(input, arrow::default_memory_pool()), bool()) {
+    auto reader_result = parquet::arrow::OpenFile(input, arrow::default_memory_pool());
+    if (!reader_result.ok()) {
+        return false;
+    }
+    *reader = std::move(reader_result).ValueOrDie();
+    return *reader != nullptr;
+}
+
+template <typename ReaderPtr>
+auto OpenParquetReader(const std::shared_ptr<arrow::io::RandomAccessFile>& input,
+                       ReaderPtr* reader, long)
+    -> decltype(parquet::arrow::OpenFile(input, arrow::default_memory_pool(), reader), bool()) {
+    auto reader_status = parquet::arrow::OpenFile(input, arrow::default_memory_pool(), reader);
+    return reader_status.ok() && *reader != nullptr;
+}
+
 bool AppendTicksFromParquet(const std::filesystem::path& parquet_path,
                             const std::string& default_symbol, const Timestamp& start,
                             const Timestamp& end, std::vector<Tick>* out,
@@ -385,9 +405,7 @@ bool AppendTicksFromParquet(const std::filesystem::path& parquet_path,
     }
 
     std::unique_ptr<parquet::arrow::FileReader> reader;
-    auto reader_status =
-        parquet::arrow::OpenFile(input_res.ValueOrDie(), arrow::default_memory_pool(), &reader);
-    if (!reader_status.ok() || reader == nullptr) {
+    if (!OpenParquetReader(input_res.ValueOrDie(), &reader, 0)) {
         return false;
     }
 

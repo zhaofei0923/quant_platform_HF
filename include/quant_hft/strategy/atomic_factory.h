@@ -7,7 +7,6 @@
 #include <unordered_map>
 
 #include "quant_hft/strategy/atomic_strategy.h"
-#include "quant_hft/strategy/composite_strategy.h"
 
 namespace quant_hft {
 
@@ -18,8 +17,9 @@ class AtomicFactory {
     static AtomicFactory& Instance();
 
     bool Register(const std::string& type, Creator creator, std::string* error = nullptr);
-    std::unique_ptr<IAtomicStrategy> Create(const AtomicStrategyDefinition& definition,
-                                            std::string* error = nullptr) const;
+    std::unique_ptr<IAtomicStrategy> Create(const std::string& type,
+                                            std::string* error = nullptr,
+                                            const std::string& strategy_id = "") const;
     bool Has(const std::string& type) const;
 
    private:

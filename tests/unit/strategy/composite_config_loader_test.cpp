@@ -10,84 +10,172 @@
 namespace quant_hft {
 namespace {
 
-std::filesystem::path WriteTempCompositeConfig(const std::string& content) {
-    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    const auto path = std::filesystem::temp_directory_path() /
-                      ("quant_hft_composite_config_loader_test_" + std::to_string(stamp) + ".yaml");
+std::filesystem::path WriteTempFile(const std::filesystem::path& path, const std::string& content) {
+    std::filesystem::create_directories(path.parent_path());
     std::ofstream out(path);
     out << content;
     out.close();
     return path;
 }
 
-TEST(CompositeConfigLoaderTest, LoadsValidCompositeConfigYamlSubset) {
-    const auto path = WriteTempCompositeConfig(
-        "composite:\n"
-        "  merge_rule: kPriority\n"
-        "  opening_strategies:\n"
-        "    - id: trend_open\n"
-        "      type: TrendOpening\n"
-        "      market_regimes: [kStrongTrend, kWeakTrend]\n"
-        "      params:\n"
-        "        volume: 1\n"
-        "        kama_er_period: 10\n"
-        "  stop_loss_strategies:\n"
-        "    - id: atr_sl\n"
-        "      type: ATRStopLoss\n"
-        "      params:\n"
-        "        atr_period: 14\n"
-        "        atr_multiplier: 2.0\n"
-        "  time_filters:\n"
-        "    - id: night_filter\n"
-        "      type: TimeFilter\n"
-        "      params:\n"
-        "        start_hour: 21\n"
-        "        end_hour: 2\n"
-        "        timezone: Asia/Shanghai\n");
+std::filesystem::path MakeTempDir(const std::string& stem) {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto path = std::filesystem::temp_directory_path() / (stem + "_" + std::to_string(stamp));
+    std::filesystem::create_directories(path);
+    return path;
+}
+
+TEST(CompositeConfigLoaderTest, LoadsV2YamlSubStrategiesWithEnabledAndRegimeGate) {
+    const std::filesystem::path root = MakeTempDir("quant_hft_composite_v2_yaml");
+    WriteTempFile(root / "sub" / "kama.yaml",
+                  "params:\n"
+                  "  id: kama_1\n"
+                  "  er_period: 10\n"
+                  "  fast_period: 2\n"
+                  "  slow_period: 30\n");
+    WriteTempFile(root / "sub" / "trend.yaml",
+                  "params:\n"
+                  "  id: trend_1\n"
+                  "  er_period: 10\n"
+                  "  fast_period: 2\n"
+                  "  slow_period: 30\n");
+
+    const std::filesystem::path path =
+        WriteTempFile(root / "composite.yaml",
+                      "composite:\n"
+                      "  merge_rule: kPriority\n"
+                      "  sub_strategies:\n"
+                      "    - id: kama_1\n"
+                      "      enabled: true\n"
+                      "      type: KamaTrendStrategy\n"
+                      "      config_path: ./sub/kama.yaml\n"
+                      "      entry_market_regimes: [kStrongTrend, kWeakTrend]\n"
+                      "    - id: trend_1\n"
+                      "      enabled: false\n"
+                      "      type: TrendStrategy\n"
+                      "      config_path: ./sub/trend.yaml\n");
 
     CompositeStrategyDefinition definition;
     std::string error;
-    EXPECT_TRUE(LoadCompositeStrategyDefinition(path.string(), &definition, &error)) << error;
-    EXPECT_EQ(definition.merge_rule, SignalMergeRule::kPriority);
-    ASSERT_EQ(definition.opening_strategies.size(), 1U);
-    EXPECT_EQ(definition.opening_strategies.front().id, "trend_open");
-    EXPECT_EQ(definition.opening_strategies.front().type, "TrendOpening");
-    ASSERT_EQ(definition.opening_strategies.front().market_regimes.size(), 2U);
-    EXPECT_EQ(definition.opening_strategies.front().market_regimes[0], MarketRegime::kStrongTrend);
-    EXPECT_EQ(definition.opening_strategies.front().market_regimes[1], MarketRegime::kWeakTrend);
-    ASSERT_EQ(definition.time_filters.size(), 1U);
-    EXPECT_EQ(definition.time_filters.front().params.at("timezone"), "Asia/Shanghai");
+    ASSERT_TRUE(LoadCompositeStrategyDefinition(path.string(), &definition, &error)) << error;
+    ASSERT_EQ(definition.sub_strategies.size(), 2U);
+    EXPECT_EQ(definition.sub_strategies[0].id, "kama_1");
+    EXPECT_TRUE(definition.sub_strategies[0].enabled);
+    EXPECT_EQ(definition.sub_strategies[0].type, "KamaTrendStrategy");
+    ASSERT_EQ(definition.sub_strategies[0].entry_market_regimes.size(), 2U);
+    EXPECT_EQ(definition.sub_strategies[0].entry_market_regimes[0], MarketRegime::kStrongTrend);
+    EXPECT_EQ(definition.sub_strategies[0].entry_market_regimes[1], MarketRegime::kWeakTrend);
+    EXPECT_EQ(definition.sub_strategies[1].id, "trend_1");
+    EXPECT_FALSE(definition.sub_strategies[1].enabled);
+    EXPECT_EQ(definition.sub_strategies[1].type, "TrendStrategy");
+    EXPECT_EQ(definition.sub_strategies[1].params.at("er_period"), "10");
 
-    std::filesystem::remove(path);
+    std::filesystem::remove_all(root);
 }
 
-TEST(CompositeConfigLoaderTest, RejectsInvalidMergeRuleWithLineNumber) {
-    const auto path = WriteTempCompositeConfig(
-        "composite:\n"
-        "  merge_rule: kUnknown\n");
+TEST(CompositeConfigLoaderTest, RejectsLegacyStrategySections) {
+    const std::filesystem::path root = MakeTempDir("quant_hft_composite_v2_legacy_section");
+    const std::filesystem::path path =
+        WriteTempFile(root / "legacy.yaml",
+                      "composite:\n"
+                      "  merge_rule: kPriority\n"
+                      "  opening_strategies:\n"
+                      "    - id: legacy\n"
+                      "      type: TrendOpening\n");
 
     CompositeStrategyDefinition definition;
     std::string error;
     EXPECT_FALSE(LoadCompositeStrategyDefinition(path.string(), &definition, &error));
-    EXPECT_NE(error.find("line"), std::string::npos);
-    EXPECT_NE(error.find("merge_rule"), std::string::npos);
+    EXPECT_NE(error.find("opening_strategies"), std::string::npos);
+    EXPECT_NE(error.find("sub_strategies"), std::string::npos);
 
-    std::filesystem::remove(path);
+    std::filesystem::remove_all(root);
 }
 
-TEST(CompositeConfigLoaderTest, RejectsUnknownFieldWithLineNumber) {
-    const auto path = WriteTempCompositeConfig(
-        "composite:\n"
-        "  merge_rule: kPriority\n"
-        "  unsupported_field: true\n");
+TEST(CompositeConfigLoaderTest, RejectsLegacyMarketRegimesField) {
+    const std::filesystem::path root = MakeTempDir("quant_hft_composite_v2_legacy_regimes");
+    const std::filesystem::path path =
+        WriteTempFile(root / "legacy_regime.yaml",
+                      "composite:\n"
+                      "  merge_rule: kPriority\n"
+                      "  sub_strategies:\n"
+                      "    - id: kama_1\n"
+                      "      enabled: true\n"
+                      "      type: KamaTrendStrategy\n"
+                      "      params:\n"
+                      "        id: kama_1\n"
+                      "      market_regimes: [kStrongTrend]\n");
 
     CompositeStrategyDefinition definition;
     std::string error;
     EXPECT_FALSE(LoadCompositeStrategyDefinition(path.string(), &definition, &error));
-    EXPECT_NE(error.find("line"), std::string::npos);
-    EXPECT_NE(error.find("unsupported_field"), std::string::npos);
+    EXPECT_NE(error.find("market_regimes"), std::string::npos);
+    EXPECT_NE(error.find("entry_market_regimes"), std::string::npos);
 
-    std::filesystem::remove(path);
+    std::filesystem::remove_all(root);
+}
+
+TEST(CompositeConfigLoaderTest, RejectsLegacyStrategyTypeNames) {
+    const std::filesystem::path root = MakeTempDir("quant_hft_composite_v2_legacy_type");
+    const std::filesystem::path path =
+        WriteTempFile(root / "legacy_type.yaml",
+                      "composite:\n"
+                      "  merge_rule: kPriority\n"
+                      "  sub_strategies:\n"
+                      "    - id: kama_1\n"
+                      "      enabled: true\n"
+                      "      type: KamaTrendOpening\n"
+                      "      params:\n"
+                      "        id: kama_1\n");
+
+    CompositeStrategyDefinition definition;
+    std::string error;
+    EXPECT_FALSE(LoadCompositeStrategyDefinition(path.string(), &definition, &error));
+    EXPECT_NE(error.find("legacy strategy type"), std::string::npos);
+    EXPECT_NE(error.find("KamaTrendStrategy"), std::string::npos);
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(CompositeConfigLoaderTest, LoadsV2JsonCompositeConfig) {
+    const std::filesystem::path root = MakeTempDir("quant_hft_composite_v2_json");
+    WriteTempFile(root / "sub" / "kama.json",
+                  "{\n"
+                  "  \"params\": {\n"
+                  "    \"id\": \"kama_1\",\n"
+                  "    \"er_period\": \"10\",\n"
+                  "    \"fast_period\": \"2\",\n"
+                  "    \"slow_period\": \"30\"\n"
+                  "  }\n"
+                  "}\n");
+    const std::filesystem::path path =
+        WriteTempFile(root / "composite.json",
+                      "{\n"
+                      "  \"composite\": {\n"
+                      "    \"merge_rule\": \"kPriority\",\n"
+                      "    \"sub_strategies\": [\n"
+                      "      {\n"
+                      "        \"id\": \"kama_1\",\n"
+                      "        \"enabled\": true,\n"
+                      "        \"type\": \"KamaTrendStrategy\",\n"
+                      "        \"config_path\": \"./sub/kama.json\",\n"
+                      "        \"entry_market_regimes\": [\"kStrongTrend\", \"kWeakTrend\"]\n"
+                      "      }\n"
+                      "    ]\n"
+                      "  }\n"
+                      "}\n");
+
+    CompositeStrategyDefinition definition;
+    std::string error;
+    ASSERT_TRUE(LoadCompositeStrategyDefinition(path.string(), &definition, &error)) << error;
+    ASSERT_EQ(definition.sub_strategies.size(), 1U);
+    EXPECT_EQ(definition.sub_strategies[0].id, "kama_1");
+    EXPECT_TRUE(definition.sub_strategies[0].enabled);
+    EXPECT_EQ(definition.sub_strategies[0].type, "KamaTrendStrategy");
+    ASSERT_EQ(definition.sub_strategies[0].entry_market_regimes.size(), 2U);
+    EXPECT_EQ(definition.sub_strategies[0].params.at("er_period"), "10");
+
+    std::filesystem::remove_all(root);
 }
 
 }  // namespace

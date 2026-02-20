@@ -20,17 +20,20 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 #include "quant_hft/apps/cli_support.h"
 #include "quant_hft/backtest/indicator_trace_parquet_writer.h"
 #include "quant_hft/backtest/parquet_data_feed.h"
+#include "quant_hft/backtest/product_fee_config_loader.h"
 #include "quant_hft/backtest/sub_strategy_indicator_trace_parquet_writer.h"
 #include "quant_hft/common/timestamp.h"
 #include "quant_hft/services/market_state_detector.h"
 #include "quant_hft/strategy/composite_strategy.h"
 #include "quant_hft/strategy/demo_live_strategy.h"
+#include "quant_hft/strategy/strategy_main_config_loader.h"
 #include "quant_hft/strategy/strategy_registry.h"
 
 namespace quant_hft::apps {
@@ -86,6 +89,15 @@ inline std::string GetArgAny(const ArgMap& args, std::initializer_list<const cha
         }
     }
     return fallback;
+}
+
+inline bool HasArgAny(const ArgMap& args, std::initializer_list<const char*> keys) {
+    for (const char* key : keys) {
+        if (args.find(key) != args.end()) {
+            return true;
+        }
+    }
+    return false;
 }
 
 inline bool ParseBool(const std::string& raw, bool* out) {
@@ -707,6 +719,9 @@ struct BacktestCliSpec {
     std::string wal_path;
     std::string account_id{"sim-account"};
     std::string run_id;
+    double initial_equity{1'000'000.0};
+    std::string product_config_path;
+    std::string strategy_main_config_path;
     std::string strategy_factory{"demo"};
     std::string strategy_composite_config;
     bool emit_state_snapshots{false};
@@ -756,6 +771,14 @@ struct InstrumentPnlSnapshot {
 };
 
 struct BacktestPerformanceSummary {
+    double initial_equity{0.0};
+    double final_equity{0.0};
+    double total_commission{0.0};
+    double total_pnl_after_cost{0.0};
+    double max_margin_used{0.0};
+    double final_margin_used{0.0};
+    std::int64_t margin_clipped_orders{0};
+    std::int64_t margin_rejected_orders{0};
     double total_realized_pnl{0.0};
     double total_unrealized_pnl{0.0};
     double total_pnl{0.0};
@@ -818,6 +841,8 @@ struct BacktestCliResult {
     std::string data_source;
     std::string engine_mode;
     std::string rollover_mode;
+    double initial_equity{0.0};
+    double final_equity{0.0};
     BacktestCliSpec spec;
     std::string input_signature;
     std::string data_signature;
@@ -857,6 +882,27 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
     }
 
     BacktestCliSpec spec;
+    const bool has_symbols = detail::HasArgAny(args, {"symbols", "symbol"});
+    const bool has_start_date = detail::HasArgAny(args, {"start_date", "start-date"});
+    const bool has_end_date = detail::HasArgAny(args, {"end_date", "end-date"});
+    const bool has_strategy_factory =
+        detail::HasArgAny(args, {"strategy_factory", "strategy-factory"});
+    const bool has_strategy_composite_config =
+        detail::HasArgAny(args, {"strategy_composite_config", "strategy-composite-config"});
+    const bool has_initial_equity = detail::HasArgAny(args, {"initial_equity", "initial-equity"});
+    const bool has_product_config_path =
+        detail::HasArgAny(args, {"product_config_path", "product-config-path"});
+    const bool has_max_loss_percent =
+        detail::HasArgAny(args, {"max_loss_percent", "max-loss-percent"});
+
+    if (has_max_loss_percent) {
+        if (error != nullptr) {
+            *error = "max_loss_percent has been removed; configure risk_per_trade_pct in each "
+                     "sub strategy params";
+        }
+        return false;
+    }
+
     spec.csv_path = detail::GetArgAny(args, {"csv_path", "csv-path", "csv"});
     spec.dataset_root =
         detail::GetArgAny(args, {"dataset_root", "dataset-root", "parquet_root", "parquet-root"});
@@ -876,6 +922,11 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
     spec.account_id = detail::GetArgAny(args, {"account_id", "account-id"}, "sim-account");
     spec.run_id = detail::GetArgAny(args, {"run_id", "run-id"},
                                     "backtest-" + std::to_string(UnixEpochMillisNow()));
+    spec.initial_equity = 1'000'000.0;
+    spec.product_config_path =
+        detail::GetArgAny(args, {"product_config_path", "product-config-path"});
+    spec.strategy_main_config_path =
+        detail::GetArgAny(args, {"strategy_main_config_path", "strategy-main-config-path"});
     spec.strategy_factory =
         detail::ToLower(detail::GetArgAny(args, {"strategy_factory", "strategy-factory"}, "demo"));
     spec.strategy_composite_config =
@@ -915,7 +966,18 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
             }
         }
     }
-
+    {
+        const std::string raw_initial =
+            detail::GetArgAny(args, {"initial_equity", "initial-equity"}, "1000000");
+        double parsed = 0.0;
+        if (!detail::ParseDouble(raw_initial, &parsed)) {
+            if (error != nullptr) {
+                *error = "invalid initial_equity: " + raw_initial;
+            }
+            return false;
+        }
+        spec.initial_equity = parsed;
+    }
     {
         const std::string raw_det =
             detail::GetArgAny(args, {"deterministic_fills", "deterministic-fills"}, "true");
@@ -994,6 +1056,39 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
         }
         spec.strict_parquet = parsed;
     }
+    if (!spec.strategy_main_config_path.empty()) {
+        StrategyMainConfig main_config;
+        if (!LoadStrategyMainConfig(spec.strategy_main_config_path, &main_config, error)) {
+            return false;
+        }
+        if (main_config.run_type != "backtest") {
+            if (error != nullptr) {
+                *error = "strategy_main_config run_type must be backtest for backtest replay";
+            }
+            return false;
+        }
+        if (!has_initial_equity) {
+            spec.initial_equity = main_config.backtest.initial_equity;
+        }
+        if (!has_symbols && !main_config.backtest.symbols.empty()) {
+            spec.symbols = main_config.backtest.symbols;
+        }
+        if (!has_start_date && !main_config.backtest.start_date.empty()) {
+            spec.start_date = detail::NormalizeTradingDay(main_config.backtest.start_date);
+        }
+        if (!has_end_date && !main_config.backtest.end_date.empty()) {
+            spec.end_date = detail::NormalizeTradingDay(main_config.backtest.end_date);
+        }
+        if (!has_product_config_path && !main_config.backtest.product_config_path.empty()) {
+            spec.product_config_path = main_config.backtest.product_config_path;
+        }
+        if (!has_strategy_factory) {
+            spec.strategy_factory = "composite";
+        }
+        if (!has_strategy_composite_config) {
+            spec.strategy_composite_config = spec.strategy_main_config_path;
+        }
+    }
 
     if (spec.engine_mode != "csv" && spec.engine_mode != "parquet" &&
         spec.engine_mode != "core_sim") {
@@ -1018,6 +1113,12 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
     if (spec.rollover_slippage_bps < 0.0) {
         if (error != nullptr) {
             *error = "rollover_slippage_bps must be non-negative";
+        }
+        return false;
+    }
+    if (!(spec.initial_equity > 0.0)) {
+        if (error != nullptr) {
+            *error = "initial_equity must be > 0";
         }
         return false;
     }
@@ -1112,7 +1213,11 @@ inline std::string BuildInputSignature(const BacktestCliSpec& spec) {
         << (spec.max_ticks.has_value() ? std::to_string(spec.max_ticks.value()) : "null") << ';'
         << "deterministic_fills=" << (spec.deterministic_fills ? "true" : "false") << ';'
         << "wal_path=" << spec.wal_path << ';' << "account_id=" << spec.account_id << ';'
-        << "run_id=" << spec.run_id << ';' << "strategy_factory=" << spec.strategy_factory << ';'
+        << "run_id=" << spec.run_id << ';'
+        << "initial_equity=" << detail::FormatDouble(spec.initial_equity) << ';'
+        << "product_config_path=" << spec.product_config_path << ';'
+        << "strategy_main_config_path=" << spec.strategy_main_config_path << ';'
+        << "strategy_factory=" << spec.strategy_factory << ';'
         << "strategy_composite_config=" << spec.strategy_composite_config << ';'
         << "emit_state_snapshots=" << (spec.emit_state_snapshots ? "true" : "false") << ';'
         << "emit_indicator_trace=" << (spec.emit_indicator_trace ? "true" : "false") << ';'
@@ -1477,17 +1582,115 @@ inline bool ValidatePartitionMetaFile(const std::filesystem::path& meta_path, st
 }
 
 inline std::string SourceFilterFromSymbols(const std::vector<std::string>& symbols) {
-    std::set<std::string> prefixes;
+    std::set<std::string> product_prefixes;
     for (const std::string& symbol : symbols) {
-        const std::string prefix = detail::InstrumentSymbolPrefix(symbol);
+        const std::string trimmed = detail::Trim(symbol);
+        if (trimmed.empty()) {
+            continue;
+        }
+        bool has_digit = false;
+        for (unsigned char ch : trimmed) {
+            if (std::isdigit(ch) != 0) {
+                has_digit = true;
+                break;
+            }
+        }
+        if (has_digit) {
+            continue;
+        }
+        const std::string prefix = detail::InstrumentSymbolPrefix(trimmed);
         if (!prefix.empty()) {
-            prefixes.insert(prefix);
+            product_prefixes.insert(prefix);
         }
     }
-    if (prefixes.size() == 1U) {
-        return *prefixes.begin();
+    if (product_prefixes.size() == 1U) {
+        return *product_prefixes.begin();
     }
     return "";
+}
+
+struct ParquetSymbolSelection {
+    std::vector<std::string> instrument_ids;
+    std::vector<std::string> product_symbols;
+};
+
+inline ParquetSymbolSelection BuildParquetSymbolSelection(const std::vector<std::string>& symbols) {
+    ParquetSymbolSelection selection;
+    std::set<std::string> instrument_ids;
+    std::set<std::string> product_symbols;
+    for (const std::string& symbol : symbols) {
+        const std::string trimmed = detail::Trim(symbol);
+        if (trimmed.empty()) {
+            continue;
+        }
+
+        bool has_digit = false;
+        for (unsigned char ch : trimmed) {
+            if (std::isdigit(ch) != 0) {
+                has_digit = true;
+                break;
+            }
+        }
+
+        if (has_digit) {
+            instrument_ids.insert(trimmed);
+            continue;
+        }
+
+        const std::string product = detail::InstrumentSymbolPrefix(trimmed);
+        if (!product.empty()) {
+            product_symbols.insert(product);
+        }
+    }
+
+    selection.instrument_ids.assign(instrument_ids.begin(), instrument_ids.end());
+    selection.product_symbols.assign(product_symbols.begin(), product_symbols.end());
+    return selection;
+}
+
+inline std::vector<ParquetPartitionMeta> SelectParquetPartitionsForSymbols(
+    ParquetDataFeed* feed, EpochNanos start_ts_ns, EpochNanos end_ts_ns,
+    const std::vector<std::string>& symbols) {
+    std::vector<ParquetPartitionMeta> selected;
+    if (feed == nullptr) {
+        return selected;
+    }
+    if (start_ts_ns > end_ts_ns) {
+        return selected;
+    }
+
+    const ParquetSymbolSelection selection = BuildParquetSymbolSelection(symbols);
+    std::unordered_set<std::string> seen_paths;
+    auto append_unique = [&](const std::vector<ParquetPartitionMeta>& partitions) {
+        for (const auto& partition : partitions) {
+            if (seen_paths.insert(partition.file_path).second) {
+                selected.push_back(partition);
+            }
+        }
+    };
+
+    if (selection.instrument_ids.empty() && selection.product_symbols.empty()) {
+        append_unique(feed->QueryPartitions(start_ts_ns, end_ts_ns, std::vector<std::string>{},
+                                            std::string{}));
+    } else {
+        if (!selection.instrument_ids.empty()) {
+            append_unique(feed->QueryPartitions(start_ts_ns, end_ts_ns, selection.instrument_ids,
+                                                std::string{}));
+        }
+        for (const std::string& product : selection.product_symbols) {
+            append_unique(
+                feed->QueryPartitions(start_ts_ns, end_ts_ns, std::vector<std::string>{}, product));
+        }
+    }
+
+    std::sort(selected.begin(), selected.end(),
+              [](const ParquetPartitionMeta& left, const ParquetPartitionMeta& right) {
+                  if (left.min_ts_ns != right.min_ts_ns) {
+                      return left.min_ts_ns < right.min_ts_ns;
+                  }
+                  return left.file_path < right.file_path;
+              });
+    return selected;
 }
 
 inline bool LoadParquetTicks(const BacktestCliSpec& spec, std::vector<ReplayTick>* out,
@@ -1547,9 +1750,8 @@ inline bool LoadParquetTicks(const BacktestCliSpec& spec, std::vector<ReplayTick
         }
     }
 
-    const std::string source_filter = SourceFilterFromSymbols(spec.symbols);
-    const auto selected =
-        feed.QueryPartitions(start.ToEpochNanos(), end.ToEpochNanos(), spec.symbols, source_filter);
+    const auto selected = SelectParquetPartitionsForSymbols(&feed, start.ToEpochNanos(),
+                                                            end.ToEpochNanos(), spec.symbols);
 
     out->clear();
     std::vector<std::vector<ReplayTick>> streams;
@@ -1865,8 +2067,8 @@ inline double ComputeUnrealized(std::int32_t net_position, double avg_open_price
     return 0.0;
 }
 
-inline double ComputeTotalEquity(const std::map<std::string, PositionState>& state_by_instrument,
-                                 const std::map<std::string, double>& mark_price_by_instrument) {
+inline double ComputeTotalPnl(const std::map<std::string, PositionState>& state_by_instrument,
+                              const std::map<std::string, double>& mark_price_by_instrument) {
     double total = 0.0;
     for (const auto& [instrument_id, state] : state_by_instrument) {
         double mark = state.avg_open_price;
@@ -1876,6 +2078,47 @@ inline double ComputeTotalEquity(const std::map<std::string, PositionState>& sta
         }
         total +=
             state.realized_pnl + ComputeUnrealized(state.net_position, state.avg_open_price, mark);
+    }
+    return total;
+}
+
+inline double ComputeTotalEquity(double initial_equity,
+                                 const std::map<std::string, PositionState>& state_by_instrument,
+                                 const std::map<std::string, double>& mark_price_by_instrument,
+                                 double total_commission) {
+    return initial_equity + ComputeTotalPnl(state_by_instrument, mark_price_by_instrument) -
+           total_commission;
+}
+
+inline double ComputeInstrumentMarginUsed(
+    const std::string& instrument_id, const PositionState& state,
+    const std::map<std::string, double>& mark_price_by_instrument,
+    const ProductFeeBook& product_fee_book) {
+    if (state.net_position == 0) {
+        return 0.0;
+    }
+    const ProductFeeEntry* fee_entry = product_fee_book.Find(instrument_id);
+    if (fee_entry == nullptr) {
+        return 0.0;
+    }
+    double fill_price = state.avg_open_price;
+    const auto mark_it = mark_price_by_instrument.find(instrument_id);
+    if (mark_it != mark_price_by_instrument.end()) {
+        fill_price = mark_it->second;
+    }
+    const Side side = state.net_position > 0 ? Side::kBuy : Side::kSell;
+    return ProductFeeBook::ComputeRequiredMargin(*fee_entry, side, std::abs(state.net_position),
+                                                 fill_price);
+}
+
+inline double ComputeTotalMarginUsed(
+    const std::map<std::string, PositionState>& state_by_instrument,
+    const std::map<std::string, double>& mark_price_by_instrument,
+    const ProductFeeBook& product_fee_book) {
+    double total = 0.0;
+    for (const auto& [instrument_id, state] : state_by_instrument) {
+        total += ComputeInstrumentMarginUsed(instrument_id, state, mark_price_by_instrument,
+                                             product_fee_book);
     }
     return total;
 }
@@ -1978,6 +2221,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     StrategyContext strategy_ctx;
     strategy_ctx.strategy_id = spec.strategy_factory;
     strategy_ctx.account_id = spec.account_id;
+    strategy_ctx.metadata["run_type"] = "backtest";
     strategy_ctx.metadata["strategy_factory"] = spec.strategy_factory;
     if (spec.strategy_factory == "composite") {
         strategy_ctx.metadata["composite_config_path"] = spec.strategy_composite_config;
@@ -2014,6 +2258,31 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     std::map<std::string, std::int64_t> instrument_bars;
     std::map<std::string, std::int64_t> order_status_counts;
     std::vector<double> equity_points;
+    double total_commission = 0.0;
+    double used_margin_total = 0.0;
+    double max_margin_used = 0.0;
+    std::int64_t margin_clipped_orders = 0;
+    std::int64_t margin_rejected_orders = 0;
+    if (spec.deterministic_fills) {
+        equity_points.push_back(spec.initial_equity);
+    }
+
+    ProductFeeBook product_fee_book;
+    bool has_product_fee = false;
+    if (!spec.product_config_path.empty()) {
+        if (!LoadProductFeeConfig(spec.product_config_path, &product_fee_book, error)) {
+            return false;
+        }
+        has_product_fee = true;
+        if (composite_strategy != nullptr) {
+            std::unordered_map<std::string, double> multipliers;
+            if (product_fee_book.ExportContractMultipliers(&multipliers)) {
+                for (const auto& [instrument_id, multiplier] : multipliers) {
+                    composite_strategy->SetBacktestContractMultiplier(instrument_id, multiplier);
+                }
+            }
+        }
+    }
 
     std::map<std::string, std::string> symbol_active_contract;
     std::vector<RolloverEvent> rollover_events;
@@ -2272,6 +2541,23 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             }
         }
 
+        if (has_product_fee) {
+            used_margin_total =
+                ComputeTotalMarginUsed(position_state, mark_price, product_fee_book);
+            max_margin_used = std::max(max_margin_used, used_margin_total);
+            if (composite_strategy != nullptr) {
+                const ProductFeeEntry* entry = product_fee_book.Find(state.instrument_id);
+                if (entry != nullptr && entry->contract_multiplier > 0.0) {
+                    composite_strategy->SetBacktestContractMultiplier(state.instrument_id,
+                                                                      entry->contract_multiplier);
+                }
+            }
+        }
+        if (composite_strategy != nullptr) {
+            const double equity = ComputeTotalEquity(spec.initial_equity, position_state,
+                                                     mark_price, total_commission);
+            composite_strategy->SetBacktestAccountSnapshot(equity, equity - spec.initial_equity);
+        }
         std::vector<SignalIntent> intents = strategy->OnState(state);
 
         if (spec.emit_sub_strategy_indicator_trace) {
@@ -2299,6 +2585,8 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 row.atr = atomic_trace.atr;
                 row.adx = atomic_trace.adx;
                 row.er = atomic_trace.er;
+                row.stop_loss_price = atomic_trace.stop_loss_price;
+                row.take_profit_price = atomic_trace.take_profit_price;
                 row.market_regime = state.market_regime;
                 if (!sub_strategy_indicator_trace_writer.Append(row, error)) {
                     return false;
@@ -2312,12 +2600,86 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             intents_processed += static_cast<std::int64_t>(intents.size());
             for (const SignalIntent& intent : intents) {
                 const double fill_price = last.last_price;
+                const ProductFeeEntry* fee_entry = nullptr;
+                if (has_product_fee) {
+                    fee_entry = product_fee_book.Find(intent.instrument_id);
+                    if (fee_entry == nullptr) {
+                        if (error != nullptr) {
+                            *error = "missing product fee config for instrument_id: " +
+                                     intent.instrument_id;
+                        }
+                        return false;
+                    }
+                }
+
+                std::int32_t exec_volume = intent.volume;
+                if (fee_entry != nullptr && intent.offset == OffsetFlag::kOpen && exec_volume > 0) {
+                    const double account_equity = ComputeTotalEquity(
+                        spec.initial_equity, position_state, mark_price, total_commission);
+                    const double available_margin =
+                        std::max(0.0, account_equity - used_margin_total);
+                    const double per_lot_margin =
+                        ProductFeeBook::ComputePerLotMargin(*fee_entry, intent.side, fill_price);
+                    std::int32_t max_openable = 0;
+                    if (std::isfinite(per_lot_margin) && per_lot_margin > 0.0) {
+                        const double raw_openable = std::floor(available_margin / per_lot_margin);
+                        if (std::isfinite(raw_openable) && raw_openable > 0.0) {
+                            max_openable = static_cast<std::int32_t>(std::min<double>(
+                                raw_openable, std::numeric_limits<std::int32_t>::max()));
+                        }
+                    }
+                    if (max_openable < exec_volume) {
+                        ++margin_clipped_orders;
+                        exec_volume = std::max<std::int32_t>(0, max_openable);
+                    }
+                    if (exec_volume <= 0) {
+                        ++margin_rejected_orders;
+                        ++order_events;
+                        order_status_counts["REJECTED"] += 1;
+                        continue;
+                    }
+                }
+
+                if (exec_volume <= 0) {
+                    continue;
+                }
+
                 PositionState& pnl_state = position_state[intent.instrument_id];
-                ApplyTrade(&pnl_state, intent.side, intent.volume, fill_price);
+                ApplyTrade(&pnl_state, intent.side, exec_volume, fill_price);
+
+                double commission = 0.0;
+                if (fee_entry != nullptr) {
+                    commission = ProductFeeBook::ComputeCommission(*fee_entry, intent.offset,
+                                                                   exec_volume, fill_price);
+                }
+                total_commission += commission;
+                if (has_product_fee) {
+                    used_margin_total =
+                        ComputeTotalMarginUsed(position_state, mark_price, product_fee_book);
+                    max_margin_used = std::max(max_margin_used, used_margin_total);
+                }
 
                 order_events += 2;
                 order_status_counts["ACCEPTED"] += 1;
                 order_status_counts["FILLED"] += 1;
+
+                OrderEvent filled_event;
+                filled_event.account_id = spec.account_id;
+                filled_event.strategy_id = intent.strategy_id;
+                filled_event.client_order_id =
+                    intent.trace_id.empty()
+                        ? ("det-order-" + std::to_string(intents_processed) + "-" +
+                           intent.instrument_id + "-" + std::to_string(intent.ts_ns))
+                        : intent.trace_id;
+                filled_event.instrument_id = intent.instrument_id;
+                filled_event.side = intent.side;
+                filled_event.offset = intent.offset;
+                filled_event.status = OrderStatus::kFilled;
+                filled_event.total_volume = exec_volume;
+                filled_event.filled_volume = exec_volume;
+                filled_event.avg_fill_price = fill_price;
+                filled_event.ts_ns = intent.ts_ns;
+                strategy->OnOrderEvent(filled_event);
 
                 if (wal_out.is_open()) {
                     const std::string accepted_line =
@@ -2333,7 +2695,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                         JsonEscape(intent.trace_id) +
                         "\",\"ts_ns\":" + std::to_string(intent.ts_ns) +
                         ",\"price\":" + detail::FormatDouble(fill_price) +
-                        ",\"filled_volume\":" + std::to_string(intent.volume) + "}";
+                        ",\"filled_volume\":" + std::to_string(exec_volume) + "}";
                     if (detail::WriteWalLine(&wal_out, accepted_line)) {
                         ++wal_records;
                     }
@@ -2343,7 +2705,8 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 }
             }
 
-            equity_points.push_back(ComputeTotalEquity(position_state, mark_price));
+            equity_points.push_back(ComputeTotalEquity(spec.initial_equity, position_state,
+                                                       mark_price, total_commission));
         }
         return true;
     };
@@ -2407,6 +2770,8 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     result.data_source = data_source;
     result.engine_mode = spec.engine_mode;
     result.rollover_mode = spec.rollover_mode;
+    result.initial_equity = spec.initial_equity;
+    result.final_equity = spec.initial_equity;
     result.spec = spec;
     result.spec.strategy_factory = spec.strategy_factory;
     result.spec.strategy_composite_config = spec.strategy_composite_config;
@@ -2488,6 +2853,18 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     deterministic.performance.total_realized_pnl = total_realized_pnl;
     deterministic.performance.total_unrealized_pnl = total_unrealized_pnl;
     deterministic.performance.total_pnl = total_realized_pnl + total_unrealized_pnl;
+    deterministic.performance.initial_equity = spec.initial_equity;
+    deterministic.performance.final_equity =
+        equity_points.empty() ? spec.initial_equity : equity_points.back();
+    deterministic.performance.total_commission = total_commission;
+    deterministic.performance.total_pnl_after_cost =
+        deterministic.performance.total_pnl - deterministic.performance.total_commission;
+    deterministic.performance.max_margin_used = max_margin_used;
+    deterministic.performance.final_margin_used =
+        has_product_fee ? ComputeTotalMarginUsed(position_state, mark_price, product_fee_book)
+                        : 0.0;
+    deterministic.performance.margin_clipped_orders = margin_clipped_orders;
+    deterministic.performance.margin_rejected_orders = margin_rejected_orders;
     deterministic.performance.max_equity = max_equity;
     deterministic.performance.min_equity = min_equity;
     deterministic.performance.max_drawdown = max_drawdown;
@@ -2501,6 +2878,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     result.replay = replay;
     result.has_deterministic = true;
     result.deterministic = deterministic;
+    result.final_equity = deterministic.performance.final_equity;
 
     *out = std::move(result);
     return true;
@@ -2566,6 +2944,8 @@ inline std::string RenderBacktestJson(const BacktestCliResult& result) {
          << "  \"data_source\": \"" << JsonEscape(result.data_source) << "\",\n"
          << "  \"engine_mode\": \"" << JsonEscape(result.engine_mode) << "\",\n"
          << "  \"rollover_mode\": \"" << JsonEscape(result.rollover_mode) << "\",\n"
+         << "  \"initial_equity\": " << detail::FormatDouble(result.initial_equity) << ",\n"
+         << "  \"final_equity\": " << detail::FormatDouble(result.final_equity) << ",\n"
          << "  \"metric_keys\": [\"total_pnl\", \"max_drawdown\", \"win_rate\", \"fill_rate\", "
             "\"capital_efficiency\"],\n"
          << "  \"spec\": {\n"
@@ -2605,6 +2985,11 @@ inline std::string RenderBacktestJson(const BacktestCliResult& result) {
          << "    \"wal_path\": \"" << JsonEscape(result.spec.wal_path) << "\",\n"
          << "    \"account_id\": \"" << JsonEscape(result.spec.account_id) << "\",\n"
          << "    \"run_id\": \"" << JsonEscape(result.spec.run_id) << "\",\n"
+         << "    \"initial_equity\": " << detail::FormatDouble(result.spec.initial_equity) << ",\n"
+         << "    \"product_config_path\": \"" << JsonEscape(result.spec.product_config_path)
+         << "\",\n"
+         << "    \"strategy_main_config_path\": \""
+         << JsonEscape(result.spec.strategy_main_config_path) << "\",\n"
          << "    \"strategy_factory\": \"" << JsonEscape(result.spec.strategy_factory) << "\",\n"
          << "    \"strategy_composite_config\": \""
          << JsonEscape(result.spec.strategy_composite_config) << "\",\n"
@@ -2724,6 +3109,22 @@ inline std::string RenderBacktestJson(const BacktestCliResult& result) {
              << "    \"total_unrealized_pnl\": "
              << detail::FormatDouble(result.deterministic.total_unrealized_pnl) << ",\n"
              << "    \"performance\": {\n"
+             << "      \"initial_equity\": "
+             << detail::FormatDouble(result.deterministic.performance.initial_equity) << ",\n"
+             << "      \"final_equity\": "
+             << detail::FormatDouble(result.deterministic.performance.final_equity) << ",\n"
+             << "      \"total_commission\": "
+             << detail::FormatDouble(result.deterministic.performance.total_commission) << ",\n"
+             << "      \"total_pnl_after_cost\": "
+             << detail::FormatDouble(result.deterministic.performance.total_pnl_after_cost) << ",\n"
+             << "      \"max_margin_used\": "
+             << detail::FormatDouble(result.deterministic.performance.max_margin_used) << ",\n"
+             << "      \"final_margin_used\": "
+             << detail::FormatDouble(result.deterministic.performance.final_margin_used) << ",\n"
+             << "      \"margin_clipped_orders\": "
+             << result.deterministic.performance.margin_clipped_orders << ",\n"
+             << "      \"margin_rejected_orders\": "
+             << result.deterministic.performance.margin_rejected_orders << ",\n"
              << "      \"total_realized_pnl\": "
              << detail::FormatDouble(result.deterministic.performance.total_realized_pnl) << ",\n"
              << "      \"total_unrealized_pnl\": "

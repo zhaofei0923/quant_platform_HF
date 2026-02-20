@@ -6,6 +6,11 @@
 - 配置文件支持 `${VAR_NAME}` 占位符
 - 运行时入口统一为 C++ 可执行文件
 
+## 配置字典
+
+- 全量字段解释与文件覆盖清单：`docs/ops/config_catalog.md`
+- 配置文档覆盖校验：`python3 scripts/build/verify_config_docs_coverage.py`
+
 ## 配置优先级
 
 1. 命令行参数（如 `--config`）
@@ -42,6 +47,7 @@ ctp:
 
 ## Composite 策略插件配置
 
+- `ctp.run_type`: `live|sim|backtest`。`core_engine` 仅允许 `live|sim`，`backtest` 仅用于回测链路。
 - `ctp.strategy_factory`: 选择策略工厂。默认 `demo`。
 - `ctp.strategy_composite_config`: 仅当 `strategy_factory: composite` 时必填。
 - 路径解析规则：相对路径按 `ctp.yaml` 所在目录解析，启动时会转换为规范路径。
@@ -50,9 +56,91 @@ ctp:
 
 ```yaml
 ctp:
+  run_type: "sim"
   strategy_factory: "composite"
   strategy_composite_config: "../strategies/composite_strategy.yaml"
 ```
+
+## 回测主策略与资金配置
+
+回测支持三层配置：
+
+1. 主策略配置（`strategy_main_config_path`）
+2. 子策略配置（各子策略 `config_path`）
+3. 产品信息配置（`product_config_path`，示例文件 `instrument_info.json`）
+
+推荐主策略配置字段：
+
+- `run_type: backtest`（必需）
+- `market_state_mode: true|false`
+- `backtest.initial_equity`
+- `backtest.symbols/start_date/end_date`
+- `backtest.product_config_path`
+- `composite.sub_strategies[]`（完整子策略）
+
+`backtest.symbols` 在 Parquet 回测支持两种输入：
+
+- 品种（如 `c`）：按 `source=<品种>` 自动选择区间内相关合约分区
+- 合约（如 `rb2405`）：按 `instrument_id` 精确选择，兼容历史配置
+
+CLI 优先级：`CLI 参数 > strategy_main_config > 默认值`。
+
+当 `strategy_main_config_path` 提供且 `run_type != backtest` 时，回测入口会直接报错。
+
+## 产品信息配置（YAML/JSON）
+
+支持 `instrument_id` 精确匹配和 `symbol` 前缀回退匹配。配置同时包含手续费、每手乘数、保证金率。
+手续费模式：
+
+- `rate`: 按成交额比例
+- `per_lot`: 按手固定
+
+示例：
+
+```yaml
+products:
+  rb2405:
+    symbol: rb
+    contract_multiplier: 10
+    long_margin_ratio: 0.16
+    short_margin_ratio: 0.16
+    open_mode: rate
+    open_value: 0.0001
+    close_mode: per_lot
+    close_value: 2
+    close_today_mode: per_lot
+    close_today_value: 3
+```
+
+默认推荐直接使用 `instrument_info.json`（`volume_multiple + commission.*_ratio_by_*`）自动映射。
+JSON 形态支持两种写法：
+
+- 包装写法：`{ "products": { ... } }`
+- 原始写法：`{ "RB": {...}, "MA": {...} }`（与 `instrument_info.json` 根结构一致）
+
+仍兼容 `products_info.yaml`（内容与 `instrument_info.json` 对齐）。
+
+回测中若配置了 `product_config_path` 但找不到当前 `instrument_id` 的产品项，会 fail-fast 退出。
+
+## 回测资金与结果口径
+
+- 开仓风险资金：由各子策略 `risk_per_trade_pct` 自行计算
+- 保证金约束：`available_margin = max(0, account_equity - used_margin_total)`
+- 开仓自动缩量：`max_openable = floor(available_margin / per_lot_margin)`，`volume=min(requested,max_openable)`
+- 手续费口径：按产品费率配置计入 `total_commission`
+- 权益口径：`final_equity = initial_equity + total_pnl_after_cost`
+- `total_pnl_after_cost = total_pnl - total_commission`
+
+结果 JSON 的 `deterministic.performance` 中包含：
+
+- `initial_equity`
+- `final_equity`
+- `total_commission`
+- `total_pnl_after_cost`
+- `max_margin_used`
+- `final_margin_used`
+- `margin_clipped_orders`
+- `margin_rejected_orders`
 
 ## 研究回放指标轨迹落盘
 
@@ -83,6 +171,7 @@ ctp:
 
 - `strategy_id`, `strategy_type`
 - `kama`, `atr`, `adx`, `er`（不可用字段为 `NULL`）
+- `stop_loss_price`, `take_profit_price`（nullable）
 
 示例：
 
@@ -129,6 +218,8 @@ ctp:
 ```bash
 bash scripts/build/dependency_audit.sh --build-dir build
 bash scripts/build/repo_purity_check.sh --repo-root .
+python3 scripts/build/verify_products_info_sync.py
+python3 scripts/build/verify_config_docs_coverage.py
 ```
 
 ## 安全建议

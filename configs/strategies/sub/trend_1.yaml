@@ -1,0 +1,19 @@
+# CONFIG DOC
+# Purpose: TrendStrategy 完整子策略参数（entry + sizing + stop/take）。
+# Consumer: atomic_factory / TrendStrategy
+# Field dictionary: docs/ops/config_catalog.md (`configs/strategies/sub/trend_1.yaml`)
+
+params:
+  id: trend_1
+  er_period: 10
+  fast_period: 2
+  slow_period: 30
+  kama_filter: 0.0
+  risk_per_trade_pct: 0.01
+  default_volume: 1
+  stop_loss_mode: trailing_atr
+  stop_loss_atr_period: 14
+  stop_loss_atr_multiplier: 2.0
+  take_profit_mode: atr_target
+  take_profit_atr_period: 14
+  take_profit_atr_multiplier: 3.0

@@ -1,0 +1,28 @@
+# CONFIG DOC
+# Purpose: 回测主策略入口配置（Composite V2）。
+# Consumer: strategy_main_config_loader / backtest_replay_support
+# Field dictionary: docs/ops/config_catalog.md (`configs/strategies/main_backtest_strategy.yaml`)
+
+run_type: backtest
+market_state_mode: true
+
+backtest:
+  initial_equity: 200000
+  symbols: [c]
+  start_date: 20240101
+  end_date: 20240131
+  product_config_path: ./instrument_info.json
+
+composite:
+  merge_rule: kPriority
+  sub_strategies:
+    - id: kama_trend_1
+      enabled: true
+      type: KamaTrendStrategy
+      config_path: ./sub/kama_trend_1.yaml
+      entry_market_regimes: [kStrongTrend, kWeakTrend]
+    - id: trend_1
+      enabled: false
+      type: TrendStrategy
+      config_path: ./sub/trend_1.yaml
+      entry_market_regimes: [kStrongTrend]

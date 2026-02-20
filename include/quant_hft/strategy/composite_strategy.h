@@ -19,20 +19,20 @@ enum class SignalMergeRule : std::uint8_t {
     kPriority = 0,
 };
 
-struct AtomicStrategyDefinition {
+struct SubStrategyDefinition {
     std::string id;
+    bool enabled{true};
     std::string type;
+    std::string config_path;
     AtomicParams params;
-    std::vector<MarketRegime> market_regimes;
+    std::vector<MarketRegime> entry_market_regimes;
 };
 
 struct CompositeStrategyDefinition {
+    std::string run_type{"live"};
+    bool market_state_mode{true};
     SignalMergeRule merge_rule{SignalMergeRule::kPriority};
-    std::vector<AtomicStrategyDefinition> opening_strategies;
-    std::vector<AtomicStrategyDefinition> stop_loss_strategies;
-    std::vector<AtomicStrategyDefinition> take_profit_strategies;
-    std::vector<AtomicStrategyDefinition> time_filters;
-    std::vector<AtomicStrategyDefinition> risk_control_strategies;
+    std::vector<SubStrategyDefinition> sub_strategies;
 };
 
 struct CompositeAtomicTraceRow {
@@ -42,6 +42,8 @@ struct CompositeAtomicTraceRow {
     std::optional<double> atr;
     std::optional<double> adx;
     std::optional<double> er;
+    std::optional<double> stop_loss_price;
+    std::optional<double> take_profit_price;
 };
 
 class CompositeStrategy : public ILiveStrategy {
@@ -57,11 +59,13 @@ class CompositeStrategy : public ILiveStrategy {
     std::vector<SignalIntent> OnTimer(EpochNanos now_ns) override;
     void Shutdown() override;
     std::vector<CompositeAtomicTraceRow> CollectAtomicIndicatorTrace() const;
+    void SetBacktestAccountSnapshot(double equity, double pnl_after_cost);
+    void SetBacktestContractMultiplier(const std::string& instrument_id, double multiplier);
 
    private:
-    struct OpeningSlot {
-        IOpeningStrategy* strategy{nullptr};
-        std::vector<MarketRegime> market_regimes;
+    struct SubStrategySlot {
+        ISubStrategy* strategy{nullptr};
+        std::vector<MarketRegime> entry_market_regimes;
     };
 
     struct AtomicTraceSlot {
@@ -70,10 +74,14 @@ class CompositeStrategy : public ILiveStrategy {
         IAtomicIndicatorTraceProvider* provider{nullptr};
     };
 
-    bool IsOpeningAllowedByRegime(const OpeningSlot& slot, MarketRegime regime) const;
+    bool IsOpenSignalAllowedByRegime(const SubStrategySlot& slot, MarketRegime regime) const;
+    std::vector<SignalIntent> ApplyNonOpenSignalGate(const std::vector<SignalIntent>& signals);
+    std::vector<SignalIntent> ApplyOpeningGate(const std::vector<SignalIntent>& opening_signals,
+                                               const StateSnapshot7D& state);
     std::vector<SignalIntent> MergeSignals(const std::vector<SignalIntent>& signals) const;
     static int SignalPriority(SignalType signal_type);
     static bool IsPreferredSignal(const SignalIntent& lhs, const SignalIntent& rhs);
+    static bool IsValidRunType(const std::string& run_type);
     void LoadDefinitionFromContext();
     void BuildAtomicStrategies();
 
@@ -84,14 +92,12 @@ class CompositeStrategy : public ILiveStrategy {
     AtomicStrategyContext atomic_context_;
 
     std::vector<std::unique_ptr<IAtomicStrategy>> owned_atomic_strategies_;
-    std::vector<OpeningSlot> opening_strategies_;
-    std::vector<IStopLossStrategy*> stop_loss_strategies_;
-    std::vector<ITakeProfitStrategy*> take_profit_strategies_;
-    std::vector<ITimeFilterStrategy*> time_filters_;
-    std::vector<IRiskControlStrategy*> risk_control_strategies_;
+    std::vector<SubStrategySlot> sub_strategies_;
     std::vector<IAtomicOrderAware*> order_aware_strategies_;
     std::vector<AtomicTraceSlot> trace_providers_;
     std::unordered_map<std::string, std::int32_t> last_filled_volume_by_order_;
+    std::unordered_map<std::string, std::string> position_owner_by_instrument_;
+    std::unordered_map<std::string, SignalIntent> pending_reverse_open_by_instrument_;
 };
 
 bool RegisterCompositeStrategy(std::string* error = nullptr);

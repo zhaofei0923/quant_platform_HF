@@ -23,6 +23,8 @@ struct SubStrategyIndicatorTraceRow {
     std::optional<double> atr;
     std::optional<double> adx;
     std::optional<double> er;
+    std::optional<double> stop_loss_price;
+    std::optional<double> take_profit_price;
     MarketRegime market_regime{MarketRegime::kUnknown};
 };
 

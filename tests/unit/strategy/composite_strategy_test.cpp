@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <cctype>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -15,8 +16,10 @@ namespace quant_hft {
 namespace {
 
 std::vector<std::string>* g_call_log = nullptr;
-std::unordered_map<std::string, std::int32_t>* g_captured_positions = nullptr;
-std::unordered_map<std::string, double>* g_captured_avg_prices = nullptr;
+double* g_captured_account_equity = nullptr;
+double* g_captured_total_pnl_after_cost = nullptr;
+std::string* g_captured_run_type = nullptr;
+std::unordered_map<std::string, double>* g_captured_contract_multipliers = nullptr;
 
 bool ParseBool(const std::string& value) {
     return value == "1" || value == "true" || value == "TRUE";
@@ -24,699 +27,424 @@ bool ParseBool(const std::string& value) {
 
 int ParseInt(const std::string& value) { return std::stoi(value); }
 
+double ParseDouble(const std::string& value) { return std::stod(value); }
+
+std::string ToLower(std::string value) {
+    for (char& ch : value) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return value;
+}
+
 std::string GetOrDefault(const AtomicParams& params, const std::string& key,
                          const std::string& def) {
     const auto it = params.find(key);
     return it == params.end() ? def : it->second;
 }
 
-class TestRiskControl final : public IRiskControlStrategy {
-   public:
-    void Init(const AtomicParams& params) override {
-        id_ = GetOrDefault(params, "id", "risk");
-        emit_ = ParseBool(GetOrDefault(params, "emit", "0"));
-        volume_ = ParseInt(GetOrDefault(params, "volume", "1"));
-        trace_id_ = GetOrDefault(params, "trace_id", "risk");
+std::optional<double> ParseOptionalDouble(const AtomicParams& params, const std::string& key) {
+    const auto it = params.find(key);
+    if (it == params.end() || it->second.empty()) {
+        return std::nullopt;
     }
-    std::string GetId() const override { return id_; }
-    void Reset() override {}
-    std::vector<SignalIntent> OnState(const StateSnapshot7D& state,
-                                      const AtomicStrategyContext& ctx) override {
-        (void)ctx;
-        if (g_call_log != nullptr) {
-            g_call_log->push_back("risk");
-        }
-        if (!emit_) {
-            return {};
-        }
-        SignalIntent signal;
-        signal.strategy_id = id_;
-        signal.instrument_id = state.instrument_id;
-        signal.signal_type = SignalType::kForceClose;
-        signal.side = Side::kSell;
-        signal.offset = OffsetFlag::kClose;
-        signal.volume = volume_;
-        signal.limit_price = state.bar_close;
-        signal.ts_ns = state.ts_ns;
-        signal.trace_id = trace_id_;
-        return {signal};
-    }
-
-   private:
-    std::string id_;
-    bool emit_{false};
-    int volume_{1};
-    std::string trace_id_;
-};
-
-class TestStopLoss final : public IStopLossStrategy {
-   public:
-    void Init(const AtomicParams& params) override {
-        id_ = GetOrDefault(params, "id", "stop");
-        emit_ = ParseBool(GetOrDefault(params, "emit", "0"));
-    }
-    std::string GetId() const override { return id_; }
-    void Reset() override {}
-    std::vector<SignalIntent> OnState(const StateSnapshot7D& state,
-                                      const AtomicStrategyContext& ctx) override {
-        (void)ctx;
-        if (g_call_log != nullptr) {
-            g_call_log->push_back("stop");
-        }
-        if (!emit_) {
-            return {};
-        }
-        SignalIntent signal;
-        signal.strategy_id = id_;
-        signal.instrument_id = state.instrument_id;
-        signal.signal_type = SignalType::kStopLoss;
-        signal.side = Side::kSell;
-        signal.offset = OffsetFlag::kClose;
-        signal.volume = 1;
-        signal.limit_price = state.bar_close;
-        signal.ts_ns = state.ts_ns;
-        signal.trace_id = "stop";
-        return {signal};
-    }
-
-   private:
-    std::string id_;
-    bool emit_{false};
-};
-
-class TestTakeProfit final : public ITakeProfitStrategy {
-   public:
-    void Init(const AtomicParams& params) override {
-        id_ = GetOrDefault(params, "id", "take");
-        emit_ = ParseBool(GetOrDefault(params, "emit", "0"));
-    }
-    std::string GetId() const override { return id_; }
-    void Reset() override {}
-    std::vector<SignalIntent> OnState(const StateSnapshot7D& state,
-                                      const AtomicStrategyContext& ctx) override {
-        (void)ctx;
-        if (g_call_log != nullptr) {
-            g_call_log->push_back("take");
-        }
-        if (!emit_) {
-            return {};
-        }
-        SignalIntent signal;
-        signal.strategy_id = id_;
-        signal.instrument_id = state.instrument_id;
-        signal.signal_type = SignalType::kTakeProfit;
-        signal.side = Side::kSell;
-        signal.offset = OffsetFlag::kClose;
-        signal.volume = 1;
-        signal.limit_price = state.bar_close;
-        signal.ts_ns = state.ts_ns;
-        signal.trace_id = "take";
-        return {signal};
-    }
-
-   private:
-    std::string id_;
-    bool emit_{false};
-};
-
-class TestTimeFilter final : public ITimeFilterStrategy {
-   public:
-    void Init(const AtomicParams& params) override {
-        id_ = GetOrDefault(params, "id", "time");
-        allow_ = ParseBool(GetOrDefault(params, "allow", "1"));
-    }
-    std::string GetId() const override { return id_; }
-    void Reset() override {}
-    bool AllowOpening(EpochNanos now_ns) override {
-        (void)now_ns;
-        if (g_call_log != nullptr) {
-            g_call_log->push_back("time");
-        }
-        return allow_;
-    }
-
-   private:
-    std::string id_;
-    bool allow_{true};
-};
-
-class TestOpening final : public IOpeningStrategy {
-   public:
-    void Init(const AtomicParams& params) override {
-        id_ = GetOrDefault(params, "id", "open");
-        emit_ = ParseBool(GetOrDefault(params, "emit", "1"));
-        volume_ = ParseInt(GetOrDefault(params, "volume", "1"));
-        ts_ns_ = std::stoll(GetOrDefault(params, "signal_ts_ns", "0"));
-        trace_id_ = GetOrDefault(params, "trace_id", "open");
-    }
-    std::string GetId() const override { return id_; }
-    void Reset() override {}
-    std::vector<SignalIntent> OnState(const StateSnapshot7D& state,
-                                      const AtomicStrategyContext& ctx) override {
-        (void)ctx;
-        if (g_call_log != nullptr) {
-            g_call_log->push_back("open");
-        }
-        if (!emit_) {
-            return {};
-        }
-        SignalIntent signal;
-        signal.strategy_id = id_;
-        signal.instrument_id = state.instrument_id;
-        signal.signal_type = SignalType::kOpen;
-        signal.side = Side::kBuy;
-        signal.offset = OffsetFlag::kOpen;
-        signal.volume = volume_;
-        signal.limit_price = state.bar_close;
-        signal.ts_ns = (ts_ns_ == 0 ? state.ts_ns : ts_ns_);
-        signal.trace_id = trace_id_;
-        return {signal};
-    }
-
-   private:
-    std::string id_;
-    bool emit_{true};
-    int volume_{1};
-    EpochNanos ts_ns_{0};
-    std::string trace_id_;
-};
-
-class ContextCaptureOpening final : public IOpeningStrategy {
-   public:
-    void Init(const AtomicParams& params) override { id_ = GetOrDefault(params, "id", "capture"); }
-    std::string GetId() const override { return id_; }
-    void Reset() override {}
-    std::vector<SignalIntent> OnState(const StateSnapshot7D& state,
-                                      const AtomicStrategyContext& ctx) override {
-        (void)state;
-        if (g_captured_positions != nullptr) {
-            *g_captured_positions = ctx.net_positions;
-        }
-        if (g_captured_avg_prices != nullptr) {
-            *g_captured_avg_prices = ctx.avg_open_prices;
-        }
-        return {};
-    }
-
-   private:
-    std::string id_;
-};
-
-class TraceProviderOpening final : public IOpeningStrategy, public IAtomicIndicatorTraceProvider {
-   public:
-    void Init(const AtomicParams& params) override { id_ = GetOrDefault(params, "id", "trace"); }
-    std::string GetId() const override { return id_; }
-    void Reset() override { snapshot_.reset(); }
-    std::vector<SignalIntent> OnState(const StateSnapshot7D& state,
-                                      const AtomicStrategyContext& ctx) override {
-        (void)ctx;
-        AtomicIndicatorSnapshot snapshot;
-        snapshot.kama = state.bar_close;
-        snapshot.atr = state.bar_high - state.bar_low;
-        snapshot.er = 0.5;
-        snapshot_ = snapshot;
-        return {};
-    }
-    std::optional<AtomicIndicatorSnapshot> IndicatorSnapshot() const override { return snapshot_; }
-
-   private:
-    std::string id_;
-    std::optional<AtomicIndicatorSnapshot> snapshot_;
-};
-
-std::string UniqueType(const std::string& prefix) {
-    static std::atomic<int> seq{0};
-    return prefix + "_" + std::to_string(seq.fetch_add(1));
+    return ParseDouble(it->second);
 }
 
-CompositeStrategyDefinition MakeDefinition(const std::string& risk_type,
-                                           const std::string& stop_type,
-                                           const std::string& take_type,
-                                           const std::string& time_type,
-                                           const std::vector<AtomicStrategyDefinition>& openings) {
-    CompositeStrategyDefinition definition;
-    definition.merge_rule = SignalMergeRule::kPriority;
+class ScriptedSubStrategy final : public ISubStrategy,
+                                 public IAtomicOrderAware,
+                                 public IAtomicIndicatorTraceProvider {
+   public:
+    void Init(const AtomicParams& params) override {
+        id_ = GetOrDefault(params, "id", "scripted");
+        emit_open_ = ParseBool(GetOrDefault(params, "emit_open", "0"));
+        emit_close_ = ParseBool(GetOrDefault(params, "emit_close", "0"));
+        emit_stop_loss_ = ParseBool(GetOrDefault(params, "emit_stop_loss", "0"));
+        emit_take_profit_ = ParseBool(GetOrDefault(params, "emit_take_profit", "0"));
+        emit_force_close_ = ParseBool(GetOrDefault(params, "emit_force_close", "0"));
+        volume_ = ParseInt(GetOrDefault(params, "volume", "1"));
+        signal_ts_ns_ = std::stoll(GetOrDefault(params, "signal_ts_ns", "0"));
+        trace_base_ = GetOrDefault(params, "trace", id_);
+        open_side_ =
+            ToLower(GetOrDefault(params, "open_side", "buy")) == "sell" ? Side::kSell : Side::kBuy;
+        close_side_ = ToLower(GetOrDefault(params, "close_side", "sell")) == "buy" ? Side::kBuy
+                                                                                     : Side::kSell;
 
-    AtomicStrategyDefinition risk;
-    risk.id = "risk_1";
-    risk.type = risk_type;
-    risk.params = {{"id", "risk_1"}, {"emit", "0"}};
-    definition.risk_control_strategies.push_back(risk);
+        snapshot_kama_ = ParseOptionalDouble(params, "snapshot_kama");
+        snapshot_atr_ = ParseOptionalDouble(params, "snapshot_atr");
+        snapshot_er_ = ParseOptionalDouble(params, "snapshot_er");
+        snapshot_stop_loss_price_ = ParseOptionalDouble(params, "snapshot_stop_loss_price");
+        snapshot_take_profit_price_ = ParseOptionalDouble(params, "snapshot_take_profit_price");
+    }
 
-    AtomicStrategyDefinition stop;
-    stop.id = "stop_1";
-    stop.type = stop_type;
-    stop.params = {{"id", "stop_1"}, {"emit", "0"}};
-    definition.stop_loss_strategies.push_back(stop);
+    std::string GetId() const override { return id_; }
 
-    AtomicStrategyDefinition take;
-    take.id = "take_1";
-    take.type = take_type;
-    take.params = {{"id", "take_1"}, {"emit", "0"}};
-    definition.take_profit_strategies.push_back(take);
+    void Reset() override {}
 
-    AtomicStrategyDefinition time;
-    time.id = "time_1";
-    time.type = time_type;
-    time.params = {{"id", "time_1"}, {"allow", "1"}};
-    definition.time_filters.push_back(time);
+    std::vector<SignalIntent> OnState(const StateSnapshot7D& state,
+                                      const AtomicStrategyContext& ctx) override {
+        if (g_call_log != nullptr) {
+            g_call_log->push_back(id_);
+        }
+        if (g_captured_account_equity != nullptr) {
+            *g_captured_account_equity = ctx.account_equity;
+        }
+        if (g_captured_total_pnl_after_cost != nullptr) {
+            *g_captured_total_pnl_after_cost = ctx.total_pnl_after_cost;
+        }
+        if (g_captured_run_type != nullptr) {
+            *g_captured_run_type = ctx.run_type;
+        }
+        if (g_captured_contract_multipliers != nullptr) {
+            *g_captured_contract_multipliers = ctx.contract_multipliers;
+        }
 
-    definition.opening_strategies = openings;
+        std::vector<SignalIntent> signals;
+        auto append_signal = [&](SignalType type, Side side, OffsetFlag offset,
+                                 const std::string& suffix) {
+            SignalIntent signal;
+            signal.strategy_id = id_;
+            signal.instrument_id = state.instrument_id;
+            signal.signal_type = type;
+            signal.side = side;
+            signal.offset = offset;
+            signal.volume = volume_;
+            signal.limit_price = state.bar_close;
+            signal.ts_ns = signal_ts_ns_ == 0 ? state.ts_ns : signal_ts_ns_;
+            signal.trace_id = trace_base_ + suffix;
+            signals.push_back(signal);
+        };
+
+        if (emit_force_close_) {
+            append_signal(SignalType::kForceClose, close_side_, OffsetFlag::kClose, "-force");
+        }
+        if (emit_stop_loss_) {
+            append_signal(SignalType::kStopLoss, close_side_, OffsetFlag::kClose, "-stop");
+        }
+        if (emit_take_profit_) {
+            append_signal(SignalType::kTakeProfit, close_side_, OffsetFlag::kClose, "-take");
+        }
+        if (emit_close_) {
+            append_signal(SignalType::kClose, close_side_, OffsetFlag::kClose, "-close");
+        }
+        if (emit_open_) {
+            append_signal(SignalType::kOpen, open_side_, OffsetFlag::kOpen, "-open");
+        }
+        return signals;
+    }
+
+    void OnOrderEvent(const OrderEvent& event, const AtomicStrategyContext& ctx) override {
+        (void)event;
+        if (g_captured_account_equity != nullptr) {
+            *g_captured_account_equity = ctx.account_equity;
+        }
+        if (g_captured_total_pnl_after_cost != nullptr) {
+            *g_captured_total_pnl_after_cost = ctx.total_pnl_after_cost;
+        }
+    }
+
+    std::optional<AtomicIndicatorSnapshot> IndicatorSnapshot() const override {
+        if (!snapshot_kama_.has_value() && !snapshot_atr_.has_value() && !snapshot_er_.has_value() &&
+            !snapshot_stop_loss_price_.has_value() && !snapshot_take_profit_price_.has_value()) {
+            return std::nullopt;
+        }
+        AtomicIndicatorSnapshot snapshot;
+        snapshot.kama = snapshot_kama_;
+        snapshot.atr = snapshot_atr_;
+        snapshot.er = snapshot_er_;
+        snapshot.stop_loss_price = snapshot_stop_loss_price_;
+        snapshot.take_profit_price = snapshot_take_profit_price_;
+        return snapshot;
+    }
+
+   private:
+    std::string id_;
+    bool emit_open_{false};
+    bool emit_close_{false};
+    bool emit_stop_loss_{false};
+    bool emit_take_profit_{false};
+    bool emit_force_close_{false};
+    int volume_{1};
+    EpochNanos signal_ts_ns_{0};
+    std::string trace_base_{"trace"};
+    Side open_side_{Side::kBuy};
+    Side close_side_{Side::kSell};
+    std::optional<double> snapshot_kama_;
+    std::optional<double> snapshot_atr_;
+    std::optional<double> snapshot_er_;
+    std::optional<double> snapshot_stop_loss_price_;
+    std::optional<double> snapshot_take_profit_price_;
+};
+
+std::string UniqueType(const std::string& stem) {
+    static std::atomic<int> seq{0};
+    return "composite_strategy_test_" + stem + "_" + std::to_string(seq.fetch_add(1));
+}
+
+void RegisterScriptedType(const std::string& type) {
+    AtomicFactory& factory = AtomicFactory::Instance();
+    if (factory.Has(type)) {
+        return;
+    }
+    std::string error;
+    ASSERT_TRUE(factory.Register(type, []() { return std::make_unique<ScriptedSubStrategy>(); }, &error))
+        << error;
+}
+
+SubStrategyDefinition MakeSubStrategy(const std::string& id, const std::string& type,
+                                      const AtomicParams& params, bool enabled = true) {
+    SubStrategyDefinition definition;
+    definition.id = id;
+    definition.type = type;
+    definition.enabled = enabled;
+    definition.params = params;
     return definition;
 }
 
-StateSnapshot7D MakeState(MarketRegime regime = MarketRegime::kStrongTrend) {
+StateSnapshot7D MakeState(const std::string& instrument, EpochNanos ts_ns = 1,
+                          MarketRegime market_regime = MarketRegime::kUnknown) {
     StateSnapshot7D state;
-    state.instrument_id = "IF2406";
+    state.instrument_id = instrument;
     state.has_bar = true;
-    state.bar_close = 100.0;
-    state.ts_ns = 123456789;
-    state.market_regime = regime;
+    state.bar_open = 100.0;
+    state.bar_high = 101.0;
+    state.bar_low = 99.0;
+    state.bar_close = 100.5;
+    state.bar_volume = 10.0;
+    state.market_regime = market_regime;
+    state.ts_ns = ts_ns;
     return state;
 }
 
-OrderEvent MakeOrderEvent(const std::string& order_id, const std::string& instrument_id, Side side,
-                          OffsetFlag offset, std::int32_t filled_volume, double avg_fill_price) {
+StrategyContext MakeStrategyContext() {
+    StrategyContext ctx;
+    ctx.strategy_id = "composite";
+    ctx.account_id = "acct";
+    ctx.metadata["run_type"] = "backtest";
+    return ctx;
+}
+
+OrderEvent MakeOrderEvent(const std::string& strategy_id, const std::string& instrument_id,
+                          Side side, OffsetFlag offset, std::int32_t filled_volume,
+                          double fill_price, const std::string& order_id) {
     OrderEvent event;
-    event.account_id = "acct";
-    event.strategy_id = "composite";
-    event.client_order_id = order_id;
+    event.strategy_id = strategy_id;
     event.instrument_id = instrument_id;
     event.side = side;
     event.offset = offset;
-    event.status = OrderStatus::kPartiallyFilled;
-    event.total_volume = 10;
     event.filled_volume = filled_volume;
-    event.avg_fill_price = avg_fill_price;
+    event.avg_fill_price = fill_price;
+    event.client_order_id = order_id;
     return event;
 }
 
 }  // namespace
 
-TEST(CompositeStrategyTest, ExecutesInExpectedOrderAndPriorityMergeKeepsHighestPriority) {
-    AtomicFactory factory;
-    std::string error;
-    const std::string risk_type = UniqueType("risk");
-    const std::string stop_type = UniqueType("stop");
-    const std::string take_type = UniqueType("take");
-    const std::string time_type = UniqueType("time");
-    const std::string open_type = UniqueType("open");
+TEST(CompositeStrategyTest, DispatchesOnlyEnabledSubStrategies) {
+    const std::string enabled_type = UniqueType("enabled");
+    const std::string disabled_type = UniqueType("disabled");
+    RegisterScriptedType(enabled_type);
+    RegisterScriptedType(disabled_type);
 
-    ASSERT_TRUE(factory.Register(
-        risk_type, []() { return std::make_unique<TestRiskControl>(); }, &error))
-        << error;
-    ASSERT_TRUE(factory.Register(
-        stop_type, []() { return std::make_unique<TestStopLoss>(); }, &error))
-        << error;
-    ASSERT_TRUE(factory.Register(
-        take_type, []() { return std::make_unique<TestTakeProfit>(); }, &error))
-        << error;
-    ASSERT_TRUE(factory.Register(
-        time_type, []() { return std::make_unique<TestTimeFilter>(); }, &error))
-        << error;
-    ASSERT_TRUE(factory.Register(
-        open_type, []() { return std::make_unique<TestOpening>(); }, &error))
-        << error;
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {
+        MakeSubStrategy("s1", enabled_type,
+                        {{"id", "s1"}, {"emit_open", "1"}, {"open_side", "buy"}}),
+        MakeSubStrategy("s2", disabled_type,
+                        {{"id", "s2"}, {"emit_open", "1"}, {"open_side", "buy"}}, false),
+    };
 
-    AtomicStrategyDefinition opening;
-    opening.id = "open_1";
-    opening.type = open_type;
-    opening.params = {{"id", "open_1"}, {"emit", "1"}};
-    CompositeStrategyDefinition definition =
-        MakeDefinition(risk_type, stop_type, take_type, time_type, {opening});
-    definition.risk_control_strategies[0].params["emit"] = "1";
-    definition.stop_loss_strategies[0].params["emit"] = "1";
-    definition.take_profit_strategies[0].params["emit"] = "1";
-
-    CompositeStrategy strategy(definition, &factory);
-    StrategyContext ctx;
-    ctx.strategy_id = "composite";
-    ctx.account_id = "acct";
-    strategy.Initialize(ctx);
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
 
     std::vector<std::string> call_log;
     g_call_log = &call_log;
-    const auto signals = strategy.OnState(MakeState());
+    const std::vector<SignalIntent> signals = strategy.OnState(MakeState("rb2405", 10));
     g_call_log = nullptr;
 
-    ASSERT_EQ(call_log.size(), 5u);
-    EXPECT_EQ(call_log[0], "risk");
-    EXPECT_EQ(call_log[1], "stop");
-    EXPECT_EQ(call_log[2], "take");
-    EXPECT_EQ(call_log[3], "time");
-    EXPECT_EQ(call_log[4], "open");
-
-    ASSERT_EQ(signals.size(), 1u);
-    EXPECT_EQ(signals[0].signal_type, SignalType::kForceClose);
+    ASSERT_EQ(call_log.size(), 1U);
+    EXPECT_EQ(call_log.front(), "s1");
+    ASSERT_EQ(signals.size(), 1U);
+    EXPECT_EQ(signals.front().strategy_id, "s1");
+    EXPECT_EQ(signals.front().signal_type, SignalType::kOpen);
 }
 
-TEST(CompositeStrategyTest, TimeFilterBlocksOpeningSignals) {
-    AtomicFactory factory;
-    std::string error;
-    const std::string risk_type = UniqueType("risk");
-    const std::string stop_type = UniqueType("stop");
-    const std::string take_type = UniqueType("take");
-    const std::string time_type = UniqueType("time");
-    const std::string open_type = UniqueType("open");
+TEST(CompositeStrategyTest, MarketRegimeFilterAppliesOnlyToOpenSignals) {
+    const std::string sub_type = UniqueType("regime");
+    RegisterScriptedType(sub_type);
 
-    ASSERT_TRUE(factory.Register(
-        risk_type, []() { return std::make_unique<TestRiskControl>(); }, &error))
-        << error;
-    ASSERT_TRUE(factory.Register(
-        stop_type, []() { return std::make_unique<TestStopLoss>(); }, &error))
-        << error;
-    ASSERT_TRUE(factory.Register(
-        take_type, []() { return std::make_unique<TestTakeProfit>(); }, &error))
-        << error;
-    ASSERT_TRUE(factory.Register(
-        time_type, []() { return std::make_unique<TestTimeFilter>(); }, &error))
-        << error;
-    ASSERT_TRUE(factory.Register(
-        open_type, []() { return std::make_unique<TestOpening>(); }, &error))
-        << error;
+    SubStrategyDefinition sub = MakeSubStrategy(
+        "s1", sub_type,
+        {{"id", "s1"}, {"emit_open", "1"}, {"emit_stop_loss", "1"}, {"open_side", "buy"}});
+    sub.entry_market_regimes = {MarketRegime::kStrongTrend};
 
-    AtomicStrategyDefinition opening;
-    opening.id = "open_1";
-    opening.type = open_type;
-    opening.params = {{"id", "open_1"}, {"emit", "1"}};
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.market_state_mode = true;
+    definition.sub_strategies = {sub};
 
-    CompositeStrategyDefinition definition =
-        MakeDefinition(risk_type, stop_type, take_type, time_type, {opening});
-    definition.time_filters[0].params["allow"] = "0";
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+    strategy.OnOrderEvent(MakeOrderEvent("s1", "rb2405", Side::kBuy, OffsetFlag::kOpen, 1, 100.0,
+                                         "open-fill-1"));
 
-    CompositeStrategy strategy(definition, &factory);
-    StrategyContext ctx;
-    ctx.strategy_id = "composite";
-    ctx.account_id = "acct";
-    strategy.Initialize(ctx);
-
-    std::vector<std::string> call_log;
-    g_call_log = &call_log;
-    const auto signals = strategy.OnState(MakeState());
-    g_call_log = nullptr;
-
-    EXPECT_TRUE(signals.empty());
-    EXPECT_EQ(call_log.size(), 4u);
-    EXPECT_EQ(call_log[3], "time");
+    const std::vector<SignalIntent> signals =
+        strategy.OnState(MakeState("rb2405", 20, MarketRegime::kRanging));
+    ASSERT_EQ(signals.size(), 1U);
+    EXPECT_EQ(signals.front().signal_type, SignalType::kStopLoss);
+    EXPECT_EQ(signals.front().offset, OffsetFlag::kClose);
 }
 
-TEST(CompositeStrategyTest, FiltersOpeningByMarketRegime) {
-    AtomicFactory factory;
-    std::string error;
-    const std::string risk_type = UniqueType("risk");
-    const std::string stop_type = UniqueType("stop");
-    const std::string take_type = UniqueType("take");
-    const std::string time_type = UniqueType("time");
-    const std::string open_type = UniqueType("open");
+TEST(CompositeStrategyTest, KeepsOwnershipGateAndReverseTwoStep) {
+    const std::string sell_type = UniqueType("sell");
+    RegisterScriptedType(sell_type);
 
-    ASSERT_TRUE(factory.Register(
-        risk_type, []() { return std::make_unique<TestRiskControl>(); }, &error))
-        << error;
-    ASSERT_TRUE(factory.Register(
-        stop_type, []() { return std::make_unique<TestStopLoss>(); }, &error))
-        << error;
-    ASSERT_TRUE(factory.Register(
-        take_type, []() { return std::make_unique<TestTakeProfit>(); }, &error))
-        << error;
-    ASSERT_TRUE(factory.Register(
-        time_type, []() { return std::make_unique<TestTimeFilter>(); }, &error))
-        << error;
-    ASSERT_TRUE(factory.Register(
-        open_type, []() { return std::make_unique<TestOpening>(); }, &error))
-        << error;
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {MakeSubStrategy(
+        "s1", sell_type, {{"id", "s1"}, {"emit_open", "1"}, {"open_side", "sell"}, {"volume", "1"}})};
 
-    AtomicStrategyDefinition opening;
-    opening.id = "open_1";
-    opening.type = open_type;
-    opening.params = {{"id", "open_1"}, {"emit", "1"}};
-    opening.market_regimes = {MarketRegime::kStrongTrend};
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+    strategy.OnOrderEvent(MakeOrderEvent("s1", "rb2405", Side::kBuy, OffsetFlag::kOpen, 1, 100.0,
+                                         "owner-open"));
 
-    CompositeStrategyDefinition definition =
-        MakeDefinition(risk_type, stop_type, take_type, time_type, {opening});
-    CompositeStrategy strategy(definition, &factory);
-    StrategyContext ctx;
-    ctx.strategy_id = "composite";
-    ctx.account_id = "acct";
-    strategy.Initialize(ctx);
+    const std::vector<SignalIntent> first = strategy.OnState(MakeState("rb2405", 30));
+    ASSERT_EQ(first.size(), 1U);
+    EXPECT_EQ(first.front().signal_type, SignalType::kClose);
+    EXPECT_EQ(first.front().offset, OffsetFlag::kClose);
+    EXPECT_EQ(first.front().side, Side::kSell);
 
-    EXPECT_TRUE(strategy.OnState(MakeState(MarketRegime::kRanging)).empty());
-    const auto signals = strategy.OnState(MakeState(MarketRegime::kStrongTrend));
-    ASSERT_EQ(signals.size(), 1u);
-    EXPECT_EQ(signals[0].signal_type, SignalType::kOpen);
+    strategy.OnOrderEvent(MakeOrderEvent("s1", "rb2405", Side::kSell, OffsetFlag::kClose, 1, 99.0,
+                                         "owner-close"));
+    const std::vector<SignalIntent> second = strategy.OnState(MakeState("rb2405", 31));
+    ASSERT_EQ(second.size(), 1U);
+    EXPECT_EQ(second.front().signal_type, SignalType::kOpen);
+    EXPECT_EQ(second.front().offset, OffsetFlag::kOpen);
+    EXPECT_EQ(second.front().side, Side::kSell);
 }
 
-TEST(CompositeStrategyTest, TieBreakUsesVolumeThenTimestampThenTraceId) {
-    AtomicFactory factory;
-    std::string error;
-    const std::string risk_type = UniqueType("risk");
+TEST(CompositeStrategyTest, MergesByPriorityThenVolumeThenTimestampThenTraceId) {
     const std::string stop_type = UniqueType("stop");
-    const std::string take_type = UniqueType("take");
-    const std::string time_type = UniqueType("time");
-    const std::string open_type = UniqueType("open");
+    const std::string open_type_a = UniqueType("open_a");
+    const std::string open_type_b = UniqueType("open_b");
+    const std::string open_type_c = UniqueType("open_c");
+    RegisterScriptedType(stop_type);
+    RegisterScriptedType(open_type_a);
+    RegisterScriptedType(open_type_b);
+    RegisterScriptedType(open_type_c);
 
-    ASSERT_TRUE(factory.Register(
-        risk_type, []() { return std::make_unique<TestRiskControl>(); }, &error))
-        << error;
-    ASSERT_TRUE(factory.Register(
-        stop_type, []() { return std::make_unique<TestStopLoss>(); }, &error))
-        << error;
-    ASSERT_TRUE(factory.Register(
-        take_type, []() { return std::make_unique<TestTakeProfit>(); }, &error))
-        << error;
-    ASSERT_TRUE(factory.Register(
-        time_type, []() { return std::make_unique<TestTimeFilter>(); }, &error))
-        << error;
-    ASSERT_TRUE(factory.Register(
-        open_type, []() { return std::make_unique<TestOpening>(); }, &error))
-        << error;
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {
+        MakeSubStrategy("stop", stop_type,
+                        {{"id", "stop"}, {"emit_stop_loss", "1"}, {"trace", "a"}, {"volume", "1"}}),
+        MakeSubStrategy("openA", open_type_a,
+                        {{"id", "openA"},
+                         {"emit_open", "1"},
+                         {"trace", "b"},
+                         {"signal_ts_ns", "100"},
+                         {"volume", "2"}}),
+        MakeSubStrategy("openB", open_type_b,
+                        {{"id", "openB"},
+                         {"emit_open", "1"},
+                         {"trace", "a"},
+                         {"signal_ts_ns", "100"},
+                         {"volume", "2"}}),
+        MakeSubStrategy("openC", open_type_c,
+                        {{"id", "openC"},
+                         {"emit_open", "1"},
+                         {"trace", "z"},
+                         {"signal_ts_ns", "200"},
+                         {"volume", "1"}}),
+    };
 
-    AtomicStrategyDefinition open_a;
-    open_a.id = "open_a";
-    open_a.type = open_type;
-    open_a.params = {{"id", "open_a"},
-                     {"emit", "1"},
-                     {"volume", "2"},
-                     {"signal_ts_ns", "200"},
-                     {"trace_id", "c"}};
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+    strategy.OnOrderEvent(MakeOrderEvent("stop", "rb2405", Side::kBuy, OffsetFlag::kOpen, 1, 100.0,
+                                         "priority-open"));
 
-    AtomicStrategyDefinition open_b;
-    open_b.id = "open_b";
-    open_b.type = open_type;
-    open_b.params = {{"id", "open_b"},
-                     {"emit", "1"},
-                     {"volume", "2"},
-                     {"signal_ts_ns", "200"},
-                     {"trace_id", "a"}};
-
-    AtomicStrategyDefinition open_c;
-    open_c.id = "open_c";
-    open_c.type = open_type;
-    open_c.params = {{"id", "open_c"},
-                     {"emit", "1"},
-                     {"volume", "1"},
-                     {"signal_ts_ns", "300"},
-                     {"trace_id", "z"}};
-
-    CompositeStrategyDefinition definition =
-        MakeDefinition(risk_type, stop_type, take_type, time_type, {open_a, open_b, open_c});
-
-    CompositeStrategy strategy(definition, &factory);
-    StrategyContext ctx;
-    ctx.strategy_id = "composite";
-    ctx.account_id = "acct";
-    strategy.Initialize(ctx);
-
-    const auto signals = strategy.OnState(MakeState());
-    ASSERT_EQ(signals.size(), 1u);
-    EXPECT_EQ(signals[0].signal_type, SignalType::kOpen);
-    EXPECT_EQ(signals[0].trace_id, "a");
+    const std::vector<SignalIntent> signals = strategy.OnState(MakeState("rb2405", 40));
+    ASSERT_EQ(signals.size(), 1U);
+    EXPECT_EQ(signals.front().signal_type, SignalType::kStopLoss);
+    EXPECT_EQ(signals.front().strategy_id, "stop");
 }
 
-TEST(CompositeStrategyTest, OrderEventsUpdatePositionAverageAndDeltaFilledIdempotency) {
-    AtomicFactory factory;
-    std::string error;
-    const std::string risk_type = UniqueType("risk");
-    const std::string stop_type = UniqueType("stop");
-    const std::string take_type = UniqueType("take");
-    const std::string time_type = UniqueType("time");
-    const std::string capture_type = UniqueType("capture");
+TEST(CompositeStrategyTest, RejectsNonBacktestRunType) {
+    const std::string sub_type = UniqueType("run_type");
+    RegisterScriptedType(sub_type);
 
-    ASSERT_TRUE(factory.Register(
-        risk_type, []() { return std::make_unique<TestRiskControl>(); }, &error))
-        << error;
-    ASSERT_TRUE(factory.Register(
-        stop_type, []() { return std::make_unique<TestStopLoss>(); }, &error))
-        << error;
-    ASSERT_TRUE(factory.Register(
-        take_type, []() { return std::make_unique<TestTakeProfit>(); }, &error))
-        << error;
-    ASSERT_TRUE(factory.Register(
-        time_type, []() { return std::make_unique<TestTimeFilter>(); }, &error))
-        << error;
-    ASSERT_TRUE(factory.Register(
-        capture_type, []() { return std::make_unique<ContextCaptureOpening>(); }, &error))
-        << error;
+    CompositeStrategyDefinition definition;
+    definition.run_type = "sim";
+    definition.sub_strategies = {MakeSubStrategy("s1", sub_type, {{"id", "s1"}, {"emit_open", "1"}})};
 
-    AtomicStrategyDefinition capture;
-    capture.id = "capture";
-    capture.type = capture_type;
-    capture.params = {{"id", "capture"}};
-    CompositeStrategyDefinition definition =
-        MakeDefinition(risk_type, stop_type, take_type, time_type, {capture});
-
-    CompositeStrategy strategy(definition, &factory);
-    StrategyContext ctx;
-    ctx.strategy_id = "composite";
-    ctx.account_id = "acct";
-    strategy.Initialize(ctx);
-
-    strategy.OnOrderEvent(
-        MakeOrderEvent("ord_open", "IF2406", Side::kBuy, OffsetFlag::kOpen, 1, 100.0));
-    strategy.OnOrderEvent(
-        MakeOrderEvent("ord_open", "IF2406", Side::kBuy, OffsetFlag::kOpen, 3, 102.0));
-    strategy.OnOrderEvent(
-        MakeOrderEvent("ord_open", "IF2406", Side::kBuy, OffsetFlag::kOpen, 3, 102.0));
-    strategy.OnOrderEvent(
-        MakeOrderEvent("ord_close", "IF2406", Side::kSell, OffsetFlag::kClose, 1, 110.0));
-
-    std::unordered_map<std::string, std::int32_t> captured_positions;
-    std::unordered_map<std::string, double> captured_avg_prices;
-    g_captured_positions = &captured_positions;
-    g_captured_avg_prices = &captured_avg_prices;
-    strategy.OnState(MakeState());
-    g_captured_positions = nullptr;
-    g_captured_avg_prices = nullptr;
-
-    ASSERT_EQ(captured_positions["IF2406"], 2);
-    ASSERT_TRUE(captured_avg_prices.find("IF2406") != captured_avg_prices.end());
-    EXPECT_NEAR(captured_avg_prices["IF2406"], (100.0 + 102.0 * 2.0) / 3.0, 1e-9);
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    StrategyContext ctx = MakeStrategyContext();
+    ctx.metadata["run_type"] = "sim";
+    EXPECT_THROW(strategy.Initialize(ctx), std::runtime_error);
 }
 
-TEST(CompositeStrategyTest, OrderEventsHandleReverseAndFlattingToZero) {
-    AtomicFactory factory;
-    std::string error;
-    const std::string risk_type = UniqueType("risk");
-    const std::string stop_type = UniqueType("stop");
-    const std::string take_type = UniqueType("take");
-    const std::string time_type = UniqueType("time");
-    const std::string capture_type = UniqueType("capture");
+TEST(CompositeStrategyTest, PropagatesBacktestSnapshotIntoAtomicContext) {
+    const std::string sub_type = UniqueType("ctx");
+    RegisterScriptedType(sub_type);
 
-    ASSERT_TRUE(factory.Register(
-        risk_type, []() { return std::make_unique<TestRiskControl>(); }, &error))
-        << error;
-    ASSERT_TRUE(factory.Register(
-        stop_type, []() { return std::make_unique<TestStopLoss>(); }, &error))
-        << error;
-    ASSERT_TRUE(factory.Register(
-        take_type, []() { return std::make_unique<TestTakeProfit>(); }, &error))
-        << error;
-    ASSERT_TRUE(factory.Register(
-        time_type, []() { return std::make_unique<TestTimeFilter>(); }, &error))
-        << error;
-    ASSERT_TRUE(factory.Register(
-        capture_type, []() { return std::make_unique<ContextCaptureOpening>(); }, &error))
-        << error;
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {
+        MakeSubStrategy("capture", sub_type, {{"id", "capture"}, {"emit_open", "0"}})};
 
-    AtomicStrategyDefinition capture;
-    capture.id = "capture";
-    capture.type = capture_type;
-    capture.params = {{"id", "capture"}};
-    CompositeStrategyDefinition definition =
-        MakeDefinition(risk_type, stop_type, take_type, time_type, {capture});
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+    strategy.SetBacktestAccountSnapshot(200000.0, 1234.5);
+    strategy.SetBacktestContractMultiplier("rb2405", 10.0);
 
-    CompositeStrategy strategy(definition, &factory);
-    StrategyContext ctx;
-    ctx.strategy_id = "composite";
-    ctx.account_id = "acct";
-    strategy.Initialize(ctx);
+    double captured_equity = 0.0;
+    double captured_pnl = 0.0;
+    std::string captured_run_type;
+    std::unordered_map<std::string, double> captured_multipliers;
+    g_captured_account_equity = &captured_equity;
+    g_captured_total_pnl_after_cost = &captured_pnl;
+    g_captured_run_type = &captured_run_type;
+    g_captured_contract_multipliers = &captured_multipliers;
+    (void)strategy.OnState(MakeState("rb2405", 50));
+    g_captured_account_equity = nullptr;
+    g_captured_total_pnl_after_cost = nullptr;
+    g_captured_run_type = nullptr;
+    g_captured_contract_multipliers = nullptr;
 
-    strategy.OnOrderEvent(
-        MakeOrderEvent("ord_open", "IF2406", Side::kBuy, OffsetFlag::kOpen, 2, 100.0));
-    strategy.OnOrderEvent(
-        MakeOrderEvent("ord_reverse", "IF2406", Side::kSell, OffsetFlag::kClose, 5, 99.0));
-
-    std::unordered_map<std::string, std::int32_t> captured_positions;
-    std::unordered_map<std::string, double> captured_avg_prices;
-    g_captured_positions = &captured_positions;
-    g_captured_avg_prices = &captured_avg_prices;
-    strategy.OnState(MakeState());
-    g_captured_positions = nullptr;
-    g_captured_avg_prices = nullptr;
-
-    ASSERT_EQ(captured_positions["IF2406"], -3);
-    ASSERT_TRUE(captured_avg_prices.find("IF2406") != captured_avg_prices.end());
-    EXPECT_NEAR(captured_avg_prices["IF2406"], 99.0, 1e-9);
-
-    strategy.OnOrderEvent(
-        MakeOrderEvent("ord_flat", "IF2406", Side::kBuy, OffsetFlag::kClose, 3, 98.0));
-
-    captured_positions.clear();
-    captured_avg_prices.clear();
-    g_captured_positions = &captured_positions;
-    g_captured_avg_prices = &captured_avg_prices;
-    strategy.OnState(MakeState());
-    g_captured_positions = nullptr;
-    g_captured_avg_prices = nullptr;
-
-    ASSERT_EQ(captured_positions["IF2406"], 0);
-    EXPECT_TRUE(captured_avg_prices.find("IF2406") == captured_avg_prices.end());
+    EXPECT_DOUBLE_EQ(captured_equity, 200000.0);
+    EXPECT_DOUBLE_EQ(captured_pnl, 1234.5);
+    EXPECT_EQ(captured_run_type, "backtest");
+    ASSERT_EQ(captured_multipliers.count("rb2405"), 1U);
+    EXPECT_DOUBLE_EQ(captured_multipliers["rb2405"], 10.0);
 }
 
-TEST(CompositeStrategyTest, CollectAtomicIndicatorTraceExposesProviderSnapshot) {
-    AtomicFactory factory;
-    std::string error;
-    const std::string risk_type = UniqueType("risk");
-    const std::string stop_type = UniqueType("stop");
-    const std::string take_type = UniqueType("take");
-    const std::string time_type = UniqueType("time");
+TEST(CompositeStrategyTest, CollectAtomicIndicatorTraceContainsStopAndTakePrices) {
     const std::string trace_type = UniqueType("trace");
+    RegisterScriptedType(trace_type);
 
-    ASSERT_TRUE(factory.Register(
-        risk_type, []() { return std::make_unique<TestRiskControl>(); }, &error))
-        << error;
-    ASSERT_TRUE(factory.Register(
-        stop_type, []() { return std::make_unique<TestStopLoss>(); }, &error))
-        << error;
-    ASSERT_TRUE(factory.Register(
-        take_type, []() { return std::make_unique<TestTakeProfit>(); }, &error))
-        << error;
-    ASSERT_TRUE(factory.Register(
-        time_type, []() { return std::make_unique<TestTimeFilter>(); }, &error))
-        << error;
-    ASSERT_TRUE(factory.Register(
-        trace_type, []() { return std::make_unique<TraceProviderOpening>(); }, &error))
-        << error;
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {MakeSubStrategy(
+        "trace", trace_type,
+        {{"id", "trace"},
+         {"snapshot_kama", "101.1"},
+         {"snapshot_atr", "1.2"},
+         {"snapshot_er", "0.6"},
+         {"snapshot_stop_loss_price", "98.8"},
+         {"snapshot_take_profit_price", "106.6"}})};
 
-    AtomicStrategyDefinition trace_open;
-    trace_open.id = "trace_open";
-    trace_open.type = trace_type;
-    trace_open.params = {{"id", "trace_open"}};
-    CompositeStrategyDefinition definition =
-        MakeDefinition(risk_type, stop_type, take_type, time_type, {trace_open});
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+    (void)strategy.OnState(MakeState("rb2405", 60));
 
-    CompositeStrategy strategy(definition, &factory);
-    StrategyContext ctx;
-    ctx.strategy_id = "composite";
-    ctx.account_id = "acct";
-    strategy.Initialize(ctx);
-
-    StateSnapshot7D state = MakeState();
-    state.bar_high = 103.0;
-    state.bar_low = 101.0;
-    state.bar_close = 102.0;
-    strategy.OnState(state);
-
-    const auto traces = strategy.CollectAtomicIndicatorTrace();
-    ASSERT_EQ(traces.size(), 1u);
-    EXPECT_EQ(traces[0].strategy_id, "trace_open");
-    EXPECT_EQ(traces[0].strategy_type, trace_type);
-    ASSERT_TRUE(traces[0].kama.has_value());
-    ASSERT_TRUE(traces[0].atr.has_value());
-    ASSERT_TRUE(traces[0].er.has_value());
-    EXPECT_FALSE(traces[0].adx.has_value());
-    EXPECT_DOUBLE_EQ(*traces[0].kama, 102.0);
-    EXPECT_DOUBLE_EQ(*traces[0].atr, 2.0);
-    EXPECT_DOUBLE_EQ(*traces[0].er, 0.5);
+    const std::vector<CompositeAtomicTraceRow> rows = strategy.CollectAtomicIndicatorTrace();
+    ASSERT_EQ(rows.size(), 1U);
+    EXPECT_EQ(rows.front().strategy_id, "trace");
+    ASSERT_TRUE(rows.front().stop_loss_price.has_value());
+    ASSERT_TRUE(rows.front().take_profit_price.has_value());
+    EXPECT_DOUBLE_EQ(rows.front().stop_loss_price.value(), 98.8);
+    EXPECT_DOUBLE_EQ(rows.front().take_profit_price.value(), 106.6);
 }
 
 }  // namespace quant_hft

@@ -2,12 +2,14 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
+
+#include "quant_hft/core/simple_json.h"
 
 namespace quant_hft {
 namespace {
@@ -22,6 +24,12 @@ std::string Trim(const std::string& input) {
         --end;
     }
     return input.substr(begin, end - begin);
+}
+
+std::string ToLower(std::string text) {
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return text;
 }
 
 std::string StripInlineComment(const std::string& input) {
@@ -137,13 +145,29 @@ bool ParseMarketRegimeList(const std::string& value, std::vector<MarketRegime>* 
     return true;
 }
 
+bool ParseBoolText(const std::string& value, bool* out) {
+    if (out == nullptr) {
+        return false;
+    }
+    const std::string normalized = ToLower(Trim(value));
+    if (normalized == "true" || normalized == "1" || normalized == "yes" || normalized == "on") {
+        *out = true;
+        return true;
+    }
+    if (normalized == "false" || normalized == "0" || normalized == "no" || normalized == "off") {
+        *out = false;
+        return true;
+    }
+    return false;
+}
+
 std::string FormatLineError(int line_no, const std::string& reason) {
     std::ostringstream oss;
     oss << "line " << line_no << ": " << reason;
     return oss.str();
 }
 
-bool ValidateCurrentStrategy(AtomicStrategyDefinition* strategy, int strategy_line,
+bool ValidateCurrentStrategy(SubStrategyDefinition* strategy, int strategy_line,
                              std::string* error) {
     if (strategy == nullptr) {
         return true;
@@ -163,10 +187,241 @@ bool ValidateCurrentStrategy(AtomicStrategyDefinition* strategy, int strategy_li
     return true;
 }
 
-}  // namespace
+bool ParseAtomicParamsYaml(const std::filesystem::path& path, AtomicParams* out,
+                           std::string* error) {
+    if (out == nullptr) {
+        if (error != nullptr) {
+            *error = "params output is null";
+        }
+        return false;
+    }
+    std::ifstream input(path);
+    if (!input.is_open()) {
+        if (error != nullptr) {
+            *error = "unable to open strategy config: " + path.string();
+        }
+        return false;
+    }
 
-bool LoadCompositeStrategyDefinition(const std::string& path, CompositeStrategyDefinition* out,
-                                     std::string* error) {
+    out->clear();
+    bool in_params = false;
+    int params_indent = 0;
+    std::string raw_line;
+    int line_no = 0;
+    while (std::getline(input, raw_line)) {
+        ++line_no;
+        const std::string text = Trim(StripInlineComment(raw_line));
+        if (text.empty()) {
+            continue;
+        }
+        const std::size_t first_non_space = raw_line.find_first_not_of(' ');
+        const int indent =
+            first_non_space == std::string::npos ? 0 : static_cast<int>(first_non_space);
+
+        std::string key;
+        std::string value;
+        if (!ParseKeyValue(text, &key, &value)) {
+            if (error != nullptr) {
+                *error = FormatLineError(line_no, "invalid key/value entry");
+            }
+            return false;
+        }
+
+        if (!in_params) {
+            if (key != "params") {
+                if (error != nullptr) {
+                    *error = FormatLineError(line_no, "unsupported_field: " + key);
+                }
+                return false;
+            }
+            if (!value.empty()) {
+                if (error != nullptr) {
+                    *error = FormatLineError(line_no, "params must be a YAML section");
+                }
+                return false;
+            }
+            in_params = true;
+            params_indent = indent;
+            continue;
+        }
+
+        if (indent <= params_indent) {
+            if (error != nullptr) {
+                *error = FormatLineError(line_no, "unexpected field outside params section");
+            }
+            return false;
+        }
+        (*out)[key] = value;
+    }
+
+    if (input.bad()) {
+        if (error != nullptr) {
+            *error = "failed reading strategy config: " + path.string();
+        }
+        return false;
+    }
+    if (!in_params) {
+        if (error != nullptr) {
+            *error = "line 1: expected top-level key `params:`";
+        }
+        return false;
+    }
+    return true;
+}
+
+bool ParseAtomicParamsJson(const std::filesystem::path& path, AtomicParams* out,
+                           std::string* error) {
+    if (out == nullptr) {
+        if (error != nullptr) {
+            *error = "params output is null";
+        }
+        return false;
+    }
+    std::ifstream input(path);
+    if (!input.is_open()) {
+        if (error != nullptr) {
+            *error = "unable to open strategy config: " + path.string();
+        }
+        return false;
+    }
+    std::ostringstream buffer;
+    buffer << input.rdbuf();
+    if (input.bad()) {
+        if (error != nullptr) {
+            *error = "failed reading strategy config: " + path.string();
+        }
+        return false;
+    }
+
+    simple_json::Value root;
+    if (!simple_json::Parse(buffer.str(), &root, error)) {
+        return false;
+    }
+    if (!root.IsObject()) {
+        if (error != nullptr) {
+            *error = "strategy json config root must be an object";
+        }
+        return false;
+    }
+    const simple_json::Value* params = root.Find("params");
+    if (params == nullptr || !params->IsObject()) {
+        if (error != nullptr) {
+            *error = "strategy json config requires object field `params`";
+        }
+        return false;
+    }
+
+    out->clear();
+    for (const auto& [key, value] : params->object_value) {
+        if (value.IsObject() || value.IsArray()) {
+            if (error != nullptr) {
+                *error = "strategy param `" + key + "` must be a scalar value";
+            }
+            return false;
+        }
+        (*out)[key] = value.ToString();
+    }
+    return true;
+}
+
+bool LoadAtomicParamsFile(const std::filesystem::path& path, AtomicParams* out,
+                          std::string* error) {
+    const std::string lowered = ToLower(path.extension().string());
+    if (lowered == ".json") {
+        return ParseAtomicParamsJson(path, out, error);
+    }
+    return ParseAtomicParamsYaml(path, out, error);
+}
+
+bool ResolveStrategyExternalConfig(const std::filesystem::path& base_dir,
+                                   SubStrategyDefinition* strategy, int line_no,
+                                   std::string* error) {
+    if (strategy == nullptr || strategy->config_path.empty()) {
+        return true;
+    }
+    if (!strategy->params.empty()) {
+        if (error != nullptr) {
+            *error = FormatLineError(line_no, "config_path and params cannot be used together");
+        }
+        return false;
+    }
+    std::filesystem::path resolved(strategy->config_path);
+    if (resolved.is_relative()) {
+        resolved = base_dir / resolved;
+    }
+    resolved = resolved.lexically_normal();
+    if (!LoadAtomicParamsFile(resolved, &strategy->params, error)) {
+        return false;
+    }
+    strategy->config_path = resolved.string();
+    return true;
+}
+
+bool ApplyStrategyField(SubStrategyDefinition* strategy, const std::string& key,
+                        const std::string& value, int line_no, std::string* error) {
+    if (strategy == nullptr) {
+        return false;
+    }
+    if (key == "id") {
+        strategy->id = value;
+        return true;
+    }
+    if (key == "type") {
+        if (value == "KamaTrendOpening" || value == "TrendOpening" ||
+            value == "TrailingStopLoss" || value == "ATRStopLoss" ||
+            value == "ATRTakeProfit" || value == "TimeFilter" ||
+            value == "MaxPositionRiskControl") {
+            if (error != nullptr) {
+                *error = FormatLineError(
+                    line_no, "legacy strategy type `" + value +
+                                 "` is not supported in Composite V2; use complete sub strategy "
+                                 "types such as `KamaTrendStrategy` or `TrendStrategy`");
+            }
+            return false;
+        }
+        strategy->type = value;
+        return true;
+    }
+    if (key == "enabled") {
+        bool parsed = true;
+        if (!ParseBoolText(value, &parsed)) {
+            if (error != nullptr) {
+                *error = FormatLineError(line_no, "invalid enabled bool");
+            }
+            return false;
+        }
+        strategy->enabled = parsed;
+        return true;
+    }
+    if (key == "config_path") {
+        strategy->config_path = value;
+        return true;
+    }
+    if (key == "entry_market_regimes") {
+        if (!ParseMarketRegimeList(value, &strategy->entry_market_regimes)) {
+            if (error != nullptr) {
+                *error = FormatLineError(line_no, "invalid entry_market_regimes list");
+            }
+            return false;
+        }
+        return true;
+    }
+    if (key == "market_regimes") {
+        if (error != nullptr) {
+            *error = FormatLineError(
+                line_no,
+                "field `market_regimes` has been removed; use `entry_market_regimes`");
+        }
+        return false;
+    }
+    if (error != nullptr) {
+        *error = FormatLineError(line_no, "unsupported strategy field: " + key);
+    }
+    return false;
+}
+
+bool LoadCompositeYaml(const std::filesystem::path& path, CompositeStrategyDefinition* out,
+                       std::string* error) {
     if (out == nullptr) {
         if (error != nullptr) {
             *error = "composite definition output is null";
@@ -177,16 +432,18 @@ bool LoadCompositeStrategyDefinition(const std::string& path, CompositeStrategyD
     std::ifstream input(path);
     if (!input.is_open()) {
         if (error != nullptr) {
-            *error = "unable to open composite config: " + path;
+            *error = "unable to open composite config: " + path.string();
         }
         return false;
     }
 
     CompositeStrategyDefinition definition;
     bool saw_composite_root = false;
+    bool in_composite = false;
+    const int composite_indent = 0;
 
-    std::vector<AtomicStrategyDefinition>* active_section = nullptr;
-    AtomicStrategyDefinition* current_strategy = nullptr;
+    std::vector<SubStrategyDefinition>* active_section = nullptr;
+    SubStrategyDefinition* current_strategy = nullptr;
     int current_strategy_line = 0;
     bool in_params = false;
     int params_indent = 0;
@@ -202,21 +459,9 @@ bool LoadCompositeStrategyDefinition(const std::string& path, CompositeStrategyD
         reset_item_state();
     };
     const auto resolve_section =
-        [&](const std::string& key) -> std::vector<AtomicStrategyDefinition>* {
-        if (key == "opening_strategies") {
-            return &definition.opening_strategies;
-        }
-        if (key == "stop_loss_strategies") {
-            return &definition.stop_loss_strategies;
-        }
-        if (key == "take_profit_strategies") {
-            return &definition.take_profit_strategies;
-        }
-        if (key == "time_filters") {
-            return &definition.time_filters;
-        }
-        if (key == "risk_control_strategies") {
-            return &definition.risk_control_strategies;
+        [&](const std::string& key) -> std::vector<SubStrategyDefinition>* {
+        if (key == "sub_strategies") {
+            return &definition.sub_strategies;
         }
         return nullptr;
     };
@@ -236,15 +481,16 @@ bool LoadCompositeStrategyDefinition(const std::string& path, CompositeStrategyD
             continue;
         }
 
-        if (!saw_composite_root) {
-            if (indent != 0 || text != "composite:") {
-                if (error != nullptr) {
-                    *error = FormatLineError(line_no, "expected top-level key `composite:`");
-                }
-                return false;
+        if (!in_composite) {
+            if (indent == 0 && text == "composite:") {
+                saw_composite_root = true;
+                in_composite = true;
             }
-            saw_composite_root = true;
             continue;
+        }
+
+        if (indent <= composite_indent) {
+            break;
         }
 
         if (indent <= 2 &&
@@ -274,6 +520,37 @@ bool LoadCompositeStrategyDefinition(const std::string& path, CompositeStrategyD
                     return false;
                 }
                 continue;
+            }
+            if (key == "run_type") {
+                if (value.empty()) {
+                    if (error != nullptr) {
+                        *error = FormatLineError(line_no, "run_type must not be empty");
+                    }
+                    return false;
+                }
+                definition.run_type = value;
+                continue;
+            }
+            if (key == "market_state_mode") {
+                bool parsed = true;
+                if (!ParseBoolText(value, &parsed)) {
+                    if (error != nullptr) {
+                        *error = FormatLineError(line_no, "invalid market_state_mode bool");
+                    }
+                    return false;
+                }
+                definition.market_state_mode = parsed;
+                continue;
+            }
+            if (key == "opening_strategies" || key == "stop_loss_strategies" ||
+                key == "take_profit_strategies" || key == "time_filters" ||
+                key == "risk_control_strategies") {
+                if (error != nullptr) {
+                    *error = FormatLineError(line_no, "legacy section `" + key +
+                                                          "` is no longer supported; use "
+                                                          "`sub_strategies`");
+                }
+                return false;
             }
             auto* section = resolve_section(key);
             if (section != nullptr) {
@@ -337,27 +614,21 @@ bool LoadCompositeStrategyDefinition(const std::string& path, CompositeStrategyD
                 }
                 return false;
             }
-            if (key == "id") {
-                current_strategy->id = value;
-                continue;
-            }
-            if (key == "type") {
-                current_strategy->type = value;
-                continue;
-            }
-            if (key == "market_regimes") {
-                if (!ParseMarketRegimeList(value, &current_strategy->market_regimes)) {
+            if (key == "params") {
+                if (!value.empty()) {
                     if (error != nullptr) {
-                        *error = FormatLineError(line_no, "invalid market_regimes list");
+                        *error = FormatLineError(line_no, "params must be a YAML section");
                     }
                     return false;
                 }
+                in_params = true;
+                params_indent = indent;
                 continue;
             }
-            if (error != nullptr) {
-                *error = FormatLineError(line_no, "unsupported strategy field: " + key);
+            if (!ApplyStrategyField(current_strategy, key, value, line_no, error)) {
+                return false;
             }
-            return false;
+            continue;
         }
 
         if (current_strategy == nullptr) {
@@ -375,23 +646,6 @@ bool LoadCompositeStrategyDefinition(const std::string& path, CompositeStrategyD
             }
             return false;
         }
-        if (key == "id") {
-            current_strategy->id = value;
-            continue;
-        }
-        if (key == "type") {
-            current_strategy->type = value;
-            continue;
-        }
-        if (key == "market_regimes") {
-            if (!ParseMarketRegimeList(value, &current_strategy->market_regimes)) {
-                if (error != nullptr) {
-                    *error = FormatLineError(line_no, "invalid market_regimes list");
-                }
-                return false;
-            }
-            continue;
-        }
         if (key == "params") {
             if (!value.empty()) {
                 if (error != nullptr) {
@@ -403,15 +657,14 @@ bool LoadCompositeStrategyDefinition(const std::string& path, CompositeStrategyD
             params_indent = indent;
             continue;
         }
-        if (error != nullptr) {
-            *error = FormatLineError(line_no, "unsupported strategy field: " + key);
+        if (!ApplyStrategyField(current_strategy, key, value, line_no, error)) {
+            return false;
         }
-        return false;
     }
 
     if (input.bad()) {
         if (error != nullptr) {
-            *error = "failed reading composite config: " + path;
+            *error = "failed reading composite config: " + path.string();
         }
         return false;
     }
@@ -425,8 +678,315 @@ bool LoadCompositeStrategyDefinition(const std::string& path, CompositeStrategyD
         return false;
     }
 
+    const std::filesystem::path base_dir = path.parent_path();
+    auto apply_section = [&](std::vector<SubStrategyDefinition>* section) -> bool {
+        if (section == nullptr) {
+            return true;
+        }
+        for (auto& strategy : *section) {
+            if (!ResolveStrategyExternalConfig(base_dir, &strategy, 0, error)) {
+                return false;
+            }
+        }
+        return true;
+    };
+    if (!apply_section(&definition.sub_strategies)) {
+        return false;
+    }
+
     *out = std::move(definition);
     return true;
+}
+
+bool ParseMarketRegimeJsonArray(const simple_json::Value& array_value,
+                                std::vector<MarketRegime>* out, std::string* error) {
+    if (out == nullptr || !array_value.IsArray()) {
+        if (error != nullptr) {
+            *error = "entry_market_regimes must be an array";
+        }
+        return false;
+    }
+    out->clear();
+    for (const auto& item : array_value.array_value) {
+        if (!item.IsString()) {
+            if (error != nullptr) {
+                *error = "entry_market_regimes elements must be strings";
+            }
+            return false;
+        }
+        MarketRegime regime = MarketRegime::kUnknown;
+        if (!ParseMarketRegime(item.string_value, &regime)) {
+            if (error != nullptr) {
+                *error = "invalid market_regime token: " + item.string_value;
+            }
+            return false;
+        }
+        out->push_back(regime);
+    }
+    return true;
+}
+
+bool ParseStrategyJsonObject(const simple_json::Value& item, SubStrategyDefinition* out,
+                             std::string* error) {
+    if (out == nullptr) {
+        return false;
+    }
+    if (!item.IsObject()) {
+        if (error != nullptr) {
+            *error = "strategy entry must be an object";
+        }
+        return false;
+    }
+
+    SubStrategyDefinition parsed;
+    for (const auto& [key, value] : item.object_value) {
+        if (key == "id") {
+            if (!value.IsString()) {
+                if (error != nullptr) {
+                    *error = "strategy id must be string";
+                }
+                return false;
+            }
+            parsed.id = value.string_value;
+            continue;
+        }
+        if (key == "type") {
+            if (!value.IsString()) {
+                if (error != nullptr) {
+                    *error = "strategy type must be string";
+                }
+                return false;
+            }
+            if (value.string_value == "KamaTrendOpening" || value.string_value == "TrendOpening" ||
+                value.string_value == "TrailingStopLoss" ||
+                value.string_value == "ATRStopLoss" || value.string_value == "ATRTakeProfit" ||
+                value.string_value == "TimeFilter" ||
+                value.string_value == "MaxPositionRiskControl") {
+                if (error != nullptr) {
+                    *error =
+                        "legacy strategy type `" + value.string_value +
+                        "` is not supported in Composite V2; use complete sub strategy types such "
+                        "as `KamaTrendStrategy` or `TrendStrategy`";
+                }
+                return false;
+            }
+            parsed.type = value.string_value;
+            continue;
+        }
+        if (key == "enabled") {
+            if (!value.IsBool()) {
+                if (error != nullptr) {
+                    *error = "strategy enabled must be bool";
+                }
+                return false;
+            }
+            parsed.enabled = value.bool_value;
+            continue;
+        }
+        if (key == "config_path") {
+            if (!value.IsString()) {
+                if (error != nullptr) {
+                    *error = "strategy config_path must be string";
+                }
+                return false;
+            }
+            parsed.config_path = value.string_value;
+            continue;
+        }
+        if (key == "entry_market_regimes") {
+            if (!ParseMarketRegimeJsonArray(value, &parsed.entry_market_regimes, error)) {
+                return false;
+            }
+            continue;
+        }
+        if (key == "market_regimes") {
+            if (error != nullptr) {
+                *error = "field `market_regimes` has been removed; use `entry_market_regimes`";
+            }
+            return false;
+        }
+        if (key == "params") {
+            if (!value.IsObject()) {
+                if (error != nullptr) {
+                    *error = "strategy params must be object";
+                }
+                return false;
+            }
+            for (const auto& [param_key, param_value] : value.object_value) {
+                if (param_value.IsObject() || param_value.IsArray()) {
+                    if (error != nullptr) {
+                        *error = "strategy param `" + param_key + "` must be scalar";
+                    }
+                    return false;
+                }
+                parsed.params[param_key] = param_value.ToString();
+            }
+            continue;
+        }
+        if (error != nullptr) {
+            *error = "unsupported strategy field: " + key;
+        }
+        return false;
+    }
+
+    if (parsed.id.empty() || parsed.type.empty()) {
+        if (error != nullptr) {
+            *error = "strategy id and type are required";
+        }
+        return false;
+    }
+    *out = std::move(parsed);
+    return true;
+}
+
+bool ParseStrategySectionJson(const simple_json::Value& value,
+                              std::vector<SubStrategyDefinition>* out, std::string* error) {
+    if (out == nullptr) {
+        return false;
+    }
+    if (!value.IsArray()) {
+        if (error != nullptr) {
+            *error = "strategy section must be array";
+        }
+        return false;
+    }
+    out->clear();
+    for (const auto& item : value.array_value) {
+        SubStrategyDefinition strategy;
+        if (!ParseStrategyJsonObject(item, &strategy, error)) {
+            return false;
+        }
+        out->push_back(std::move(strategy));
+    }
+    return true;
+}
+
+bool LoadCompositeJson(const std::filesystem::path& path, CompositeStrategyDefinition* out,
+                       std::string* error) {
+    if (out == nullptr) {
+        if (error != nullptr) {
+            *error = "composite definition output is null";
+        }
+        return false;
+    }
+    std::ifstream input(path);
+    if (!input.is_open()) {
+        if (error != nullptr) {
+            *error = "unable to open composite config: " + path.string();
+        }
+        return false;
+    }
+    std::ostringstream buffer;
+    buffer << input.rdbuf();
+    if (input.bad()) {
+        if (error != nullptr) {
+            *error = "failed reading composite config: " + path.string();
+        }
+        return false;
+    }
+
+    simple_json::Value root;
+    if (!simple_json::Parse(buffer.str(), &root, error)) {
+        return false;
+    }
+    if (!root.IsObject()) {
+        if (error != nullptr) {
+            *error = "composite json root must be object";
+        }
+        return false;
+    }
+    const simple_json::Value* composite = root.Find("composite");
+    if (composite == nullptr) {
+        composite = &root;
+    }
+    if (!composite->IsObject()) {
+        if (error != nullptr) {
+            *error = "json field `composite` must be object";
+        }
+        return false;
+    }
+
+    CompositeStrategyDefinition definition;
+    for (const auto& [key, value] : composite->object_value) {
+        if (key == "merge_rule") {
+            if (!value.IsString() || !ParseMergeRule(value.string_value, &definition.merge_rule)) {
+                if (error != nullptr) {
+                    *error = "unsupported merge_rule";
+                }
+                return false;
+            }
+            continue;
+        }
+        if (key == "run_type") {
+            if (!value.IsString() || value.string_value.empty()) {
+                if (error != nullptr) {
+                    *error = "run_type must be non-empty string";
+                }
+                return false;
+            }
+            definition.run_type = value.string_value;
+            continue;
+        }
+        if (key == "market_state_mode") {
+            if (!value.IsBool()) {
+                if (error != nullptr) {
+                    *error = "market_state_mode must be bool";
+                }
+                return false;
+            }
+            definition.market_state_mode = value.bool_value;
+            continue;
+        }
+        if (key == "sub_strategies") {
+            if (!ParseStrategySectionJson(value, &definition.sub_strategies, error)) {
+                return false;
+            }
+            continue;
+        }
+        if (key == "opening_strategies" || key == "stop_loss_strategies" ||
+            key == "take_profit_strategies" || key == "time_filters" ||
+            key == "risk_control_strategies") {
+            if (error != nullptr) {
+                *error = "legacy section `" + key + "` is no longer supported; use `sub_strategies`";
+            }
+            return false;
+        }
+        if (error != nullptr) {
+            *error = "unsupported_field: " + key;
+        }
+        return false;
+    }
+
+    const std::filesystem::path base_dir = path.parent_path();
+    auto apply_section = [&](std::vector<SubStrategyDefinition>* section) -> bool {
+        if (section == nullptr) {
+            return true;
+        }
+        for (auto& strategy : *section) {
+            if (!ResolveStrategyExternalConfig(base_dir, &strategy, 0, error)) {
+                return false;
+            }
+        }
+        return true;
+    };
+    if (!apply_section(&definition.sub_strategies)) {
+        return false;
+    }
+
+    *out = std::move(definition);
+    return true;
+}
+
+}  // namespace
+
+bool LoadCompositeStrategyDefinition(const std::string& path, CompositeStrategyDefinition* out,
+                                     std::string* error) {
+    const std::filesystem::path config_path(path);
+    const std::string lowered = ToLower(config_path.extension().string());
+    if (lowered == ".json") {
+        return LoadCompositeJson(config_path, out, error);
+    }
+    return LoadCompositeYaml(config_path, out, error);
 }
 
 }  // namespace quant_hft

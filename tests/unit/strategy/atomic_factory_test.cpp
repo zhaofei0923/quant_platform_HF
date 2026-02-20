@@ -54,11 +54,7 @@ TEST(AtomicFactoryTest, RegistersAndCreatesAtomicStrategy) {
         type, []() { return std::make_unique<TestAtomicStrategy>(); }, &error))
         << error;
 
-    AtomicStrategyDefinition definition;
-    definition.id = "opening-1";
-    definition.type = type;
-
-    std::unique_ptr<IAtomicStrategy> strategy = factory.Create(definition, &error);
+    std::unique_ptr<IAtomicStrategy> strategy = factory.Create(type, &error, "opening-1");
     ASSERT_NE(strategy, nullptr) << error;
     EXPECT_EQ(strategy->GetId(), "test_atomic_strategy");
 }
@@ -81,24 +77,17 @@ TEST(AtomicFactoryTest, UnknownTypeErrorContainsIdAndType) {
     AtomicFactory factory;
     std::string error;
 
-    AtomicStrategyDefinition definition;
-    definition.id = "unknown-opening";
-    definition.type = "missing_type";
-
-    std::unique_ptr<IAtomicStrategy> strategy = factory.Create(definition, &error);
+    std::unique_ptr<IAtomicStrategy> strategy =
+        factory.Create("missing_type", &error, "unknown-opening");
     EXPECT_EQ(strategy, nullptr);
     EXPECT_NE(error.find("unknown-opening"), std::string::npos);
     EXPECT_NE(error.find("missing_type"), std::string::npos);
 }
 
 TEST(AtomicFactoryTest, MacroRegistrationRegistersIntoGlobalFactory) {
-    AtomicStrategyDefinition definition;
-    definition.id = "macro-opening";
-    definition.type = "atomic_factory_registered_dummy";
-
     std::string error;
-    std::unique_ptr<IAtomicStrategy> strategy =
-        AtomicFactory::Instance().Create(definition, &error);
+    std::unique_ptr<IAtomicStrategy> strategy = AtomicFactory::Instance().Create(
+        "atomic_factory_registered_dummy", &error, "macro-opening");
     ASSERT_NE(strategy, nullptr) << error;
     EXPECT_EQ(strategy->GetId(), "registered_atomic_strategy");
 }

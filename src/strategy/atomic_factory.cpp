@@ -32,14 +32,16 @@ bool AtomicFactory::Register(const std::string& type, Creator creator, std::stri
     return true;
 }
 
-std::unique_ptr<IAtomicStrategy> AtomicFactory::Create(const AtomicStrategyDefinition& definition,
-                                                       std::string* error) const {
+std::unique_ptr<IAtomicStrategy> AtomicFactory::Create(const std::string& type, std::string* error,
+                                                       const std::string& strategy_id) const {
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto it = creators_.find(definition.type);
+    const auto it = creators_.find(type);
     if (it == creators_.end()) {
         if (error != nullptr) {
-            *error = "unknown atomic strategy type '" + definition.type + "' for strategy id '" +
-                     definition.id + "'";
+            *error = "unknown atomic strategy type '" + type + "'";
+            if (!strategy_id.empty()) {
+                *error += " for strategy id '" + strategy_id + "'";
+            }
         }
         return nullptr;
     }

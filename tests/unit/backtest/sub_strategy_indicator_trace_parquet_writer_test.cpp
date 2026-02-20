@@ -69,7 +69,7 @@ TEST(SubStrategyIndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicator
     row0.instrument_id = "rb2405";
     row0.ts_ns = 1700000000000000000LL;
     row0.strategy_id = "open_1";
-    row0.strategy_type = "TrendOpening";
+    row0.strategy_type = "TrendStrategy";
     row0.bar_open = 100.0;
     row0.bar_high = 101.0;
     row0.bar_low = 99.0;
@@ -84,6 +84,8 @@ TEST(SubStrategyIndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicator
     row1.atr = 1.2;
     row1.adx = 25.4;
     row1.er = 0.55;
+    row1.stop_loss_price = 98.5;
+    row1.take_profit_price = 105.0;
     row1.market_regime = MarketRegime::kWeakTrend;
     ASSERT_TRUE(writer.Append(row1, &error)) << error;
 
@@ -102,14 +104,16 @@ TEST(SubStrategyIndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicator
     ASSERT_TRUE(parquet_reader->ReadTable(&table).ok());
     ASSERT_NE(table, nullptr);
     EXPECT_EQ(table->num_rows(), 2);
-    EXPECT_EQ(table->num_columns(), 14);
+    EXPECT_EQ(table->num_columns(), 16);
 
     const std::shared_ptr<arrow::Schema> schema = table->schema();
     ASSERT_NE(schema, nullptr);
     EXPECT_EQ(schema->field(2)->name(), "strategy_id");
     EXPECT_EQ(schema->field(3)->name(), "strategy_type");
     EXPECT_EQ(schema->field(10)->name(), "atr");
-    EXPECT_EQ(schema->field(13)->name(), "market_regime");
+    EXPECT_EQ(schema->field(13)->name(), "stop_loss_price");
+    EXPECT_EQ(schema->field(14)->name(), "take_profit_price");
+    EXPECT_EQ(schema->field(15)->name(), "market_regime");
 
     const auto strategy_id = std::static_pointer_cast<arrow::StringArray>(
         table->GetColumnByName("strategy_id")->chunk(0));
@@ -117,14 +121,22 @@ TEST(SubStrategyIndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicator
         std::static_pointer_cast<arrow::DoubleArray>(table->GetColumnByName("kama")->chunk(0));
     const auto atr =
         std::static_pointer_cast<arrow::DoubleArray>(table->GetColumnByName("atr")->chunk(0));
+    const auto stop_loss_price = std::static_pointer_cast<arrow::DoubleArray>(
+        table->GetColumnByName("stop_loss_price")->chunk(0));
+    const auto take_profit_price = std::static_pointer_cast<arrow::DoubleArray>(
+        table->GetColumnByName("take_profit_price")->chunk(0));
     const auto regime = std::static_pointer_cast<arrow::UInt8Array>(
         table->GetColumnByName("market_regime")->chunk(0));
 
     EXPECT_EQ(strategy_id->GetString(0), "open_1");
     EXPECT_TRUE(kama->IsNull(0));
     EXPECT_TRUE(atr->IsNull(0));
+    EXPECT_TRUE(stop_loss_price->IsNull(0));
+    EXPECT_TRUE(take_profit_price->IsNull(0));
     EXPECT_DOUBLE_EQ(kama->Value(1), 100.8);
     EXPECT_DOUBLE_EQ(atr->Value(1), 1.2);
+    EXPECT_DOUBLE_EQ(stop_loss_price->Value(1), 98.5);
+    EXPECT_DOUBLE_EQ(take_profit_price->Value(1), 105.0);
     EXPECT_EQ(regime->Value(0), static_cast<std::uint8_t>(MarketRegime::kUnknown));
     EXPECT_EQ(regime->Value(1), static_cast<std::uint8_t>(MarketRegime::kWeakTrend));
 

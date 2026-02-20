@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "quant_hft/strategy/atomic_factory.h"
 #include "quant_hft/strategy/composite_config_loader.h"
@@ -18,15 +19,16 @@ namespace {
 
 template <typename T>
 std::vector<T*> BuildTypedStrategies(
-    const std::vector<AtomicStrategyDefinition>& definitions, AtomicFactory* factory,
+    const std::vector<SubStrategyDefinition>& definitions, AtomicFactory* factory,
     std::vector<std::unique_ptr<IAtomicStrategy>>* owned,
     std::vector<IAtomicOrderAware*>* order_aware,
-    const std::function<void(const AtomicStrategyDefinition&, IAtomicStrategy*)>& on_strategy) {
+    const std::function<void(const SubStrategyDefinition&, IAtomicStrategy*)>& on_strategy) {
     std::vector<T*> result;
     result.reserve(definitions.size());
     for (const auto& definition : definitions) {
         std::string error;
-        std::unique_ptr<IAtomicStrategy> strategy = factory->Create(definition, &error);
+        std::unique_ptr<IAtomicStrategy> strategy =
+            factory->Create(definition.type, &error, definition.id);
         if (!strategy) {
             throw std::runtime_error(error.empty() ? "failed to create atomic strategy" : error);
         }
@@ -61,7 +63,12 @@ void CompositeStrategy::Initialize(const StrategyContext& ctx) {
     atomic_context_.account_id = ctx.account_id;
     atomic_context_.net_positions.clear();
     atomic_context_.avg_open_prices.clear();
+    atomic_context_.contract_multipliers.clear();
+    atomic_context_.account_equity = 0.0;
+    atomic_context_.total_pnl_after_cost = 0.0;
     last_filled_volume_by_order_.clear();
+    position_owner_by_instrument_.clear();
+    pending_reverse_open_by_instrument_.clear();
 
     if (factory_ == nullptr) {
         factory_ = &AtomicFactory::Instance();
@@ -75,6 +82,18 @@ void CompositeStrategy::Initialize(const StrategyContext& ctx) {
     if (!has_embedded_definition_) {
         LoadDefinitionFromContext();
     }
+    if (const auto run_type_it = strategy_context_.metadata.find("run_type");
+        run_type_it != strategy_context_.metadata.end() && !run_type_it->second.empty()) {
+        definition_.run_type = run_type_it->second;
+    }
+
+    if (!IsValidRunType(definition_.run_type)) {
+        throw std::runtime_error("unsupported run_type: " + definition_.run_type);
+    }
+    if (definition_.run_type != "backtest") {
+        throw std::runtime_error("CompositeStrategy V2 only supports run_type=backtest");
+    }
+    atomic_context_.run_type = definition_.run_type;
 
     if (definition_.merge_rule != SignalMergeRule::kPriority) {
         throw std::runtime_error("CompositeStrategy only supports merge_rule = kPriority");
@@ -84,37 +103,30 @@ void CompositeStrategy::Initialize(const StrategyContext& ctx) {
 }
 
 std::vector<SignalIntent> CompositeStrategy::OnState(const StateSnapshot7D& state) {
-    std::vector<SignalIntent> all_signals;
+    std::vector<SignalIntent> non_open_signals;
+    std::vector<SignalIntent> opening_signals;
 
-    for (IRiskControlStrategy* strategy : risk_control_strategies_) {
-        std::vector<SignalIntent> signals = strategy->OnState(state, atomic_context_);
-        all_signals.insert(all_signals.end(), signals.begin(), signals.end());
-    }
-
-    for (IStopLossStrategy* strategy : stop_loss_strategies_) {
-        std::vector<SignalIntent> signals = strategy->OnState(state, atomic_context_);
-        all_signals.insert(all_signals.end(), signals.begin(), signals.end());
-    }
-
-    for (ITakeProfitStrategy* strategy : take_profit_strategies_) {
-        std::vector<SignalIntent> signals = strategy->OnState(state, atomic_context_);
-        all_signals.insert(all_signals.end(), signals.begin(), signals.end());
-    }
-
-    bool opening_allowed = true;
-    for (ITimeFilterStrategy* strategy : time_filters_) {
-        opening_allowed = opening_allowed && strategy->AllowOpening(state.ts_ns);
-    }
-
-    if (opening_allowed) {
-        for (const OpeningSlot& slot : opening_strategies_) {
-            if (!IsOpeningAllowedByRegime(slot, state.market_regime)) {
+    for (const SubStrategySlot& slot : sub_strategies_) {
+        std::vector<SignalIntent> signals = slot.strategy->OnState(state, atomic_context_);
+        for (const SignalIntent& signal : signals) {
+            if (signal.instrument_id.empty()) {
                 continue;
             }
-            std::vector<SignalIntent> signals = slot.strategy->OnState(state, atomic_context_);
-            all_signals.insert(all_signals.end(), signals.begin(), signals.end());
+            if (signal.signal_type == SignalType::kOpen) {
+                if (definition_.market_state_mode &&
+                    !IsOpenSignalAllowedByRegime(slot, state.market_regime)) {
+                    continue;
+                }
+                opening_signals.push_back(signal);
+                continue;
+            }
+            non_open_signals.push_back(signal);
         }
     }
+
+    std::vector<SignalIntent> all_signals = ApplyNonOpenSignalGate(non_open_signals);
+    const std::vector<SignalIntent> gated_openings = ApplyOpeningGate(opening_signals, state);
+    all_signals.insert(all_signals.end(), gated_openings.begin(), gated_openings.end());
 
     return MergeSignals(all_signals);
 }
@@ -152,6 +164,7 @@ void CompositeStrategy::OnOrderEvent(const OrderEvent& event) {
     if (new_position == 0) {
         atomic_context_.net_positions[instrument] = 0;
         atomic_context_.avg_open_prices.erase(instrument);
+        position_owner_by_instrument_.erase(instrument);
     } else if (old_position == 0) {
         atomic_context_.net_positions[instrument] = new_position;
         atomic_context_.avg_open_prices[instrument] = fill_price;
@@ -170,6 +183,16 @@ void CompositeStrategy::OnOrderEvent(const OrderEvent& event) {
     } else {
         atomic_context_.net_positions[instrument] = new_position;
         atomic_context_.avg_open_prices[instrument] = fill_price;
+    }
+
+    if (new_position != 0) {
+        if (event.offset == OffsetFlag::kOpen && !event.strategy_id.empty()) {
+            position_owner_by_instrument_[instrument] = event.strategy_id;
+        } else if (position_owner_by_instrument_.find(instrument) ==
+                       position_owner_by_instrument_.end() &&
+                   !event.strategy_id.empty()) {
+            position_owner_by_instrument_[instrument] = event.strategy_id;
+        }
     }
 
     for (IAtomicOrderAware* strategy : order_aware_strategies_) {
@@ -198,36 +221,160 @@ std::vector<CompositeAtomicTraceRow> CompositeStrategy::CollectAtomicIndicatorTr
             row.atr = snapshot->atr;
             row.adx = snapshot->adx;
             row.er = snapshot->er;
+            row.stop_loss_price = snapshot->stop_loss_price;
+            row.take_profit_price = snapshot->take_profit_price;
         }
         rows.push_back(std::move(row));
     }
     return rows;
 }
 
+void CompositeStrategy::SetBacktestAccountSnapshot(double equity, double pnl_after_cost) {
+    atomic_context_.account_equity = equity;
+    atomic_context_.total_pnl_after_cost = pnl_after_cost;
+}
+
+void CompositeStrategy::SetBacktestContractMultiplier(const std::string& instrument_id,
+                                                      double multiplier) {
+    if (instrument_id.empty() || !std::isfinite(multiplier) || multiplier <= 0.0) {
+        return;
+    }
+    atomic_context_.contract_multipliers[instrument_id] = multiplier;
+}
+
 void CompositeStrategy::Shutdown() {
     for (auto& strategy : owned_atomic_strategies_) {
         strategy->Reset();
     }
-    opening_strategies_.clear();
-    stop_loss_strategies_.clear();
-    take_profit_strategies_.clear();
-    time_filters_.clear();
-    risk_control_strategies_.clear();
+    sub_strategies_.clear();
     order_aware_strategies_.clear();
     trace_providers_.clear();
     owned_atomic_strategies_.clear();
     atomic_context_.net_positions.clear();
     atomic_context_.avg_open_prices.clear();
+    atomic_context_.contract_multipliers.clear();
     last_filled_volume_by_order_.clear();
+    position_owner_by_instrument_.clear();
+    pending_reverse_open_by_instrument_.clear();
 }
 
-bool CompositeStrategy::IsOpeningAllowedByRegime(const OpeningSlot& slot,
-                                                 MarketRegime regime) const {
-    if (slot.market_regimes.empty()) {
+bool CompositeStrategy::IsOpenSignalAllowedByRegime(const SubStrategySlot& slot,
+                                                    MarketRegime regime) const {
+    if (slot.entry_market_regimes.empty()) {
         return true;
     }
-    return std::find(slot.market_regimes.begin(), slot.market_regimes.end(), regime) !=
-           slot.market_regimes.end();
+    return std::find(slot.entry_market_regimes.begin(), slot.entry_market_regimes.end(), regime) !=
+           slot.entry_market_regimes.end();
+}
+
+std::vector<SignalIntent> CompositeStrategy::ApplyNonOpenSignalGate(
+    const std::vector<SignalIntent>& signals) {
+    std::vector<SignalIntent> gated;
+    gated.reserve(signals.size());
+    for (const SignalIntent& signal : signals) {
+        if (signal.instrument_id.empty()) {
+            continue;
+        }
+        const auto pos_it = atomic_context_.net_positions.find(signal.instrument_id);
+        const std::int32_t position =
+            pos_it == atomic_context_.net_positions.end() ? 0 : pos_it->second;
+        if (position == 0) {
+            continue;
+        }
+
+        const auto owner_it = position_owner_by_instrument_.find(signal.instrument_id);
+        const bool has_owner =
+            owner_it != position_owner_by_instrument_.end() && !owner_it->second.empty();
+        if (has_owner && owner_it->second != signal.strategy_id) {
+            continue;
+        }
+
+        SignalIntent normalized = signal;
+        normalized.signal_type =
+            signal.signal_type == SignalType::kOpen ? SignalType::kClose : signal.signal_type;
+        normalized.offset = OffsetFlag::kClose;
+        normalized.side = position > 0 ? Side::kSell : Side::kBuy;
+        const std::int32_t abs_pos = std::abs(position);
+        if (normalized.volume <= 0 || normalized.volume > abs_pos) {
+            normalized.volume = abs_pos;
+        }
+        gated.push_back(std::move(normalized));
+    }
+    return gated;
+}
+
+std::vector<SignalIntent> CompositeStrategy::ApplyOpeningGate(
+    const std::vector<SignalIntent>& opening_signals, const StateSnapshot7D& state) {
+    std::vector<SignalIntent> gated;
+
+    for (const SignalIntent& signal : opening_signals) {
+        if (signal.instrument_id.empty()) {
+            continue;
+        }
+
+        const auto pos_it = atomic_context_.net_positions.find(signal.instrument_id);
+        const std::int32_t position =
+            pos_it == atomic_context_.net_positions.end() ? 0 : pos_it->second;
+        const auto owner_it = position_owner_by_instrument_.find(signal.instrument_id);
+        const bool has_owner =
+            owner_it != position_owner_by_instrument_.end() && !owner_it->second.empty();
+
+        if (position == 0) {
+            if (pending_reverse_open_by_instrument_.count(signal.instrument_id) != 0) {
+                continue;
+            }
+            gated.push_back(signal);
+            continue;
+        }
+
+        if (has_owner && owner_it->second != signal.strategy_id) {
+            continue;
+        }
+
+        const Side position_side = position > 0 ? Side::kBuy : Side::kSell;
+        if (signal.side == position_side) {
+            continue;
+        }
+
+        SignalIntent close_signal;
+        close_signal.strategy_id =
+            !signal.strategy_id.empty()
+                ? signal.strategy_id
+                : (has_owner ? owner_it->second : strategy_context_.strategy_id);
+        close_signal.instrument_id = signal.instrument_id;
+        close_signal.signal_type = SignalType::kClose;
+        close_signal.side = position_side == Side::kBuy ? Side::kSell : Side::kBuy;
+        close_signal.offset = OffsetFlag::kClose;
+        close_signal.volume = std::abs(position);
+        close_signal.limit_price =
+            std::isfinite(signal.limit_price) ? signal.limit_price : state.bar_close;
+        close_signal.ts_ns = state.ts_ns;
+        close_signal.trace_id = signal.trace_id.empty()
+                                    ? (close_signal.strategy_id + "-reverse-close")
+                                    : (signal.trace_id + "-reverse-close");
+        gated.push_back(close_signal);
+        pending_reverse_open_by_instrument_[signal.instrument_id] = signal;
+    }
+
+    for (auto it = pending_reverse_open_by_instrument_.begin();
+         it != pending_reverse_open_by_instrument_.end();) {
+        const auto pos_it = atomic_context_.net_positions.find(it->first);
+        const std::int32_t position =
+            pos_it == atomic_context_.net_positions.end() ? 0 : pos_it->second;
+        if (position != 0) {
+            ++it;
+            continue;
+        }
+        SignalIntent pending_open = it->second;
+        pending_open.ts_ns = state.ts_ns;
+        if (std::isfinite(state.bar_close) && state.bar_close > 0.0) {
+            pending_open.limit_price = state.bar_close;
+        }
+        gated.push_back(pending_open);
+        it = pending_reverse_open_by_instrument_.erase(it);
+    }
+
+    return gated;
 }
 
 std::vector<SignalIntent> CompositeStrategy::MergeSignals(
@@ -289,6 +436,10 @@ bool CompositeStrategy::IsPreferredSignal(const SignalIntent& lhs, const SignalI
     return lhs.trace_id < rhs.trace_id;
 }
 
+bool CompositeStrategy::IsValidRunType(const std::string& run_type) {
+    return run_type == "live" || run_type == "sim" || run_type == "backtest";
+}
+
 void CompositeStrategy::LoadDefinitionFromContext() {
     const auto path_it = strategy_context_.metadata.find("composite_config_path");
     if (path_it == strategy_context_.metadata.end() || path_it->second.empty()) {
@@ -302,16 +453,20 @@ void CompositeStrategy::LoadDefinitionFromContext() {
 }
 
 void CompositeStrategy::BuildAtomicStrategies() {
-    opening_strategies_.clear();
-    stop_loss_strategies_.clear();
-    take_profit_strategies_.clear();
-    time_filters_.clear();
-    risk_control_strategies_.clear();
+    sub_strategies_.clear();
     order_aware_strategies_.clear();
     trace_providers_.clear();
     owned_atomic_strategies_.clear();
 
-    const auto on_atomic_strategy = [&](const AtomicStrategyDefinition& definition,
+    std::vector<SubStrategyDefinition> active_definitions;
+    active_definitions.reserve(definition_.sub_strategies.size());
+    for (const auto& definition : definition_.sub_strategies) {
+        if (definition.enabled) {
+            active_definitions.push_back(definition);
+        }
+    }
+
+    const auto on_atomic_strategy = [&](const SubStrategyDefinition& definition,
                                         IAtomicStrategy* strategy) {
         if (auto* trace_provider = dynamic_cast<IAtomicIndicatorTraceProvider*>(strategy);
             trace_provider != nullptr) {
@@ -323,28 +478,15 @@ void CompositeStrategy::BuildAtomicStrategies() {
         }
     };
 
-    risk_control_strategies_ = BuildTypedStrategies<IRiskControlStrategy>(
-        definition_.risk_control_strategies, factory_, &owned_atomic_strategies_,
-        &order_aware_strategies_, on_atomic_strategy);
-    stop_loss_strategies_ = BuildTypedStrategies<IStopLossStrategy>(
-        definition_.stop_loss_strategies, factory_, &owned_atomic_strategies_,
-        &order_aware_strategies_, on_atomic_strategy);
-    take_profit_strategies_ = BuildTypedStrategies<ITakeProfitStrategy>(
-        definition_.take_profit_strategies, factory_, &owned_atomic_strategies_,
-        &order_aware_strategies_, on_atomic_strategy);
-    time_filters_ = BuildTypedStrategies<ITimeFilterStrategy>(
-        definition_.time_filters, factory_, &owned_atomic_strategies_, &order_aware_strategies_,
+    std::vector<ISubStrategy*> typed = BuildTypedStrategies<ISubStrategy>(
+        active_definitions, factory_, &owned_atomic_strategies_, &order_aware_strategies_,
         on_atomic_strategy);
-
-    std::vector<IOpeningStrategy*> opening = BuildTypedStrategies<IOpeningStrategy>(
-        definition_.opening_strategies, factory_, &owned_atomic_strategies_,
-        &order_aware_strategies_, on_atomic_strategy);
-    opening_strategies_.reserve(opening.size());
-    for (std::size_t i = 0; i < opening.size(); ++i) {
-        OpeningSlot slot;
-        slot.strategy = opening[i];
-        slot.market_regimes = definition_.opening_strategies[i].market_regimes;
-        opening_strategies_.push_back(std::move(slot));
+    sub_strategies_.reserve(typed.size());
+    for (std::size_t i = 0; i < typed.size(); ++i) {
+        SubStrategySlot slot;
+        slot.strategy = typed[i];
+        slot.entry_market_regimes = active_definitions[i].entry_market_regimes;
+        sub_strategies_.push_back(std::move(slot));
     }
 }
 

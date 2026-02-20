@@ -1,11 +1,8 @@
 #include <mutex>
 #include <string>
 
-#include "quant_hft/strategy/atomic/atr_stop_loss.h"
-#include "quant_hft/strategy/atomic/atr_take_profit.h"
-#include "quant_hft/strategy/atomic/max_position_risk_control.h"
-#include "quant_hft/strategy/atomic/time_filter.h"
-#include "quant_hft/strategy/atomic/trend_opening.h"
+#include "quant_hft/strategy/atomic/kama_trend_strategy.h"
+#include "quant_hft/strategy/atomic/trend_strategy.h"
 #include "quant_hft/strategy/atomic_factory.h"
 
 namespace quant_hft {
@@ -27,26 +24,13 @@ bool RegisterBuiltinAtomicStrategies(std::string* error) {
     static std::string register_error;
     std::call_once(register_once, [&]() {
         if (!RegisterOne(
-                "TrendOpening", []() { return std::make_unique<TrendOpening>(); },
+                "KamaTrendStrategy", []() { return std::make_unique<KamaTrendStrategy>(); },
                 &register_error)) {
             return;
         }
         if (!RegisterOne(
-                "ATRStopLoss", []() { return std::make_unique<ATRStopLoss>(); }, &register_error)) {
-            return;
-        }
-        if (!RegisterOne(
-                "ATRTakeProfit", []() { return std::make_unique<ATRTakeProfit>(); },
+                "TrendStrategy", []() { return std::make_unique<TrendStrategy>(); },
                 &register_error)) {
-            return;
-        }
-        if (!RegisterOne(
-                "TimeFilter", []() { return std::make_unique<TimeFilter>(); }, &register_error)) {
-            return;
-        }
-        if (!RegisterOne(
-                "MaxPositionRiskControl",
-                []() { return std::make_unique<MaxPositionRiskControl>(); }, &register_error)) {
             return;
         }
         registered = true;

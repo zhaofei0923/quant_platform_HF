@@ -17,4 +17,4 @@ params:
   stop_loss_atr_multiplier: 2.0
   take_profit_mode: atr_target
   take_profit_atr_period: 14
-  take_profit_atr_multiplier: 3.0
+  take_profit_atr_multiplier: 20.0

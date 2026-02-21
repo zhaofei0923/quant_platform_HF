@@ -97,7 +97,9 @@ ctp:
 - `backtest.initial_equity`
 - `backtest.symbols/start_date/end_date`
 - `backtest.product_config_path`
+- `composite.enable_non_backtest`（默认 `false`，仅在 `sim/live` 时置 `true`）
 - `composite.sub_strategies[]`（完整子策略）
+- `composite.sub_strategies[].overrides.{backtest|sim|live}.params`（按运行模式覆盖参数）
 
 `backtest.symbols` 在 Parquet 回测支持两种输入：
 
@@ -107,6 +109,31 @@ ctp:
 CLI 优先级：`CLI 参数 > strategy_main_config > 默认值`。
 
 当 `strategy_main_config_path` 提供且 `run_type != backtest` 时，回测入口会直接报错。
+
+示例（开启 sim 并做参数覆盖）：
+
+```yaml
+run_type: sim
+market_state_mode: true
+backtest:
+  initial_equity: 200000
+  symbols: [c]
+  start_date: 20240101
+  end_date: 20240131
+  product_config_path: ./instrument_info.json
+composite:
+  merge_rule: kPriority
+  enable_non_backtest: true
+  sub_strategies:
+    - id: kama_trend_1
+      enabled: true
+      type: KamaTrendStrategy
+      config_path: ./sub/kama_trend_1.yaml
+      overrides:
+        sim:
+          params:
+            default_volume: 2
+```
 
 ## 产品信息配置（YAML/JSON）
 

@@ -42,6 +42,12 @@ add_library(quant_hft_core STATIC
     src/backtest/backtest_metrics.cpp
     src/backtest/live_data_feed.cpp
     src/apps/backtest_result_export.cpp
+    src/optim/parameter_space.cpp
+    src/optim/grid_search.cpp
+    src/optim/random_search.cpp
+    src/optim/task_scheduler.cpp
+    src/optim/result_analyzer.cpp
+    src/optim/temp_config_generator.cpp
     src/indicators/adx.cpp
     src/indicators/atr.cpp
     src/indicators/ema.cpp
@@ -217,6 +223,9 @@ target_link_libraries(daily_settlement PRIVATE quant_hft_core)
 
 add_executable(backtest_cli src/apps/backtest_cli_main.cpp)
 target_link_libraries(backtest_cli PRIVATE quant_hft_core)
+
+add_executable(parameter_optim_cli src/apps/parameter_optim_cli_main.cpp)
+target_link_libraries(parameter_optim_cli PRIVATE quant_hft_core)
 
 add_executable(backtest_consistency_cli src/apps/backtest_consistency_cli_main.cpp)
 target_link_libraries(backtest_consistency_cli PRIVATE quant_hft_core)
@@ -504,6 +513,21 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(backtest_replay_support_test tests/unit/apps/backtest_replay_support_test.cpp)
     target_link_libraries(backtest_replay_support_test PRIVATE quant_hft_core GTest::gtest_main)
 
+    add_executable(parameter_space_test tests/unit/optim/parameter_space_test.cpp)
+    target_link_libraries(parameter_space_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(grid_search_test tests/unit/optim/grid_search_test.cpp)
+    target_link_libraries(grid_search_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(task_scheduler_test tests/unit/optim/task_scheduler_test.cpp)
+    target_link_libraries(task_scheduler_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(result_analyzer_test tests/unit/optim/result_analyzer_test.cpp)
+    target_link_libraries(result_analyzer_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(temp_config_generator_test tests/unit/optim/temp_config_generator_test.cpp)
+    target_link_libraries(temp_config_generator_test PRIVATE quant_hft_core GTest::gtest_main)
+
     add_executable(ops_cli_test tests/unit/apps/ops_cli_test.cpp)
     target_link_libraries(ops_cli_test PRIVATE GTest::gtest_main)
     target_compile_definitions(ops_cli_test PRIVATE QUANT_HFT_BUILD_DIR="${CMAKE_BINARY_DIR}")
@@ -600,6 +624,11 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(kama_test)
     gtest_discover_tests(adx_test)
     gtest_discover_tests(backtest_replay_support_test)
+    gtest_discover_tests(parameter_space_test)
+    gtest_discover_tests(grid_search_test)
+    gtest_discover_tests(task_scheduler_test)
+    gtest_discover_tests(result_analyzer_test)
+    gtest_discover_tests(temp_config_generator_test)
     gtest_discover_tests(ops_cli_test)
     gtest_discover_tests(quality_gate_scripts_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(consistency_gate_script_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

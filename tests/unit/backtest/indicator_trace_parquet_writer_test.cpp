@@ -5,6 +5,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <utility>
 
 #if QUANT_HFT_ENABLE_ARROW_PARQUET
 #include <arrow/api.h>
@@ -20,6 +21,28 @@ std::filesystem::path UniqueTracePath(const std::string& stem) {
     return std::filesystem::temp_directory_path() /
            (stem + "_" + std::to_string(stamp) + ".parquet");
 }
+
+#if QUANT_HFT_ENABLE_ARROW_PARQUET
+template <typename ReaderPtr>
+auto OpenParquetReaderCompat(const std::shared_ptr<arrow::io::RandomAccessFile>& input,
+                             ReaderPtr* reader, int)
+    -> decltype(parquet::arrow::OpenFile(input, arrow::default_memory_pool()), bool()) {
+    auto reader_result = parquet::arrow::OpenFile(input, arrow::default_memory_pool());
+    if (!reader_result.ok()) {
+        return false;
+    }
+    *reader = std::move(reader_result).ValueOrDie();
+    return *reader != nullptr;
+}
+
+template <typename ReaderPtr>
+auto OpenParquetReaderCompat(const std::shared_ptr<arrow::io::RandomAccessFile>& input,
+                             ReaderPtr* reader, long)
+    -> decltype(parquet::arrow::OpenFile(input, arrow::default_memory_pool(), reader), bool()) {
+    auto reader_status = parquet::arrow::OpenFile(input, arrow::default_memory_pool(), reader);
+    return reader_status.ok() && *reader != nullptr;
+}
+#endif
 
 TEST(IndicatorTraceParquetWriterTest, OpenFailsWhenArrowWriterDisabled) {
 #if QUANT_HFT_ENABLE_ARROW_PARQUET
@@ -105,8 +128,7 @@ TEST(IndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicatorsWhenEnable
     std::shared_ptr<arrow::io::ReadableFile> input = input_result.ValueOrDie();
 
     std::unique_ptr<parquet::arrow::FileReader> parquet_reader;
-    ASSERT_TRUE(
-        parquet::arrow::OpenFile(input, arrow::default_memory_pool(), &parquet_reader).ok());
+    ASSERT_TRUE(OpenParquetReaderCompat(input, &parquet_reader, 0));
     std::shared_ptr<arrow::Table> table;
     ASSERT_TRUE(parquet_reader->ReadTable(&table).ok());
     ASSERT_NE(table, nullptr);

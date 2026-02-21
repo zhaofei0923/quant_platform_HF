@@ -282,6 +282,7 @@
 | `backtest.end_date` | string | 是 | 无 | `YYYYMMDD` | 回测结束日期 | `20240131` |
 | `backtest.product_config_path` | string | 是 | 无 | 路径 | 产品费率/保证金配置 | `./instrument_info.json` |
 | `composite.merge_rule` | string | 否 | `kPriority` | `kPriority` | 信号合并规则 | `kPriority` |
+| `composite.enable_non_backtest` | bool | 否 | `false` | `true/false` | 是否允许 `sim/live` 模式运行 Composite | `false` |
 | `composite.sub_strategies[]` | list | 是 | 空 | 数组 | 完整子策略列表 | 见示例 |
 | `composite.sub_strategies[].id` | string | 是 | 无 | 非空 | 子策略实例 ID | `kama_trend_1` |
 | `composite.sub_strategies[].enabled` | bool | 否 | `true` | `true/false` | 子策略开关 | `true` |
@@ -289,11 +290,72 @@
 | `composite.sub_strategies[].config_path` | string | 条件必填 | 无 | 路径 | 子策略参数配置路径 | `./sub/kama_trend_1.yaml` |
 | `composite.sub_strategies[].params` | map | 条件必填 | 无 | 键值对 | 内联参数 | `risk_per_trade_pct: 0.01` |
 | `composite.sub_strategies[].entry_market_regimes` | list[string] | 否 | 空 | 枚举集合 | 仅开仓信号的市场状态门控 | `[kStrongTrend, kWeakTrend]` |
+| `composite.sub_strategies[].overrides` | map | 否 | 空 | `backtest/sim/live` | 运行模式参数覆盖容器 | 见下方示例 |
+| `composite.sub_strategies[].overrides.<run_mode>.params` | map | 否 | 空 | 标量键值对 | 覆盖对应 run_mode 下原子策略 `params` | `default_volume: 2` |
 
 说明：
 
 - 旧字段 `opening_strategies/stop_loss_strategies/take_profit_strategies/time_filters/risk_control_strategies` 在 V2 直接报错。
 - `backtest.max_loss_percent` 已移除，风险预算下沉到子策略参数 `risk_per_trade_pct`。
+- 当 `run_type != backtest` 且 `composite.enable_non_backtest=false` 时，初始化会 fail-fast。
+- `overrides` 仅允许键 `backtest|sim|live`，且 `params` 仅允许标量值；非法键会 fail-fast。
+- 参数合并顺序：`base params + overrides[run_mode].params`（后者覆盖前者）。
+- `entry_market_regimes` 仅影响 `kOpen`；`StopLoss/TakeProfit/Close/ForceClose` 不受该门控影响。
+
+升级后使用示例：
+
+示例 A（回测兼容模式，默认行为不变）：
+
+```yaml
+run_type: backtest
+market_state_mode: true
+backtest:
+  initial_equity: 200000
+  symbols: [c]
+  start_date: 20240101
+  end_date: 20240131
+  product_config_path: ./instrument_info.json
+composite:
+  merge_rule: kPriority
+  enable_non_backtest: false
+  sub_strategies:
+    - id: kama_trend_1
+      enabled: true
+      type: KamaTrendStrategy
+      config_path: ./sub/kama_trend_1.yaml
+      entry_market_regimes: [kStrongTrend, kWeakTrend]
+```
+
+示例 B（开启 sim/live 并按运行模式覆盖参数）：
+
+```yaml
+run_type: sim
+market_state_mode: true
+backtest:
+  initial_equity: 200000
+  symbols: [c]
+  start_date: 20240101
+  end_date: 20240131
+  product_config_path: ./instrument_info.json
+composite:
+  merge_rule: kPriority
+  enable_non_backtest: true
+  sub_strategies:
+    - id: kama_trend_1
+      enabled: true
+      type: KamaTrendStrategy
+      config_path: ./sub/kama_trend_1.yaml
+      overrides:
+        backtest:
+          params:
+            take_profit_atr_multiplier: 20.0
+        sim:
+          params:
+            default_volume: 2
+        live:
+          params:
+            risk_per_trade_pct: 0.005
+```
 
 ## `configs/strategies/products_info.yaml`
 
@@ -340,7 +402,7 @@
 | `params.stop_loss_atr_multiplier` | double | 否 | `2.0` | `>0` | 止损 ATR 倍数 | `2.0` |
 | `params.take_profit_mode` | string | 否 | `atr_target` | `atr_target/none` | 止盈模型 | `atr_target` |
 | `params.take_profit_atr_period` | int | 否 | `14` | `>0` | 止盈 ATR 周期 | `14` |
-| `params.take_profit_atr_multiplier` | double | 否 | `3.0` | `>0` | 止盈 ATR 倍数 | `3.0` |
+| `params.take_profit_atr_multiplier` | double | 否 | `3.0` | `>0` | 止盈 ATR 倍数 | `20.0` |
 
 说明：
 

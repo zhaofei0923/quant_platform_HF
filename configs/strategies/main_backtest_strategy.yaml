@@ -2,6 +2,12 @@
 # Purpose: 回测主策略入口配置（Composite V2）。
 # Consumer: strategy_main_config_loader / backtest_replay_support
 # Field dictionary: docs/ops/config_catalog.md (`configs/strategies/main_backtest_strategy.yaml`)
+#
+# 升级要点（2026-02）：
+# 1) `composite.enable_non_backtest` 默认 false：保持历史“仅 backtest”行为。
+# 2) `composite.sub_strategies[].overrides.{backtest|sim|live}.params`：
+#    运行模式参数覆盖（base params + overrides[run_mode]）。
+# 3) `entry_market_regimes` 只影响 `kOpen` 开仓信号，不阻断平仓类信号。
 
 run_type: backtest
 market_state_mode: true
@@ -15,12 +21,24 @@ backtest:
 
 composite:
   merge_rule: kPriority
+  enable_non_backtest: false
   sub_strategies:
     - id: kama_trend_1
       enabled: true
       type: KamaTrendStrategy
       config_path: ./sub/kama_trend_1.yaml
       entry_market_regimes: [kStrongTrend, kWeakTrend]
+      # 示例：按运行模式覆盖参数（默认关闭，仅作为写法说明）
+      # overrides:
+      #   backtest:
+      #     params:
+      #       take_profit_atr_multiplier: 20.0
+      #   sim:
+      #     params:
+      #       default_volume: 2
+      #   live:
+      #     params:
+      #       risk_per_trade_pct: 0.005
     - id: trend_1
       enabled: false
       type: TrendStrategy

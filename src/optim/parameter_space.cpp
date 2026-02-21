@@ -771,6 +771,22 @@ bool LoadParameterSpace(const std::string& yaml_path, ParameterSpace* out, std::
         return false;
     }
 
+    const auto engine_mode_it = space.backtest_args.find("engine_mode");
+    if (engine_mode_it == space.backtest_args.end()) {
+        space.backtest_args["engine_mode"] = "parquet";
+    } else if (ToLower(Trim(engine_mode_it->second)) != "parquet") {
+        if (error != nullptr) {
+            *error = "backtest_args.engine_mode must be parquet under parquet-only policy";
+        }
+        return false;
+    }
+    if (space.backtest_args.find("dataset_root") == space.backtest_args.end()) {
+        if (error != nullptr) {
+            *error = "backtest_args.dataset_root is required under parquet-only policy";
+        }
+        return false;
+    }
+
     *out = std::move(space);
     return true;
 }

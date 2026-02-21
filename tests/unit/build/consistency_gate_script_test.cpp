@@ -49,13 +49,24 @@ std::string EscapePathForShell(const std::filesystem::path& path) {
     return escaped;
 }
 
+std::string BuildDirForTest() {
+#ifdef QUANT_HFT_BUILD_DIR
+    return QUANT_HFT_BUILD_DIR;
+#else
+    return "build";
+#endif
+}
+
 TEST(ConsistencyGateScriptTest, GeneratesConsistencyReports) {
     const auto temp_root = MakeTempDir("generate");
     const auto results_dir = temp_root / "results";
     const auto csv_path = temp_root / "sample.csv";
+    const auto dataset_root = temp_root / "parquet_v2";
 
-    const std::string command = "bash scripts/build/run_consistency_gates.sh --build-dir build " +
+    const std::string command =
+        "bash scripts/build/run_consistency_gates.sh --build-dir '" + BuildDirForTest() + "' " +
                                 std::string("--csv-path '") + EscapePathForShell(csv_path) +
+                                "' --dataset-root '" + EscapePathForShell(dataset_root) +
                                 "' --results-dir '" + EscapePathForShell(results_dir) + "'";
     const int rc = RunCommand(command);
     EXPECT_EQ(rc, 0);
@@ -80,13 +91,15 @@ TEST(ConsistencyGateScriptTest, FailsWhenBaselineIsMissing) {
     const auto temp_root = MakeTempDir("missing_baseline");
     const auto results_dir = temp_root / "results";
     const auto csv_path = temp_root / "sample.csv";
+    const auto dataset_root = temp_root / "parquet_v2";
     const auto missing_baseline = temp_root / "missing_baseline.json";
     const auto missing_provenance = temp_root / "missing_provenance.json";
 
     const std::string command =
-        "bash scripts/build/run_consistency_gates.sh --build-dir build " +
+        "bash scripts/build/run_consistency_gates.sh --build-dir '" + BuildDirForTest() + "' " +
         std::string("--csv-path '") + EscapePathForShell(csv_path) + "' --results-dir '" +
-        EscapePathForShell(results_dir) + "' --baseline-json '" +
+        EscapePathForShell(results_dir) + "' --dataset-root '" +
+        EscapePathForShell(dataset_root) + "' --baseline-json '" +
         EscapePathForShell(missing_baseline) + "' --provenance-json '" +
         EscapePathForShell(missing_provenance) + "'";
     const int rc = RunCommand(command);
@@ -102,6 +115,7 @@ TEST(ConsistencyGateScriptTest, FailsWhenConsistencyExceedsTolerance) {
     const auto temp_root = MakeTempDir("diff_fail");
     const auto results_dir = temp_root / "results";
     const auto csv_path = temp_root / "diff.csv";
+    const auto dataset_root = temp_root / "parquet_v2";
     WriteFile(
         csv_path,
         "symbol,exchange,ts_ns,last_price,last_volume,bid_price1,bid_volume1,ask_price1,ask_volume1,"
@@ -111,8 +125,11 @@ TEST(ConsistencyGateScriptTest, FailsWhenConsistencyExceedsTolerance) {
         "rb2405,SHFE,1704067260000000000,98.0,1,97.9,5,98.1,5,12,1176,100\n"
         "rb2405,SHFE,1704067261000000000,97.0,1,96.9,5,97.1,5,13,1261,100\n");
 
-    const std::string command = "bash scripts/build/run_consistency_gates.sh --build-dir build " +
+    const std::string command =
+                                "bash scripts/build/run_consistency_gates.sh --build-dir '" +
+                                BuildDirForTest() + "' " +
                                 std::string("--csv-path '") + EscapePathForShell(csv_path) +
+                                "' --dataset-root '" + EscapePathForShell(dataset_root) +
                                 "' --results-dir '" + EscapePathForShell(results_dir) +
                                 "' --abs-tol 1e-8 --rel-tol 1e-6";
     const int rc = RunCommand(command);

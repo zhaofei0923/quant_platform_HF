@@ -83,6 +83,8 @@ TEST(ParameterSpaceTest, UsesDefaultsWhenOptimizationMissing) {
     const auto path = WriteTempFile(
         "composite_config_path: configs/strategies/main_backtest_strategy.yaml\n"
         "target_sub_config_path: ./sub/kama_trend_1.yaml\n"
+        "backtest_args:\n"
+        "  dataset_root: backtest_data/parquet_v2\n"
         "parameters:\n"
         "  - name: default_volume\n"
         "    type: int\n"

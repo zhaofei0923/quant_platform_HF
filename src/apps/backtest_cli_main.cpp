@@ -13,6 +13,10 @@ int main(int argc, char** argv) {
         std::cerr << "backtest_cli: " << error << '\n';
         return 2;
     }
+    if (!RequireParquetBacktestSpec(spec, &error)) {
+        std::cerr << "backtest_cli: " << error << '\n';
+        return 2;
+    }
 
     BacktestCliResult result;
     if (!RunBacktestSpec(spec, &result, &error)) {

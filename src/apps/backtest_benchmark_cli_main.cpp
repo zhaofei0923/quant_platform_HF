@@ -75,11 +75,12 @@ int main(int argc, char** argv) {
     }
 
     ArgMap spec_args = args;
-    if (detail::GetArgAny(spec_args, {"csv_path", "csv-path", "csv"}).empty()) {
-        spec_args["csv_path"] = "runtime/benchmarks/backtest/rb_ci_sample.csv";
+    if (detail::GetArgAny(spec_args, {"dataset_root", "dataset-root", "parquet_root", "parquet-root"})
+            .empty()) {
+        spec_args["dataset_root"] = "backtest_data/parquet_v2";
     }
     if (detail::GetArgAny(spec_args, {"engine_mode", "engine-mode"}).empty()) {
-        spec_args["engine_mode"] = "csv";
+        spec_args["engine_mode"] = "parquet";
     }
     spec_args["deterministic_fills"] = "true";
     spec_args["max_ticks"] = std::to_string(max_ticks);
@@ -87,6 +88,10 @@ int main(int argc, char** argv) {
     BacktestCliSpec base_spec;
     std::string error;
     if (!ParseBacktestCliSpec(spec_args, &base_spec, &error)) {
+        std::cerr << "backtest_benchmark_cli: " << error << '\n';
+        return 2;
+    }
+    if (!RequireParquetBacktestSpec(base_spec, &error)) {
         std::cerr << "backtest_benchmark_cli: " << error << '\n';
         return 2;
     }

@@ -3,6 +3,7 @@ set -euo pipefail
 
 build_dir="build"
 csv_path="runtime/benchmarks/backtest/rb_ci_sample.csv"
+dataset_root="runtime/benchmarks/backtest/parquet_v2"
 results_dir="docs/results"
 config_path="configs/sim/ctp.yaml"
 max_ticks="4"
@@ -17,7 +18,8 @@ Usage: $0 [options]
 
 Options:
   --build-dir PATH    Build directory containing CLIs (default: build)
-  --csv-path PATH     Input CSV for consistency checks (default: runtime/benchmarks/backtest/rb_ci_sample.csv)
+  --csv-path PATH     Source CSV used to bootstrap parquet dataset (default: runtime/benchmarks/backtest/rb_ci_sample.csv)
+  --dataset-root PATH Parquet dataset root for consistency checks (default: runtime/benchmarks/backtest/parquet_v2)
   --results-dir PATH  Directory for generated reports (default: docs/results)
   --config PATH       Config path for simnow_compare_cli (default: configs/sim/ctp.yaml)
   --max-ticks N       Max ticks used in checks (default: 4)
@@ -37,6 +39,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --csv-path)
       csv_path="$2"
+      shift 2
+      ;;
+    --dataset-root)
+      dataset_root="$2"
       shift 2
       ;;
     --results-dir)
@@ -87,9 +93,14 @@ if [[ ! -x "${build_dir}/simnow_compare_cli" ]]; then
   echo "error: missing executable: ${build_dir}/simnow_compare_cli" >&2
   exit 2
 fi
+if [[ ! -x "${build_dir}/csv_to_parquet_cli" ]]; then
+  echo "error: missing executable: ${build_dir}/csv_to_parquet_cli" >&2
+  exit 2
+fi
 
 mkdir -p "${results_dir}"
 mkdir -p "$(dirname "${csv_path}")"
+mkdir -p "${dataset_root}"
 
 if [[ ! -f "${csv_path}" ]]; then
   cat >"${csv_path}" <<'CSV'
@@ -101,6 +112,15 @@ rb2405,SHFE,1704067203000000000,102.0,1,101.9,5,102.1,5,13,1326,100
 CSV
 fi
 
+if ! "${build_dir}/csv_to_parquet_cli" \
+  --input_csv "${csv_path}" \
+  --output_root "${dataset_root}" \
+  --source rb \
+  --resume true >/dev/null; then
+  echo "error: failed to bootstrap parquet dataset from csv: ${csv_path}" >&2
+  exit 2
+fi
+
 shadow_report_json="${results_dir}/shadow_consistency_report.json"
 shadow_report_html="${results_dir}/shadow_consistency_report.html"
 shadow_report_sqlite="${results_dir}/shadow_consistency.sqlite"
@@ -110,7 +130,7 @@ shadow_reason="within_threshold"
 
 if ! "${build_dir}/simnow_compare_cli" \
   --config "${config_path}" \
-  --csv_path "${csv_path}" \
+  --dataset_root "${dataset_root}" \
   --run_id "shadow-consistency-gate" \
   --max_ticks "${max_ticks}" \
   --dry_run true \
@@ -138,8 +158,8 @@ fi
 
 if [[ "${backtest_status}" == "pass" ]]; then
   if ! "${build_dir}/backtest_consistency_cli" \
-    --engine_mode csv \
-    --csv_path "${csv_path}" \
+    --engine_mode parquet \
+    --dataset_root "${dataset_root}" \
     --max_ticks "${max_ticks}" \
     --run_id "backtest-consistency-gate" \
     --deterministic_fills true \

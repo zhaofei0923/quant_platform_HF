@@ -100,13 +100,19 @@ int main(int argc, char** argv) {
         ApplySpecJsonToArgs(content.str(), &spec_args);
     }
 
+    const std::string dataset_root =
+        detail::GetArgAny(args, {"dataset_root", "dataset-root", "parquet_root", "parquet-root"});
+    if (!dataset_root.empty()) {
+        spec_args["dataset_root"] = dataset_root;
+    }
     const std::string csv_path = detail::GetArgAny(args, {"csv_path", "csv-path", "csv"});
-    if (!csv_path.empty()) {
-        spec_args["csv_path"] = csv_path;
+    if (!csv_path.empty() && dataset_root.empty() && spec_file.empty()) {
+        std::cerr << "factor_eval_cli: csv_path is deprecated, use dataset_root for parquet replay\n";
+        return 2;
     }
 
-    if (spec_file.empty() && detail::GetArgAny(spec_args, {"csv_path"}).empty()) {
-        std::cerr << "factor_eval_cli: either spec_file or csv_path is required\n";
+    if (spec_file.empty() && detail::GetArgAny(spec_args, {"dataset_root"}).empty()) {
+        std::cerr << "factor_eval_cli: either spec_file or dataset_root is required\n";
         return 2;
     }
 
@@ -125,6 +131,10 @@ int main(int argc, char** argv) {
 
     BacktestCliSpec spec;
     if (!ParseBacktestCliSpec(spec_args, &spec, &error)) {
+        std::cerr << "factor_eval_cli: " << error << '\n';
+        return 2;
+    }
+    if (!RequireParquetBacktestSpec(spec, &error)) {
         std::cerr << "factor_eval_cli: " << error << '\n';
         return 2;
     }

@@ -537,6 +537,8 @@ if(QUANT_HFT_BUILD_TESTS)
 
     add_executable(consistency_gate_script_test tests/unit/build/consistency_gate_script_test.cpp)
     target_link_libraries(consistency_gate_script_test PRIVATE GTest::gtest_main)
+    target_compile_definitions(consistency_gate_script_test PRIVATE
+                               QUANT_HFT_BUILD_DIR="${CMAKE_BINARY_DIR}")
 
     add_executable(preprod_rehearsal_gate_script_test
                    tests/unit/build/preprod_rehearsal_gate_script_test.cpp)

@@ -464,6 +464,10 @@ int main(int argc, char** argv) {
         std::cerr << "backtest_consistency_cli: " << error << '\n';
         return 2;
     }
+    if (!RequireParquetBacktestSpec(spec, &error)) {
+        std::cerr << "backtest_consistency_cli: " << error << '\n';
+        return 2;
+    }
 
     std::string baseline_json;
     if (!ReadTextFile(baseline_json_path, &baseline_json, &error)) {

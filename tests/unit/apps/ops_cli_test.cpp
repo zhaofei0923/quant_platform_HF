@@ -388,9 +388,11 @@ TEST(OpsCli, CsvParquetCompareSupportsSymbolsFilter) {
 TEST(OpsCli, BacktestCliExportsCsvArtifactsWithDetailFlags) {
     const auto dir = MakeTempDir("backtest_csv_export");
     const auto input_csv = dir / "rb_sample.csv";
+    const auto dataset_root = dir / "parquet_v2";
     const auto output_json = dir / "backtest.json";
     const auto output_md = dir / "backtest.md";
     const auto output_csv_dir = dir / "csv";
+    const auto convert_log = dir / "convert_stdout.log";
     const auto stdout_log = dir / "backtest_stdout.log";
 
     WriteFile(input_csv,
@@ -400,8 +402,15 @@ TEST(OpsCli, BacktestCliExportsCsvArtifactsWithDetailFlags) {
               "20230103,rb2305,09:00:00,0,4102.0,101,4101.0,3,4103.0,4,41020.0,1239900.0,1001\n"
               "20230103,rb2305,09:00:01,0,4103.0,102,4102.0,3,4104.0,4,41030.0,1245300.0,1002\n");
 
+    const std::string convert_command = "\"" + BinaryPath("csv_to_parquet_cli").string() +
+                                        "\" --input_csv \"" + input_csv.string() +
+                                        "\" --output_root \"" + dataset_root.string() +
+                                        "\" --source rb --resume true";
+    ASSERT_EQ(RunCommandCapture(convert_command, convert_log), 0);
+
     const std::string command = "\"" + BinaryPath("backtest_cli").string() +
-                                "\" --engine_mode csv --csv_path \"" + input_csv.string() +
+                                "\" --engine_mode parquet --dataset_root \"" +
+                                dataset_root.string() +
                                 "\" --max_ticks 100 --emit_position_history true"
                                 " --output_json \"" +
                                 output_json.string() + "\" --output_md \"" + output_md.string() +
@@ -424,9 +433,11 @@ TEST(OpsCli, BacktestCliExportsCsvArtifactsWithDetailFlags) {
 TEST(OpsCli, FactorEvalCliIncludesDetectorConfigInOutputJson) {
     const auto dir = MakeTempDir("factor_eval_detector");
     const auto input_csv = dir / "rb_sample.csv";
+    const auto dataset_root = dir / "parquet_v2";
     const auto detector_yaml = dir / "detector.yaml";
     const auto output_jsonl = dir / "tracker.jsonl";
     const auto output_json = dir / "factor_eval.json";
+    const auto convert_log = dir / "convert_stdout.log";
     const auto stdout_log = dir / "factor_eval_stdout.log";
 
     WriteFile(input_csv,
@@ -440,10 +451,16 @@ TEST(OpsCli, FactorEvalCliIncludesDetectorConfigInOutputJson) {
               "  adx_period: 7\n"
               "  atr_period: 5\n");
 
+    const std::string convert_command = "\"" + BinaryPath("csv_to_parquet_cli").string() +
+                                        "\" --input_csv \"" + input_csv.string() +
+                                        "\" --output_root \"" + dataset_root.string() +
+                                        "\" --source rb --resume true";
+    ASSERT_EQ(RunCommandCapture(convert_command, convert_log), 0);
+
     const std::string command = "\"" + BinaryPath("factor_eval_cli").string() +
                                 "\" --factor_id factor-test --template trend"
-                                " --csv_path \"" +
-                                input_csv.string() + "\" --detector_config \"" +
+                                " --dataset_root \"" + dataset_root.string() +
+                                "\" --engine_mode parquet --detector_config \"" +
                                 detector_yaml.string() + "\" --max_ticks 100 --output_jsonl \"" +
                                 output_jsonl.string() + "\" --output_json \"" +
                                 output_json.string() + "\"";

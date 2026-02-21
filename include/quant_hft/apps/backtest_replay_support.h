@@ -1223,6 +1223,22 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
     return true;
 }
 
+inline bool RequireParquetBacktestSpec(const BacktestCliSpec& spec, std::string* error) {
+    if (spec.engine_mode != "parquet") {
+        if (error != nullptr) {
+            *error = "parquet-only policy: engine_mode must be parquet";
+        }
+        return false;
+    }
+    if (spec.dataset_root.empty()) {
+        if (error != nullptr) {
+            *error = "parquet-only policy: dataset_root is required";
+        }
+        return false;
+    }
+    return true;
+}
+
 inline std::string BuildInputSignature(const BacktestCliSpec& spec) {
     std::ostringstream symbols_stream;
     for (std::size_t index = 0; index < spec.symbols.size(); ++index) {

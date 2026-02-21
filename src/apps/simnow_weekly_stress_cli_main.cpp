@@ -117,8 +117,14 @@ int main(int argc, char** argv) {
     const auto args = ParseArgs(argc, argv);
 
     const std::string config_path = detail::GetArgAny(args, {"config"}, "configs/sim/ctp.yaml");
-    const std::string csv_path =
-        detail::GetArgAny(args, {"csv_path", "csv-path"}, "backtest_data/rb.csv");
+    const std::string dataset_root =
+        detail::GetArgAny(args,
+                          {"dataset_root", "dataset-root", "parquet_root", "parquet-root"},
+                          "backtest_data/parquet_v2");
+    if (!detail::GetArgAny(args, {"csv_path", "csv-path"}).empty()) {
+        std::cerr << "simnow_weekly_stress_cli: csv_path is deprecated, use dataset_root\n";
+        return 2;
+    }
     const std::string result_json =
         detail::GetArgAny(args, {"result_json", "result-json", "output_json", "output-json"},
                           "docs/results/simnow_weekly_stress.json");
@@ -177,13 +183,17 @@ int main(int argc, char** argv) {
             run_prefix + "-" + (index + 1 < 10 ? "0" : "") + std::to_string(index + 1);
 
         BacktestCliSpec spec;
-        spec.csv_path = csv_path;
-        spec.engine_mode = "csv";
+        spec.dataset_root = dataset_root;
+        spec.engine_mode = "parquet";
         spec.max_ticks = max_ticks;
         spec.deterministic_fills = true;
         spec.run_id = run_id;
         spec.account_id = "sim-account";
 
+        if (!RequireParquetBacktestSpec(spec, &error)) {
+            std::cerr << "simnow_weekly_stress_cli: " << error << '\n';
+            return 2;
+        }
         BacktestCliResult backtest;
         if (!RunBacktestSpec(spec, &backtest, &error)) {
             std::cerr << "simnow_weekly_stress_cli: " << error << '\n';

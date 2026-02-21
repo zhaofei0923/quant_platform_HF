@@ -44,6 +44,9 @@ bool RunModeSummary(const quant_hft::apps::BacktestCliSpec& base_spec, std::int6
     for (std::int64_t idx = 0; idx < total_runs; ++idx) {
         quant_hft::apps::BacktestCliSpec run_spec = base_spec;
         run_spec.run_id = "compare-" + base_spec.engine_mode + "-" + std::to_string(idx);
+        if (!quant_hft::apps::RequireParquetBacktestSpec(run_spec, error)) {
+            return false;
+        }
 
         const auto started = std::chrono::steady_clock::now();
         quant_hft::apps::BacktestCliResult result;
@@ -155,9 +158,8 @@ int main(int argc, char** argv) {
     }
 
     BacktestCliSpec csv_spec;
-    csv_spec.csv_path = csv_path;
     csv_spec.dataset_root = parquet_root;
-    csv_spec.engine_mode = "csv";
+    csv_spec.engine_mode = "parquet";
     csv_spec.rollover_mode = "strict";
     csv_spec.rollover_price_mode = "bbo";
     csv_spec.rollover_slippage_bps = 0.0;
@@ -171,8 +173,7 @@ int main(int argc, char** argv) {
     csv_spec.emit_state_snapshots = false;
 
     BacktestCliSpec parquet_spec = csv_spec;
-    parquet_spec.engine_mode = "parquet";
-    parquet_spec.run_id = "compare-parquet";
+    parquet_spec.run_id = "compare-parquet-b";
 
     ModeSummary csv_summary;
     ModeSummary parquet_summary;
@@ -214,7 +215,7 @@ int main(int argc, char** argv) {
          << "  \"deterministic_fills\": " << (deterministic_fills ? "true" : "false") << ",\n"
          << "  \"summary\": {\n"
          << "    \"csv\": {\n"
-         << "      \"engine_mode\": \"csv\",\n"
+         << "      \"engine_mode\": \"parquet\",\n"
          << "      \"mean_ms\": " << detail::FormatDouble(csv_summary.mean_ms) << ",\n"
          << "      \"p95_ms\": " << detail::FormatDouble(csv_summary.p95_ms) << ",\n"
          << "      \"min_ms\": " << detail::FormatDouble(csv_summary.min_ms) << ",\n"

@@ -1,0 +1,28 @@
+mode: fixed_params
+
+backtest_base:
+  engine_mode: parquet
+  dataset_root: backtest_data/parquet_v2
+  strategy_factory: composite
+  strategy_composite_config: configs/strategies/main_backtest_strategy.yaml
+  max_ticks: 5000
+  emit_trades: false
+  emit_orders: false
+  emit_position_history: false
+  deterministic_fills: true
+  strict_parquet: true
+
+window:
+  type: rolling
+  train_length_days: 5
+  test_length_days: 2
+  step_days: 5
+  min_train_days: 5
+  start_date: 20230101
+  end_date: 20230201
+
+output:
+  report_json: docs/results/rolling_backtest_report.json
+  report_md: docs/results/rolling_backtest_report.md
+  keep_temp_files: false
+  window_parallel: 1

@@ -48,6 +48,22 @@ TEST(ResultAnalyzerTest, ExtractMetricSupportsAliasMapping) {
     std::filesystem::remove(json_path, ec);
 }
 
+TEST(ResultAnalyzerTest, ExtractMetricFromJsonTextWorks) {
+    const std::string json_text =
+        "{\n"
+        "  \"summary\": {\"total_pnl\": 12.3},\n"
+        "  \"hf_standard\": {\n"
+        "    \"advanced_summary\": {\"profit_factor\": 2.5}\n"
+        "  }\n"
+        "}\n";
+
+    std::string error;
+    const double value =
+        ResultAnalyzer::ExtractMetricFromJsonText(json_text, "hf_standard.profit_factor", &error);
+    EXPECT_TRUE(error.empty()) << error;
+    EXPECT_DOUBLE_EQ(value, 2.5);
+}
+
 TEST(ResultAnalyzerTest, AnalyzeBuildsConvergenceAndObjectives) {
     Trial t1;
     t1.trial_id = "t1";

@@ -1069,4 +1069,27 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecClipsVolumeByMarginAndTracksUsage
     std::filesystem::remove(fee_cfg, ec);
 }
 
+TEST(BacktestReplaySupportTest, RequireParquetBacktestSpecRejectsUnsupportedEngineMode) {
+    BacktestCliSpec spec;
+    spec.engine_mode = "csv";
+    spec.dataset_root = "backtest_data/parquet_v2";
+    std::string error;
+    EXPECT_FALSE(RequireParquetBacktestSpec(spec, &error));
+    EXPECT_NE(error.find("engine_mode must be parquet"), std::string::npos);
+}
+
+TEST(BacktestReplaySupportTest, RequireParquetBacktestSpecHonorsArrowBuildFlag) {
+    BacktestCliSpec spec;
+    spec.engine_mode = "parquet";
+    spec.dataset_root = "backtest_data/parquet_v2";
+    std::string error;
+    const bool ok = RequireParquetBacktestSpec(spec, &error);
+#if QUANT_HFT_ENABLE_ARROW_PARQUET
+    EXPECT_TRUE(ok) << error;
+#else
+    EXPECT_FALSE(ok);
+    EXPECT_NE(error.find("built without Arrow/Parquet support"), std::string::npos);
+#endif
+}
+
 }  // namespace quant_hft::apps

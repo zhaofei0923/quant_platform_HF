@@ -48,6 +48,11 @@ add_library(quant_hft_core STATIC
     src/optim/task_scheduler.cpp
     src/optim/result_analyzer.cpp
     src/optim/temp_config_generator.cpp
+    src/rolling/rolling_config.cpp
+    src/rolling/window_generator.cpp
+    src/rolling/metric_extractor.cpp
+    src/rolling/rolling_runner.cpp
+    src/rolling/rolling_report_writer.cpp
     src/indicators/adx.cpp
     src/indicators/atr.cpp
     src/indicators/ema.cpp
@@ -226,6 +231,9 @@ target_link_libraries(backtest_cli PRIVATE quant_hft_core)
 
 add_executable(parameter_optim_cli src/apps/parameter_optim_cli_main.cpp)
 target_link_libraries(parameter_optim_cli PRIVATE quant_hft_core)
+
+add_executable(rolling_backtest_cli src/apps/rolling_backtest_cli_main.cpp)
+target_link_libraries(rolling_backtest_cli PRIVATE quant_hft_core)
 
 add_executable(backtest_consistency_cli src/apps/backtest_consistency_cli_main.cpp)
 target_link_libraries(backtest_consistency_cli PRIVATE quant_hft_core)
@@ -513,6 +521,26 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(backtest_replay_support_test tests/unit/apps/backtest_replay_support_test.cpp)
     target_link_libraries(backtest_replay_support_test PRIVATE quant_hft_core GTest::gtest_main)
 
+    add_executable(rolling_config_test tests/unit/apps/rolling_config_test.cpp)
+    target_link_libraries(rolling_config_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(window_generator_test tests/unit/apps/window_generator_test.cpp)
+    target_link_libraries(window_generator_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(metric_extractor_test tests/unit/apps/metric_extractor_test.cpp)
+    target_link_libraries(metric_extractor_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(rolling_runner_fixed_test tests/unit/apps/rolling_runner_fixed_test.cpp)
+    target_link_libraries(rolling_runner_fixed_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(rolling_runner_optimize_test tests/unit/apps/rolling_runner_optimize_test.cpp)
+    target_link_libraries(rolling_runner_optimize_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(run_backtest_spec_parallel_smoke_test
+                   tests/unit/apps/run_backtest_spec_parallel_smoke_test.cpp)
+    target_link_libraries(run_backtest_spec_parallel_smoke_test PRIVATE quant_hft_core
+                                                                         GTest::gtest_main)
+
     add_executable(parameter_space_test tests/unit/optim/parameter_space_test.cpp)
     target_link_libraries(parameter_space_test PRIVATE quant_hft_core GTest::gtest_main)
 
@@ -543,6 +571,10 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(preprod_rehearsal_gate_script_test
                    tests/unit/build/preprod_rehearsal_gate_script_test.cpp)
     target_link_libraries(preprod_rehearsal_gate_script_test PRIVATE GTest::gtest_main)
+
+    add_executable(run_backtest_from_config_script_test
+                   tests/unit/build/run_backtest_from_config_script_test.cpp)
+    target_link_libraries(run_backtest_from_config_script_test PRIVATE GTest::gtest_main)
 
     if(QUANT_HFT_METRICS_ACTIVE)
         add_executable(exporter_test tests/unit/monitoring/exporter_test.cpp)
@@ -626,6 +658,12 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(kama_test)
     gtest_discover_tests(adx_test)
     gtest_discover_tests(backtest_replay_support_test)
+    gtest_discover_tests(rolling_config_test)
+    gtest_discover_tests(window_generator_test)
+    gtest_discover_tests(metric_extractor_test)
+    gtest_discover_tests(rolling_runner_fixed_test)
+    gtest_discover_tests(rolling_runner_optimize_test)
+    gtest_discover_tests(run_backtest_spec_parallel_smoke_test)
     gtest_discover_tests(parameter_space_test)
     gtest_discover_tests(grid_search_test)
     gtest_discover_tests(task_scheduler_test)
@@ -635,6 +673,9 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(quality_gate_scripts_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(consistency_gate_script_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(preprod_rehearsal_gate_script_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    gtest_discover_tests(run_backtest_from_config_script_test
+                         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                         TEST_PREFIX "run_backtest_from_config_script_test.")
     if(QUANT_HFT_METRICS_ACTIVE)
         gtest_discover_tests(exporter_test)
     endif()

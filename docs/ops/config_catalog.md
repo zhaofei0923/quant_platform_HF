@@ -36,6 +36,7 @@
 - `configs/deploy/environments/prodlike_multi_host.yaml`
 - `configs/ops/ctp_cutover.template.env`
 - `configs/ops/ctp_rollback_drill.template.env`
+- `configs/ops/backtest_run.yaml`
 
 ---
 
@@ -598,6 +599,80 @@ composite:
 | `MAX_ROLLBACK_SECONDS` | 是 | 中 | 最大回滚耗时 | `180` |
 | `ROLLBACK_EVIDENCE_OUTPUT` | 是 | 中 | 回滚证据输出路径 | `docs/results/ctp_rollback_result.env` |
 
+## `configs/ops/backtest_run.yaml`
+
+- Purpose: 一键编译 + parquet 回测运行配置。
+- Consumer: `scripts/build/run_backtest_from_config.sh`。
+- 约束: `engine_mode` 必须为 `parquet`（parquet-only policy）。
+
+字段表：
+
+| 字段 | 类型 | 必填 | 默认值 | 取值 | 含义 | 示例 |
+|---|---|---|---|---|---|---|
+| `build_dir` | string | 否 | `build-gcc` | 目录路径 | cmake 构建目录 | `build-gcc` |
+| `cmake_build_type` | string | 否 | `Release` | `Debug/Release/...` | CMake 构建类型 | `Release` |
+| `build_tests` | bool | 否 | `false` | `true/false` | 是否开启测试目标 | `false` |
+| `enable_arrow_parquet` | bool | 否 | `true` | `true/false` | 是否开启 Arrow/Parquet 编译开关 | `true` |
+| `auto_install_arrow_parquet_deps` | bool | 否 | `true` | `true/false` | 构建失败时自动安装依赖并重试一次 | `true` |
+| `engine_mode` | string | 是 | 无 | `parquet` | 回测数据引擎模式 | `parquet` |
+| `dataset_root` | string | 是 | 无 | 目录路径 | Parquet 数据根目录 | `backtest_data/parquet_v2` |
+| `strategy_main_config_path` | string | 是 | 无 | 文件路径 | 主策略配置文件 | `configs/strategies/main_backtest_strategy.yaml` |
+| `output_json` | string | 是 | 无 | 文件路径 | 回测 JSON 输出路径 | `docs/results/backtest_auto.json` |
+| `output_md` | string | 是 | 无 | 文件路径 | 回测 Markdown 输出路径 | `docs/results/backtest_auto.md` |
+| `export_csv_dir` | string | 否 | 空 | 目录路径 | 回测明细 CSV 导出目录 | `docs/results/backtest_auto_csv` |
+| `run_id` | string | 否 | 空 | 任意字符串 | 回测运行 ID | `bt-20260221-001` |
+| `max_ticks` | int | 否 | 空 | `>0` | 最大回放 tick 数 | `5000` |
+| `start_date` | string | 否 | 空 | `YYYYMMDD` | 回测开始日期 | `20240101` |
+| `end_date` | string | 否 | 空 | `YYYYMMDD` | 回测结束日期 | `20240131` |
+| `deterministic_fills` | bool | 否 | `true` | `true/false` | 是否开启确定性成交 | `true` |
+| `strict_parquet` | bool | 否 | `true` | `true/false` | parquet 严格模式 | `true` |
+| `rollover_mode` | string | 否 | `strict` | `strict/carry` | 换月模式 | `strict` |
+| `rollover_price_mode` | string | 否 | `bbo` | `bbo/mid/last` | 换月价格模式 | `bbo` |
+| `rollover_slippage_bps` | double | 否 | `0` | `>=0` | 换月滑点（bps） | `0` |
+| `emit_trades` | bool | 否 | `true` | `true/false` | 是否输出 trades 明细 | `true` |
+| `emit_orders` | bool | 否 | `true` | `true/false` | 是否输出 orders 明细 | `true` |
+| `emit_position_history` | bool | 否 | `false` | `true/false` | 是否输出持仓快照明细 | `false` |
+
+## `configs/ops/rolling_backtest.yaml`
+
+- Purpose: 滚动窗口回测与滚动优化运行配置。
+- Consumer: `rolling_backtest_cli`。
+- 约束: parquet-only + manifest required。
+
+字段表：
+
+| 字段 | 类型 | 必填 | 默认值 | 取值 | 含义 | 示例 |
+|---|---|---|---|---|---|---|
+| `mode` | string | 是 | 无 | `fixed_params/rolling_optimize` | 运行模式 | `rolling_optimize` |
+| `backtest_base.engine_mode` | string | 是 | `parquet` | `parquet` | 数据引擎 | `parquet` |
+| `backtest_base.dataset_root` | string | 是 | 无 | 目录路径 | 数据根目录 | `backtest_data/parquet_v2` |
+| `backtest_base.dataset_manifest` | string | 否 | `${dataset_root}/_manifest/partitions.jsonl` | 文件路径 | manifest 路径 | `backtest_data/parquet_v2/_manifest/partitions.jsonl` |
+| `backtest_base.symbols` | list[string] | 否 | 空 | 合约或品种列表 | 回放标的过滤 | `[rb]` |
+| `backtest_base.strategy_factory` | string | 否 | `composite` | 已注册策略工厂名 | 策略工厂 | `composite` |
+| `backtest_base.strategy_composite_config` | string | `strategy_factory=composite` 时必填 | 空 | 文件路径 | 组合策略配置 | `configs/strategies/main_backtest_strategy.yaml` |
+| `backtest_base.emit_trades` | bool | 否 | `false` | `true/false` | 是否输出 trades | `false` |
+| `backtest_base.emit_orders` | bool | 否 | `false` | `true/false` | 是否输出 orders | `false` |
+| `backtest_base.emit_position_history` | bool | 否 | `false` | `true/false` | 是否输出持仓快照 | `false` |
+| `window.type` | string | 是 | `rolling` | `rolling/expanding` | 窗口类型 | `rolling` |
+| `window.train_length_days` | int | 是 | `180` | `>0` | 训练窗口交易日长度 | `180` |
+| `window.test_length_days` | int | 是 | `30` | `>0` | 测试窗口交易日长度 | `30` |
+| `window.step_days` | int | 是 | `30` | `>0` | 滑动步长（交易日） | `30` |
+| `window.min_train_days` | int | expanding 模式建议必填 | `180` | `>0` | expanding 最小训练长度 | `180` |
+| `window.start_date` | string | 是 | 无 | `YYYYMMDD` | 回测起始交易日 | `20230101` |
+| `window.end_date` | string | 是 | 无 | `YYYYMMDD` | 回测结束交易日 | `20241231` |
+| `optimization.algorithm` | string | `rolling_optimize` 必填 | `grid` | `grid` | 优化算法 | `grid` |
+| `optimization.metric` | string | `rolling_optimize` 必填 | `hf_standard.profit_factor` | 指标路径/别名 | 优化目标 | `hf_standard.profit_factor` |
+| `optimization.maximize` | bool | 否 | `true` | `true/false` | 最大化或最小化 | `true` |
+| `optimization.max_trials` | int | `rolling_optimize` 必填 | `100` | `>0` | 每窗口 trial 上限 | `100` |
+| `optimization.parallel` | int | `rolling_optimize` 必填 | `1` | `>0` | 窗口内并发 trial 数 | `2` |
+| `optimization.param_space` | string | `rolling_optimize` 必填 | 无 | 文件路径 | 参数空间配置 | `runtime/optim/param_space.yaml` |
+| `optimization.target_sub_config_path` | string | 否 | 空 | 文件路径 | 目标子策略路径（与 param_space 一致性校验） | `configs/strategies/sub/kama_trend_1.yaml` |
+| `output.report_json` | string | 是 | 无 | 文件路径 | 汇总 JSON 报告路径 | `docs/results/rolling_backtest_report.json` |
+| `output.report_md` | string | 是 | 无 | 文件路径 | 汇总 Markdown 报告路径 | `docs/results/rolling_backtest_report.md` |
+| `output.best_params_dir` | string | 否 | 空 | 目录路径 | 每窗口 best params 输出目录 | `runtime/rolling/best_params` |
+| `output.keep_temp_files` | bool | 否 | `false` | `true/false` | 是否保留临时 trial 产物 | `false` |
+| `output.window_parallel` | int | 否 | `1` | `>0` | 窗口并发数（`rolling_optimize` 强制降级到 1） | `1` |
+
 ---
 
 ## 常见错误与排查
@@ -624,6 +699,13 @@ composite:
   --engine_mode parquet \
   --dataset_root backtest_data/parquet_v2 \
   --strategy_main_config_path configs/strategies/main_backtest_strategy.yaml
+```
+
+### 配置驱动一键回测
+
+```bash
+bash scripts/build/run_backtest_from_config.sh \
+  --config configs/ops/backtest_run.yaml
 ```
 
 ### 配置覆盖校验

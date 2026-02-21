@@ -25,6 +25,10 @@ class ResultAnalyzer {
    public:
     static std::string ResolveMetricPathAlias(const std::string& metric_path);
 
+    static double ExtractMetricFromJsonText(const std::string& json_text,
+                                            const std::string& metric_path,
+                                            std::string* error);
+
     static double ExtractMetricFromJson(const std::string& json_path,
                                         const std::string& metric_path,
                                         std::string* error);

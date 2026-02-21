@@ -22,6 +22,7 @@
 namespace quant_hft {
 namespace {
 
+#if !QUANT_HFT_ENABLE_ARROW_PARQUET
 std::vector<std::string> SplitCsvLine(const std::string& line) {
     std::vector<std::string> cells;
     std::string current;
@@ -41,6 +42,7 @@ std::vector<std::string> SplitCsvLine(const std::string& line) {
     cells.push_back(current);
     return cells;
 }
+#endif
 
 std::string Trim(std::string text) {
     const auto is_space = [](unsigned char ch) { return std::isspace(ch) != 0; };
@@ -258,6 +260,7 @@ void LoadMetaFile(const std::filesystem::path& meta_path, ParquetPartitionMeta* 
     }
 }
 
+#if !QUANT_HFT_ENABLE_ARROW_PARQUET
 Tick BuildTickFromValues(const std::vector<std::string>& headers,
                          const std::vector<std::string>& values,
                          const std::string& default_symbol) {
@@ -309,6 +312,7 @@ Tick BuildTickFromValues(const std::vector<std::string>& headers,
 
     return tick;
 }
+#endif
 
 #if QUANT_HFT_ENABLE_ARROW_PARQUET
 std::string ReadStringArrayValue(const std::shared_ptr<arrow::Array>& values, std::int64_t row) {
@@ -401,17 +405,28 @@ bool AppendTicksFromParquet(const std::filesystem::path& parquet_path,
 
     auto input_res = arrow::io::ReadableFile::Open(parquet_path.string());
     if (!input_res.ok()) {
+        if (error != nullptr) {
+            *error = "unable to open parquet file: " + parquet_path.string() + " (" +
+                     input_res.status().ToString() + ")";
+        }
         return false;
     }
 
     std::unique_ptr<parquet::arrow::FileReader> reader;
     if (!OpenParquetReader(input_res.ValueOrDie(), &reader, 0)) {
+        if (error != nullptr) {
+            *error = "unable to open parquet reader: " + parquet_path.string();
+        }
         return false;
     }
 
     std::shared_ptr<arrow::Table> table;
     auto table_status = reader->ReadTable(&table);
     if (!table_status.ok() || table == nullptr) {
+        if (error != nullptr) {
+            *error = "unable to read parquet table: " + parquet_path.string() + " (" +
+                     table_status.ToString() + ")";
+        }
         return false;
     }
 
@@ -525,6 +540,7 @@ bool AppendTicksFromParquet(const std::filesystem::path& parquet_path,
 }
 #endif
 
+#if !QUANT_HFT_ENABLE_ARROW_PARQUET
 bool LoadTicksFromSidecar(const ParquetPartitionMeta& partition, const Timestamp& start,
                           const Timestamp& end, std::vector<Tick>* out, ParquetScanMetrics* metrics,
                           std::int64_t max_ticks, std::string* error) {
@@ -598,6 +614,7 @@ bool LoadTicksFromSidecar(const ParquetPartitionMeta& partition, const Timestamp
 
     return true;
 }
+#endif
 
 }  // namespace
 
@@ -829,21 +846,24 @@ bool ParquetDataFeed::LoadPartitionTicks(const ParquetPartitionMeta& partition,
     }
 
 #if QUANT_HFT_ENABLE_ARROW_PARQUET
-    if (AppendTicksFromParquet(partition.file_path, partition.instrument_id, start, end, out,
-                               metrics, max_ticks, nullptr)) {
-        std::sort(out->begin(), out->end(), [](const Tick& left, const Tick& right) {
-            if (left.ts_ns != right.ts_ns) {
-                return left.ts_ns < right.ts_ns;
+    std::string parquet_error;
+    if (!AppendTicksFromParquet(partition.file_path, partition.instrument_id, start, end, out,
+                                metrics, max_ticks, &parquet_error)) {
+        if (error != nullptr) {
+            if (!parquet_error.empty()) {
+                *error = parquet_error;
+            } else {
+                *error = "failed to read parquet partition: " + partition.file_path;
             }
-            return left.symbol < right.symbol;
-        });
-        return true;
+        }
+        return false;
     }
-#endif
 
+#else
     if (!LoadTicksFromSidecar(partition, start, end, out, metrics, max_ticks, error)) {
         return false;
     }
+#endif
 
     std::sort(out->begin(), out->end(), [](const Tick& left, const Tick& right) {
         if (left.ts_ns != right.ts_ns) {

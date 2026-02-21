@@ -1236,6 +1236,15 @@ inline bool RequireParquetBacktestSpec(const BacktestCliSpec& spec, std::string*
         }
         return false;
     }
+#if !QUANT_HFT_ENABLE_ARROW_PARQUET
+    if (error != nullptr) {
+        *error =
+            "parquet-only policy: binary was built without Arrow/Parquet support "
+            "(QUANT_HFT_ENABLE_ARROW_PARQUET=OFF). Rebuild with "
+            "-DQUANT_HFT_ENABLE_ARROW_PARQUET=ON";
+    }
+    return false;
+#endif
     return true;
 }
 

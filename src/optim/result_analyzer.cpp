@@ -83,52 +83,10 @@ bool ParseDoubleStrict(const std::string& text, double* out) {
     }
 }
 
-std::vector<std::pair<std::string, ParamValue>> SortedParams(const ParamValueMap& params) {
-    std::vector<std::pair<std::string, ParamValue>> sorted;
-    sorted.reserve(params.values.size());
-    for (const auto& [key, value] : params.values) {
-        sorted.emplace_back(key, value);
-    }
-    std::sort(sorted.begin(), sorted.end(), [](const auto& left, const auto& right) {
-        return left.first < right.first;
-    });
-    return sorted;
-}
-
-}  // namespace
-
-std::string ResultAnalyzer::ResolveMetricPathAlias(const std::string& metric_path) {
-    static const std::map<std::string, std::string> kAliases = {
-        {"hf_standard.profit_factor", "hf_standard.advanced_summary.profit_factor"},
-        {"profit_factor", "hf_standard.advanced_summary.profit_factor"},
-        {"summary.total_pnl", "summary.total_pnl"},
-        {"total_pnl", "summary.total_pnl"},
-        {"max_drawdown", "summary.max_drawdown"},
-    };
-    const auto it = kAliases.find(metric_path);
-    return it == kAliases.end() ? metric_path : it->second;
-}
-
-double ResultAnalyzer::ExtractMetricFromJson(const std::string& json_path,
-                                             const std::string& metric_path,
-                                             std::string* error) {
-    std::ifstream input(json_path);
-    if (!input.is_open()) {
-        if (error != nullptr) {
-            *error = "unable to open trial json: " + json_path;
-        }
-        return 0.0;
-    }
-
-    std::ostringstream buffer;
-    buffer << input.rdbuf();
-
-    Value root;
-    if (!quant_hft::simple_json::Parse(buffer.str(), &root, error)) {
-        return 0.0;
-    }
-
-    const std::string resolved_path = ResolveMetricPathAlias(metric_path);
+double ExtractMetricFromValueTree(const Value& root,
+                                  const std::string& metric_path,
+                                  std::string* error) {
+    const std::string resolved_path = ResultAnalyzer::ResolveMetricPathAlias(metric_path);
     const std::vector<std::string> segments = SplitPath(resolved_path);
     if (segments.empty()) {
         if (error != nullptr) {
@@ -172,6 +130,59 @@ double ResultAnalyzer::ExtractMetricFromJson(const std::string& json_path,
         *error = "metric path does not resolve to numeric value";
     }
     return 0.0;
+}
+
+std::vector<std::pair<std::string, ParamValue>> SortedParams(const ParamValueMap& params) {
+    std::vector<std::pair<std::string, ParamValue>> sorted;
+    sorted.reserve(params.values.size());
+    for (const auto& [key, value] : params.values) {
+        sorted.emplace_back(key, value);
+    }
+    std::sort(sorted.begin(), sorted.end(), [](const auto& left, const auto& right) {
+        return left.first < right.first;
+    });
+    return sorted;
+}
+
+}  // namespace
+
+std::string ResultAnalyzer::ResolveMetricPathAlias(const std::string& metric_path) {
+    static const std::map<std::string, std::string> kAliases = {
+        {"hf_standard.profit_factor", "hf_standard.advanced_summary.profit_factor"},
+        {"profit_factor", "hf_standard.advanced_summary.profit_factor"},
+        {"summary.total_pnl", "summary.total_pnl"},
+        {"total_pnl", "summary.total_pnl"},
+        {"max_drawdown", "summary.max_drawdown"},
+    };
+    const auto it = kAliases.find(metric_path);
+    return it == kAliases.end() ? metric_path : it->second;
+}
+
+double ResultAnalyzer::ExtractMetricFromJsonText(const std::string& json_text,
+                                                 const std::string& metric_path,
+                                                 std::string* error) {
+    Value root;
+    if (!quant_hft::simple_json::Parse(json_text, &root, error)) {
+        return 0.0;
+    }
+    return ExtractMetricFromValueTree(root, metric_path, error);
+}
+
+double ResultAnalyzer::ExtractMetricFromJson(const std::string& json_path,
+                                             const std::string& metric_path,
+                                             std::string* error) {
+    std::ifstream input(json_path);
+    if (!input.is_open()) {
+        if (error != nullptr) {
+            *error = "unable to open trial json: " + json_path;
+        }
+        return 0.0;
+    }
+
+    std::ostringstream buffer;
+    buffer << input.rdbuf();
+
+    return ExtractMetricFromJsonText(buffer.str(), metric_path, error);
 }
 
 OptimizationReport ResultAnalyzer::Analyze(const std::vector<Trial>& trials,

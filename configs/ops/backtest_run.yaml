@@ -1,0 +1,35 @@
+# CONFIG DOC
+# Purpose: 配置驱动的一键编译 + 回测入口（parquet-only）。
+# Consumer: scripts/build/run_backtest_from_config.sh
+
+# --- build ---
+build_dir: build-gcc
+cmake_build_type: Release
+build_tests: false
+enable_arrow_parquet: true
+auto_install_arrow_parquet_deps: true
+
+# --- backtest required ---
+engine_mode: parquet
+dataset_root: backtest_data/parquet_v2
+strategy_main_config_path: configs/strategies/main_backtest_strategy.yaml
+
+# --- output required ---
+output_json: docs/results/backtest_auto.json
+output_md: docs/results/backtest_auto.md
+
+# --- optional passthrough ---
+export_csv_dir:
+run_id:
+max_ticks:
+start_date:
+end_date:
+deterministic_fills: true
+strict_parquet: true
+rollover_mode: strict
+rollover_price_mode: bbo
+rollover_slippage_bps: 0
+emit_trades: true
+emit_orders: true
+emit_position_history: false
+

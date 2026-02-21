@@ -106,6 +106,9 @@ ctp:
 - 品种（如 `c`）：按 `source=<品种>` 自动选择区间内相关合约分区
 - 合约（如 `rb2405`）：按 `instrument_id` 精确选择，兼容历史配置
 
+Parquet 回测链路现为纯 Parquet 读取，不再依赖 `*.parquet.ticks.csv` sidecar 文件。  
+若二进制未启用 Arrow/Parquet（`QUANT_HFT_ENABLE_ARROW_PARQUET=OFF`），回测入口会直接报错并提示重编译。
+
 CLI 优先级：`CLI 参数 > strategy_main_config > 默认值`。
 
 当 `strategy_main_config_path` 提供且 `run_type != backtest` 时，回测入口会直接报错。
@@ -189,6 +192,62 @@ JSON 形态支持两种写法：
 - `final_margin_used`
 - `margin_clipped_orders`
 - `margin_rejected_orders`
+
+## 配置驱动一键编译+回测脚本
+
+新增脚本：`scripts/build/run_backtest_from_config.sh`  
+新增配置：`configs/ops/backtest_run.yaml`
+
+脚本能力：
+
+- 读取单一 YAML 运行配置（顶层 `key: value`）。
+- 自动执行增量构建并仅编译 `backtest_cli`（可 `--skip-build`）。
+- 固定 parquet-only 回测，自动传入 `strategy_main_config_path`。
+- 构建失败时可自动执行 `scripts/build/install_arrow_parquet_deps.sh` 后重试一次。
+
+示例：
+
+```bash
+bash scripts/build/run_backtest_from_config.sh \
+  --config configs/ops/backtest_run.yaml
+```
+
+调试模式：
+
+```bash
+bash scripts/build/run_backtest_from_config.sh \
+  --config configs/ops/backtest_run.yaml \
+  --dry-run
+```
+
+常用开关：
+
+- `--config <path>`：指定运行配置文件（默认 `configs/ops/backtest_run.yaml`）。
+- `--dry-run`：仅打印将执行的命令。
+- `--skip-build`：跳过 cmake 构建，直接运行已有 `backtest_cli`。
+
+关键配置字段：
+
+- 构建字段：`build_dir`、`cmake_build_type`、`build_tests`、`enable_arrow_parquet`、`auto_install_arrow_parquet_deps`
+- 回测必填：`engine_mode=parquet`、`dataset_root`、`strategy_main_config_path`
+- 输出必填：`output_json`、`output_md`
+- 可选透传：`max_ticks`、`start_date`、`end_date`、`run_id`、`export_csv_dir`、`emit_*`
+
+## 滚动回测 CLI（库内执行）
+
+入口：
+
+```bash
+./build-gcc/rolling_backtest_cli --config configs/ops/rolling_backtest.yaml
+```
+
+关键行为：
+
+- 仅支持 `parquet`，且要求 manifest 存在。
+- 窗口按 `trading_day` 生成。
+- 尾部不完整窗口自动丢弃。
+- `mode=rolling_optimize` 时窗口串行执行，窗口内 trial 并行由 `optimization.parallel` 控制。
+- 指标默认 `hf_standard.profit_factor`（映射到 `hf_standard.advanced_summary.profit_factor`）。
 
 ## 研究回放指标轨迹落盘
 

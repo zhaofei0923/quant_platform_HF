@@ -1,35 +1,103 @@
-# CONFIG DOC
-# Purpose: 配置驱动的一键编译 + 回测入口（parquet-only）。
-# Consumer: scripts/build/run_backtest_from_config.sh
+# 配置文件用途：一键编译 + 启动 backtest_cli（parquet-only）
+# 使用方式：bash scripts/build/run_backtest_from_config.sh --config configs/ops/backtest_run.yaml
 
-# --- build ---
+# build_dir：CMake 构建目录；示例值：build-gcc
+# build_dir：配置项说明；示例值：build-gcc
 build_dir: build-gcc
+# cmake_build_type：构建类型；示例值：Release
+# cmake_build_type：配置项说明；示例值：Release
 cmake_build_type: Release
+# build_tests：构建时是否开启测试目标；示例值：false
+# build_tests：配置项说明；示例值：false
 build_tests: false
+# enable_arrow_parquet：是否开启 Arrow/Parquet 编译开关；示例值：true
+# enable_arrow_parquet：配置项说明；示例值：true
 enable_arrow_parquet: true
+# auto_install_arrow_parquet_deps：构建失败后是否自动安装 Arrow 依赖再重试一次；示例值：true
+# auto_install_arrow_parquet_deps：配置项说明；示例值：true
 auto_install_arrow_parquet_deps: true
 
-# --- backtest required ---
+# engine_mode：回测引擎模式（固定 parquet）；示例值：parquet
+# engine_mode：配置项说明；示例值：parquet
 engine_mode: parquet
+# dataset_root：Parquet 数据根目录；示例值：backtest_data/parquet_v2
+# dataset_root：配置项说明；示例值：backtest_data/parquet_v2
 dataset_root: backtest_data/parquet_v2
+# strategy_main_config_path：主策略配置路径；示例值：configs/strategies/main_backtest_strategy.yaml
+# strategy_main_config_path：配置项说明；示例值：configs/strategies/main_backtest_strategy.yaml
+# strategy_main_config_path：说明：子策略 `timeframe_minutes` 订阅在该文件配置
 strategy_main_config_path: configs/strategies/main_backtest_strategy.yaml
 
-# --- output required ---
+# output_json：回测 JSON 输出文件；示例值：docs/results/backtest_auto.json
+# output_json：配置项说明；示例值：docs/results/backtest_auto.json
 output_json: docs/results/backtest_auto.json
+# output_md：回测 Markdown 输出文件；示例值：docs/results/backtest_auto.md
+# output_md：配置项说明；示例值：docs/results/backtest_auto.md
 output_md: docs/results/backtest_auto.md
+# output_root_dir：回测结果归档根目录；示例值：docs/results/backtest_runs
+# output_root_dir：配置项说明；示例值：docs/results/backtest_runs
+output_root_dir: docs/results/backtest_runs
+# timestamp_timezone：结果目录时间戳时区；示例值：local（可选 local/utc）
+# timestamp_timezone：配置项说明；示例值：local
+timestamp_timezone: local
 
-# --- optional passthrough ---
+# export_csv_dir：可选，回测明细 CSV 输出目录；示例值：docs/results/backtest_auto_csv（留空表示不导出）
+# export_csv_dir：配置项说明；示例值：<空>
 export_csv_dir:
+# run_id：可选，运行 ID；示例值：bt-20260221-001（留空使用默认）
+# run_id：配置项说明；示例值：<空>
 run_id:
+# max_ticks：可选，限制最大回放 tick 数；示例值：5000（留空表示不限）
+# max_ticks：配置项说明；示例值：<空>
 max_ticks:
+# start_date：可选，开始日期 YYYYMMDD；示例值：20240101（留空表示按策略配置）
+# start_date：配置项说明；示例值：<空>
 start_date:
+# end_date：可选，结束日期 YYYYMMDD；示例值：20240131（留空表示按策略配置）
+# end_date：配置项说明；示例值：<空>
 end_date:
-deterministic_fills: true
-strict_parquet: true
-rollover_mode: strict
-rollover_price_mode: bbo
-rollover_slippage_bps: 0
-emit_trades: true
-emit_orders: true
-emit_position_history: false
 
+# deterministic_fills：是否开启确定性成交；示例值：true
+# deterministic_fills：配置项说明；示例值：true
+deterministic_fills: true
+# strict_parquet：是否开启 parquet 严格模式；示例值：true
+# strict_parquet：配置项说明；示例值：true
+strict_parquet: true
+# rollover_mode：换月模式；示例值：strict（可选 strict/carry）
+# rollover_mode：配置项说明；示例值：strict
+rollover_mode: strict
+# rollover_price_mode：换月定价模式；示例值：bbo（可选 bbo/mid/last）
+# rollover_price_mode：配置项说明；示例值：bbo
+rollover_price_mode: bbo
+# rollover_slippage_bps：换月滑点（bps）；示例值：0
+# rollover_slippage_bps：配置项说明；示例值：0
+rollover_slippage_bps: 0
+
+# emit_trades：是否输出 trades 明细；示例值：true
+# emit_trades：配置项说明；示例值：true
+emit_trades: true
+# emit_orders：是否输出 orders 明细；示例值：true
+# emit_orders：配置项说明；示例值：true
+emit_orders: true
+# emit_position_history：是否输出持仓快照明细；示例值：false
+# emit_position_history：配置项说明；示例值：false
+emit_position_history: true
+# emit_indicator_trace：是否输出主策略指标追踪 parquet；示例值：false
+# emit_indicator_trace：配置项说明；示例值：false
+# emit_indicator_trace：说明：输出 schema 含 `timeframe_minutes` 列
+emit_indicator_trace: true
+# indicator_trace_path：可选，主策略指标追踪文件名模板（仅取 basename 并落到本次 run_dir）；示例值：my_trace.parquet（留空用 indicator_trace.parquet）
+# indicator_trace_path：配置项说明；示例值：<空>
+indicator_trace_path: docs/results/backtest_runs/my_trace.parquet
+# emit_sub_strategy_indicator_trace：是否输出子策略指标追踪 parquet；示例值：false
+# emit_sub_strategy_indicator_trace：配置项说明；示例值：false
+# emit_sub_strategy_indicator_trace：说明：输出 schema 含 `timeframe_minutes` 列
+emit_sub_strategy_indicator_trace: true
+# sub_strategy_indicator_trace_path：可选，子策略指标追踪文件名模板（仅取 basename 并落到本次 run_dir）；示例值：my_sub_trace.parquet（留空用 sub_strategy_indicator_trace.parquet）
+# sub_strategy_indicator_trace_path：配置项说明；示例值：<空>
+sub_strategy_indicator_trace_path: docs/results/backtest_runs/my_sub_trace.parquet
+# quiet_backtest_stdout：是否抑制 backtest_cli 的 stdout JSON 输出（建议 true，结果看 output_json）；示例值：true
+quiet_backtest_stdout: true
+# progress_only：是否仅显示进度条和完成百分比（建议 true）；示例值：true
+# progress_only：配置项说明；示例值：true
+progress_only: true

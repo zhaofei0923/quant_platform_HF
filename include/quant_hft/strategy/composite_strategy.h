@@ -26,6 +26,7 @@ struct SubStrategyDefinition {
     std::string id;
     bool enabled{true};
     std::string type;
+    std::int32_t timeframe_minutes{1};
     std::string config_path;
     AtomicParams params;
     SubStrategyOverrides overrides;
@@ -74,7 +75,18 @@ class CompositeStrategy : public ILiveStrategy {
    private:
     struct SubStrategySlot {
         ISubStrategy* strategy{nullptr};
+        std::int32_t timeframe_minutes{1};
         std::vector<MarketRegime> entry_market_regimes;
+    };
+
+    struct TimeFilterSlot {
+        ITimeFilterStrategy* strategy{nullptr};
+        std::int32_t timeframe_minutes{1};
+    };
+
+    struct RiskControlSlot {
+        IRiskControlStrategy* strategy{nullptr};
+        std::int32_t timeframe_minutes{1};
     };
 
     struct AtomicTraceSlot {
@@ -84,7 +96,7 @@ class CompositeStrategy : public ILiveStrategy {
     };
 
     bool IsOpenSignalAllowedByRegime(const SubStrategySlot& slot, MarketRegime regime) const;
-    bool AllowOpeningByTimeFilters(EpochNanos now_ns);
+    bool AllowOpeningByTimeFilters(EpochNanos now_ns, std::int32_t timeframe_minutes);
     std::vector<SignalIntent> ApplyNonOpenSignalGate(const std::vector<SignalIntent>& signals);
     std::vector<SignalIntent> ApplyOpeningGate(const std::vector<SignalIntent>& opening_signals,
                                                const StateSnapshot7D& state);
@@ -104,8 +116,8 @@ class CompositeStrategy : public ILiveStrategy {
 
     std::vector<std::unique_ptr<IAtomicStrategy>> owned_atomic_strategies_;
     std::vector<SubStrategySlot> sub_strategies_;
-    std::vector<ITimeFilterStrategy*> time_filters_;
-    std::vector<IRiskControlStrategy*> risk_control_strategies_;
+    std::vector<TimeFilterSlot> time_filters_;
+    std::vector<RiskControlSlot> risk_control_strategies_;
     std::vector<IAtomicOrderAware*> order_aware_strategies_;
     std::vector<AtomicTraceSlot> trace_providers_;
     std::unordered_map<std::string, std::int32_t> last_filled_volume_by_order_;

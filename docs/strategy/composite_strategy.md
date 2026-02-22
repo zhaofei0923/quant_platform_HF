@@ -7,6 +7,7 @@
 - 每个子策略是完整策略：`entry + sizing + stop_loss + take_profit`。
 - 主策略只负责：
   - 子策略启停调度（`enabled`）
+  - 子策略周期路由（`timeframe_minutes`）
   - 开仓市场状态门控（`entry_market_regimes`，仅影响 `kOpen`）
   - 时间过滤器链（`ITimeFilterStrategy`）与风控策略链（`IRiskControlStrategy`）
   - 信号合并与持仓归属/反手两步门控
@@ -34,6 +35,7 @@ composite:
   sub_strategies:
     - id: kama_trend_1
       enabled: true
+      timeframe_minutes: 1
       type: KamaTrendStrategy
       config_path: ./sub/kama_trend_1.yaml
       entry_market_regimes: [kStrongTrend, kWeakTrend]
@@ -46,6 +48,7 @@ composite:
             default_volume: 2
     - id: trend_1
       enabled: false
+      timeframe_minutes: 5
       type: TrendStrategy
       config_path: ./sub/trend_1.yaml
       entry_market_regimes: [kStrongTrend]
@@ -70,6 +73,7 @@ composite:
   sub_strategies:
     - id: kama_trend_1
       enabled: true
+      timeframe_minutes: 1
       type: KamaTrendStrategy
       config_path: ./sub/kama_trend_1.yaml
 ```
@@ -91,6 +95,7 @@ composite:
   sub_strategies:
     - id: kama_trend_1
       enabled: true
+      timeframe_minutes: 1
       type: KamaTrendStrategy
       config_path: ./sub/kama_trend_1.yaml
       overrides:
@@ -110,6 +115,15 @@ composite:
 - 若 `run_type` 为 `sim/live`，必须配合 `enable_non_backtest: true`，否则初始化会 fail-fast。
 - `overrides` 仅允许 `backtest|sim|live` 三个键，且每层仅支持 `params` 标量键值。
 - 真实初始化参数为：`base params + overrides[run_mode].params`。
+
+## 多周期订阅
+
+- 配置项：`composite.sub_strategies[].timeframe_minutes`。
+- 类型与约束：正整数，默认 `1`；`<=0` 会 fail-fast。
+- 生效范围：仅 `strategy_factory=composite`。
+- 路由语义：`CompositeStrategy::OnState` 只向 `slot.timeframe_minutes == state.timeframe_minutes` 的子策略分发。
+- 回测语义：`csv/parquet` 共用同一 `BarAggregator` 与二次聚合 fanout；仅产出“被订阅周期”的 Bar，不额外保留 1m 输出。
+- Trace 语义：`my_trace.parquet` 与 `my_sub_trace.parquet` 均包含 `timeframe_minutes` 列。
 
 ## 子策略示例
 

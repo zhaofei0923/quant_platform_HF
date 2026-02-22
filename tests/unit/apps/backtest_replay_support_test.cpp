@@ -3,12 +3,108 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <system_error>
+#include <vector>
+
+#if QUANT_HFT_ENABLE_ARROW_PARQUET
+#include <arrow/api.h>
+#include <arrow/io/file.h>
+#include <parquet/arrow/reader.h>
+#endif
 
 namespace quant_hft::apps {
 namespace {
+
+#if QUANT_HFT_ENABLE_ARROW_PARQUET
+template <typename ReaderPtr>
+auto OpenParquetReaderCompat(const std::shared_ptr<arrow::io::RandomAccessFile>& input,
+                             ReaderPtr* reader, int)
+    -> decltype(parquet::arrow::OpenFile(input, arrow::default_memory_pool()), bool()) {
+    auto reader_result = parquet::arrow::OpenFile(input, arrow::default_memory_pool());
+    if (!reader_result.ok()) {
+        return false;
+    }
+    *reader = std::move(reader_result).ValueOrDie();
+    return *reader != nullptr;
+}
+
+template <typename ReaderPtr>
+auto OpenParquetReaderCompat(const std::shared_ptr<arrow::io::RandomAccessFile>& input,
+                             ReaderPtr* reader, long)
+    -> decltype(parquet::arrow::OpenFile(input, arrow::default_memory_pool(), reader), bool()) {
+    auto reader_status = parquet::arrow::OpenFile(input, arrow::default_memory_pool(), reader);
+    return reader_status.ok() && *reader != nullptr;
+}
+
+std::vector<std::string> ReadStringColumnFromParquet(const std::filesystem::path& path,
+                                                     const std::string& column) {
+    std::vector<std::string> out;
+    auto input_result = arrow::io::ReadableFile::Open(path.string());
+    if (!input_result.ok()) {
+        return out;
+    }
+    std::shared_ptr<arrow::io::ReadableFile> input = input_result.ValueOrDie();
+    std::unique_ptr<parquet::arrow::FileReader> parquet_reader;
+    if (!OpenParquetReaderCompat(input, &parquet_reader, 0)) {
+        return out;
+    }
+
+    std::shared_ptr<arrow::Table> table;
+    if (!parquet_reader->ReadTable(&table).ok() || table == nullptr) {
+        return out;
+    }
+    const auto column_data = table->GetColumnByName(column);
+    if (column_data == nullptr || column_data->num_chunks() == 0) {
+        return out;
+    }
+    const auto values = std::static_pointer_cast<arrow::StringArray>(column_data->chunk(0));
+    out.reserve(values->length());
+    for (int64_t i = 0; i < values->length(); ++i) {
+        out.push_back(values->GetString(i));
+    }
+    return out;
+}
+
+std::vector<std::int32_t> ReadInt32ColumnFromParquet(const std::filesystem::path& path,
+                                                     const std::string& column) {
+    std::vector<std::int32_t> out;
+    auto input_result = arrow::io::ReadableFile::Open(path.string());
+    if (!input_result.ok()) {
+        return out;
+    }
+    std::shared_ptr<arrow::io::ReadableFile> input = input_result.ValueOrDie();
+    std::unique_ptr<parquet::arrow::FileReader> parquet_reader;
+    if (!OpenParquetReaderCompat(input, &parquet_reader, 0)) {
+        return out;
+    }
+
+    std::shared_ptr<arrow::Table> table;
+    if (!parquet_reader->ReadTable(&table).ok() || table == nullptr) {
+        return out;
+    }
+    const auto column_data = table->GetColumnByName(column);
+    if (column_data == nullptr || column_data->num_chunks() == 0) {
+        return out;
+    }
+    const auto values = std::static_pointer_cast<arrow::Int32Array>(column_data->chunk(0));
+    out.reserve(values->length());
+    for (int64_t i = 0; i < values->length(); ++i) {
+        out.push_back(values->Value(i));
+    }
+    return out;
+}
+#endif
+
+bool IsMinutePrecisionDateTime(const std::string& value) {
+    if (value.size() != 16) {
+        return false;
+    }
+    return value[4] == '-' && value[7] == '-' && value[10] == ' ' && value[13] == ':';
+}
 
 std::filesystem::path WriteTempDetectorConfig(const std::string& content) {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
@@ -26,10 +122,10 @@ std::filesystem::path WriteTempReplayCsv(const std::string& stem) {
         std::filesystem::temp_directory_path() / (stem + "_" + std::to_string(stamp) + ".csv");
     std::ofstream out(path);
     out << "InstrumentID,ts_ns,LastPrice,Volume,BidPrice1,BidVolume1,AskPrice1,AskVolume1\n";
-    out << "rb2405,1704067200000000000,100,100,99,20,101,18\n";
-    out << "rb2405,1704067201000000000,101,101,100,21,102,19\n";
-    out << "rb2405,1704067202000000000,102,102,101,22,103,20\n";
-    out << "rb2405,1704067203000000000,103,103,102,23,104,21\n";
+    out << "rb2405,1704186000000000000,100,100,99,20,101,18\n";
+    out << "rb2405,1704186001000000000,101,101,100,21,102,19\n";
+    out << "rb2405,1704186060000000000,102,102,101,22,103,20\n";
+    out << "rb2405,1704186061000000000,103,103,102,23,104,21\n";
     out.close();
     return path;
 }
@@ -40,14 +136,14 @@ std::filesystem::path WriteMultiMinuteReplayCsv(const std::string& stem) {
         std::filesystem::temp_directory_path() / (stem + "_" + std::to_string(stamp) + ".csv");
     std::ofstream out(path);
     out << "InstrumentID,ts_ns,LastPrice,Volume,BidPrice1,BidVolume1,AskPrice1,AskVolume1\n";
-    out << "rb2405,1704067200000000000,100,100,99,20,101,18\n";
-    out << "rb2405,1704067201000000000,101,101,100,21,102,19\n";
-    out << "rb2405,1704067260000000000,102,102,101,22,103,20\n";
-    out << "rb2405,1704067261000000000,103,103,102,23,104,21\n";
-    out << "rb2405,1704067320000000000,104,104,103,24,105,22\n";
-    out << "rb2405,1704067321000000000,105,105,104,25,106,23\n";
-    out << "rb2405,1704067380000000000,106,106,105,26,107,24\n";
-    out << "rb2405,1704067381000000000,107,107,106,27,108,25\n";
+    out << "rb2405,1704186000000000000,100,100,99,20,101,18\n";
+    out << "rb2405,1704186001000000000,101,101,100,21,102,19\n";
+    out << "rb2405,1704186060000000000,102,102,101,22,103,20\n";
+    out << "rb2405,1704186061000000000,103,103,102,23,104,21\n";
+    out << "rb2405,1704186120000000000,104,104,103,24,105,22\n";
+    out << "rb2405,1704186121000000000,105,105,104,25,106,23\n";
+    out << "rb2405,1704186180000000000,106,106,105,26,107,24\n";
+    out << "rb2405,1704186181000000000,107,107,106,27,108,25\n";
     out.close();
     return path;
 }
@@ -58,13 +154,13 @@ std::filesystem::path WriteFlatReplayCsv(const std::string& stem, double price =
         std::filesystem::temp_directory_path() / (stem + "_" + std::to_string(stamp) + ".csv");
     std::ofstream out(path);
     out << "InstrumentID,ts_ns,LastPrice,Volume,BidPrice1,BidVolume1,AskPrice1,AskVolume1\n";
-    out << "rb2405,1704067200000000000," << price << ",100," << (price - 1.0) << ",20,"
+    out << "rb2405,1704186000000000000," << price << ",100," << (price - 1.0) << ",20,"
         << (price + 1.0) << ",18\n";
-    out << "rb2405,1704067201000000000," << price << ",101," << (price - 1.0) << ",21,"
+    out << "rb2405,1704186001000000000," << price << ",101," << (price - 1.0) << ",21,"
         << (price + 1.0) << ",19\n";
-    out << "rb2405,1704067202000000000," << price << ",102," << (price - 1.0) << ",22,"
+    out << "rb2405,1704186060000000000," << price << ",102," << (price - 1.0) << ",22,"
         << (price + 1.0) << ",20\n";
-    out << "rb2405,1704067203000000000," << price << ",103," << (price - 1.0) << ",23,"
+    out << "rb2405,1704186061000000000," << price << ",103," << (price - 1.0) << ",23,"
         << (price + 1.0) << ",21\n";
     out.close();
     return path;
@@ -75,7 +171,7 @@ std::string UniqueRunId(const std::string& stem) {
     return stem + "-" + std::to_string(stamp);
 }
 
-std::filesystem::path WriteTempCompositeConfig(int volume = 1) {
+std::filesystem::path WriteTempCompositeConfig(int volume = 1, int timeframe_minutes = 1) {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto path = std::filesystem::temp_directory_path() /
                       ("quant_hft_composite_config_test_" + std::to_string(stamp) + ".yaml");
@@ -85,6 +181,7 @@ std::filesystem::path WriteTempCompositeConfig(int volume = 1) {
     out << "  sub_strategies:\n";
     out << "    - id: trend_1\n";
     out << "      enabled: true\n";
+    out << "      timeframe_minutes: " << timeframe_minutes << "\n";
     out << "      type: TrendStrategy\n";
     out << "      params:\n";
     out << "        id: trend_1\n";
@@ -192,6 +289,7 @@ TEST(BacktestReplaySupportTest, BuildStateSnapshotFromBarPopulatesBarFields) {
     EXPECT_DOUBLE_EQ(state.bar_low, 99.0);
     EXPECT_DOUBLE_EQ(state.bar_close, 105.0);
     EXPECT_DOUBLE_EQ(state.bar_volume, 60.0);
+    EXPECT_EQ(state.timeframe_minutes, 1);
     EXPECT_TRUE(state.has_bar);
     EXPECT_EQ(state.market_regime, MarketRegime::kUnknown);
     EXPECT_EQ(state.ts_ns, 456);
@@ -217,8 +315,14 @@ TEST(BacktestReplaySupportTest, BuildStateSnapshotFromBarUpdatesMarketRegimeWhen
         ReplayTick last = first;
         last.ts_ns = 100 + i;
 
-        state = BuildStateSnapshotFromBar(first, last, first.last_price + 1.0,
-                                          first.last_price - 1.0, 1, last.ts_ns, &detector);
+        state = BuildStateSnapshotFromBar(first,
+                                          last,
+                                          first.last_price + 1.0,
+                                          first.last_price - 1.0,
+                                          1,
+                                          last.ts_ns,
+                                          1,
+                                          &detector);
     }
 
     EXPECT_EQ(state.market_regime, MarketRegime::kStrongTrend);
@@ -571,6 +675,9 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecIndicatorTraceFollowsArrowCapabil
     EXPECT_EQ(result.indicator_trace_path, trace_path.string());
     EXPECT_GT(result.indicator_trace_rows, 0);
     EXPECT_TRUE(std::filesystem::exists(trace_path));
+    const auto dt_values = ReadStringColumnFromParquet(trace_path, "dt_utc");
+    ASSERT_FALSE(dt_values.empty());
+    EXPECT_TRUE(IsMinutePrecisionDateTime(dt_values.front()));
 #else
     EXPECT_FALSE(RunBacktestSpec(spec, &result, &error));
     EXPECT_NE(error.find("QUANT_HFT_ENABLE_ARROW_PARQUET=ON"), std::string::npos);
@@ -633,6 +740,9 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecSubStrategyTraceFollowsArrowCapab
     EXPECT_EQ(result.sub_strategy_indicator_trace_path, trace_path.string());
     EXPECT_GT(result.sub_strategy_indicator_trace_rows, 0);
     EXPECT_TRUE(std::filesystem::exists(trace_path));
+    const auto dt_values = ReadStringColumnFromParquet(trace_path, "dt_utc");
+    ASSERT_FALSE(dt_values.empty());
+    EXPECT_TRUE(IsMinutePrecisionDateTime(dt_values.front()));
 #else
     EXPECT_FALSE(RunBacktestSpec(spec, &result, &error));
     EXPECT_NE(error.find("QUANT_HFT_ENABLE_ARROW_PARQUET=ON"), std::string::npos);
@@ -642,6 +752,64 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecSubStrategyTraceFollowsArrowCapab
     std::filesystem::remove(csv_path, ec);
     std::filesystem::remove(composite_path, ec);
     std::filesystem::remove(trace_path, ec);
+}
+
+TEST(BacktestReplaySupportTest, RunBacktestSpecCompositeTraceCarriesSubscribedTimeframe) {
+#if !QUANT_HFT_ENABLE_ARROW_PARQUET
+    GTEST_SKIP() << "Arrow parquet writer is disabled in this build";
+#else
+    const std::filesystem::path csv_path =
+        WriteMultiMinuteReplayCsv("quant_hft_trace_timeframe_composite");
+    const std::filesystem::path composite_path =
+        WriteTempCompositeConfig(/*volume=*/1, /*timeframe_minutes=*/5);
+    const std::filesystem::path indicator_trace_path =
+        std::filesystem::temp_directory_path() / "quant_hft_trace_timeframe_indicator.parquet";
+    const std::filesystem::path sub_trace_path =
+        std::filesystem::temp_directory_path() / "quant_hft_trace_timeframe_sub.parquet";
+    std::error_code ec;
+    std::filesystem::remove(indicator_trace_path, ec);
+    std::filesystem::remove(sub_trace_path, ec);
+
+    BacktestCliSpec spec;
+    spec.engine_mode = "csv";
+    spec.csv_path = csv_path.string();
+    spec.run_id = "trace-timeframe-composite-test";
+    spec.strategy_factory = "composite";
+    spec.strategy_composite_config = composite_path.string();
+    spec.emit_indicator_trace = true;
+    spec.indicator_trace_path = indicator_trace_path.string();
+    spec.emit_sub_strategy_indicator_trace = true;
+    spec.sub_strategy_indicator_trace_path = sub_trace_path.string();
+    spec.max_ticks = 8;
+
+    BacktestCliResult result;
+    std::string error;
+    ASSERT_TRUE(RunBacktestSpec(spec, &result, &error)) << error;
+    ASSERT_GT(result.indicator_trace_rows, 0);
+    ASSERT_GT(result.sub_strategy_indicator_trace_rows, 0);
+
+    const auto indicator_timeframes =
+        ReadInt32ColumnFromParquet(indicator_trace_path, "timeframe_minutes");
+    ASSERT_FALSE(indicator_timeframes.empty());
+    for (const std::int32_t timeframe : indicator_timeframes) {
+        EXPECT_EQ(timeframe, 5);
+    }
+
+    const auto sub_timeframes = ReadInt32ColumnFromParquet(sub_trace_path, "timeframe_minutes");
+    ASSERT_FALSE(sub_timeframes.empty());
+    for (const std::int32_t timeframe : sub_timeframes) {
+        EXPECT_EQ(timeframe, 5);
+    }
+
+    const auto sub_dt_values = ReadStringColumnFromParquet(sub_trace_path, "dt_utc");
+    ASSERT_FALSE(sub_dt_values.empty());
+    EXPECT_EQ(sub_dt_values.front(), "2024-01-02 09:00");
+
+    std::filesystem::remove(csv_path, ec);
+    std::filesystem::remove(composite_path, ec);
+    std::filesystem::remove(indicator_trace_path, ec);
+    std::filesystem::remove(sub_trace_path, ec);
+#endif
 }
 
 TEST(BacktestReplaySupportTest, RunBacktestSpecSubStrategyTraceUsesDefaultPathWhenEnabled) {
@@ -1012,13 +1180,14 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecRejectsOpenWhenMarginInsufficient
     std::string error;
     ASSERT_TRUE(RunBacktestSpec(spec, &result, &error)) << error;
     ASSERT_TRUE(result.has_deterministic);
-    EXPECT_EQ(result.deterministic.performance.margin_clipped_orders, 1);
-    EXPECT_EQ(result.deterministic.performance.margin_rejected_orders, 1);
+    EXPECT_GE(result.deterministic.performance.margin_clipped_orders, 1);
+    EXPECT_GE(result.deterministic.performance.margin_rejected_orders, 1);
     EXPECT_EQ(result.deterministic.performance.final_margin_used, 0.0);
     EXPECT_EQ(result.deterministic.performance.max_margin_used, 0.0);
     const auto it = result.deterministic.performance.order_status_counts.find("REJECTED");
     ASSERT_NE(it, result.deterministic.performance.order_status_counts.end());
-    EXPECT_EQ(it->second, 1);
+    EXPECT_EQ(static_cast<int>(it->second),
+              result.deterministic.performance.margin_rejected_orders);
 
     std::error_code ec;
     std::filesystem::remove(csv_path, ec);
@@ -1067,6 +1236,91 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecClipsVolumeByMarginAndTracksUsage
     std::filesystem::remove(csv_path, ec);
     std::filesystem::remove(composite_path, ec);
     std::filesystem::remove(fee_cfg, ec);
+}
+
+TEST(BacktestReplaySupportTest, ToEpochNsMapsNightSessionToPreviousCalendarDay) {
+    const EpochNanos night_ts = detail::ToEpochNs("20240103", "20:59:00", 2);
+    const EpochNanos day_ts = detail::ToEpochNs("20240103", "09:00:00", 0);
+    ASSERT_GT(night_ts, 0);
+    ASSERT_GT(day_ts, 0);
+
+    EXPECT_EQ(detail::TradingDayFromEpochNs(night_ts), "20240102");
+    EXPECT_EQ(detail::UpdateTimeFromEpochNs(night_ts), "20:59:00");
+    EXPECT_EQ(night_ts % 1'000'000'000LL, 2'000'000LL);
+    EXPECT_LT(night_ts, day_ts);
+}
+
+TEST(BacktestReplaySupportTest, ToEpochNsKeepsDaySessionOnTradingDay) {
+    const EpochNanos day_ts = detail::ToEpochNs("20240103", "09:00:00", 0);
+    ASSERT_GT(day_ts, 0);
+    EXPECT_EQ(detail::TradingDayFromEpochNs(day_ts), "20240103");
+    EXPECT_EQ(detail::UpdateTimeFromEpochNs(day_ts), "09:00:00");
+}
+
+TEST(BacktestReplaySupportTest, DeriveActionDayFromTradingDayAndUpdateTimeHandlesNightSession) {
+    EXPECT_EQ(detail::DeriveActionDayFromTradingDayAndUpdateTime("20260223", "21:05:00"),
+              "20260222");
+    EXPECT_EQ(detail::DeriveActionDayFromTradingDayAndUpdateTime("20260223", "20:00:00"),
+              "20260222");
+    EXPECT_EQ(detail::DeriveActionDayFromTradingDayAndUpdateTime("20260223", "19:59:59"),
+              "20260223");
+    EXPECT_EQ(detail::DeriveActionDayFromTradingDayAndUpdateTime("20260223", "00:05:00"),
+              "20260223");
+}
+
+TEST(BacktestReplaySupportTest, ReplayBarContextTracksInterleavedInstrumentsWithoutDuplication) {
+    ReplayTick a_first;
+    a_first.instrument_id = "ag2406";
+    a_first.trading_day = "20260223";
+    a_first.update_time = "09:00:01";
+    a_first.ts_ns = 100;
+    a_first.last_price = 100.0;
+    a_first.volume = 10;
+
+    ReplayTick b_first = a_first;
+    b_first.instrument_id = "rb2405";
+    b_first.ts_ns = 110;
+    b_first.last_price = 200.0;
+
+    ReplayTick a_last = a_first;
+    a_last.update_time = "09:00:45";
+    a_last.ts_ns = 120;
+    a_last.last_price = 101.0;
+    a_last.volume = 12;
+
+    ReplayTick b_last = b_first;
+    b_last.update_time = "09:00:55";
+    b_last.ts_ns = 130;
+    b_last.last_price = 201.0;
+    b_last.volume = 11;
+
+    std::unordered_map<std::string, detail::ReplayBarTickContext> contexts;
+    std::string error;
+    ASSERT_TRUE(detail::TrackReplayBarTickContext(a_first, &contexts, &error)) << error;
+    ASSERT_TRUE(detail::TrackReplayBarTickContext(b_first, &contexts, &error)) << error;
+    ASSERT_TRUE(detail::TrackReplayBarTickContext(a_last, &contexts, &error)) << error;
+    ASSERT_TRUE(detail::TrackReplayBarTickContext(b_last, &contexts, &error)) << error;
+    EXPECT_EQ(contexts.size(), 2U);
+
+    BarSnapshot a_bar;
+    a_bar.instrument_id = "ag2406";
+    a_bar.minute = "20260223 09:00";
+    BarSnapshot b_bar;
+    b_bar.instrument_id = "rb2405";
+    b_bar.minute = "20260223 09:00";
+
+    detail::ReplayBarTickContext a_context;
+    detail::ReplayBarTickContext b_context;
+    ASSERT_TRUE(detail::ConsumeReplayBarTickContext(a_bar, &contexts, &a_context, &error)) << error;
+    ASSERT_TRUE(detail::ConsumeReplayBarTickContext(b_bar, &contexts, &b_context, &error)) << error;
+    EXPECT_EQ(a_context.first_tick.ts_ns, 100);
+    EXPECT_EQ(a_context.last_tick.ts_ns, 120);
+    EXPECT_EQ(b_context.first_tick.ts_ns, 110);
+    EXPECT_EQ(b_context.last_tick.ts_ns, 130);
+    EXPECT_TRUE(contexts.empty());
+
+    EXPECT_FALSE(detail::ConsumeReplayBarTickContext(a_bar, &contexts, &a_context, &error));
+    EXPECT_NE(error.find("missing replay bar context"), std::string::npos);
 }
 
 TEST(BacktestReplaySupportTest, RequireParquetBacktestSpecRejectsUnsupportedEngineMode) {

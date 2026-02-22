@@ -12,6 +12,8 @@ namespace quant_hft {
 struct IndicatorTraceRow {
     std::string instrument_id;
     EpochNanos ts_ns{0};
+    std::string dt_utc;
+    std::int32_t timeframe_minutes{1};
     double bar_open{0.0};
     double bar_high{0.0};
     double bar_low{0.0};

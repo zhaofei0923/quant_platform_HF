@@ -287,6 +287,7 @@
 | `composite.sub_strategies[]` | list | 是 | 空 | 数组 | 完整子策略列表 | 见示例 |
 | `composite.sub_strategies[].id` | string | 是 | 无 | 非空 | 子策略实例 ID | `kama_trend_1` |
 | `composite.sub_strategies[].enabled` | bool | 否 | `true` | `true/false` | 子策略开关 | `true` |
+| `composite.sub_strategies[].timeframe_minutes` | int | 否 | `1` | `>0` | 子策略订阅 Bar 周期（分钟） | `5` |
 | `composite.sub_strategies[].type` | string | 是 | 无 | 注册类型名 | 子策略类型 | `KamaTrendStrategy` |
 | `composite.sub_strategies[].config_path` | string | 条件必填 | 无 | 路径 | 子策略参数配置路径 | `./sub/kama_trend_1.yaml` |
 | `composite.sub_strategies[].params` | map | 条件必填 | 无 | 键值对 | 内联参数 | `risk_per_trade_pct: 0.01` |
@@ -302,6 +303,7 @@
 - `overrides` 仅允许键 `backtest|sim|live`，且 `params` 仅允许标量值；非法键会 fail-fast。
 - 参数合并顺序：`base params + overrides[run_mode].params`（后者覆盖前者）。
 - `entry_market_regimes` 仅影响 `kOpen`；`StopLoss/TakeProfit/Close/ForceClose` 不受该门控影响。
+- `timeframe_minutes` 默认为 `1`；必须是正整数；`CompositeStrategy` 仅在 `state.timeframe_minutes` 匹配时分发到对应子策略。
 
 升级后使用示例：
 
@@ -322,6 +324,7 @@ composite:
   sub_strategies:
     - id: kama_trend_1
       enabled: true
+      timeframe_minutes: 1
       type: KamaTrendStrategy
       config_path: ./sub/kama_trend_1.yaml
       entry_market_regimes: [kStrongTrend, kWeakTrend]
@@ -344,6 +347,7 @@ composite:
   sub_strategies:
     - id: kama_trend_1
       enabled: true
+      timeframe_minutes: 1
       type: KamaTrendStrategy
       config_path: ./sub/kama_trend_1.yaml
       overrides:
@@ -375,11 +379,11 @@ composite:
 | `products.<P>.short_margin_ratio` | double | 是 | 无 | `>0` | 空头保证金率 | `0.16` |
 | `products.<P>.trading_sessions[]` | list[string] | 否 | 空 | 时段字符串 | 交易时段列表 | `21:00:00-23:00:00` |
 | `products.<P>.commission.open_ratio_by_money` | double | 是 | 无 | `>=0` | 开仓按金额费率 | `0.0001` |
-| `products.<P>.commission.open_ratio_by_volume` | double | 是 | 无 | `>=0` | 开仓按手费率 | `0` |
+| `products.<P>.commission.open_ratio_by_volume` | double | 是 | 无 | `>=0` | 开仓按量费率（费用=`volume_multiple*ratio*手数`） | `0` |
 | `products.<P>.commission.close_ratio_by_money` | double | 是 | 无 | `>=0` | 平仓按金额费率 | `0.0001` |
-| `products.<P>.commission.close_ratio_by_volume` | double | 是 | 无 | `>=0` | 平仓按手费率 | `0` |
+| `products.<P>.commission.close_ratio_by_volume` | double | 是 | 无 | `>=0` | 平仓按量费率（费用=`volume_multiple*ratio*手数`） | `0` |
 | `products.<P>.commission.close_today_ratio_by_money` | double | 是 | 无 | `>=0` | 平今按金额费率 | `0.0001` |
-| `products.<P>.commission.close_today_ratio_by_volume` | double | 是 | 无 | `>=0` | 平今按手费率 | `0` |
+| `products.<P>.commission.close_today_ratio_by_volume` | double | 是 | 无 | `>=0` | 平今按量费率（费用=`volume_multiple*ratio*手数`） | `0` |
 
 ## `configs/strategies/sub/kama_trend_1.yaml`
 
@@ -453,11 +457,11 @@ composite:
 | `<P>.short_margin_ratio` | double | 是 | 无 | `>0` | 空头保证金率 | `0.16` |
 | `<P>.trading_sessions[]` | list[string] | 否 | 空 | 时段字符串 | 交易时段列表 | `21:00:00-23:00:00` |
 | `<P>.commission.open_ratio_by_money` | double | 是 | 无 | `>=0` | 开仓按金额费率 | `0.0001` |
-| `<P>.commission.open_ratio_by_volume` | double | 是 | 无 | `>=0` | 开仓按手费率 | `0` |
+| `<P>.commission.open_ratio_by_volume` | double | 是 | 无 | `>=0` | 开仓按量费率（费用=`volume_multiple*ratio*手数`） | `0` |
 | `<P>.commission.close_ratio_by_money` | double | 是 | 无 | `>=0` | 平仓按金额费率 | `0.0001` |
-| `<P>.commission.close_ratio_by_volume` | double | 是 | 无 | `>=0` | 平仓按手费率 | `0` |
+| `<P>.commission.close_ratio_by_volume` | double | 是 | 无 | `>=0` | 平仓按量费率（费用=`volume_multiple*ratio*手数`） | `0` |
 | `<P>.commission.close_today_ratio_by_money` | double | 是 | 无 | `>=0` | 平今按金额费率 | `0.0001` |
-| `<P>.commission.close_today_ratio_by_volume` | double | 是 | 无 | `>=0` | 平今按手费率 | `0` |
+| `<P>.commission.close_today_ratio_by_volume` | double | 是 | 无 | `>=0` | 平今按量费率（费用=`volume_multiple*ratio*手数`） | `0` |
 
 单产品示例解剖（`RB`）：
 
@@ -604,6 +608,7 @@ composite:
 - Purpose: 一键编译 + parquet 回测运行配置。
 - Consumer: `scripts/build/run_backtest_from_config.sh`。
 - 约束: `engine_mode` 必须为 `parquet`（parquet-only policy）。
+- 说明: 虽该脚本封装为 parquet-only，回测引擎内部 `csv/parquet` 已统一复用同一 Bar 聚合规则（`BarAggregator` + timeframe fanout）。
 
 字段表：
 
@@ -617,9 +622,11 @@ composite:
 | `engine_mode` | string | 是 | 无 | `parquet` | 回测数据引擎模式 | `parquet` |
 | `dataset_root` | string | 是 | 无 | 目录路径 | Parquet 数据根目录 | `backtest_data/parquet_v2` |
 | `strategy_main_config_path` | string | 是 | 无 | 文件路径 | 主策略配置文件 | `configs/strategies/main_backtest_strategy.yaml` |
-| `output_json` | string | 是 | 无 | 文件路径 | 回测 JSON 输出路径 | `docs/results/backtest_auto.json` |
-| `output_md` | string | 是 | 无 | 文件路径 | 回测 Markdown 输出路径 | `docs/results/backtest_auto.md` |
-| `export_csv_dir` | string | 否 | 空 | 目录路径 | 回测明细 CSV 导出目录 | `docs/results/backtest_auto_csv` |
+| `output_root_dir` | string | 否 | `docs/results/backtest_runs` | 目录路径 | 回测归档根目录 | `docs/results/backtest_runs` |
+| `timestamp_timezone` | string | 否 | `local` | `local/utc` | 归档目录时间戳时区 | `utc` |
+| `output_json` | string | 是 | 无 | 文件路径 | JSON 输出文件名模板（目录部分忽略） | `docs/results/backtest_auto.json` |
+| `output_md` | string | 是 | 无 | 文件路径 | Markdown 输出文件名模板（目录部分忽略） | `docs/results/backtest_auto.md` |
+| `export_csv_dir` | string | 否 | 空 | 目录路径 | CSV 子目录模板（仅取 basename，落在本次 run 目录下） | `docs/results/backtest_auto_csv` |
 | `run_id` | string | 否 | 空 | 任意字符串 | 回测运行 ID | `bt-20260221-001` |
 | `max_ticks` | int | 否 | 空 | `>0` | 最大回放 tick 数 | `5000` |
 | `start_date` | string | 否 | 空 | `YYYYMMDD` | 回测开始日期 | `20240101` |
@@ -632,6 +639,12 @@ composite:
 | `emit_trades` | bool | 否 | `true` | `true/false` | 是否输出 trades 明细 | `true` |
 | `emit_orders` | bool | 否 | `true` | `true/false` | 是否输出 orders 明细 | `true` |
 | `emit_position_history` | bool | 否 | `false` | `true/false` | 是否输出持仓快照明细 | `false` |
+| `emit_indicator_trace` | bool | 否 | `false` | `true/false` | 是否输出主策略指标追踪 parquet | `true` |
+| `indicator_trace_path` | string | 否 | 空 | 文件路径 | 指标追踪文件名模板（仅取 basename，落在本次 run_dir） | `my_trace.parquet` |
+| `emit_sub_strategy_indicator_trace` | bool | 否 | `false` | `true/false` | 是否输出子策略指标追踪 parquet | `true` |
+| `sub_strategy_indicator_trace_path` | string | 否 | 空 | 文件路径 | 子策略指标追踪文件名模板（仅取 basename，落在本次 run_dir） | `my_sub_trace.parquet` |
+| `quiet_backtest_stdout` | bool | 否 | `true` | `true/false` | 是否抑制 `backtest_cli` 终端 JSON 输出 | `true` |
+| `progress_only` | bool | 否 | `true` | `true/false` | 是否仅显示进度条与百分比 | `true` |
 
 ## `configs/ops/rolling_backtest.yaml`
 

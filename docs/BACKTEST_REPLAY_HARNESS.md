@@ -47,6 +47,16 @@ mkdir -p docs/results
   --output_json docs/results/backtest_cli_parquet.json
 ```
 
+### Bar Aggregation Notes (CSV + Parquet)
+
+- CSV 与 Parquet 回测都复用实盘 `BarAggregator` 路径进行 1m 合成与多周期 fanout。
+- Tick 交易时段过滤在两条回测路径均启用。
+- Trading sessions config 是回测硬依赖（CSV/Parquet 一致）：
+  - `TRADING_SESSIONS_CONFIG_PATH` has highest priority.
+  - fallback is `configs/trading_sessions.yaml`.
+  - missing/unreadable config causes fail-fast (no silent fallback).
+- Composite 多周期订阅由 `composite.sub_strategies[].timeframe_minutes` 控制；trace parquet 会写出 `timeframe_minutes` 列。
+
 ## Benchmark Gate
 
 ```bash

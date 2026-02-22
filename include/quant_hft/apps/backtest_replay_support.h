@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -31,7 +32,9 @@
 #include "quant_hft/backtest/product_fee_config_loader.h"
 #include "quant_hft/backtest/sub_strategy_indicator_trace_parquet_writer.h"
 #include "quant_hft/common/timestamp.h"
+#include "quant_hft/services/bar_aggregator.h"
 #include "quant_hft/services/market_state_detector.h"
+#include "quant_hft/strategy/composite_config_loader.h"
 #include "quant_hft/strategy/composite_strategy.h"
 #include "quant_hft/strategy/demo_live_strategy.h"
 #include "quant_hft/strategy/strategy_main_config_loader.h"
@@ -437,8 +440,25 @@ inline EpochNanos ToEpochNs(const std::string& trading_day, const std::string& u
         return 0;
     }
 
+    std::string effective_day = normalized_day;
+    // CTP-style futures ticks use trading_day for both day and night sessions.
+    // For night-session times, map to previous calendar day to preserve chronology.
+    if (hour >= 18 && !normalized_day.empty()) {
+        std::tm midnight_tm = {};
+        if (BuildUtcTm(normalized_day, 0, 0, 0, &midnight_tm)) {
+            const std::time_t midnight_seconds = timegm(&midnight_tm);
+            if (midnight_seconds > 0) {
+                const std::time_t previous_day_seconds = midnight_seconds - 24 * 60 * 60;
+                const std::tm previous_day_tm = *gmtime(&previous_day_seconds);
+                std::ostringstream day_oss;
+                day_oss << std::put_time(&previous_day_tm, "%Y%m%d");
+                effective_day = day_oss.str();
+            }
+        }
+    }
+
     std::tm tm = {};
-    if (!BuildUtcTm(normalized_day, hour, minute, second, &tm)) {
+    if (!BuildUtcTm(effective_day, hour, minute, second, &tm)) {
         return 0;
     }
 
@@ -466,6 +486,162 @@ inline std::string UpdateTimeFromEpochNs(EpochNanos ts_ns) {
     std::ostringstream oss;
     oss << std::put_time(&tm, "%H:%M:%S");
     return oss.str();
+}
+
+inline std::string TickDateTimeFromTickFields(const std::string& trading_day,
+                                              const std::string& update_time,
+                                              int update_millisec, EpochNanos fallback_ts_ns) {
+    (void)update_millisec;
+    const std::string normalized_day = NormalizeTradingDay(trading_day);
+    int hour = 0;
+    int minute = 0;
+    int second = 0;
+    if (!normalized_day.empty() && ParseTimeHms(update_time, &hour, &minute, &second)) {
+        (void)second;
+        std::ostringstream oss;
+        oss << normalized_day.substr(0, 4) << '-' << normalized_day.substr(4, 2) << '-'
+            << normalized_day.substr(6, 2) << ' ' << std::setw(2) << std::setfill('0') << hour
+            << ':' << std::setw(2) << std::setfill('0') << minute;
+        return oss.str();
+    }
+
+    if (fallback_ts_ns <= 0) {
+        return "";
+    }
+    const std::string fallback_day = TradingDayFromEpochNs(fallback_ts_ns);
+    const std::string fallback_time = UpdateTimeFromEpochNs(fallback_ts_ns);
+    const std::string fallback_minute =
+        fallback_time.size() >= 5 ? fallback_time.substr(0, 5) : fallback_time;
+    if (fallback_day.size() != 8) {
+        return fallback_minute;
+    }
+    return fallback_day.substr(0, 4) + "-" + fallback_day.substr(4, 2) + "-" +
+           fallback_day.substr(6, 2) + " " + fallback_minute;
+}
+
+inline std::string ShiftTradingDay(const std::string& trading_day, int day_offset) {
+    const std::string normalized_day = NormalizeTradingDay(trading_day);
+    if (normalized_day.empty()) {
+        return "";
+    }
+    if (day_offset == 0) {
+        return normalized_day;
+    }
+
+    std::tm midnight_tm = {};
+    if (!BuildUtcTm(normalized_day, 0, 0, 0, &midnight_tm)) {
+        return normalized_day;
+    }
+    const std::time_t midnight_seconds = timegm(&midnight_tm);
+    if (midnight_seconds < 0) {
+        return normalized_day;
+    }
+
+    const std::time_t shifted_seconds =
+        midnight_seconds + static_cast<std::time_t>(day_offset) * 24 * 60 * 60;
+    const std::tm shifted_tm = *gmtime(&shifted_seconds);
+    std::ostringstream oss;
+    oss << std::put_time(&shifted_tm, "%Y%m%d");
+    return oss.str();
+}
+
+inline std::string DeriveActionDayFromTradingDayAndUpdateTime(const std::string& trading_day,
+                                                              const std::string& update_time) {
+    const std::string normalized_day = NormalizeTradingDay(trading_day);
+    if (normalized_day.empty()) {
+        return "";
+    }
+
+    int hour = 0;
+    int minute = 0;
+    int second = 0;
+    if (!ParseTimeHms(update_time, &hour, &minute, &second)) {
+        return normalized_day;
+    }
+    if (hour >= 20) {
+        return ShiftTradingDay(normalized_day, -1);
+    }
+    return normalized_day;
+}
+
+inline std::string BuildReplayMinuteKey(const std::string& trading_day,
+                                        const std::string& update_time) {
+    const std::string normalized_day = NormalizeTradingDay(trading_day);
+    if (normalized_day.empty() || update_time.size() < 5) {
+        return "";
+    }
+    return normalized_day + " " + update_time.substr(0, 5);
+}
+
+inline std::string BuildReplayBarContextKey(const std::string& instrument_id,
+                                            const std::string& minute_key) {
+    if (instrument_id.empty() || minute_key.empty()) {
+        return "";
+    }
+    return instrument_id + "|" + minute_key;
+}
+
+inline bool ResolveTradingSessionsConfigPathForParquetBacktest(std::string* out_path,
+                                                               std::string* error) {
+    if (out_path == nullptr) {
+        if (error != nullptr) {
+            *error = "trading sessions config output is null";
+        }
+        return false;
+    }
+
+    const char* env_path = std::getenv("TRADING_SESSIONS_CONFIG_PATH");
+    std::vector<std::filesystem::path> candidates;
+    if (env_path != nullptr && std::string(env_path).size() > 0) {
+        candidates.emplace_back(env_path);
+    } else {
+        candidates.emplace_back("configs/trading_sessions.yaml");
+
+        // Also try the repository-root relative path when tests run under build directories.
+        std::filesystem::path source_header = std::filesystem::path(__FILE__);
+        for (int i = 0; i < 4 && source_header.has_parent_path(); ++i) {
+            source_header = source_header.parent_path();
+        }
+        if (!source_header.empty()) {
+            const std::filesystem::path repo_relative =
+                source_header / "configs" / "trading_sessions.yaml";
+            if (std::find(candidates.begin(), candidates.end(), repo_relative) ==
+                candidates.end()) {
+                candidates.push_back(repo_relative);
+            }
+        }
+    }
+
+    std::string last_missing_path;
+    for (const auto& candidate : candidates) {
+        std::error_code ec;
+        const bool exists = std::filesystem::exists(candidate, ec);
+        if (ec || !exists) {
+            last_missing_path = candidate.string();
+            continue;
+        }
+        std::ifstream input(candidate);
+        if (!input.is_open()) {
+            if (error != nullptr) {
+                *error = "unable to read trading sessions config for backtest: " +
+                         candidate.string();
+            }
+            return false;
+        }
+        *out_path = candidate.string();
+        return true;
+    }
+
+    if (error != nullptr) {
+        if (candidates.size() == 1) {
+            *error = "trading sessions config is required for backtest: " + candidates[0].string();
+        } else {
+            *error = "trading sessions config is required for backtest: missing " +
+                     candidates[0].string() + " and " + candidates[1].string();
+        }
+    }
+    (void)last_missing_path;
+    return false;
 }
 
 inline std::vector<std::string> SplitCsvLine(const std::string& line) {
@@ -739,6 +915,7 @@ struct BacktestCliSpec {
 struct ReplayTick {
     std::string trading_day;
     std::string instrument_id;
+    std::string exchange_id;
     std::string update_time;
     int update_millisec{0};
     EpochNanos ts_ns{0};
@@ -749,6 +926,284 @@ struct ReplayTick {
     double ask_price_1{0.0};
     std::int64_t ask_volume_1{0};
 };
+
+namespace detail {
+
+struct ReplayBarTickContext {
+    ReplayTick first_tick;
+    ReplayTick last_tick;
+    bool initialized{false};
+};
+
+inline bool TrackReplayBarTickContext(
+    const ReplayTick& tick, std::unordered_map<std::string, ReplayBarTickContext>* contexts,
+    std::string* error) {
+    if (contexts == nullptr) {
+        if (error != nullptr) {
+            *error = "replay bar context map is null";
+        }
+        return false;
+    }
+    const std::string minute_key = BuildReplayMinuteKey(tick.trading_day, tick.update_time);
+    const std::string context_key = BuildReplayBarContextKey(tick.instrument_id, minute_key);
+    if (context_key.empty()) {
+        if (error != nullptr) {
+            *error = "invalid replay tick context key for instrument: " + tick.instrument_id;
+        }
+        return false;
+    }
+
+    auto& context = (*contexts)[context_key];
+    if (!context.initialized) {
+        context.first_tick = tick;
+        context.last_tick = tick;
+        context.initialized = true;
+        return true;
+    }
+    context.last_tick = tick;
+    return true;
+}
+
+inline bool ConsumeReplayBarTickContext(
+    const BarSnapshot& bar, std::unordered_map<std::string, ReplayBarTickContext>* contexts,
+    ReplayBarTickContext* out_context, std::string* error) {
+    if (contexts == nullptr || out_context == nullptr) {
+        if (error != nullptr) {
+            *error = "replay bar context output is null";
+        }
+        return false;
+    }
+    const std::string context_key = BuildReplayBarContextKey(bar.instrument_id, bar.minute);
+    const auto it = contexts->find(context_key);
+    if (it == contexts->end() || !it->second.initialized) {
+        if (error != nullptr) {
+            *error = "missing replay bar context for " + context_key;
+        }
+        return false;
+    }
+    *out_context = it->second;
+    contexts->erase(it);
+    return true;
+}
+
+struct ReplayAggregatedBar {
+    BarSnapshot bar;
+    ReplayBarTickContext context;
+    std::int32_t timeframe_minutes{1};
+};
+
+inline bool ParseReplayMinuteValue(const std::string& minute_key, std::string* trading_day,
+                                   int* minute_of_day) {
+    if (trading_day == nullptr || minute_of_day == nullptr || minute_key.size() < 14) {
+        return false;
+    }
+    if (minute_key[8] != ' ' || minute_key[11] != ':') {
+        return false;
+    }
+    for (int i = 0; i < 8; ++i) {
+        if (std::isdigit(static_cast<unsigned char>(minute_key[i])) == 0) {
+            return false;
+        }
+    }
+    if (std::isdigit(static_cast<unsigned char>(minute_key[9])) == 0 ||
+        std::isdigit(static_cast<unsigned char>(minute_key[10])) == 0 ||
+        std::isdigit(static_cast<unsigned char>(minute_key[12])) == 0 ||
+        std::isdigit(static_cast<unsigned char>(minute_key[13])) == 0) {
+        return false;
+    }
+
+    const int hour = (minute_key[9] - '0') * 10 + (minute_key[10] - '0');
+    const int minute = (minute_key[12] - '0') * 10 + (minute_key[13] - '0');
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+        return false;
+    }
+    *trading_day = minute_key.substr(0, 8);
+    *minute_of_day = hour * 60 + minute;
+    return true;
+}
+
+inline std::string FormatReplayMinuteValue(const std::string& trading_day, int minute_of_day) {
+    if (trading_day.size() != 8 || minute_of_day < 0 || minute_of_day >= 24 * 60) {
+        return "";
+    }
+    const int hour = minute_of_day / 60;
+    const int minute = minute_of_day % 60;
+    std::ostringstream oss;
+    oss << trading_day << ' ' << std::setw(2) << std::setfill('0') << hour << ':'
+        << std::setw(2) << std::setfill('0') << minute;
+    return oss.str();
+}
+
+inline EpochNanos ReplayMinuteStartEpochNs(const std::string& minute_key) {
+    std::string trading_day;
+    int minute_of_day = 0;
+    if (!ParseReplayMinuteValue(minute_key, &trading_day, &minute_of_day)) {
+        return 0;
+    }
+    const int hour = minute_of_day / 60;
+    const int minute = minute_of_day % 60;
+    std::ostringstream update_time;
+    update_time << std::setw(2) << std::setfill('0') << hour << ':' << std::setw(2)
+                << std::setfill('0') << minute << ":00";
+    return ToEpochNs(trading_day, update_time.str(), 0);
+}
+
+inline std::string ReplayMinuteToDisplayDateTime(const std::string& minute_key) {
+    std::string trading_day;
+    int minute_of_day = 0;
+    if (!ParseReplayMinuteValue(minute_key, &trading_day, &minute_of_day)) {
+        return "";
+    }
+    if (trading_day.size() != 8) {
+        return "";
+    }
+    const int hour = minute_of_day / 60;
+    const int minute = minute_of_day % 60;
+    std::ostringstream oss;
+    oss << trading_day.substr(0, 4) << '-' << trading_day.substr(4, 2) << '-'
+        << trading_day.substr(6, 2) << ' ' << std::setw(2) << std::setfill('0') << hour << ':'
+        << std::setw(2) << std::setfill('0') << minute;
+    return oss.str();
+}
+
+class ReplayTimeframeFanout {
+   public:
+    explicit ReplayTimeframeFanout(std::vector<std::int32_t> subscribed_timeframes) {
+        for (const std::int32_t timeframe : subscribed_timeframes) {
+            if (timeframe > 0) {
+                timeframes_.push_back(timeframe);
+            }
+        }
+        if (timeframes_.empty()) {
+            timeframes_.push_back(1);
+        }
+        std::sort(timeframes_.begin(), timeframes_.end());
+        timeframes_.erase(std::unique(timeframes_.begin(), timeframes_.end()), timeframes_.end());
+    }
+
+    std::vector<ReplayAggregatedBar> OnOneMinuteBar(const BarSnapshot& one_minute_bar,
+                                                    const ReplayBarTickContext& context) {
+        std::vector<ReplayAggregatedBar> emitted;
+        if (!context.initialized) {
+            return emitted;
+        }
+        std::string trading_day;
+        int minute_of_day = 0;
+        if (!ParseReplayMinuteValue(one_minute_bar.minute, &trading_day, &minute_of_day)) {
+            return emitted;
+        }
+
+        for (const std::int32_t timeframe : timeframes_) {
+            if (timeframe == 1) {
+                ReplayAggregatedBar output;
+                output.bar = one_minute_bar;
+                output.context = context;
+                output.timeframe_minutes = 1;
+                emitted.push_back(output);
+                continue;
+            }
+
+            const int bucket_start = (minute_of_day / timeframe) * timeframe;
+            const std::string bucket_minute = FormatReplayMinuteValue(trading_day, bucket_start);
+            if (bucket_minute.empty()) {
+                continue;
+            }
+
+            const std::string slot_key =
+                one_minute_bar.instrument_id + "|" + std::to_string(timeframe);
+            const std::string bucket_key = one_minute_bar.instrument_id + "|" + bucket_minute;
+            auto& bucket = buckets_[slot_key];
+            if (!bucket.initialized) {
+                ResetBucket(&bucket, one_minute_bar, context, timeframe, bucket_key, bucket_minute);
+                continue;
+            }
+            if (bucket.bucket_key != bucket_key) {
+                ReplayAggregatedBar output;
+                output.bar = bucket.bar;
+                output.context = bucket.context;
+                output.timeframe_minutes = bucket.timeframe_minutes;
+                emitted.push_back(output);
+                ResetBucket(&bucket, one_minute_bar, context, timeframe, bucket_key, bucket_minute);
+                continue;
+            }
+
+            bucket.bar.high = std::max(bucket.bar.high, one_minute_bar.high);
+            bucket.bar.low = std::min(bucket.bar.low, one_minute_bar.low);
+            bucket.bar.close = one_minute_bar.close;
+            bucket.bar.volume += one_minute_bar.volume;
+            if (!one_minute_bar.action_day.empty()) {
+                bucket.bar.action_day = one_minute_bar.action_day;
+            }
+            bucket.context.last_tick = context.last_tick;
+        }
+
+        return emitted;
+    }
+
+    std::vector<ReplayAggregatedBar> Flush() {
+        std::vector<ReplayAggregatedBar> out;
+        out.reserve(buckets_.size());
+        for (const auto& [key, bucket] : buckets_) {
+            (void)key;
+            if (!bucket.initialized || !bucket.context.initialized) {
+                continue;
+            }
+            ReplayAggregatedBar output;
+            output.bar = bucket.bar;
+            output.context = bucket.context;
+            output.timeframe_minutes = bucket.timeframe_minutes;
+            out.push_back(output);
+        }
+        buckets_.clear();
+        std::sort(out.begin(),
+                  out.end(),
+                  [](const ReplayAggregatedBar& left, const ReplayAggregatedBar& right) {
+                      if (left.bar.ts_ns != right.bar.ts_ns) {
+                          return left.bar.ts_ns < right.bar.ts_ns;
+                      }
+                      if (left.timeframe_minutes != right.timeframe_minutes) {
+                          return left.timeframe_minutes < right.timeframe_minutes;
+                      }
+                      if (left.bar.instrument_id != right.bar.instrument_id) {
+                          return left.bar.instrument_id < right.bar.instrument_id;
+                      }
+                      return left.bar.minute < right.bar.minute;
+                  });
+        return out;
+    }
+
+   private:
+    struct BucketState {
+        bool initialized{false};
+        std::string bucket_key;
+        std::int32_t timeframe_minutes{1};
+        BarSnapshot bar;
+        ReplayBarTickContext context;
+    };
+
+    static void ResetBucket(BucketState* bucket, const BarSnapshot& one_minute_bar,
+                            const ReplayBarTickContext& context, std::int32_t timeframe_minutes,
+                            const std::string& bucket_key, const std::string& bucket_minute) {
+        if (bucket == nullptr) {
+            return;
+        }
+        bucket->initialized = true;
+        bucket->bucket_key = bucket_key;
+        bucket->timeframe_minutes = timeframe_minutes;
+        bucket->bar = one_minute_bar;
+        bucket->bar.minute = bucket_minute;
+        const EpochNanos start_ts_ns = ReplayMinuteStartEpochNs(bucket_minute);
+        if (start_ts_ns > 0) {
+            bucket->bar.ts_ns = start_ts_ns;
+        }
+        bucket->context = context;
+    }
+
+    std::vector<std::int32_t> timeframes_;
+    std::unordered_map<std::string, BucketState> buckets_;
+};
+
+}  // namespace detail
 
 struct ReplayReport {
     std::int64_t ticks_read{0};
@@ -1656,7 +2111,7 @@ inline bool ValidatePartitionMetaFile(const std::filesystem::path& meta_path, st
         }
         return false;
     }
-    if (schema_version != "v2") {
+    if (schema_version != "v2" && schema_version != "v3") {
         if (error != nullptr) {
             *error = "unsupported schema_version in meta: " + meta_path.string();
         }
@@ -1889,8 +2344,12 @@ inline bool LoadParquetTicks(const BacktestCliSpec& spec, std::vector<ReplayTick
         replay_ticks.reserve(partition_ticks.size());
         for (const Tick& tick : partition_ticks) {
             ReplayTick replay_tick;
-            replay_tick.trading_day = detail::TradingDayFromEpochNs(tick.ts_ns);
+            replay_tick.trading_day = detail::NormalizeTradingDay(partition.trading_day);
+            if (replay_tick.trading_day.empty()) {
+                replay_tick.trading_day = detail::TradingDayFromEpochNs(tick.ts_ns);
+            }
             replay_tick.instrument_id = tick.symbol;
+            replay_tick.exchange_id = tick.exchange;
             replay_tick.update_time = detail::UpdateTimeFromEpochNs(tick.ts_ns);
             replay_tick.update_millisec = static_cast<int>((tick.ts_ns % detail::kNanosPerSecond) /
                                                            detail::kNanosPerMillisecond);
@@ -2048,6 +2507,7 @@ inline bool LoadTicksForSpec(const BacktestCliSpec& spec, std::vector<ReplayTick
 inline StateSnapshot7D BuildStateSnapshotFromBar(const ReplayTick& first, const ReplayTick& last,
                                                  double high, double low, std::int64_t volume_delta,
                                                  EpochNanos ts_ns,
+                                                 std::int32_t timeframe_minutes = 1,
                                                  MarketStateDetector* detector = nullptr) {
     const double open_price = first.last_price;
     const double close_price = last.last_price;
@@ -2066,6 +2526,7 @@ inline StateSnapshot7D BuildStateSnapshotFromBar(const ReplayTick& first, const 
 
     StateSnapshot7D state;
     state.instrument_id = last.instrument_id;
+    state.timeframe_minutes = timeframe_minutes > 0 ? timeframe_minutes : 1;
     state.trend = {trend_score, detail::Clamp01(std::fabs(trend_score) * 10.0)};
     state.volatility = {volatility_score, detail::Clamp01(volatility_score * 5.0)};
     state.liquidity = {detail::Clamp01(liquidity_depth / 1000.0),
@@ -2205,6 +2666,58 @@ inline double ComputeTotalMarginUsed(
                                              product_fee_book);
     }
     return total;
+}
+
+inline bool ResolveSubscribedTimeframes(const BacktestCliSpec& spec,
+                                        std::vector<std::int32_t>* out_timeframes,
+                                        std::string* error) {
+    if (out_timeframes == nullptr) {
+        if (error != nullptr) {
+            *error = "timeframe output is null";
+        }
+        return false;
+    }
+    std::set<std::int32_t> timeframe_set;
+    if (spec.strategy_factory == "composite") {
+        if (spec.strategy_composite_config.empty()) {
+            if (error != nullptr) {
+                *error = "strategy_composite_config is required to resolve timeframe subscription";
+            }
+            return false;
+        }
+
+        CompositeStrategyDefinition definition;
+        std::string load_error;
+        if (!LoadCompositeStrategyDefinition(spec.strategy_composite_config, &definition,
+                                             &load_error)) {
+            if (error != nullptr) {
+                *error = "failed to load composite config for timeframe subscription: " +
+                         load_error;
+            }
+            return false;
+        }
+        for (const auto& sub_strategy : definition.sub_strategies) {
+            if (!sub_strategy.enabled) {
+                continue;
+            }
+            const std::int32_t timeframe_minutes =
+                sub_strategy.timeframe_minutes > 0 ? sub_strategy.timeframe_minutes : 1;
+            if (timeframe_minutes <= 0) {
+                if (error != nullptr) {
+                    *error = "invalid timeframe_minutes in composite config for strategy_id `" +
+                             sub_strategy.id + "`";
+                }
+                return false;
+            }
+            timeframe_set.insert(timeframe_minutes);
+        }
+    }
+
+    if (timeframe_set.empty()) {
+        timeframe_set.insert(1);
+    }
+    out_timeframes->assign(timeframe_set.begin(), timeframe_set.end());
+    return true;
 }
 
 inline std::pair<double, double> ComputeRolloverPrice(Side side, double last_price,
@@ -2414,6 +2927,11 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         return false;
     }
 
+    std::vector<std::int32_t> subscribed_timeframes;
+    if (!ResolveSubscribedTimeframes(spec, &subscribed_timeframes, error)) {
+        return false;
+    }
+
     std::set<std::string> instrument_universe;
 
     std::map<std::string, PositionState> position_state;
@@ -2512,6 +3030,23 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     }
 
     const bool enable_rollover = spec.deterministic_fills && spec.engine_mode == "core_sim";
+    const bool use_bar_aggregator = data_source == "csv" || data_source == "parquet";
+    std::unique_ptr<BarAggregator> replay_bar_aggregator;
+    if (use_bar_aggregator) {
+        std::string trading_sessions_config_path;
+        if (!detail::ResolveTradingSessionsConfigPathForParquetBacktest(
+                &trading_sessions_config_path, error)) {
+            return false;
+        }
+        BarAggregatorConfig aggregator_config;
+        aggregator_config.filter_non_trading_ticks = true;
+        // Backtest mode keeps replay timestamp semantics consistent by preferring exchange time.
+        aggregator_config.is_backtest_mode = true;
+        aggregator_config.trading_sessions_config_path = trading_sessions_config_path;
+        aggregator_config.use_default_session_fallback = true;
+        replay_bar_aggregator = std::make_unique<BarAggregator>(aggregator_config);
+    }
+    detail::ReplayTimeframeFanout timeframe_fanout(subscribed_timeframes);
 
     auto compute_position_value = [&]() {
         double total = 0.0;
@@ -2793,39 +3328,40 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         symbol_active_contract[symbol] = current_contract;
     };
 
-    std::vector<ReplayTick> bucket;
-    std::string active_instrument;
-    std::int64_t active_minute = -1;
+    std::unordered_map<std::string, detail::ReplayBarTickContext> replay_bar_contexts;
 
-    auto process_bucket = [&]() -> bool {
-        if (bucket.empty()) {
-            return true;
-        }
-
-        const ReplayTick& first = bucket.front();
-        const ReplayTick& last = bucket.back();
-        double high = first.last_price;
-        double low = first.last_price;
-        for (const ReplayTick& tick : bucket) {
-            high = std::max(high, tick.last_price);
-            low = std::min(low, tick.last_price);
-        }
-        const std::int64_t volume_delta = std::max<std::int64_t>(0, last.volume - first.volume);
-
+    auto process_closed_bar = [&](const ReplayTick& first, const ReplayTick& last,
+                                  const BarSnapshot& bar,
+                                  std::int32_t timeframe_minutes) -> bool {
         ++replay.bars_emitted;
         instrument_bars[last.instrument_id] += 1;
-        mark_price[last.instrument_id] = last.last_price;
+        mark_price[last.instrument_id] = bar.close;
 
         auto [detector_it, inserted] =
             regime_detectors.try_emplace(last.instrument_id, spec.detector_config);
         (void)inserted;
-        const StateSnapshot7D state = BuildStateSnapshotFromBar(
-            first, last, high, low, volume_delta, last.ts_ns, &detector_it->second);
+        const StateSnapshot7D state =
+            BuildStateSnapshotFromBar(first,
+                                      last,
+                                      bar.high,
+                                      bar.low,
+                                      bar.volume,
+                                      bar.ts_ns,
+                                      timeframe_minutes,
+                                      &detector_it->second);
 
         if (spec.emit_indicator_trace) {
             IndicatorTraceRow row;
             row.instrument_id = state.instrument_id;
             row.ts_ns = state.ts_ns;
+            if (state.timeframe_minutes > 1) {
+                row.dt_utc = detail::ReplayMinuteToDisplayDateTime(bar.minute);
+            }
+            if (row.dt_utc.empty()) {
+                row.dt_utc = detail::TickDateTimeFromTickFields(
+                    last.trading_day, last.update_time, last.update_millisec, state.ts_ns);
+            }
+            row.timeframe_minutes = state.timeframe_minutes;
             row.bar_open = state.bar_open;
             row.bar_high = state.bar_high;
             row.bar_low = state.bar_low;
@@ -2874,6 +3410,14 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 SubStrategyIndicatorTraceRow row;
                 row.instrument_id = state.instrument_id;
                 row.ts_ns = state.ts_ns;
+                if (state.timeframe_minutes > 1) {
+                    row.dt_utc = detail::ReplayMinuteToDisplayDateTime(bar.minute);
+                }
+                if (row.dt_utc.empty()) {
+                    row.dt_utc = detail::TickDateTimeFromTickFields(
+                        last.trading_day, last.update_time, last.update_millisec, state.ts_ns);
+                }
+                row.timeframe_minutes = state.timeframe_minutes;
                 row.strategy_id = atomic_trace.strategy_id;
                 row.strategy_type = atomic_trace.strategy_type;
                 row.bar_open = state.bar_open;
@@ -3091,6 +3635,32 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         return true;
     };
 
+    auto process_one_minute_bar = [&](const BarSnapshot& bar) -> bool {
+        detail::ReplayBarTickContext context;
+        if (!detail::ConsumeReplayBarTickContext(bar, &replay_bar_contexts, &context, error)) {
+            return false;
+        }
+
+        const std::vector<detail::ReplayAggregatedBar> aggregated_bars =
+            timeframe_fanout.OnOneMinuteBar(bar, context);
+        for (const detail::ReplayAggregatedBar& aggregated : aggregated_bars) {
+            if (!process_closed_bar(aggregated.context.first_tick,
+                                    aggregated.context.last_tick,
+                                    aggregated.bar,
+                                    aggregated.timeframe_minutes)) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    if (!use_bar_aggregator || replay_bar_aggregator == nullptr) {
+        if (error != nullptr) {
+            *error = "replay bar aggregator is not initialized";
+        }
+        return false;
+    }
+
     for (const ReplayTick& tick : ticks) {
         if (replay.ticks_read == 0) {
             replay.first_instrument = tick.instrument_id;
@@ -3105,29 +3675,76 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             handle_rollover(tick);
         }
 
-        const std::int64_t minute_bucket = tick.ts_ns / detail::kNanosPerMinute;
-        if (bucket.empty()) {
-            bucket.push_back(tick);
-            active_instrument = tick.instrument_id;
-            active_minute = minute_bucket;
+        MarketSnapshot snapshot;
+        snapshot.instrument_id = tick.instrument_id;
+        snapshot.exchange_id = !tick.exchange_id.empty()
+                                   ? tick.exchange_id
+                                   : replay_bar_aggregator->InferExchangeId(tick.instrument_id);
+        snapshot.trading_day = detail::NormalizeTradingDay(tick.trading_day);
+        if (snapshot.trading_day.empty()) {
+            snapshot.trading_day = detail::TradingDayFromEpochNs(tick.ts_ns);
+        }
+        snapshot.action_day =
+            detail::DeriveActionDayFromTradingDayAndUpdateTime(snapshot.trading_day, tick.update_time);
+        snapshot.update_time = tick.update_time;
+        snapshot.update_millisec = tick.update_millisec;
+        snapshot.last_price = tick.last_price;
+        snapshot.bid_price_1 = tick.bid_price_1;
+        snapshot.ask_price_1 = tick.ask_price_1;
+        snapshot.bid_volume_1 = tick.bid_volume_1;
+        snapshot.ask_volume_1 = tick.ask_volume_1;
+        snapshot.volume = tick.volume;
+        snapshot.exchange_ts_ns = tick.ts_ns;
+        snapshot.recv_ts_ns = tick.ts_ns;
+
+        if (!replay_bar_aggregator->ShouldProcessSnapshot(snapshot)) {
             continue;
         }
 
-        if (tick.instrument_id == active_instrument && minute_bucket == active_minute) {
-            bucket.push_back(tick);
-            continue;
-        }
-
-        if (!process_bucket()) {
+        ReplayTick context_tick = tick;
+        context_tick.trading_day = snapshot.trading_day;
+        if (!detail::TrackReplayBarTickContext(context_tick, &replay_bar_contexts, error)) {
             return false;
         }
-        bucket.clear();
-        bucket.push_back(tick);
-        active_instrument = tick.instrument_id;
-        active_minute = minute_bucket;
+
+        const std::vector<BarSnapshot> emitted_bars = replay_bar_aggregator->OnMarketSnapshot(snapshot);
+        for (const BarSnapshot& bar : emitted_bars) {
+            if (!process_one_minute_bar(bar)) {
+                return false;
+            }
+        }
     }
 
-    if (!process_bucket()) {
+    std::vector<BarSnapshot> flush_bars = replay_bar_aggregator->Flush();
+    std::sort(flush_bars.begin(),
+              flush_bars.end(),
+              [](const BarSnapshot& left, const BarSnapshot& right) {
+                  if (left.ts_ns != right.ts_ns) {
+                      return left.ts_ns < right.ts_ns;
+                  }
+                  return left.instrument_id < right.instrument_id;
+              });
+
+    for (const BarSnapshot& bar : flush_bars) {
+        if (!process_one_minute_bar(bar)) {
+            return false;
+        }
+    }
+
+    const std::vector<detail::ReplayAggregatedBar> fanout_flush_bars = timeframe_fanout.Flush();
+    for (const detail::ReplayAggregatedBar& aggregated : fanout_flush_bars) {
+        if (!process_closed_bar(aggregated.context.first_tick,
+                                aggregated.context.last_tick,
+                                aggregated.bar,
+                                aggregated.timeframe_minutes)) {
+            return false;
+        }
+    }
+    if (!replay_bar_contexts.empty()) {
+        if (error != nullptr) {
+            *error = "unconsumed replay bar context count: " +
+                     std::to_string(replay_bar_contexts.size());
+        }
         return false;
     }
 

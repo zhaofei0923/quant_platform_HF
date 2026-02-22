@@ -151,6 +151,8 @@ void RedisRealtimeStoreClientAdapter::UpsertStateSnapshot7D(
         {"bar_low", ToString(snapshot.bar_low)},
         {"bar_close", ToString(snapshot.bar_close)},
         {"bar_volume", ToString(snapshot.bar_volume)},
+        {"timeframe_minutes", ToString(snapshot.timeframe_minutes > 0 ? snapshot.timeframe_minutes
+                                                                      : 1)},
         {"has_bar", snapshot.has_bar ? "1" : "0"},
         {"market_regime", ToString(static_cast<std::int32_t>(snapshot.market_regime))},
         {"ts_ns", ToString(snapshot.ts_ns)},
@@ -356,6 +358,12 @@ bool RedisRealtimeStoreClientAdapter::GetStateSnapshot7D(const std::string& inst
     (void)ParseDouble(row, "bar_low", &snapshot.bar_low);
     (void)ParseDouble(row, "bar_close", &snapshot.bar_close);
     (void)ParseDouble(row, "bar_volume", &snapshot.bar_volume);
+    std::int32_t timeframe_minutes = 1;
+    if (ParseInt32(row, "timeframe_minutes", &timeframe_minutes) && timeframe_minutes > 0) {
+        snapshot.timeframe_minutes = timeframe_minutes;
+    } else {
+        snapshot.timeframe_minutes = 1;
+    }
     const std::string has_bar_text = GetOrEmpty(row, "has_bar");
     if (!has_bar_text.empty()) {
         snapshot.has_bar =

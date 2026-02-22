@@ -56,6 +56,7 @@ TEST(StrategyMainConfigLoaderTest, LoadsYamlMainConfigWithV2SubStrategies) {
                   "    - id: kama_1\n"
                   "      enabled: true\n"
                   "      type: KamaTrendStrategy\n"
+                  "      timeframe_minutes: 5\n"
                   "      config_path: ./sub/kama.yaml\n"
                   "      entry_market_regimes: [kStrongTrend]\n"
                   "    - id: trend_1\n"
@@ -82,6 +83,7 @@ TEST(StrategyMainConfigLoaderTest, LoadsYamlMainConfigWithV2SubStrategies) {
     EXPECT_EQ(config.composite.sub_strategies[0].id, "kama_1");
     EXPECT_TRUE(config.composite.sub_strategies[0].enabled);
     EXPECT_EQ(config.composite.sub_strategies[0].type, "KamaTrendStrategy");
+    EXPECT_EQ(config.composite.sub_strategies[0].timeframe_minutes, 5);
     EXPECT_EQ(config.composite.sub_strategies[0].params.at("er_period"), "10");
     EXPECT_EQ(config.composite.sub_strategies[1].id, "trend_1");
     EXPECT_FALSE(config.composite.sub_strategies[1].enabled);
@@ -157,6 +159,7 @@ TEST(StrategyMainConfigLoaderTest, LoadsJsonMainConfigWithV2SubStrategies) {
                   "        \"id\": \"kama_1\",\n"
                   "        \"enabled\": true,\n"
                   "        \"type\": \"KamaTrendStrategy\",\n"
+                  "        \"timeframe_minutes\": 15,\n"
                   "        \"config_path\": \"./sub/kama.json\",\n"
                   "        \"entry_market_regimes\": [\"kStrongTrend\", \"kWeakTrend\"]\n"
                   "      }\n"
@@ -175,6 +178,7 @@ TEST(StrategyMainConfigLoaderTest, LoadsJsonMainConfigWithV2SubStrategies) {
     ASSERT_EQ(config.composite.sub_strategies.size(), 1U);
     EXPECT_EQ(config.composite.sub_strategies[0].id, "kama_1");
     EXPECT_TRUE(config.composite.sub_strategies[0].enabled);
+    EXPECT_EQ(config.composite.sub_strategies[0].timeframe_minutes, 15);
     EXPECT_EQ(config.composite.sub_strategies[0].params.at("er_period"), "10");
 }
 

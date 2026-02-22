@@ -8,25 +8,45 @@
 # 2) `composite.sub_strategies[].overrides.{backtest|sim|live}.params`：
 #    运行模式参数覆盖（base params + overrides[run_mode]）。
 # 3) `entry_market_regimes` 只影响 `kOpen` 开仓信号，不阻断平仓类信号。
+# 4) `composite.sub_strategies[].timeframe_minutes`：子策略订阅的 Bar 周期（分钟，默认 1）。
 
+# run_type：配置项说明；示例值：backtest
 run_type: backtest
-market_state_mode: true
+# market_state_mode：配置项说明；示例值：true
+market_state_mode: false
 
+# backtest：配置项说明；示例值：<空>
 backtest:
+  # backtest.initial_equity：配置项说明；示例值：200000
   initial_equity: 200000
+  # backtest.symbols：配置项说明；示例值：[c]
   symbols: [c]
+  # backtest.start_date：配置项说明；示例值：20240101
   start_date: 20240101
-  end_date: 20240131
+  # backtest.end_date：配置项说明；示例值：20240131
+  end_date: 20240110
+  # backtest.product_config_path：配置项说明；示例值：./instrument_info.json
   product_config_path: ./instrument_info.json
 
+# composite：配置项说明；示例值：<空>
 composite:
+  # composite.merge_rule：配置项说明；示例值：kPriority
   merge_rule: kPriority
+  # composite.enable_non_backtest：配置项说明；示例值：false
   enable_non_backtest: false
+  # composite.sub_strategies：配置项说明；示例值：<空>
   sub_strategies:
+    # composite.sub_strategies.item.id：配置项说明；示例值：kama_trend_1
     - id: kama_trend_1
+      # composite.sub_strategies.enabled：配置项说明；示例值：true
       enabled: true
+      # composite.sub_strategies.timeframe_minutes：配置项说明；示例值：1（默认 1）
+      timeframe_minutes: 5
+      # composite.sub_strategies.type：配置项说明；示例值：KamaTrendStrategy
       type: KamaTrendStrategy
+      # composite.sub_strategies.config_path：配置项说明；示例值：./sub/kama_trend_1.yaml
       config_path: ./sub/kama_trend_1.yaml
+      # composite.sub_strategies.entry_market_regimes：配置项说明；示例值：[kStrongTrend, kWeakTrend]
       entry_market_regimes: [kStrongTrend, kWeakTrend]
       # 示例：按运行模式覆盖参数（默认关闭，仅作为写法说明）
       # overrides:
@@ -39,8 +59,15 @@ composite:
       #   live:
       #     params:
       #       risk_per_trade_pct: 0.005
+    # composite.sub_strategies.item.id：配置项说明；示例值：trend_1
     - id: trend_1
+      # composite.sub_strategies.enabled：配置项说明；示例值：false
       enabled: false
+      # composite.sub_strategies.timeframe_minutes：配置项说明；示例值：5（默认 1）
+      timeframe_minutes: 5
+      # composite.sub_strategies.type：配置项说明；示例值：TrendStrategy
       type: TrendStrategy
+      # composite.sub_strategies.config_path：配置项说明；示例值：./sub/trend_1.yaml
       config_path: ./sub/trend_1.yaml
+      # composite.sub_strategies.entry_market_regimes：配置项说明；示例值：[kStrongTrend]
       entry_market_regimes: [kStrongTrend]

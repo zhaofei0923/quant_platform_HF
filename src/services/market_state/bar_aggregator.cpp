@@ -15,7 +15,7 @@ bool IsFinitePositive(double value) {
     return std::isfinite(value) && value > 0.0;
 }
 
-std::string InferExchangeId(const std::string& instrument_id) {
+std::string InferExchangeIdFromDottedInstrument(const std::string& instrument_id) {
     const auto dot_pos = instrument_id.find('.');
     if (dot_pos == std::string::npos || dot_pos == 0) {
         return "";
@@ -434,7 +434,41 @@ std::string BarAggregator::ResolveExchangeId(const MarketSnapshot& snapshot) {
     if (!snapshot.exchange_id.empty()) {
         return snapshot.exchange_id;
     }
-    return InferExchangeId(snapshot.instrument_id);
+    return InferExchangeIdFromDottedInstrument(snapshot.instrument_id);
+}
+
+std::string BarAggregator::InferExchangeId(const std::string& instrument_id) const {
+    const auto dotted_exchange = InferExchangeIdFromDottedInstrument(instrument_id);
+    if (!dotted_exchange.empty()) {
+        return ToUpperAscii(dotted_exchange);
+    }
+
+    const auto symbol_upper = ToUpperAscii(ExtractInstrumentSymbol(instrument_id));
+    if (symbol_upper.empty()) {
+        return "";
+    }
+
+    std::size_t best_prefix_len = 0;
+    std::string best_exchange;
+    for (const auto& [exchange_id, rules] : session_rules_by_exchange_) {
+        const auto exchange_upper = ToUpperAscii(exchange_id);
+        if (exchange_upper.empty() || exchange_upper == "*") {
+            continue;
+        }
+        for (const auto& rule : rules) {
+            const auto prefix_upper = ToUpperAscii(rule.instrument_prefix);
+            if (prefix_upper.empty() || !StartsWith(symbol_upper, prefix_upper)) {
+                continue;
+            }
+            if (prefix_upper.size() > best_prefix_len ||
+                (prefix_upper.size() == best_prefix_len &&
+                 (best_exchange.empty() || exchange_upper < best_exchange))) {
+                best_prefix_len = prefix_upper.size();
+                best_exchange = exchange_upper;
+            }
+        }
+    }
+    return best_exchange;
 }
 
 std::string BarAggregator::ResolveProductCode(const MarketSnapshot& snapshot) {

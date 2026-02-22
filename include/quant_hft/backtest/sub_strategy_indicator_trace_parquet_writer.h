@@ -12,6 +12,8 @@ namespace quant_hft {
 struct SubStrategyIndicatorTraceRow {
     std::string instrument_id;
     EpochNanos ts_ns{0};
+    std::string dt_utc;
+    std::int32_t timeframe_minutes{1};
     std::string strategy_id;
     std::string strategy_type;
     double bar_open{0.0};

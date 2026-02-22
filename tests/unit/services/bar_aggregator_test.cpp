@@ -1,5 +1,6 @@
 #include <chrono>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <vector>
 
@@ -237,6 +238,68 @@ TEST(BarAggregatorTest, DefaultCffexSessionKeepsTreasuryAndFiltersEquityAfter150
 
     EXPECT_TRUE(aggregator.ShouldProcessSnapshot(treasury_snapshot));
     EXPECT_FALSE(aggregator.ShouldProcessSnapshot(equity_snapshot));
+}
+
+TEST(BarAggregatorTest, InferExchangeIdSupportsDotPrefixAndLongestSessionPrefixMatch) {
+    const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto config_path =
+        std::string("/tmp/trading_sessions_infer_exchange_test_") + std::to_string(now) + ".yaml";
+    {
+        std::ofstream out(config_path);
+        ASSERT_TRUE(out.is_open());
+        out << "sessions:\n"
+            << "  - exchange: SHFE\n"
+            << "    instrument_prefix: \"ag\"\n"
+            << "    day: \"09:00-15:00\"\n"
+            << "    night: \"21:00-02:30\"\n"
+            << "  - exchange: DCE\n"
+            << "    instrument_prefix: \"j\"\n"
+            << "    day: \"09:00-15:00\"\n"
+            << "    night: \"21:00-23:00\"\n"
+            << "  - exchange: CFFEX\n"
+            << "    instrument_prefix: \"jm\"\n"
+            << "    day: \"09:30-15:15\"\n"
+            << "    night: null\n";
+    }
+
+    BarAggregatorConfig config;
+    config.trading_sessions_config_path = config_path;
+    config.use_default_session_fallback = false;
+    BarAggregator aggregator(config);
+
+    EXPECT_EQ(aggregator.InferExchangeId("SHFE.ag2406"), "SHFE");
+    EXPECT_EQ(aggregator.InferExchangeId("jm2409"), "CFFEX");
+    EXPECT_EQ(aggregator.InferExchangeId("unknown2401"), "");
+
+    std::remove(config_path.c_str());
+}
+
+TEST(BarAggregatorTest, RepositoryTradingSessionsInferDceForCornSymbol) {
+    namespace fs = std::filesystem;
+    const fs::path config_path = fs::path(__FILE__)
+                                     .parent_path()
+                                     .parent_path()
+                                     .parent_path()
+                                     .parent_path() /
+                                 "configs" / "trading_sessions.yaml";
+    ASSERT_TRUE(fs::exists(config_path));
+
+    BarAggregatorConfig config;
+    config.trading_sessions_config_path = config_path.string();
+    config.use_default_session_fallback = false;
+    BarAggregator aggregator(config);
+
+    EXPECT_EQ(aggregator.InferExchangeId("c2405"), "DCE");
+    EXPECT_EQ(aggregator.InferExchangeId("eg2405"), "DCE");
+    EXPECT_EQ(aggregator.InferExchangeId("m2405"), "DCE");
+    EXPECT_EQ(aggregator.InferExchangeId("pp2405"), "DCE");
+    EXPECT_EQ(aggregator.InferExchangeId("v2405"), "DCE");
+    EXPECT_EQ(aggregator.InferExchangeId("ma405"), "CZCE");
+    EXPECT_EQ(aggregator.InferExchangeId("ta405"), "CZCE");
+
+    auto late_snapshot = MakeSnapshot("c2405", "20240102", "20240102", "15:02:00", 0, 2424.0, 1);
+    late_snapshot.exchange_id = aggregator.InferExchangeId(late_snapshot.instrument_id);
+    EXPECT_FALSE(aggregator.ShouldProcessSnapshot(late_snapshot));
 }
 
 TEST(BarAggregatorTest, AggregatesOneMinuteBarsToHigherTimeframe) {

@@ -16,6 +16,21 @@
 namespace quant_hft {
 namespace {
 
+bool IsDateTimeSecondPrecision(const std::string& value) {
+    if (value.size() != 19 && value.size() != 23) {
+        return false;
+    }
+    const bool base = value[4] == '-' && value[7] == '-' && value[10] == ' ' && value[13] == ':' &&
+                      value[16] == ':';
+    if (!base) {
+        return false;
+    }
+    if (value.size() == 23) {
+        return value[19] == '.';
+    }
+    return true;
+}
+
 std::filesystem::path UniqueTracePath(const std::string& stem) {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
     return std::filesystem::temp_directory_path() /
@@ -97,6 +112,7 @@ TEST(IndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicatorsWhenEnable
     row0.bar_close = 100.5;
     row0.bar_volume = 10.0;
     row0.market_regime = MarketRegime::kUnknown;
+    row0.dt_utc = "2023-11-14 22:13:20";
     ASSERT_TRUE(writer.Append(row0, &error)) << error;
 
     IndicatorTraceRow row1 = row0;
@@ -107,6 +123,7 @@ TEST(IndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicatorsWhenEnable
     row1.adx = 25.4;
     row1.er = 0.55;
     row1.market_regime = MarketRegime::kWeakTrend;
+    row1.dt_utc = "2023-11-14 22:14:20";
     ASSERT_TRUE(writer.Append(row1, &error)) << error;
 
     IndicatorTraceRow row2 = row1;
@@ -117,6 +134,7 @@ TEST(IndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicatorsWhenEnable
     row2.adx = 42.0;
     row2.er = 0.85;
     row2.market_regime = MarketRegime::kStrongTrend;
+    row2.dt_utc = "2023-11-14 22:15:20";
     ASSERT_TRUE(writer.Append(row2, &error)) << error;
 
     EXPECT_EQ(writer.rows_written(), 3);
@@ -133,27 +151,54 @@ TEST(IndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicatorsWhenEnable
     ASSERT_TRUE(parquet_reader->ReadTable(&table).ok());
     ASSERT_NE(table, nullptr);
     EXPECT_EQ(table->num_rows(), 3);
-    EXPECT_EQ(table->num_columns(), 12);
+    ASSERT_EQ(table->num_columns(), 14);
 
     const std::shared_ptr<arrow::Schema> schema = table->schema();
     ASSERT_NE(schema, nullptr);
+    ASSERT_EQ(schema->num_fields(), 14);
     EXPECT_EQ(schema->field(0)->name(), "instrument_id");
-    EXPECT_EQ(schema->field(7)->name(), "kama");
-    EXPECT_EQ(schema->field(11)->name(), "market_regime");
+    EXPECT_EQ(schema->field(2)->name(), "dt_utc");
+    EXPECT_EQ(schema->field(3)->name(), "timeframe_minutes");
+    EXPECT_EQ(schema->field(9)->name(), "kama");
+    EXPECT_EQ(schema->field(13)->name(), "market_regime");
     EXPECT_FALSE(schema->field(0)->nullable());
-    EXPECT_TRUE(schema->field(7)->nullable());
+    EXPECT_FALSE(schema->field(2)->nullable());
+    EXPECT_FALSE(schema->field(3)->nullable());
+    EXPECT_TRUE(schema->field(9)->nullable());
 
-    const auto kama =
-        std::static_pointer_cast<arrow::DoubleArray>(table->GetColumnByName("kama")->chunk(0));
-    const auto atr =
-        std::static_pointer_cast<arrow::DoubleArray>(table->GetColumnByName("atr")->chunk(0));
-    const auto adx =
-        std::static_pointer_cast<arrow::DoubleArray>(table->GetColumnByName("adx")->chunk(0));
-    const auto er =
-        std::static_pointer_cast<arrow::DoubleArray>(table->GetColumnByName("er")->chunk(0));
-    const auto regime = std::static_pointer_cast<arrow::UInt8Array>(
-        table->GetColumnByName("market_regime")->chunk(0));
+    const auto dt_utc_column = table->GetColumnByName("dt_utc");
+    ASSERT_NE(dt_utc_column, nullptr);
+    const auto dt_utc = std::static_pointer_cast<arrow::StringArray>(dt_utc_column->chunk(0));
+    ASSERT_EQ(dt_utc->length(), 3);
+    EXPECT_TRUE(IsDateTimeSecondPrecision(dt_utc->GetString(0)));
+    EXPECT_FALSE(dt_utc->GetString(0).empty());
+    EXPECT_EQ(dt_utc->GetString(0), row0.dt_utc);
+    EXPECT_EQ(dt_utc->GetString(1), row1.dt_utc);
+    EXPECT_EQ(dt_utc->GetString(2), row2.dt_utc);
 
+    const auto timeframe_column = table->GetColumnByName("timeframe_minutes");
+    const auto kama_column = table->GetColumnByName("kama");
+    const auto atr_column = table->GetColumnByName("atr");
+    const auto adx_column = table->GetColumnByName("adx");
+    const auto er_column = table->GetColumnByName("er");
+    const auto regime_column = table->GetColumnByName("market_regime");
+    ASSERT_NE(timeframe_column, nullptr);
+    ASSERT_NE(kama_column, nullptr);
+    ASSERT_NE(atr_column, nullptr);
+    ASSERT_NE(adx_column, nullptr);
+    ASSERT_NE(er_column, nullptr);
+    ASSERT_NE(regime_column, nullptr);
+    const auto timeframe =
+        std::static_pointer_cast<arrow::Int32Array>(timeframe_column->chunk(0));
+    const auto kama = std::static_pointer_cast<arrow::DoubleArray>(kama_column->chunk(0));
+    const auto atr = std::static_pointer_cast<arrow::DoubleArray>(atr_column->chunk(0));
+    const auto adx = std::static_pointer_cast<arrow::DoubleArray>(adx_column->chunk(0));
+    const auto er = std::static_pointer_cast<arrow::DoubleArray>(er_column->chunk(0));
+    const auto regime = std::static_pointer_cast<arrow::UInt8Array>(regime_column->chunk(0));
+
+    EXPECT_EQ(timeframe->Value(0), 1);
+    EXPECT_EQ(timeframe->Value(1), 1);
+    EXPECT_EQ(timeframe->Value(2), 1);
     EXPECT_TRUE(kama->IsNull(0));
     EXPECT_TRUE(atr->IsNull(0));
     EXPECT_TRUE(adx->IsNull(0));

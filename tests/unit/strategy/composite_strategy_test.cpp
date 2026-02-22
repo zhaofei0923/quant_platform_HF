@@ -201,9 +201,11 @@ SubStrategyDefinition MakeSubStrategy(const std::string& id, const std::string& 
 }
 
 StateSnapshot7D MakeState(const std::string& instrument, EpochNanos ts_ns = 1,
-                          MarketRegime market_regime = MarketRegime::kUnknown) {
+                          MarketRegime market_regime = MarketRegime::kUnknown,
+                          std::int32_t timeframe_minutes = 1) {
     StateSnapshot7D state;
     state.instrument_id = instrument;
+    state.timeframe_minutes = timeframe_minutes;
     state.has_bar = true;
     state.bar_open = 100.0;
     state.bar_high = 101.0;
@@ -267,6 +269,47 @@ TEST(CompositeStrategyTest, DispatchesOnlyEnabledSubStrategies) {
     ASSERT_EQ(signals.size(), 1U);
     EXPECT_EQ(signals.front().strategy_id, "s1");
     EXPECT_EQ(signals.front().signal_type, SignalType::kOpen);
+}
+
+TEST(CompositeStrategyTest, DispatchesSubStrategiesByTimeframeMinutes) {
+    const std::string tf1_type = UniqueType("tf1");
+    const std::string tf5_type = UniqueType("tf5");
+    RegisterScriptedType(tf1_type);
+    RegisterScriptedType(tf5_type);
+
+    SubStrategyDefinition tf1 = MakeSubStrategy(
+        "tf1", tf1_type, {{"id", "tf1"}, {"emit_open", "1"}, {"open_side", "buy"}});
+    tf1.timeframe_minutes = 1;
+    SubStrategyDefinition tf5 = MakeSubStrategy(
+        "tf5", tf5_type, {{"id", "tf5"}, {"emit_open", "1"}, {"open_side", "buy"}});
+    tf5.timeframe_minutes = 5;
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {tf1, tf5};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+
+    std::vector<std::string> call_log;
+    g_call_log = &call_log;
+    const std::vector<SignalIntent> tf1_signals =
+        strategy.OnState(MakeState("rb2405", 10, MarketRegime::kUnknown, 1));
+    g_call_log = nullptr;
+    ASSERT_EQ(call_log.size(), 1U);
+    EXPECT_EQ(call_log.front(), "tf1");
+    ASSERT_EQ(tf1_signals.size(), 1U);
+    EXPECT_EQ(tf1_signals.front().strategy_id, "tf1");
+
+    call_log.clear();
+    g_call_log = &call_log;
+    const std::vector<SignalIntent> tf5_signals =
+        strategy.OnState(MakeState("rb2405", 11, MarketRegime::kUnknown, 5));
+    g_call_log = nullptr;
+    ASSERT_EQ(call_log.size(), 1U);
+    EXPECT_EQ(call_log.front(), "tf5");
+    ASSERT_EQ(tf5_signals.size(), 1U);
+    EXPECT_EQ(tf5_signals.front().strategy_id, "tf5");
 }
 
 TEST(CompositeStrategyTest, MarketRegimeFilterAppliesOnlyToOpenSignals) {
@@ -441,6 +484,35 @@ TEST(CompositeStrategyTest, TimeFilterStrategiesCanBlockOpenSignals) {
 
     const std::vector<SignalIntent> blocked = strategy.OnState(MakeState("rb2405", 0));
     EXPECT_TRUE(blocked.empty());
+}
+
+TEST(CompositeStrategyTest, TimeFilterAppliesOnlyToMatchingTimeframe) {
+    const std::string open_type = UniqueType("open_time_filter_tf");
+    RegisterScriptedType(open_type);
+
+    SubStrategyDefinition open_sub =
+        MakeSubStrategy("open", open_type, {{"id", "open"}, {"emit_open", "1"}});
+    open_sub.timeframe_minutes = 1;
+    SubStrategyDefinition time_filter_sub =
+        MakeSubStrategy("time_filter", "TimeFilter",
+                        {{"id", "time_filter"},
+                         {"start_hour", "0"},
+                         {"end_hour", "23"},
+                         {"timezone", "UTC"}});
+    time_filter_sub.timeframe_minutes = 5;
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {open_sub, time_filter_sub};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+
+    const std::vector<SignalIntent> signals =
+        strategy.OnState(MakeState("rb2405", 0, MarketRegime::kUnknown, 1));
+    ASSERT_EQ(signals.size(), 1U);
+    EXPECT_EQ(signals.front().strategy_id, "open");
+    EXPECT_EQ(signals.front().signal_type, SignalType::kOpen);
 }
 
 TEST(CompositeStrategyTest, SaveAndLoadStateRestoresPositionGate) {

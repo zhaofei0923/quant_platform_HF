@@ -181,6 +181,7 @@ TEST(RedisRealtimeStoreClientAdapterTest, RoundTripsStateSnapshot7D) {
     state.bar_low = 4500.0;
     state.bar_close = 4520.0;
     state.bar_volume = 123.0;
+    state.timeframe_minutes = 5;
     state.has_bar = true;
     state.market_regime = MarketRegime::kWeakTrend;
     state.ts_ns = 123;
@@ -197,6 +198,7 @@ TEST(RedisRealtimeStoreClientAdapterTest, RoundTripsStateSnapshot7D) {
     EXPECT_DOUBLE_EQ(got.bar_low, 4500.0);
     EXPECT_DOUBLE_EQ(got.bar_close, 4520.0);
     EXPECT_DOUBLE_EQ(got.bar_volume, 123.0);
+    EXPECT_EQ(got.timeframe_minutes, 5);
     EXPECT_TRUE(got.has_bar);
     EXPECT_EQ(got.market_regime, MarketRegime::kWeakTrend);
     EXPECT_EQ(got.ts_ns, 123);
@@ -235,6 +237,7 @@ TEST(RedisRealtimeStoreClientAdapterTest, ReadsLegacyStateSnapshotWithoutBarFiel
     EXPECT_DOUBLE_EQ(got.bar_low, 0.0);
     EXPECT_DOUBLE_EQ(got.bar_close, 0.0);
     EXPECT_DOUBLE_EQ(got.bar_volume, 0.0);
+    EXPECT_EQ(got.timeframe_minutes, 1);
     EXPECT_FALSE(got.has_bar);
     EXPECT_EQ(got.market_regime, MarketRegime::kUnknown);
 }

@@ -2,8 +2,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -159,6 +162,28 @@ bool ParseBoolText(const std::string& value, bool* out) {
         return true;
     }
     return false;
+}
+
+bool ParseInt32Text(const std::string& value, std::int32_t* out) {
+    if (out == nullptr) {
+        return false;
+    }
+    const std::string normalized = Trim(value);
+    if (normalized.empty()) {
+        return false;
+    }
+    try {
+        std::size_t consumed = 0;
+        const long long parsed = std::stoll(normalized, &consumed);
+        if (consumed != normalized.size() || parsed < std::numeric_limits<std::int32_t>::min() ||
+            parsed > std::numeric_limits<std::int32_t>::max()) {
+            return false;
+        }
+        *out = static_cast<std::int32_t>(parsed);
+        return true;
+    } catch (...) {
+        return false;
+    }
 }
 
 AtomicParams* SelectOverrideParams(SubStrategyDefinition* strategy, const std::string& run_mode) {
@@ -407,6 +432,17 @@ bool ApplyStrategyField(SubStrategyDefinition* strategy, const std::string& key,
             return false;
         }
         strategy->enabled = parsed;
+        return true;
+    }
+    if (key == "timeframe_minutes") {
+        std::int32_t parsed = 0;
+        if (!ParseInt32Text(value, &parsed) || parsed <= 0) {
+            if (error != nullptr) {
+                *error = FormatLineError(line_no, "timeframe_minutes must be positive integer");
+            }
+            return false;
+        }
+        strategy->timeframe_minutes = parsed;
         return true;
     }
     if (key == "config_path") {
@@ -987,6 +1023,41 @@ bool ParseStrategyJsonObject(const simple_json::Value& item, SubStrategyDefiniti
                 return false;
             }
             parsed.enabled = value.bool_value;
+            continue;
+        }
+        if (key == "timeframe_minutes") {
+            std::int32_t parsed_timeframe = 0;
+            if (value.IsNumber()) {
+                const double raw = value.number_value;
+                if (!std::isfinite(raw) || std::floor(raw) != raw ||
+                    raw < static_cast<double>(std::numeric_limits<std::int32_t>::min()) ||
+                    raw > static_cast<double>(std::numeric_limits<std::int32_t>::max())) {
+                    if (error != nullptr) {
+                        *error = "strategy timeframe_minutes must be positive integer";
+                    }
+                    return false;
+                }
+                parsed_timeframe = static_cast<std::int32_t>(raw);
+            } else if (value.IsString()) {
+                if (!ParseInt32Text(value.string_value, &parsed_timeframe)) {
+                    if (error != nullptr) {
+                        *error = "strategy timeframe_minutes must be positive integer";
+                    }
+                    return false;
+                }
+            } else {
+                if (error != nullptr) {
+                    *error = "strategy timeframe_minutes must be positive integer";
+                }
+                return false;
+            }
+            if (parsed_timeframe <= 0) {
+                if (error != nullptr) {
+                    *error = "strategy timeframe_minutes must be positive integer";
+                }
+                return false;
+            }
+            parsed.timeframe_minutes = parsed_timeframe;
             continue;
         }
         if (key == "config_path") {

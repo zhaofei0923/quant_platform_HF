@@ -122,17 +122,23 @@ std::vector<SignalIntent> CompositeStrategy::OnState(const StateSnapshot7D& stat
     atomic_context_.market_regime = state.market_regime;
     std::vector<SignalIntent> non_open_signals;
     std::vector<SignalIntent> opening_signals;
-    const bool allow_opening_by_time_filter = AllowOpeningByTimeFilters(state.ts_ns);
+    const std::int32_t state_timeframe_minutes =
+        state.timeframe_minutes > 0 ? state.timeframe_minutes : 1;
+    const bool allow_opening_by_time_filter =
+        AllowOpeningByTimeFilters(state.ts_ns, state_timeframe_minutes);
 
-    for (IRiskControlStrategy* risk_strategy : risk_control_strategies_) {
-        if (risk_strategy == nullptr) {
+    for (const RiskControlSlot& slot : risk_control_strategies_) {
+        if (slot.strategy == nullptr || slot.timeframe_minutes != state_timeframe_minutes) {
             continue;
         }
-        std::vector<SignalIntent> signals = risk_strategy->OnState(state, atomic_context_);
+        std::vector<SignalIntent> signals = slot.strategy->OnState(state, atomic_context_);
         non_open_signals.insert(non_open_signals.end(), signals.begin(), signals.end());
     }
 
     for (const SubStrategySlot& slot : sub_strategies_) {
+        if (slot.strategy == nullptr || slot.timeframe_minutes != state_timeframe_minutes) {
+            continue;
+        }
         std::vector<SignalIntent> signals = slot.strategy->OnState(state, atomic_context_);
         for (const SignalIntent& signal : signals) {
             if (signal.instrument_id.empty()) {
@@ -510,12 +516,13 @@ bool CompositeStrategy::IsOpenSignalAllowedByRegime(const SubStrategySlot& slot,
            slot.entry_market_regimes.end();
 }
 
-bool CompositeStrategy::AllowOpeningByTimeFilters(EpochNanos now_ns) {
-    for (ITimeFilterStrategy* time_filter : time_filters_) {
-        if (time_filter == nullptr) {
+bool CompositeStrategy::AllowOpeningByTimeFilters(EpochNanos now_ns,
+                                                  std::int32_t timeframe_minutes) {
+    for (const TimeFilterSlot& slot : time_filters_) {
+        if (slot.strategy == nullptr || slot.timeframe_minutes != timeframe_minutes) {
             continue;
         }
-        if (!time_filter->AllowOpening(now_ns)) {
+        if (!slot.strategy->AllowOpening(now_ns)) {
             return false;
         }
     }
@@ -710,18 +717,28 @@ void CompositeStrategy::BuildAtomicStrategies() {
             sub_strategy != nullptr) {
             SubStrategySlot slot;
             slot.strategy = sub_strategy;
+            slot.timeframe_minutes = definition.timeframe_minutes > 0 ? definition.timeframe_minutes
+                                                                      : 1;
             slot.entry_market_regimes = definition.entry_market_regimes;
             sub_strategies_.push_back(std::move(slot));
             bound_to_supported_interface = true;
         }
         if (auto* time_filter = dynamic_cast<ITimeFilterStrategy*>(strategy.get());
             time_filter != nullptr) {
-            time_filters_.push_back(time_filter);
+            TimeFilterSlot slot;
+            slot.strategy = time_filter;
+            slot.timeframe_minutes = definition.timeframe_minutes > 0 ? definition.timeframe_minutes
+                                                                      : 1;
+            time_filters_.push_back(std::move(slot));
             bound_to_supported_interface = true;
         }
         if (auto* risk_control = dynamic_cast<IRiskControlStrategy*>(strategy.get());
             risk_control != nullptr) {
-            risk_control_strategies_.push_back(risk_control);
+            RiskControlSlot slot;
+            slot.strategy = risk_control;
+            slot.timeframe_minutes = definition.timeframe_minutes > 0 ? definition.timeframe_minutes
+                                                                      : 1;
+            risk_control_strategies_.push_back(std::move(slot));
             bound_to_supported_interface = true;
         }
         if (!bound_to_supported_interface) {

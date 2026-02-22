@@ -62,12 +62,14 @@ TEST(CompositeConfigLoaderTest, LoadsV2YamlSubStrategiesWithEnabledAndRegimeGate
     EXPECT_EQ(definition.sub_strategies[0].id, "kama_1");
     EXPECT_TRUE(definition.sub_strategies[0].enabled);
     EXPECT_EQ(definition.sub_strategies[0].type, "KamaTrendStrategy");
+    EXPECT_EQ(definition.sub_strategies[0].timeframe_minutes, 1);
     ASSERT_EQ(definition.sub_strategies[0].entry_market_regimes.size(), 2U);
     EXPECT_EQ(definition.sub_strategies[0].entry_market_regimes[0], MarketRegime::kStrongTrend);
     EXPECT_EQ(definition.sub_strategies[0].entry_market_regimes[1], MarketRegime::kWeakTrend);
     EXPECT_EQ(definition.sub_strategies[1].id, "trend_1");
     EXPECT_FALSE(definition.sub_strategies[1].enabled);
     EXPECT_EQ(definition.sub_strategies[1].type, "TrendStrategy");
+    EXPECT_EQ(definition.sub_strategies[1].timeframe_minutes, 1);
     EXPECT_EQ(definition.sub_strategies[1].params.at("er_period"), "10");
 
     std::filesystem::remove_all(root);
@@ -172,6 +174,7 @@ TEST(CompositeConfigLoaderTest, LoadsV2JsonCompositeConfig) {
     EXPECT_EQ(definition.sub_strategies[0].id, "kama_1");
     EXPECT_TRUE(definition.sub_strategies[0].enabled);
     EXPECT_EQ(definition.sub_strategies[0].type, "KamaTrendStrategy");
+    EXPECT_EQ(definition.sub_strategies[0].timeframe_minutes, 1);
     ASSERT_EQ(definition.sub_strategies[0].entry_market_regimes.size(), 2U);
     EXPECT_EQ(definition.sub_strategies[0].params.at("er_period"), "10");
 
@@ -287,6 +290,83 @@ TEST(CompositeConfigLoaderTest, RejectsUnsupportedOverridesRunModeKey) {
     EXPECT_FALSE(LoadCompositeStrategyDefinition(path.string(), &definition, &error));
     EXPECT_NE(error.find("backtest|sim|live"), std::string::npos);
 
+    std::filesystem::remove_all(root);
+}
+
+TEST(CompositeConfigLoaderTest, LoadsTimeframeMinutesFromYamlAndJson) {
+    const std::filesystem::path yaml_root = MakeTempDir("quant_hft_composite_v2_timeframe_yaml");
+    WriteTempFile(yaml_root / "sub" / "kama.yaml",
+                  "params:\n"
+                  "  id: kama_1\n");
+    const std::filesystem::path yaml_path =
+        WriteTempFile(yaml_root / "composite.yaml",
+                      "composite:\n"
+                      "  merge_rule: kPriority\n"
+                      "  sub_strategies:\n"
+                      "    - id: kama_1\n"
+                      "      enabled: true\n"
+                      "      type: KamaTrendStrategy\n"
+                      "      timeframe_minutes: 5\n"
+                      "      config_path: ./sub/kama.yaml\n");
+
+    CompositeStrategyDefinition yaml_definition;
+    std::string error;
+    ASSERT_TRUE(LoadCompositeStrategyDefinition(yaml_path.string(), &yaml_definition, &error))
+        << error;
+    ASSERT_EQ(yaml_definition.sub_strategies.size(), 1U);
+    EXPECT_EQ(yaml_definition.sub_strategies[0].timeframe_minutes, 5);
+    std::filesystem::remove_all(yaml_root);
+
+    const std::filesystem::path json_root = MakeTempDir("quant_hft_composite_v2_timeframe_json");
+    WriteTempFile(json_root / "sub" / "trend.json",
+                  "{\n"
+                  "  \"params\": {\n"
+                  "    \"id\": \"trend_1\"\n"
+                  "  }\n"
+                  "}\n");
+    const std::filesystem::path json_path =
+        WriteTempFile(json_root / "composite.json",
+                      "{\n"
+                      "  \"composite\": {\n"
+                      "    \"merge_rule\": \"kPriority\",\n"
+                      "    \"sub_strategies\": [\n"
+                      "      {\n"
+                      "        \"id\": \"trend_1\",\n"
+                      "        \"enabled\": true,\n"
+                      "        \"type\": \"TrendStrategy\",\n"
+                      "        \"timeframe_minutes\": 15,\n"
+                      "        \"config_path\": \"./sub/trend.json\"\n"
+                      "      }\n"
+                      "    ]\n"
+                      "  }\n"
+                      "}\n");
+
+    CompositeStrategyDefinition json_definition;
+    ASSERT_TRUE(LoadCompositeStrategyDefinition(json_path.string(), &json_definition, &error))
+        << error;
+    ASSERT_EQ(json_definition.sub_strategies.size(), 1U);
+    EXPECT_EQ(json_definition.sub_strategies[0].timeframe_minutes, 15);
+    std::filesystem::remove_all(json_root);
+}
+
+TEST(CompositeConfigLoaderTest, RejectsInvalidTimeframeMinutes) {
+    const std::filesystem::path root = MakeTempDir("quant_hft_composite_v2_timeframe_invalid");
+    const std::filesystem::path path =
+        WriteTempFile(root / "invalid_timeframe.yaml",
+                      "composite:\n"
+                      "  merge_rule: kPriority\n"
+                      "  sub_strategies:\n"
+                      "    - id: trend_1\n"
+                      "      enabled: true\n"
+                      "      type: TrendStrategy\n"
+                      "      timeframe_minutes: 0\n"
+                      "      params:\n"
+                      "        id: trend_1\n");
+
+    CompositeStrategyDefinition definition;
+    std::string error;
+    EXPECT_FALSE(LoadCompositeStrategyDefinition(path.string(), &definition, &error));
+    EXPECT_NE(error.find("timeframe_minutes"), std::string::npos);
     std::filesystem::remove_all(root);
 }
 

@@ -220,6 +220,7 @@ struct MarketSnapshot {
 
 struct StateSnapshot7D {
     std::string instrument_id;
+    std::int32_t timeframe_minutes{1};
     StateDimension trend;
     StateDimension volatility;
     StateDimension liquidity;

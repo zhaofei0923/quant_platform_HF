@@ -1,6 +1,7 @@
 #include "quant_hft/backtest/indicator_trace_parquet_writer.h"
 
 #include <algorithm>
+#include <ctime>
 #include <exception>
 #include <filesystem>
 #include <memory>
@@ -20,6 +21,28 @@ bool SetError(const std::string& message, std::string* error) {
         *error = message;
     }
     return false;
+}
+
+constexpr std::int64_t kNanosPerSecond = 1'000'000'000LL;
+
+std::string FormatDateTimeFromEpochNs(EpochNanos ts_ns) {
+    const std::time_t seconds = static_cast<std::time_t>(ts_ns / kNanosPerSecond);
+    std::tm tm_value {};
+#if defined(_WIN32)
+    if (gmtime_s(&tm_value, &seconds) != 0) {
+        return "";
+    }
+#else
+    if (gmtime_r(&seconds, &tm_value) == nullptr) {
+        return "";
+    }
+#endif
+
+    char buffer[17];
+    if (std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M", &tm_value) == 0) {
+        return "";
+    }
+    return std::string(buffer);
 }
 
 #if QUANT_HFT_ENABLE_ARROW_PARQUET
@@ -101,6 +124,8 @@ bool IndicatorTraceParquetWriter::Close(std::string* error) {
 #else
     arrow::StringBuilder instrument_builder;
     arrow::Int64Builder ts_ns_builder;
+    arrow::StringBuilder dt_utc_builder;
+    arrow::Int32Builder timeframe_minutes_builder;
     arrow::DoubleBuilder bar_open_builder;
     arrow::DoubleBuilder bar_high_builder;
     arrow::DoubleBuilder bar_low_builder;
@@ -116,6 +141,13 @@ bool IndicatorTraceParquetWriter::Close(std::string* error) {
         if (!ExpectArrowStatus(instrument_builder.Append(row.instrument_id),
                                "failed appending instrument_id", error) ||
             !ExpectArrowStatus(ts_ns_builder.Append(row.ts_ns), "failed appending ts_ns", error) ||
+            !ExpectArrowStatus(
+                dt_utc_builder.Append(row.dt_utc.empty() ? FormatDateTimeFromEpochNs(row.ts_ns)
+                                                         : row.dt_utc),
+                               "failed appending dt_utc", error) ||
+            !ExpectArrowStatus(timeframe_minutes_builder.Append(
+                                   row.timeframe_minutes > 0 ? row.timeframe_minutes : 1),
+                               "failed appending timeframe_minutes", error) ||
             !ExpectArrowStatus(bar_open_builder.Append(row.bar_open), "failed appending bar_open",
                                error) ||
             !ExpectArrowStatus(bar_high_builder.Append(row.bar_high), "failed appending bar_high",
@@ -153,6 +185,8 @@ bool IndicatorTraceParquetWriter::Close(std::string* error) {
 
     std::shared_ptr<arrow::Array> instrument_array;
     std::shared_ptr<arrow::Array> ts_ns_array;
+    std::shared_ptr<arrow::Array> dt_utc_array;
+    std::shared_ptr<arrow::Array> timeframe_minutes_array;
     std::shared_ptr<arrow::Array> bar_open_array;
     std::shared_ptr<arrow::Array> bar_high_array;
     std::shared_ptr<arrow::Array> bar_low_array;
@@ -165,6 +199,9 @@ bool IndicatorTraceParquetWriter::Close(std::string* error) {
     std::shared_ptr<arrow::Array> market_regime_array;
     if (!FinishArray(&instrument_builder, "instrument_id", &instrument_array, error) ||
         !FinishArray(&ts_ns_builder, "ts_ns", &ts_ns_array, error) ||
+        !FinishArray(&dt_utc_builder, "dt_utc", &dt_utc_array, error) ||
+        !FinishArray(&timeframe_minutes_builder, "timeframe_minutes", &timeframe_minutes_array,
+                     error) ||
         !FinishArray(&bar_open_builder, "bar_open", &bar_open_array, error) ||
         !FinishArray(&bar_high_builder, "bar_high", &bar_high_array, error) ||
         !FinishArray(&bar_low_builder, "bar_low", &bar_low_array, error) ||
@@ -181,6 +218,8 @@ bool IndicatorTraceParquetWriter::Close(std::string* error) {
     auto schema = arrow::schema({
         arrow::field("instrument_id", arrow::utf8(), false),
         arrow::field("ts_ns", arrow::int64(), false),
+        arrow::field("dt_utc", arrow::utf8(), false),
+        arrow::field("timeframe_minutes", arrow::int32(), false),
         arrow::field("bar_open", arrow::float64(), false),
         arrow::field("bar_high", arrow::float64(), false),
         arrow::field("bar_low", arrow::float64(), false),
@@ -194,9 +233,11 @@ bool IndicatorTraceParquetWriter::Close(std::string* error) {
     });
 
     auto table =
-        arrow::Table::Make(schema, {instrument_array, ts_ns_array, bar_open_array, bar_high_array,
-                                    bar_low_array, bar_close_array, bar_volume_array, kama_array,
-                                    atr_array, adx_array, er_array, market_regime_array});
+        arrow::Table::Make(schema,
+                           {instrument_array, ts_ns_array, dt_utc_array, timeframe_minutes_array,
+                            bar_open_array, bar_high_array, bar_low_array, bar_close_array,
+                            bar_volume_array, kama_array, atr_array, adx_array, er_array,
+                            market_regime_array});
 
     const std::filesystem::path output_path(output_path_);
     const std::filesystem::path tmp_path(output_path_ + ".tmp");

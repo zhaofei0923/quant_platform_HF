@@ -50,6 +50,7 @@ public:
     std::vector<BarSnapshot> OnMarketSnapshot(const MarketSnapshot& snapshot);
     std::vector<BarSnapshot> Flush();
     void ResetInstrument(const std::string& instrument_id);
+    std::string InferExchangeId(const std::string& instrument_id) const;
     bool IsInTradingSession(const std::string& exchange_id, const std::string& update_time) const;
     static std::vector<BarSnapshot> AggregateFromOneMinute(
         const std::vector<BarSnapshot>& one_minute_bars,

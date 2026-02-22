@@ -79,6 +79,7 @@ StateSnapshot7D RuleMarketStateEngine::BuildState(const std::string& instrument_
                                                   const MarketSnapshot& snapshot) const {
     StateSnapshot7D out;
     out.instrument_id = instrument_id;
+    out.timeframe_minutes = 1;
     out.ts_ns = snapshot.recv_ts_ns == 0 ? NowEpochNanos() : snapshot.recv_ts_ns;
     out.bar_open = snapshot.last_price;
     out.bar_high = snapshot.last_price;

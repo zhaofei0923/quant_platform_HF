@@ -521,6 +521,9 @@ TEST(OpsCli, BacktestCliExportsCsvArtifactsWithDetailFlags) {
     const std::string payload = ReadFile(output_json);
     EXPECT_NE(payload.find("\"hf_standard\""), std::string::npos);
     EXPECT_NE(payload.find("\"emit_position_history\": true"), std::string::npos);
+    EXPECT_NE(payload.find("\"monte_carlo\""), std::string::npos);
+    EXPECT_NE(payload.find("\"simulations\": 1000"), std::string::npos);
+    EXPECT_NE(payload.find("\"factor_exposure\""), std::string::npos);
 }
 
 TEST(OpsCli, FactorEvalCliIncludesDetectorConfigInOutputJson) {

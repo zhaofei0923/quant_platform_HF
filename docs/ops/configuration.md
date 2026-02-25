@@ -233,6 +233,12 @@ bash scripts/build/run_backtest_from_config.sh \
 - 输出必填：`output_json`、`output_md`
 - 可选透传：`max_ticks`、`start_date`、`end_date`、`run_id`、`export_csv_dir`、`emit_*`
 
+`backtest_cli` 输出 `hf_standard` 的补充说明：
+
+- `monte_carlo`：基于日收益做有放回 bootstrap，默认 `simulations=1000`、随机种子 `42`。
+- `factor_exposure`：输出 `trend_dummy`、`range_dummy` 两个代理因子的单因子 OLS 暴露度与 `t_stat`。
+- `advanced_summary.beta` / `advanced_summary.alpha`：当前无 benchmark 输入，默认保持 `0.0`。
+
 ## 滚动回测 CLI（库内执行）
 
 入口：

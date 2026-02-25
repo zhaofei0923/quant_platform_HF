@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -153,6 +154,13 @@ RollingMetrics ComputeRollingMetrics(const std::vector<DailyPerformance>& daily,
                                      int window_days = 63);
 
 std::vector<RegimePerformance> ComputeRegimePerformance(const std::vector<TradeRecord>& trades);
+
+MonteCarloResult ComputeMonteCarloResult(const std::vector<DailyPerformance>& daily,
+                                         double initial_capital,
+                                         int simulations = 1000,
+                                         std::uint32_t seed = 42);
+
+std::vector<FactorExposure> ComputeFactorExposure(const std::vector<DailyPerformance>& daily);
 
 AdvancedSummary ComputeAdvancedSummary(const std::vector<DailyPerformance>& daily,
                                        const std::vector<TradeRecord>& trades,

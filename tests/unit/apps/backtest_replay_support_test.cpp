@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -965,6 +966,14 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecDeterministicFillFeedsOrderEventT
     EXPECT_FALSE(result.orders.empty());
     EXPECT_TRUE(result.position_history.empty());
     EXPECT_EQ(result.parameters.engine_mode, "csv");
+    EXPECT_GT(result.monte_carlo.simulations, 0);
+    EXPECT_TRUE(std::isfinite(result.monte_carlo.mean_final_capital));
+    EXPECT_FALSE(result.factor_exposure.empty());
+    for (const FactorExposure& row : result.factor_exposure) {
+        EXPECT_FALSE(row.factor.empty());
+        EXPECT_TRUE(std::isfinite(row.exposure));
+        EXPECT_TRUE(std::isfinite(row.t_stat));
+    }
 
     std::error_code ec;
     std::filesystem::remove(csv_path, ec);

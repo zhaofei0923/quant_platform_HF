@@ -3817,6 +3817,8 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     result.regime_performance = ComputeRegimePerformance(result.trades);
     result.advanced_summary =
         ComputeAdvancedSummary(result.daily, result.trades, result.risk_metrics);
+    result.monte_carlo = ComputeMonteCarloResult(result.daily, spec.initial_equity);
+    result.factor_exposure = ComputeFactorExposure(result.daily);
 
     if (!spec.deterministic_fills) {
         result.replay = replay;

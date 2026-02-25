@@ -8,6 +8,7 @@
 #include <iomanip>
 #include <map>
 #include <numeric>
+#include <random>
 #include <set>
 #include <sstream>
 #include <string>
@@ -97,6 +98,81 @@ double MaxDrawdownPct(const std::vector<double>& values) {
         }
     }
     return max_drawdown;
+}
+
+std::string ToLower(std::string text) {
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](const unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return text;
+}
+
+bool IsTrendRegime(const std::string& regime) {
+    const std::string normalized = ToLower(regime);
+    return normalized.find("strongtrend") != std::string::npos ||
+           normalized.find("weaktrend") != std::string::npos ||
+           normalized == "trend";
+}
+
+bool IsRangeRegime(const std::string& regime) {
+    const std::string normalized = ToLower(regime);
+    return normalized.find("ranging") != std::string::npos ||
+           normalized.find("flat") != std::string::npos;
+}
+
+struct OlsEstimate {
+    double beta{0.0};
+    double t_stat{0.0};
+};
+
+OlsEstimate ComputeSingleFactorOls(const std::vector<double>& returns,
+                                   const std::vector<double>& factor) {
+    OlsEstimate estimate;
+    if (returns.size() != factor.size() || returns.empty()) {
+        return estimate;
+    }
+
+    const std::size_t count = returns.size();
+    const double factor_mean = Mean(factor);
+    const double return_mean = Mean(returns);
+
+    double sxx = 0.0;
+    double sxy = 0.0;
+    for (std::size_t index = 0; index < count; ++index) {
+        const double dx = factor[index] - factor_mean;
+        const double dy = returns[index] - return_mean;
+        sxx += dx * dx;
+        sxy += dx * dy;
+    }
+    if (sxx <= 1e-12) {
+        return estimate;
+    }
+
+    estimate.beta = sxy / sxx;
+    if (count < 3) {
+        return estimate;
+    }
+
+    const double alpha = return_mean - estimate.beta * factor_mean;
+    double rss = 0.0;
+    for (std::size_t index = 0; index < count; ++index) {
+        const double fitted = alpha + estimate.beta * factor[index];
+        const double residual = returns[index] - fitted;
+        rss += residual * residual;
+    }
+
+    const double dof = static_cast<double>(count - 2);
+    if (dof <= 0.0) {
+        return estimate;
+    }
+    const double sigma_sq = rss / dof;
+    if (sigma_sq <= 0.0) {
+        return estimate;
+    }
+    const double se_beta = std::sqrt(sigma_sq / sxx);
+    if (se_beta > 1e-12) {
+        estimate.t_stat = estimate.beta / se_beta;
+    }
+    return estimate;
 }
 
 }  // namespace
@@ -385,6 +461,103 @@ std::vector<RegimePerformance> ComputeRegimePerformance(const std::vector<TradeR
     return out;
 }
 
+MonteCarloResult ComputeMonteCarloResult(const std::vector<DailyPerformance>& daily,
+                                         double initial_capital,
+                                         int simulations,
+                                         std::uint32_t seed) {
+    MonteCarloResult result;
+    if (daily.empty() || simulations <= 0) {
+        return result;
+    }
+
+    std::vector<double> daily_returns;
+    daily_returns.reserve(daily.size());
+    for (const DailyPerformance& row : daily) {
+        daily_returns.push_back(row.daily_return_pct / 100.0);
+    }
+    if (daily_returns.empty()) {
+        return result;
+    }
+
+    double start_capital = initial_capital;
+    if (start_capital <= 0.0) {
+        start_capital = daily.front().capital;
+    }
+    if (start_capital <= 0.0) {
+        start_capital = 1.0;
+    }
+
+    result.simulations = simulations;
+    std::vector<double> final_capitals;
+    std::vector<double> max_drawdowns;
+    final_capitals.reserve(static_cast<std::size_t>(simulations));
+    max_drawdowns.reserve(static_cast<std::size_t>(simulations));
+
+    std::mt19937 rng(seed);
+    std::uniform_int_distribution<std::size_t> pick(0, daily_returns.size() - 1);
+    int loss_count = 0;
+    for (int simulation = 0; simulation < simulations; ++simulation) {
+        double capital = start_capital;
+        double running_peak = start_capital;
+        double max_drawdown = 0.0;
+        for (std::size_t step = 0; step < daily_returns.size(); ++step) {
+            capital *= (1.0 + daily_returns[pick(rng)]);
+            running_peak = std::max(running_peak, capital);
+            if (running_peak > 0.0) {
+                max_drawdown =
+                    std::max(max_drawdown, (running_peak - capital) / running_peak * 100.0);
+            }
+        }
+        final_capitals.push_back(capital);
+        max_drawdowns.push_back(max_drawdown);
+        if (capital < start_capital) {
+            ++loss_count;
+        }
+    }
+
+    result.mean_final_capital = Mean(final_capitals);
+    result.prob_loss = static_cast<double>(loss_count) / static_cast<double>(simulations);
+
+    std::sort(final_capitals.begin(), final_capitals.end());
+    result.ci_95_lower = PercentileFromSorted(final_capitals, 0.025);
+    result.ci_95_upper = PercentileFromSorted(final_capitals, 0.975);
+
+    std::sort(max_drawdowns.begin(), max_drawdowns.end());
+    result.max_drawdown_95 = PercentileFromSorted(max_drawdowns, 0.95);
+    return result;
+}
+
+std::vector<FactorExposure> ComputeFactorExposure(const std::vector<DailyPerformance>& daily) {
+    std::vector<FactorExposure> exposure = {
+        FactorExposure{"trend_dummy", 0.0, 0.0},
+        FactorExposure{"range_dummy", 0.0, 0.0},
+    };
+    if (daily.empty()) {
+        return exposure;
+    }
+
+    std::vector<double> returns;
+    std::vector<double> trend_factor;
+    std::vector<double> range_factor;
+    returns.reserve(daily.size());
+    trend_factor.reserve(daily.size());
+    range_factor.reserve(daily.size());
+    for (const DailyPerformance& row : daily) {
+        returns.push_back(row.daily_return_pct / 100.0);
+        trend_factor.push_back(IsTrendRegime(row.market_regime) ? 1.0 : 0.0);
+        range_factor.push_back(IsRangeRegime(row.market_regime) ? 1.0 : 0.0);
+    }
+
+    const OlsEstimate trend_ols = ComputeSingleFactorOls(returns, trend_factor);
+    exposure[0].exposure = trend_ols.beta;
+    exposure[0].t_stat = trend_ols.t_stat;
+
+    const OlsEstimate range_ols = ComputeSingleFactorOls(returns, range_factor);
+    exposure[1].exposure = range_ols.beta;
+    exposure[1].t_stat = range_ols.t_stat;
+    return exposure;
+}
+
 AdvancedSummary ComputeAdvancedSummary(const std::vector<DailyPerformance>& daily,
                                        const std::vector<TradeRecord>& trades,
                                        const RiskMetrics& /*risk_metrics*/) {
@@ -419,6 +592,11 @@ AdvancedSummary ComputeAdvancedSummary(const std::vector<DailyPerformance>& dail
     std::sort(sorted.begin(), sorted.end());
     const double q95 = PercentileFromSorted(sorted, 0.95);
     const double q05 = PercentileFromSorted(sorted, 0.05);
+    const double mean_return = Mean(returns);
+    const double std_return = StdDev(returns, mean_return);
+    if (std_return > 1e-12) {
+        summary.information_ratio = (mean_return / std_return) * std::sqrt(252.0);
+    }
     if (std::fabs(q05) > 1e-12) {
         summary.tail_ratio = std::fabs(q95 / q05);
     }
@@ -437,6 +615,50 @@ AdvancedSummary ComputeAdvancedSummary(const std::vector<DailyPerformance>& dail
     }
     if (std::fabs(loss_pnl) > 1e-12) {
         summary.profit_factor = win_pnl / std::fabs(loss_pnl);
+    }
+
+    std::vector<double> win_streak_lengths;
+    std::vector<double> loss_streak_lengths;
+    int current_sign = 0;
+    int current_streak = 0;
+    auto flush_streak = [&]() {
+        if (current_streak <= 0) {
+            return;
+        }
+        if (current_sign > 0) {
+            win_streak_lengths.push_back(static_cast<double>(current_streak));
+        } else if (current_sign < 0) {
+            loss_streak_lengths.push_back(static_cast<double>(current_streak));
+        }
+    };
+    for (const double value : returns) {
+        int sign = 0;
+        if (value > 1e-12) {
+            sign = 1;
+        } else if (value < -1e-12) {
+            sign = -1;
+        }
+        if (sign == 0) {
+            flush_streak();
+            current_sign = 0;
+            current_streak = 0;
+            continue;
+        }
+        if (current_sign == sign || current_sign == 0) {
+            current_sign = sign;
+            ++current_streak;
+            continue;
+        }
+        flush_streak();
+        current_sign = sign;
+        current_streak = 1;
+    }
+    flush_streak();
+
+    const double mean_win_duration = Mean(win_streak_lengths);
+    const double mean_loss_duration = Mean(loss_streak_lengths);
+    if (mean_loss_duration > 1e-12) {
+        summary.avg_win_loss_duration_ratio = mean_win_duration / mean_loss_duration;
     }
 
     return summary;

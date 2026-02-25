@@ -609,6 +609,10 @@ composite:
 - Consumer: `scripts/build/run_backtest_from_config.sh`。
 - 约束: `engine_mode` 必须为 `parquet`（parquet-only policy）。
 - 说明: 虽该脚本封装为 parquet-only，回测引擎内部 `csv/parquet` 已统一复用同一 Bar 聚合规则（`BarAggregator` + timeframe fanout）。
+- 输出口径:
+  - `backtest_cli` JSON 的 `hf_standard.monte_carlo` 由日收益 bootstrap 计算，默认 `simulations=1000`、`seed=42`。
+  - `hf_standard.factor_exposure` 目前输出代理因子 `trend_dummy` / `range_dummy` 的单因子 OLS 暴露度与 `t_stat`。
+  - `hf_standard.advanced_summary.beta/alpha` 在未提供外部 benchmark 收益序列时保持 `0.0`。
 
 字段表：
 

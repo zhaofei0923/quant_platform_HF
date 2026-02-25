@@ -1,18 +1,24 @@
 stages:
-  backtest_parquet_convert:
-    cmd: python3 scripts/data/convert_backtest_csv_to_parquet.py --execute --input backtest_data --output-dir runtime/backtest/parquet --report-json docs/results/backtest_parquet_conversion_report.json --filename-prefix-policy error --rollover-min-gap-ms 0
+  backtest_parquet_repro:
+    cmd: >-
+      bash scripts/build/run_reproducible_parquet_convert_validate.sh
+      --build-dir build-gcc
+      --csv-path backtest_data
+      --output-root runtime/backtest/parquet_v2
+      --results-dir docs/results
+      --skip-build false
+      --clean-output true
+      --require-match-existing false
+      --expected-fingerprint-file ""
+      --fingerprint-scope parquet
     deps:
       - backtest_data
-      - scripts/data/convert_backtest_csv_to_parquet.py
+      - src/apps/csv_to_parquet_cli_main.cpp
+      - scripts/build/run_reproducible_parquet_convert_validate.sh
+      - scripts/build/install_arrow_parquet_deps.sh
     outs:
-      - runtime/backtest/parquet
+      - runtime/backtest/parquet_v2
     metrics:
-      - docs/results/backtest_parquet_conversion_report.json
-
-  backtest_parquet_validate:
-    cmd: python3 scripts/data/validate_backtest_parquet_dataset.py --dataset-root runtime/backtest/parquet --report-json docs/results/backtest_parquet_validation_report.json --require-non-empty --conversion-report docs/results/backtest_parquet_conversion_report.json
-    deps:
-      - runtime/backtest/parquet
-      - scripts/data/validate_backtest_parquet_dataset.py
-    metrics:
-      - docs/results/backtest_parquet_validation_report.json
+      - docs/results/parquet_repro_convert.json
+      - docs/results/parquet_repro_validate.json
+      - docs/results/parquet_repro_fingerprint.sha256

@@ -41,7 +41,7 @@ composite:
       # composite.sub_strategies.enabled：配置项说明；示例值：true
       enabled: true
       # composite.sub_strategies.timeframe_minutes：配置项说明；示例值：1（默认 1）
-      timeframe_minutes: 5
+      timeframe_minutes: 1
       # composite.sub_strategies.type：配置项说明；示例值：KamaTrendStrategy
       type: KamaTrendStrategy
       # composite.sub_strategies.config_path：配置项说明；示例值：./sub/kama_trend_1.yaml

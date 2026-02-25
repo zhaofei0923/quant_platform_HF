@@ -5,6 +5,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #ifndef QUANT_HFT_BUILD_DIR
 #error "QUANT_HFT_BUILD_DIR is required"
@@ -23,6 +24,16 @@ std::string ReadFile(const std::filesystem::path& path) {
     std::ostringstream buffer;
     buffer << input.rdbuf();
     return buffer.str();
+}
+
+std::vector<std::string> ReadLines(const std::filesystem::path& path) {
+    std::vector<std::string> lines;
+    std::ifstream input(path);
+    std::string line;
+    while (std::getline(input, line)) {
+        lines.push_back(line);
+    }
+    return lines;
 }
 
 int RunCommandCapture(const std::string& command, const std::filesystem::path& output_file) {
@@ -304,13 +315,95 @@ TEST(OpsCli, CsvToParquetCliWritesManifestAndMeta) {
     EXPECT_NE(meta_text.find("min_ts_ns="), std::string::npos);
     EXPECT_NE(meta_text.find("max_ts_ns="), std::string::npos);
     EXPECT_NE(meta_text.find("row_count="), std::string::npos);
-    EXPECT_NE(meta_text.find("schema_version="), std::string::npos);
+    EXPECT_NE(meta_text.find("schema_version=v3"), std::string::npos);
     EXPECT_NE(meta_text.find("source_csv_fingerprint="), std::string::npos);
 
     const std::string manifest_text = ReadFile(manifest);
     EXPECT_NE(manifest_text.find("\"source\":\"rb\""), std::string::npos);
     EXPECT_NE(manifest_text.find("\"instrument_id\":\"rb2305\""), std::string::npos);
     EXPECT_NE(manifest_text.find("\"trading_day\":\"20230103\""), std::string::npos);
+    EXPECT_NE(manifest_text.find("\"schema_version\":\"v3\""), std::string::npos);
+}
+
+TEST(OpsCli, CsvToParquetCliPreservesPartitionRowOrder) {
+    const auto dir = MakeTempDir("csv_to_parquet_order");
+    const auto input_csv = dir / "rb_order_sample.csv";
+    const auto output_root = dir / "parquet_v2";
+    const auto stdout_log = dir / "stdout.log";
+
+    WriteFile(input_csv,
+              "TradingDay,InstrumentID,UpdateTime,UpdateMillisec,LastPrice,Volume,BidPrice1,"
+              "BidVolume1,AskPrice1,AskVolume1,AveragePrice,Turnover,OpenInterest\n"
+              "20230103,rb2305,09:00:02,0,4100.11,100,4099.0,3,4101.0,4,41000.0,1234500.0,1000\n"
+              "20230103,rb2305,09:00:01,0,4100.22,101,4099.1,3,4101.1,4,41020.0,1239900.0,1001\n"
+              "20230103,rb2305,09:00:03,0,4100.33,102,4099.2,3,4101.2,4,41030.0,1245300.0,1002\n");
+
+    const std::string command = "\"" + BinaryPath("csv_to_parquet_cli").string() +
+                                "\" --input_csv \"" + input_csv.string() + "\" --output_root \"" +
+                                output_root.string() + "\" --source rb --resume true";
+    ASSERT_EQ(RunCommandCapture(command, stdout_log), 0);
+
+    const std::filesystem::path sidecar = output_root / "source=rb" / "trading_day=20230103" /
+                                          "instrument_id=rb2305" / "part-0000.parquet.ticks.csv";
+    ASSERT_TRUE(std::filesystem::exists(sidecar));
+
+    const std::vector<std::string> lines = ReadLines(sidecar);
+    ASSERT_GE(lines.size(), 4U);
+    EXPECT_NE(lines[1].find(",4100.11,"), std::string::npos);
+    EXPECT_NE(lines[2].find(",4100.22,"), std::string::npos);
+    EXPECT_NE(lines[3].find(",4100.33,"), std::string::npos);
+}
+
+TEST(OpsCli, CsvToParquetCliFailsOnParseError) {
+    const auto dir = MakeTempDir("csv_to_parquet_parse_error");
+    const auto input_csv = dir / "rb_invalid.csv";
+    const auto output_root = dir / "parquet_v2";
+    const auto stdout_log = dir / "stdout.log";
+
+    WriteFile(input_csv,
+              "TradingDay,InstrumentID,UpdateTime,UpdateMillisec,LastPrice,Volume,BidPrice1,"
+              "BidVolume1,AskPrice1,AskVolume1,AveragePrice,Turnover,OpenInterest\n"
+              "20230103,rb2305,08:59:00,500,4100.0,100,4099.0,3,4101.0,4,41000.0,1234500.0,1000\n"
+              "20230103,,09:00:00,0,4102.0,101,4101.0,3,4103.0,4,41020.0,1239900.0,1001\n");
+
+    const std::string command = "\"" + BinaryPath("csv_to_parquet_cli").string() +
+                                "\" --input_csv \"" + input_csv.string() + "\" --output_root \"" +
+                                output_root.string() + "\" --source rb --resume true";
+    const int rc = RunCommandCapture(command, stdout_log);
+
+    EXPECT_NE(rc, 0);
+    const std::string output = ReadFile(stdout_log);
+    EXPECT_NE(output.find("parse error at line 3"), std::string::npos);
+}
+
+TEST(OpsCli, CsvToParquetCliResumeWithFingerprintSkipsRebuild) {
+    const auto dir = MakeTempDir("csv_to_parquet_resume");
+    const auto input_csv = dir / "rb_sample.csv";
+    const auto output_root = dir / "parquet_v2";
+    const auto first_stdout_log = dir / "first.log";
+    const auto second_stdout_log = dir / "second.log";
+    const auto manifest = output_root / "_manifest" / "partitions.jsonl";
+
+    WriteFile(input_csv,
+              "TradingDay,InstrumentID,UpdateTime,UpdateMillisec,LastPrice,Volume,BidPrice1,"
+              "BidVolume1,AskPrice1,AskVolume1,AveragePrice,Turnover,OpenInterest\n"
+              "20230103,rb2305,08:59:00,500,4100.0,100,4099.0,3,4101.0,4,41000.0,1234500.0,1000\n"
+              "20230103,rb2305,09:00:00,0,4102.0,101,4101.0,3,4103.0,4,41020.0,1239900.0,1001\n");
+
+    const std::string command = "\"" + BinaryPath("csv_to_parquet_cli").string() +
+                                "\" --input_csv \"" + input_csv.string() + "\" --output_root \"" +
+                                output_root.string() + "\" --source rb --resume true";
+    ASSERT_EQ(RunCommandCapture(command, first_stdout_log), 0);
+    ASSERT_TRUE(std::filesystem::exists(manifest));
+    const std::string manifest_first = ReadFile(manifest);
+
+    ASSERT_EQ(RunCommandCapture(command, second_stdout_log), 0);
+    const std::string manifest_second = ReadFile(manifest);
+    EXPECT_EQ(manifest_first, manifest_second);
+
+    const std::string second_output = ReadFile(second_stdout_log);
+    EXPECT_NE(second_output.find("\"partitions_converted\": 0"), std::string::npos);
+    EXPECT_NE(second_output.find("\"partitions_skipped\": 1"), std::string::npos);
 }
 
 TEST(OpsCli, CsvParquetCompareIncludesScanMetrics) {

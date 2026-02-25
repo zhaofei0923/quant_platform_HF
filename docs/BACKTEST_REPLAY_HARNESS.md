@@ -4,7 +4,12 @@
 
 Run deterministic replay using `backtest_cli` and validate parity/performance using C++ CLIs.
 
-## Data Preparation (CSV -> Parquet v2)
+## Data Preparation (CSV -> Parquet v3)
+
+标准约束：
+- `schema_version` 固定为 `v3`（manifest + meta 一致）。
+- 每个分区 (`source/trading_day/instrument_id`) 内，行顺序严格按原始 CSV 出现顺序写入。
+- 跨机器复现使用 `sha256` 指纹比对（同工具链版本）。
 
 ```bash
 mkdir -p docs/results
@@ -13,12 +18,26 @@ mkdir -p docs/results
   --output_root backtest_data/parquet_v2 \
   --source rb \
   --resume true \
-  --require_arrow_writer false \
+  --require_arrow_writer true \
   --batch_rows 500000 \
   --memory_budget_mb 1024 \
   --row_group_mb 128 \
   --compression snappy
 ```
+
+## One-Command Rebuild + Validate (Deterministic)
+
+```bash
+bash scripts/build/run_reproducible_parquet_convert_validate.sh \
+  --build-dir build-gcc \
+  --csv-path backtest_data \
+  --output-root backtest_data/parquet_v2 \
+  --clean-output true \
+  --require-match-existing false
+```
+
+完成后可用以下基线做字节级校验：
+- `docs/ops/backtest_data_parquet_v2_expected.sha256`
 
 ## Basic Replay
 

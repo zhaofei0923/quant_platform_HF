@@ -6,6 +6,8 @@ csv_path="backtest_data"
 source_symbol=""
 output_root="backtest_data/parquet_v2"
 results_dir="docs/results"
+required_arrow_version="12"
+required_parquet_version="12"
 
 convert_report=""
 validate_report=""
@@ -18,6 +20,9 @@ batch_rows="500000"
 memory_budget_mb="1024"
 row_group_mb="128"
 compression="snappy"
+backtest_smoke_tick_cap="2000"
+backtest_smoke_symbol=""
+backtest_smoke_date=""
 
 skip_build="false"
 clean_output="true"
@@ -28,6 +33,11 @@ expected_fingerprint_file=""
 fingerprint_compare_diff=""
 fingerprint_scope="parquet"
 default_expected_fingerprint_file="docs/ops/backtest_data_parquet_v2_expected.sha256"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+deps_check_script="${script_dir}/install_arrow_parquet_deps.sh"
+
+export TZ=UTC
+export LC_ALL=C
 
 usage() {
   cat <<'USAGE'
@@ -46,6 +56,8 @@ Options:
   --source SYMBOL                    Optional source symbol prefix filter (default: empty)
   --output-root PATH                 Parquet output root (default: backtest_data/parquet_v2)
   --results-dir PATH                 Reports directory (default: docs/results)
+  --required-arrow-version V         Minimum Arrow pkg-config version (default: 12)
+  --required-parquet-version V       Minimum Parquet pkg-config version (default: 12)
   --convert-report PATH              Conversion JSON output path
   --validate-report PATH             Validation JSON output path
   --fingerprint-file PATH            Deterministic sha256 fingerprint output path
@@ -56,6 +68,9 @@ Options:
   --memory-budget-mb N               csv_to_parquet_cli memory_budget_mb (default: 1024)
   --row-group-mb N                   csv_to_parquet_cli row_group_mb (default: 128)
   --compression CODEC                csv_to_parquet_cli compression (default: snappy)
+  --backtest-smoke-tick-cap N        Cap backtest smoke max_ticks for low-memory replay (default: 2000)
+  --backtest-smoke-symbol SYMBOL      Optional explicit symbol for smoke replay (default: auto from manifest)
+  --backtest-smoke-date YYYYMMDD      Optional explicit trading day for smoke replay (default: auto from manifest)
   --skip-build BOOL                  Skip cmake configure/build (default: false)
   --clean-output BOOL                Remove output root before conversion (default: true)
   --generate-sample-if-missing BOOL  Generate sample only when --csv-path points to missing *.csv file (default: true)
@@ -84,6 +99,68 @@ require_positive_int() {
   local name="$2"
   if ! [[ "${value}" =~ ^[0-9]+$ ]] || [[ "${value}" == "0" ]]; then
     echo "error: ${name} must be a positive integer, got: ${value}" >&2
+    exit 2
+  fi
+}
+
+toolchain_cmake_version="unknown"
+toolchain_cxx_path="unknown"
+toolchain_cxx_version="unknown"
+toolchain_arrow_version="unknown"
+toolchain_parquet_version="unknown"
+
+capture_toolchain_info() {
+  if command -v cmake >/dev/null 2>&1; then
+    toolchain_cmake_version="$(cmake --version | head -n 1 | sed -E 's/^cmake version[[:space:]]+//')"
+  fi
+
+  if [[ -f "${build_dir}/CMakeCache.txt" ]]; then
+    toolchain_cxx_path="$(
+      grep '^CMAKE_CXX_COMPILER:FILEPATH=' "${build_dir}/CMakeCache.txt" | head -n1 | cut -d= -f2- || true
+    )"
+  fi
+  if [[ -z "${toolchain_cxx_path}" || "${toolchain_cxx_path}" == "unknown" ]]; then
+    toolchain_cxx_path="$(command -v g++ 2>/dev/null || command -v c++ 2>/dev/null || echo unknown)"
+  fi
+  if [[ -n "${toolchain_cxx_path}" && "${toolchain_cxx_path}" != "unknown" ]]; then
+    toolchain_cxx_version="$("${toolchain_cxx_path}" --version 2>/dev/null | head -n1 || echo unknown)"
+  fi
+
+  if command -v pkg-config >/dev/null 2>&1; then
+    toolchain_arrow_version="$(pkg-config --modversion arrow 2>/dev/null || echo unknown)"
+    toolchain_parquet_version="$(pkg-config --modversion parquet 2>/dev/null || echo unknown)"
+  fi
+  if [[ "${toolchain_arrow_version}" == "unknown" || "${toolchain_parquet_version}" == "unknown" ]]; then
+    if command -v python3 >/dev/null 2>&1; then
+      local pyarrow_ver=""
+      pyarrow_ver="$(python3 - <<'PY' 2>/dev/null || true
+try:
+    import pyarrow as pa
+except Exception:
+    print("unknown")
+else:
+    print(pa.__version__)
+PY
+)"
+      if [[ -n "${pyarrow_ver}" && "${pyarrow_ver}" != "unknown" ]]; then
+        toolchain_arrow_version="${pyarrow_ver}"
+        toolchain_parquet_version="${pyarrow_ver}"
+      fi
+    fi
+  fi
+}
+
+verify_arrow_toolchain() {
+  if [[ ! -x "${deps_check_script}" ]]; then
+    echo "error: missing dependency check script: ${deps_check_script}" >&2
+    exit 2
+  fi
+  if ! "${deps_check_script}" \
+    --required-arrow-version "${required_arrow_version}" \
+    --required-parquet-version "${required_parquet_version}" \
+    --check-only true >/dev/null; then
+    echo "error: Arrow/Parquet toolchain check failed" >&2
+    echo "hint: run scripts/build/install_arrow_parquet_deps.sh --required-arrow-version ${required_arrow_version} --required-parquet-version ${required_parquet_version}" >&2
     exit 2
   fi
 }
@@ -143,6 +220,14 @@ while [[ $# -gt 0 ]]; do
       results_dir="$2"
       shift 2
       ;;
+    --required-arrow-version)
+      required_arrow_version="$2"
+      shift 2
+      ;;
+    --required-parquet-version)
+      required_parquet_version="$2"
+      shift 2
+      ;;
     --convert-report)
       convert_report="$2"
       shift 2
@@ -181,6 +266,18 @@ while [[ $# -gt 0 ]]; do
       ;;
     --compression)
       compression="$2"
+      shift 2
+      ;;
+    --backtest-smoke-tick-cap)
+      backtest_smoke_tick_cap="$2"
+      shift 2
+      ;;
+    --backtest-smoke-symbol)
+      backtest_smoke_symbol="$2"
+      shift 2
+      ;;
+    --backtest-smoke-date)
+      backtest_smoke_date="$2"
       shift 2
       ;;
     --skip-build)
@@ -231,11 +328,21 @@ require_positive_int "${max_ticks}" "max_ticks"
 require_positive_int "${batch_rows}" "batch_rows"
 require_positive_int "${memory_budget_mb}" "memory_budget_mb"
 require_positive_int "${row_group_mb}" "row_group_mb"
+require_positive_int "${backtest_smoke_tick_cap}" "backtest_smoke_tick_cap"
 fingerprint_scope="$(to_lower "${fingerprint_scope}")"
 if [[ "${fingerprint_scope}" != "parquet" && "${fingerprint_scope}" != "all" ]]; then
   echo "error: fingerprint_scope must be one of: parquet, all (got: ${fingerprint_scope})" >&2
   exit 2
 fi
+
+if [[ -n "${backtest_smoke_date}" ]]; then
+  if ! [[ "${backtest_smoke_date}" =~ ^[0-9]{8}$ ]]; then
+    echo "error: backtest_smoke_date must be YYYYMMDD, got: ${backtest_smoke_date}" >&2
+    exit 2
+  fi
+fi
+
+verify_arrow_toolchain
 
 mkdir -p "${results_dir}"
 
@@ -337,6 +444,8 @@ if [[ ! -x "${build_dir}/backtest_cli" ]]; then
   exit 2
 fi
 
+capture_toolchain_info
+
 mkdir -p "$(dirname "${convert_report}")"
 mkdir -p "$(dirname "${validate_report}")"
 mkdir -p "$(dirname "${fingerprint_file}")"
@@ -394,7 +503,9 @@ for input_csv in "${csv_inputs[@]}"; do
   convert_index=$((convert_index + 1))
 done
 
-python3 - "${tmp_run_dir}" "${convert_report}" "${input_mode}" "${input_path}" "${source_symbol}" <<'PY'
+python3 - "${tmp_run_dir}" "${convert_report}" "${input_mode}" "${input_path}" "${source_symbol}" \
+  "${toolchain_cmake_version}" "${toolchain_cxx_path}" "${toolchain_cxx_version}" \
+  "${toolchain_arrow_version}" "${toolchain_parquet_version}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -404,6 +515,13 @@ convert_report = Path(sys.argv[2])
 input_mode = sys.argv[3]
 input_path = sys.argv[4]
 source_filter = sys.argv[5]
+toolchain = {
+    "cmake_version": sys.argv[6],
+    "cxx_path": sys.argv[7],
+    "cxx_version": sys.argv[8],
+    "arrow_version": sys.argv[9],
+    "parquet_version": sys.argv[10],
+}
 
 run_files = sorted(run_dir.glob("run-*.json"))
 if not run_files:
@@ -455,6 +573,7 @@ summary = {
     "partitions_converted": partitions_converted,
     "partitions_skipped": partitions_skipped,
     "partitions_written_with_arrow": partitions_written_with_arrow,
+    "toolchain": toolchain,
     "runs": runs,
     "errors": errors,
 }
@@ -496,15 +615,65 @@ else
 fi
 
 run_id="parquet-repro-$(date -u +%Y%m%dT%H%M%SZ)"
-"${build_dir}/backtest_cli" \
-  --engine_mode parquet \
-  --dataset_root "${output_root}" \
-  --strict_parquet true \
-  --max_ticks "${max_ticks}" \
-  --deterministic_fills true \
-  --run_id "${run_id}" \
-  --output_json "${backtest_report}" \
-  --output_md "${backtest_markdown}" >/dev/null
+manifest_for_smoke="${output_root}/_manifest/partitions.jsonl"
+if [[ -z "${backtest_smoke_symbol}" || -z "${backtest_smoke_date}" ]]; then
+  if [[ -f "${manifest_for_smoke}" ]]; then
+    while IFS=$'\t' read -r auto_symbol auto_day; do
+      if [[ -z "${backtest_smoke_symbol}" && -n "${auto_symbol}" ]]; then
+        backtest_smoke_symbol="${auto_symbol}"
+      fi
+      if [[ -z "${backtest_smoke_date}" && -n "${auto_day}" ]]; then
+        backtest_smoke_date="${auto_day}"
+      fi
+      break
+    done < <(python3 - "${manifest_for_smoke}" <<'PY'
+import json
+import sys
+
+manifest_path = sys.argv[1]
+with open(manifest_path, encoding="utf-8") as handle:
+    for line in handle:
+        line = line.strip()
+        if not line:
+            continue
+        payload = json.loads(line)
+        symbol = str(payload.get("instrument_id", "")).strip()
+        day = str(payload.get("trading_day", "")).strip()
+        if symbol and day:
+            print(f"{symbol}\t{day}")
+            break
+PY
+)
+  fi
+fi
+
+backtest_smoke_max_ticks="${max_ticks}"
+if (( backtest_smoke_tick_cap < backtest_smoke_max_ticks )); then
+  backtest_smoke_max_ticks="${backtest_smoke_tick_cap}"
+fi
+
+backtest_cmd=(
+  "${build_dir}/backtest_cli"
+  --engine_mode parquet
+  --dataset_root "${output_root}"
+  --strict_parquet true
+  --max_ticks "${backtest_smoke_max_ticks}"
+  --deterministic_fills true
+  --emit_trades false
+  --emit_orders false
+  --emit_position_history false
+  --run_id "${run_id}"
+  --output_json "${backtest_report}"
+  --output_md "${backtest_markdown}"
+)
+if [[ -n "${backtest_smoke_symbol}" ]]; then
+  backtest_cmd+=(--symbols "${backtest_smoke_symbol}")
+fi
+if [[ -n "${backtest_smoke_date}" ]]; then
+  backtest_cmd+=(--start_date "${backtest_smoke_date}" --end_date "${backtest_smoke_date}")
+fi
+
+"${backtest_cmd[@]}" >/dev/null
 
 python3 - "${convert_report}" "${output_root}" "${backtest_report}" "${validate_report}" "${fingerprint_file}" "${fingerprint_scope}" <<'PY'
 import hashlib
@@ -644,6 +813,12 @@ for index, entry in enumerate(manifest_entries):
     meta_count += 1
 
     meta = parse_meta(meta_path)
+    manifest_schema = str(entry.get("schema_version", "")).strip()
+    if manifest_schema != "v3":
+        errors.append(
+            f"manifest schema_version must be v3 for {rel_path}, got: {manifest_schema or 'missing'}"
+        )
+
     for required_key in (
         "min_ts_ns",
         "max_ts_ns",
@@ -654,6 +829,11 @@ for index, entry in enumerate(manifest_entries):
     ):
         if required_key not in meta:
             errors.append(f"meta missing key '{required_key}': {meta_path}")
+
+    if meta.get("schema_version", "") != "v3":
+        errors.append(
+            f"meta schema_version must be v3 for {rel_path}, got: {meta.get('schema_version', 'missing')}"
+        )
 
     for numeric_key in ("min_ts_ns", "max_ts_ns", "row_count"):
         if numeric_key not in meta:
@@ -679,6 +859,7 @@ for index, entry in enumerate(manifest_entries):
             )
 
 replay = backtest.get("replay", {})
+backtest_spec = backtest.get("spec", {})
 ticks_read = int(replay.get("ticks_read", 0) or 0)
 scan_rows = int(replay.get("scan_rows", 0) or 0)
 
@@ -710,12 +891,19 @@ summary = {
     "partitions_converted": partitions_converted,
     "partitions_skipped": partitions_skipped,
     "partitions_written_with_arrow": partitions_written_with_arrow,
+    "toolchain": convert.get("toolchain", {}),
     "manifest_entry_count": len(manifest_entries),
     "parquet_count": parquet_count,
     "meta_count": meta_count,
     "sidecar_count": sidecar_count,
     "backtest_ticks_read": ticks_read,
     "backtest_scan_rows": scan_rows,
+    "backtest_symbols": backtest_spec.get("symbols", []),
+    "backtest_start_date": backtest_spec.get("start_date", ""),
+    "backtest_end_date": backtest_spec.get("end_date", ""),
+    "backtest_emit_trades": backtest_spec.get("emit_trades"),
+    "backtest_emit_orders": backtest_spec.get("emit_orders"),
+    "backtest_emit_position_history": backtest_spec.get("emit_position_history"),
     "fingerprint_file": str(fingerprint_file),
     "fingerprint_scope": fingerprint_scope,
     "fingerprint_digest_sha256": fingerprint_digest,
@@ -755,3 +943,7 @@ echo "validation report: ${validate_report}"
 echo "fingerprint file: ${fingerprint_file}"
 echo "fingerprint scope: ${fingerprint_scope}"
 echo "backtest report: ${backtest_report}"
+echo "backtest smoke symbol: ${backtest_smoke_symbol:-<unbounded>}"
+echo "backtest smoke date: ${backtest_smoke_date:-<unbounded>}"
+echo "backtest smoke max_ticks: ${backtest_smoke_max_ticks}"
+echo "toolchain: cmake=${toolchain_cmake_version}, cxx=${toolchain_cxx_version}, arrow=${toolchain_arrow_version}, parquet=${toolchain_parquet_version}"

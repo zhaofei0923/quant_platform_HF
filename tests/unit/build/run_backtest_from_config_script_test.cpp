@@ -217,5 +217,131 @@ TEST(RunBacktestFromConfigScriptTest, SkipBuildPassesThroughOptionalArgs) {
     EXPECT_TRUE(std::filesystem::exists(export_csv_dir));
 }
 
-}  // namespace
+TEST(RunBacktestFromConfigScriptTest, SkipBuildShowsProgressAndCanSilenceBacktestStdout) {
+    const auto root = MakeTempDir("skip_build_progress");
+    const auto build_dir = root / "build-gcc";
+    const auto dataset_root = root / "parquet_v2";
+    const auto strategy_main = root / "main_backtest_strategy.yaml";
+    const auto config_path = root / "backtest_run.yaml";
+    const auto output_json = root / "result" / "result.json";
+    const auto output_md = root / "result" / "result.md";
+    const auto fake_cli = build_dir / "backtest_cli";
+    const auto log_file = root / "progress.log";
 
+    std::filesystem::create_directories(build_dir);
+    std::filesystem::create_directories(dataset_root);
+    WriteFile(strategy_main, "run_type: backtest\n");
+
+    WriteFile(fake_cli,
+              "#!/usr/bin/env bash\n"
+              "set -euo pipefail\n"
+              "sleep 0.2\n"
+              "echo '{\"status\":\"ok\",\"pnl\":123}'\n");
+    std::filesystem::permissions(fake_cli,
+                                 std::filesystem::perms::owner_exec |
+                                     std::filesystem::perms::group_exec |
+                                     std::filesystem::perms::others_exec |
+                                     std::filesystem::perms::owner_read |
+                                     std::filesystem::perms::group_read |
+                                     std::filesystem::perms::others_read |
+                                     std::filesystem::perms::owner_write,
+                                 std::filesystem::perm_options::replace);
+
+    WriteFile(config_path,
+              "build_dir: " +
+                  build_dir.string() +
+                  "\n"
+                  "engine_mode: parquet\n"
+                  "dataset_root: " +
+                  dataset_root.string() +
+                  "\n"
+                  "strategy_main_config_path: " +
+                  strategy_main.string() +
+                  "\n"
+                  "output_json: " +
+                  output_json.string() +
+                  "\n"
+                  "output_md: " +
+                  output_md.string() +
+                  "\n"
+                  "quiet_backtest_stdout: true\n"
+                  "progress_only: true\n");
+
+    const std::string command =
+        "bash scripts/build/run_backtest_from_config.sh --config '" +
+        EscapePathForShell(config_path) + "' --skip-build >'" + EscapePathForShell(log_file) +
+        "' 2>&1";
+    const int rc = RunCommand(command);
+    EXPECT_EQ(rc, 0);
+
+    const std::string payload = ReadFile(log_file);
+    EXPECT_NE(payload.find("%"), std::string::npos);
+    EXPECT_NE(payload.find("100%"), std::string::npos);
+    EXPECT_EQ(payload.find("{\"status\":\"ok\",\"pnl\":123}"), std::string::npos);
+    EXPECT_EQ(payload.find("=== backtest run summary ==="), std::string::npos);
+    EXPECT_EQ(payload.find("config_path="), std::string::npos);
+    EXPECT_EQ(payload.find("--engine_mode"), std::string::npos);
+}
+
+TEST(RunBacktestFromConfigScriptTest, SkipBuildShowsErrorWhenProgressOnlyEnabled) {
+    const auto root = MakeTempDir("skip_build_progress_error");
+    const auto build_dir = root / "build-gcc";
+    const auto dataset_root = root / "parquet_v2";
+    const auto strategy_main = root / "main_backtest_strategy.yaml";
+    const auto config_path = root / "backtest_run.yaml";
+    const auto output_json = root / "result" / "result.json";
+    const auto output_md = root / "result" / "result.md";
+    const auto fake_cli = build_dir / "backtest_cli";
+    const auto log_file = root / "progress_error.log";
+
+    std::filesystem::create_directories(build_dir);
+    std::filesystem::create_directories(dataset_root);
+    WriteFile(strategy_main, "run_type: backtest\n");
+
+    WriteFile(fake_cli,
+              "#!/usr/bin/env bash\n"
+              "set -euo pipefail\n"
+              "echo 'fatal: replay failed at row 12' >&2\n"
+              "exit 7\n");
+    std::filesystem::permissions(fake_cli,
+                                 std::filesystem::perms::owner_exec |
+                                     std::filesystem::perms::group_exec |
+                                     std::filesystem::perms::others_exec |
+                                     std::filesystem::perms::owner_read |
+                                     std::filesystem::perms::group_read |
+                                     std::filesystem::perms::others_read |
+                                     std::filesystem::perms::owner_write,
+                                 std::filesystem::perm_options::replace);
+
+    WriteFile(config_path,
+              "build_dir: " +
+                  build_dir.string() +
+                  "\n"
+                  "engine_mode: parquet\n"
+                  "dataset_root: " +
+                  dataset_root.string() +
+                  "\n"
+                  "strategy_main_config_path: " +
+                  strategy_main.string() +
+                  "\n"
+                  "output_json: " +
+                  output_json.string() +
+                  "\n"
+                  "output_md: " +
+                  output_md.string() +
+                  "\n"
+                  "quiet_backtest_stdout: true\n"
+                  "progress_only: true\n");
+
+    const std::string command =
+        "bash scripts/build/run_backtest_from_config.sh --config '" +
+        EscapePathForShell(config_path) + "' --skip-build >'" + EscapePathForShell(log_file) +
+        "' 2>&1";
+    const int rc = RunCommand(command);
+    EXPECT_NE(rc, 0);
+
+    const std::string payload = ReadFile(log_file);
+    EXPECT_NE(payload.find("fatal: replay failed at row 12"), std::string::npos);
+}
+
+}  // namespace

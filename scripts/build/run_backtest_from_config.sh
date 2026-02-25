@@ -19,6 +19,8 @@ fi
 config_path="configs/ops/backtest_run.yaml"
 dry_run=false
 skip_build=false
+quiet_backtest_stdout=true
+progress_only=true
 
 usage() {
   cat <<'EOF'
@@ -109,11 +111,108 @@ print_cmd() {
 }
 
 run_cmd() {
-  print_cmd "$@"
   if [[ "${dry_run}" == true ]]; then
+    print_cmd "$@"
     return 0
   fi
+  if is_true "${progress_only}"; then
+    local log_file=""
+    local rc=0
+    log_file="$(mktemp)"
+    if "$@" >"${log_file}" 2>&1; then
+      rm -f "${log_file}"
+      return 0
+    fi
+    rc=$?
+    cat "${log_file}" >&2
+    rm -f "${log_file}"
+    return "${rc}"
+  fi
+  print_cmd "$@"
   "$@"
+}
+
+render_progress_bar() {
+  local percent="$1"
+  if (( percent < 0 )); then
+    percent=0
+  fi
+  if (( percent > 100 )); then
+    percent=100
+  fi
+  printf '\r%3d%%' "${percent}"
+}
+
+run_backtest_cmd() {
+  local -a cmd=("$@")
+  local quiet_stdout=false
+  local use_progress=false
+  local log_file=""
+  local cmd_pid=0
+  local rc=0
+  local percent=0
+
+  if is_true "${quiet_backtest_stdout}"; then
+    quiet_stdout=true
+  fi
+  if is_true "${progress_only}"; then
+    use_progress=true
+  fi
+
+  if [[ "${dry_run}" == true ]]; then
+    print_cmd "${cmd[@]}"
+    return 0
+  fi
+
+  if [[ "${use_progress}" != true ]]; then
+    print_cmd "${cmd[@]}"
+    if [[ "${quiet_stdout}" != true ]]; then
+      "${cmd[@]}"
+      return $?
+    fi
+    log_file="$(mktemp)"
+    if "${cmd[@]}" >"${log_file}" 2>&1; then
+      rm -f "${log_file}"
+      return 0
+    fi
+    rc=$?
+    cat "${log_file}" >&2
+    rm -f "${log_file}"
+    return "${rc}"
+  fi
+
+  log_file="$(mktemp)"
+  "${cmd[@]}" >"${log_file}" 2>&1 &
+  cmd_pid=$!
+
+  render_progress_bar 0
+  while kill -0 "${cmd_pid}" >/dev/null 2>&1; do
+    if (( percent < 95 )); then
+      ((percent += 1))
+    fi
+    render_progress_bar "${percent}"
+    sleep 0.2
+  done
+  if wait "${cmd_pid}"; then
+    rc=0
+  else
+    rc=$?
+  fi
+
+  if [[ "${rc}" -eq 0 ]]; then
+    render_progress_bar 100
+    printf '\n'
+    if [[ "${quiet_stdout}" != true ]]; then
+      cat "${log_file}"
+    fi
+    rm -f "${log_file}"
+    return 0
+  fi
+
+  printf '\n' >&2
+  cat "${log_file}" >&2
+  rm -f "${log_file}"
+  return "${rc}"
 }
 
 cmake_cache_value() {
@@ -230,6 +329,8 @@ rollover_slippage_bps="$(cfg_get "rollover_slippage_bps" "0")"
 emit_trades="$(cfg_get "emit_trades" "true")"
 emit_orders="$(cfg_get "emit_orders" "true")"
 emit_position_history="$(cfg_get "emit_position_history" "false")"
+quiet_backtest_stdout="$(cfg_get "quiet_backtest_stdout" "true")"
+progress_only="$(cfg_get "progress_only" "true")"
 
 if [[ -z "${engine_mode}" || -z "${dataset_root_raw}" || -z "${strategy_main_config_path_raw}" ||
       -z "${output_json_raw}" || -z "${output_md_raw}" ]]; then
@@ -378,16 +479,19 @@ append_arg_if_set backtest_cmd --emit_trades "${emit_trades}"
 append_arg_if_set backtest_cmd --emit_orders "${emit_orders}"
 append_arg_if_set backtest_cmd --emit_position_history "${emit_position_history}"
 
-echo "=== backtest run summary ==="
-echo "config_path=${config_path}"
-echo "build_dir=${build_dir}"
-echo "dataset_root=${dataset_root}"
-echo "strategy_main_config_path=${strategy_main_config_path}"
-echo "output_json=${output_json}"
-echo "output_md=${output_md}"
-if [[ -n "${export_csv_dir}" ]]; then
-  echo "export_csv_dir=${export_csv_dir}"
+if [[ "${dry_run}" == true ]] || ! is_true "${progress_only}"; then
+  echo "=== backtest run summary ==="
+  echo "config_path=${config_path}"
+  echo "build_dir=${build_dir}"
+  echo "dataset_root=${dataset_root}"
+  echo "strategy_main_config_path=${strategy_main_config_path}"
+  echo "output_json=${output_json}"
+  echo "output_md=${output_md}"
+  if [[ -n "${export_csv_dir}" ]]; then
+    echo "export_csv_dir=${export_csv_dir}"
+  fi
+  echo "dry_run=${dry_run}, skip_build=${skip_build}"
+  echo "quiet_backtest_stdout=${quiet_backtest_stdout}, progress_only=${progress_only}"
 fi
-echo "dry_run=${dry_run}, skip_build=${skip_build}"
 
-run_cmd "${backtest_cmd[@]}"
+run_backtest_cmd "${backtest_cmd[@]}"

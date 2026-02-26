@@ -204,6 +204,10 @@ JSON 形态支持两种写法：
 - 自动执行增量构建并仅编译 `backtest_cli`（可 `--skip-build`）。
 - 固定 parquet-only 回测，自动传入 `strategy_main_config_path`。
 - 构建失败时可自动执行 `scripts/build/install_arrow_parquet_deps.sh` 后重试一次。
+- 每次运行创建归档目录：`output_root_dir/<run_id>_<timestamp>/`（`run_id` 为空时自动生成）。
+- JSON/Markdown/CSV 明细/指标 trace 全部统一落盘到同一 `run_dir`。
+- `output_json` / `output_md` / `export_csv_dir` / trace 路径均按模板 `basename` 落盘，忽略模板中的目录。
+- 当 `export_csv_dir` 为空时，默认导出到 `run_dir/csv/`。
 
 示例：
 
@@ -226,12 +230,29 @@ bash scripts/build/run_backtest_from_config.sh \
 - `--dry-run`：仅打印将执行的命令。
 - `--skip-build`：跳过 cmake 构建，直接运行已有 `backtest_cli`。
 
+产物目录示例（`run_id=bt-20260226-001`）：
+
+```text
+docs/results/backtest_runs/
+  bt-20260226-001_20260226T104530/
+    backtest_auto.json
+    backtest_auto.md
+    csv/
+      daily_equity.csv
+      trades.csv
+      orders.csv
+      position_history.csv
+    indicator_trace.parquet
+    sub_strategy_indicator_trace.parquet
+```
+
 关键配置字段：
 
 - 构建字段：`build_dir`、`cmake_build_type`、`build_tests`、`enable_arrow_parquet`、`auto_install_arrow_parquet_deps`
 - 回测必填：`engine_mode=parquet`、`dataset_root`、`strategy_main_config_path`
-- 输出必填：`output_json`、`output_md`
-- 可选透传：`max_ticks`、`start_date`、`end_date`、`run_id`、`export_csv_dir`、`emit_*`
+- 归档字段：`output_root_dir`、`timestamp_timezone`
+- 输出必填：`output_json`、`output_md`（仅取 basename，落到 run_dir）
+- 可选透传：`max_ticks`、`start_date`、`end_date`、`run_id`、`export_csv_dir`、`emit_*`、trace 路径字段
 
 `backtest_cli` 输出 `hf_standard` 的补充说明：
 

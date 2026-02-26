@@ -75,6 +75,32 @@ to_upper() {
   printf '%s' "$1" | tr '[:lower:]' '[:upper:]'
 }
 
+sanitize_for_path() {
+  local value="$1"
+  local sanitized=""
+  sanitized="$(printf '%s' "${value}" | sed -E 's/[^A-Za-z0-9._-]+/_/g; s/^_+//; s/_+$//')"
+  if [[ -z "${sanitized}" ]]; then
+    sanitized="run"
+  fi
+  printf '%s' "${sanitized}"
+}
+
+timestamp_now() {
+  local timezone_mode="$1"
+  case "${timezone_mode}" in
+    utc)
+      date -u +%Y%m%dT%H%M%SZ
+      ;;
+    local)
+      date +%Y%m%dT%H%M%S
+      ;;
+    *)
+      echo "error: timestamp_timezone must be one of: local, utc (got: ${timezone_mode})" >&2
+      exit 2
+      ;;
+  esac
+}
+
 unquote() {
   local value="$1"
   if [[ ${#value} -ge 2 ]]; then
@@ -122,8 +148,9 @@ run_cmd() {
     if "$@" >"${log_file}" 2>&1; then
       rm -f "${log_file}"
       return 0
+    else
+      rc=$?
     fi
-    rc=$?
     cat "${log_file}" >&2
     rm -f "${log_file}"
     return "${rc}"
@@ -309,6 +336,8 @@ cmake_build_type="$(cfg_get "cmake_build_type" "Release")"
 build_tests="$(cfg_get "build_tests" "false")"
 enable_arrow_parquet="$(cfg_get "enable_arrow_parquet" "true")"
 auto_install_arrow_parquet_deps="$(cfg_get "auto_install_arrow_parquet_deps" "true")"
+output_root_dir_raw="$(cfg_get "output_root_dir" "docs/results/backtest_runs")"
+timestamp_timezone="$(to_lower "$(cfg_get "timestamp_timezone" "local")")"
 
 engine_mode="$(to_lower "$(cfg_get "engine_mode" "parquet")")"
 dataset_root_raw="$(cfg_get "dataset_root" "")"
@@ -329,6 +358,10 @@ rollover_slippage_bps="$(cfg_get "rollover_slippage_bps" "0")"
 emit_trades="$(cfg_get "emit_trades" "true")"
 emit_orders="$(cfg_get "emit_orders" "true")"
 emit_position_history="$(cfg_get "emit_position_history" "false")"
+emit_indicator_trace="$(cfg_get "emit_indicator_trace" "false")"
+indicator_trace_path_raw="$(cfg_get "indicator_trace_path" "")"
+emit_sub_strategy_indicator_trace="$(cfg_get "emit_sub_strategy_indicator_trace" "false")"
+sub_strategy_indicator_trace_path_raw="$(cfg_get "sub_strategy_indicator_trace_path" "")"
 quiet_backtest_stdout="$(cfg_get "quiet_backtest_stdout" "true")"
 progress_only="$(cfg_get "progress_only" "true")"
 
@@ -345,9 +378,46 @@ fi
 
 dataset_root="$(to_abs_path "${dataset_root_raw}")"
 strategy_main_config_path="$(to_abs_path "${strategy_main_config_path_raw}")"
-output_json="$(to_abs_path "${output_json_raw}")"
-output_md="$(to_abs_path "${output_md_raw}")"
-export_csv_dir="$(to_abs_path "${export_csv_dir_raw}")"
+output_root_dir="$(to_abs_path "${output_root_dir_raw}")"
+
+run_timestamp="$(timestamp_now "${timestamp_timezone}")"
+effective_run_id="${run_id}"
+if [[ -z "${effective_run_id}" ]]; then
+  effective_run_id="backtest-${run_timestamp}"
+fi
+
+safe_run_id="$(sanitize_for_path "${effective_run_id}")"
+run_dir="${output_root_dir}/${safe_run_id}_${run_timestamp}"
+output_json_basename="$(basename "${output_json_raw}")"
+output_md_basename="$(basename "${output_md_raw}")"
+output_json="${run_dir}/${output_json_basename}"
+output_md="${run_dir}/${output_md_basename}"
+
+if [[ -z "${export_csv_dir_raw}" ]]; then
+  export_csv_dir="${run_dir}/csv"
+else
+  export_csv_dir="${run_dir}/$(basename "${export_csv_dir_raw}")"
+fi
+
+if is_true "${emit_indicator_trace}"; then
+  if [[ -z "${indicator_trace_path_raw}" ]]; then
+    indicator_trace_path="${run_dir}/indicator_trace.parquet"
+  else
+    indicator_trace_path="${run_dir}/$(basename "${indicator_trace_path_raw}")"
+  fi
+else
+  indicator_trace_path=""
+fi
+
+if is_true "${emit_sub_strategy_indicator_trace}"; then
+  if [[ -z "${sub_strategy_indicator_trace_path_raw}" ]]; then
+    sub_strategy_indicator_trace_path="${run_dir}/sub_strategy_indicator_trace.parquet"
+  else
+    sub_strategy_indicator_trace_path="${run_dir}/$(basename "${sub_strategy_indicator_trace_path_raw}")"
+  fi
+else
+  sub_strategy_indicator_trace_path=""
+fi
 
 if [[ ! -f "${strategy_main_config_path}" ]]; then
   echo "error: strategy_main_config_path does not exist: ${strategy_main_config_path}" >&2
@@ -358,11 +428,10 @@ if [[ ! -d "${dataset_root}" ]]; then
   exit 2
 fi
 
+mkdir -p "${run_dir}"
 mkdir -p "$(dirname "${output_json}")"
 mkdir -p "$(dirname "${output_md}")"
-if [[ -n "${export_csv_dir}" ]]; then
-  mkdir -p "${export_csv_dir}"
-fi
+mkdir -p "${export_csv_dir}"
 
 jobs="4"
 if command -v nproc >/dev/null 2>&1; then
@@ -456,6 +525,15 @@ if [[ "${skip_build}" != true && "${dry_run}" != true && ! -x "${backtest_bin}" 
   exit 1
 fi
 
+if [[ "${skip_build}" != true && "${dry_run}" != true ]]; then
+  current_arrow="$(to_upper "$(cmake_cache_value "QUANT_HFT_ENABLE_ARROW_PARQUET")")"
+  if [[ "${current_arrow}" != "ON" ]]; then
+    echo "error: parquet-only policy requires QUANT_HFT_ENABLE_ARROW_PARQUET=ON in ${build_dir}/CMakeCache.txt (got: ${current_arrow:-<unset>})" >&2
+    echo "hint: rerun configure with -DQUANT_HFT_ENABLE_ARROW_PARQUET=ON and fix any Arrow/Parquet compile errors first" >&2
+    exit 2
+  fi
+fi
+
 backtest_cmd=(
   "${backtest_bin}"
   --engine_mode "${engine_mode}"
@@ -463,10 +541,10 @@ backtest_cmd=(
   --strategy_main_config_path "${strategy_main_config_path}"
   --output_json "${output_json}"
   --output_md "${output_md}"
+  --run_id "${effective_run_id}"
 )
 
 append_arg_if_set backtest_cmd --export_csv_dir "${export_csv_dir}"
-append_arg_if_set backtest_cmd --run_id "${run_id}"
 append_arg_if_set backtest_cmd --max_ticks "${max_ticks}"
 append_arg_if_set backtest_cmd --start_date "${start_date}"
 append_arg_if_set backtest_cmd --end_date "${end_date}"
@@ -478,17 +556,32 @@ append_arg_if_set backtest_cmd --rollover_slippage_bps "${rollover_slippage_bps}
 append_arg_if_set backtest_cmd --emit_trades "${emit_trades}"
 append_arg_if_set backtest_cmd --emit_orders "${emit_orders}"
 append_arg_if_set backtest_cmd --emit_position_history "${emit_position_history}"
+if is_true "${emit_indicator_trace}"; then
+  backtest_cmd+=(--emit_indicator_trace true --indicator_trace_path "${indicator_trace_path}")
+fi
+if is_true "${emit_sub_strategy_indicator_trace}"; then
+  backtest_cmd+=(--emit_sub_strategy_indicator_trace true \
+    --sub_strategy_indicator_trace_path "${sub_strategy_indicator_trace_path}")
+fi
 
 if [[ "${dry_run}" == true ]] || ! is_true "${progress_only}"; then
   echo "=== backtest run summary ==="
   echo "config_path=${config_path}"
   echo "build_dir=${build_dir}"
+  echo "output_root_dir=${output_root_dir}"
+  echo "timestamp_timezone=${timestamp_timezone}"
+  echo "run_id=${effective_run_id}"
+  echo "run_dir=${run_dir}"
   echo "dataset_root=${dataset_root}"
   echo "strategy_main_config_path=${strategy_main_config_path}"
   echo "output_json=${output_json}"
   echo "output_md=${output_md}"
-  if [[ -n "${export_csv_dir}" ]]; then
-    echo "export_csv_dir=${export_csv_dir}"
+  echo "export_csv_dir=${export_csv_dir}"
+  if [[ -n "${indicator_trace_path}" ]]; then
+    echo "indicator_trace_path=${indicator_trace_path}"
+  fi
+  if [[ -n "${sub_strategy_indicator_trace_path}" ]]; then
+    echo "sub_strategy_indicator_trace_path=${sub_strategy_indicator_trace_path}"
   fi
   echo "dry_run=${dry_run}, skip_build=${skip_build}"
   echo "quiet_backtest_stdout=${quiet_backtest_stdout}, progress_only=${progress_only}"

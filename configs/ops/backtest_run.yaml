@@ -28,21 +28,21 @@ dataset_root: backtest_data/parquet_v2
 # strategy_main_config_path：说明：子策略 `timeframe_minutes` 订阅在该文件配置
 strategy_main_config_path: configs/strategies/main_backtest_strategy.yaml
 
-# output_json：回测 JSON 输出文件；示例值：docs/results/backtest_auto.json
+# output_json：回测 JSON 输出文件名模板（仅取 basename，最终落盘到 output_root_dir/<run_id>_<timestamp>/）；示例值：docs/results/backtest_auto.json
 # output_json：配置项说明；示例值：docs/results/backtest_auto.json
 output_json: docs/results/backtest_auto.json
-# output_md：回测 Markdown 输出文件；示例值：docs/results/backtest_auto.md
+# output_md：回测 Markdown 输出文件名模板（仅取 basename，最终落盘到 output_root_dir/<run_id>_<timestamp>/）；示例值：docs/results/backtest_auto.md
 # output_md：配置项说明；示例值：docs/results/backtest_auto.md
 output_md: docs/results/backtest_auto.md
-# output_root_dir：回测结果归档根目录；示例值：docs/results/backtest_runs
+# output_root_dir：回测结果归档根目录；每次运行生成子目录 <run_id>_<timestamp>
 # output_root_dir：配置项说明；示例值：docs/results/backtest_runs
 output_root_dir: docs/results/backtest_runs
-# timestamp_timezone：结果目录时间戳时区；示例值：local（可选 local/utc）
+# timestamp_timezone：结果目录时间戳时区；示例值：local（可选 local/utc，utc 会追加 Z）
 # timestamp_timezone：配置项说明；示例值：local
 timestamp_timezone: local
 
-# export_csv_dir：可选，回测明细 CSV 输出目录；示例值：docs/results/backtest_auto_csv（留空表示不导出）
-# export_csv_dir：配置项说明；示例值：<空>
+# export_csv_dir：可选，回测明细 CSV 子目录模板（仅取 basename，落在本次 run_dir）；留空默认 csv
+# export_csv_dir：配置项说明；示例值：docs/results/backtest_auto_csv
 export_csv_dir:
 # run_id：可选，运行 ID；示例值：bt-20260221-001（留空使用默认）
 # run_id：配置项说明；示例值：<空>
@@ -88,14 +88,14 @@ emit_position_history: true
 emit_indicator_trace: true
 # indicator_trace_path：可选，主策略指标追踪文件名模板（仅取 basename 并落到本次 run_dir）；示例值：my_trace.parquet（留空用 indicator_trace.parquet）
 # indicator_trace_path：配置项说明；示例值：<空>
-indicator_trace_path: docs/results/backtest_runs/my_trace.parquet
+indicator_trace_path: my_trace.parquet
 # emit_sub_strategy_indicator_trace：是否输出子策略指标追踪 parquet；示例值：false
 # emit_sub_strategy_indicator_trace：配置项说明；示例值：false
 # emit_sub_strategy_indicator_trace：说明：输出 schema 含 `timeframe_minutes` 列
 emit_sub_strategy_indicator_trace: true
 # sub_strategy_indicator_trace_path：可选，子策略指标追踪文件名模板（仅取 basename 并落到本次 run_dir）；示例值：my_sub_trace.parquet（留空用 sub_strategy_indicator_trace.parquet）
 # sub_strategy_indicator_trace_path：配置项说明；示例值：<空>
-sub_strategy_indicator_trace_path: docs/results/backtest_runs/my_sub_trace.parquet
+sub_strategy_indicator_trace_path: my_sub_trace.parquet
 # quiet_backtest_stdout：是否抑制 backtest_cli 的 stdout JSON 输出（建议 true，结果看 output_json）；示例值：true
 quiet_backtest_stdout: true
 # progress_only：是否仅显示进度条和完成百分比（建议 true）；示例值：true

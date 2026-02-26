@@ -609,6 +609,10 @@ composite:
 - Consumer: `scripts/build/run_backtest_from_config.sh`。
 - 约束: `engine_mode` 必须为 `parquet`（parquet-only policy）。
 - 说明: 虽该脚本封装为 parquet-only，回测引擎内部 `csv/parquet` 已统一复用同一 Bar 聚合规则（`BarAggregator` + timeframe fanout）。
+- 归档规则:
+  - 每次回测创建 `run_dir = ${output_root_dir}/${sanitize(run_id)}_${timestamp}`。
+  - 当 `run_id` 为空时，脚本自动生成 `backtest-${timestamp}` 并透传给 `backtest_cli`。
+  - JSON/Markdown/CSV/trace 产物统一落盘到该 `run_dir`。
 - 输出口径:
   - `backtest_cli` JSON 的 `hf_standard.monte_carlo` 由日收益 bootstrap 计算，默认 `simulations=1000`、`seed=42`。
   - `hf_standard.factor_exposure` 目前输出代理因子 `trend_dummy` / `range_dummy` 的单因子 OLS 暴露度与 `t_stat`。
@@ -626,11 +630,11 @@ composite:
 | `engine_mode` | string | 是 | 无 | `parquet` | 回测数据引擎模式 | `parquet` |
 | `dataset_root` | string | 是 | 无 | 目录路径 | Parquet 数据根目录 | `backtest_data/parquet_v2` |
 | `strategy_main_config_path` | string | 是 | 无 | 文件路径 | 主策略配置文件 | `configs/strategies/main_backtest_strategy.yaml` |
-| `output_root_dir` | string | 否 | `docs/results/backtest_runs` | 目录路径 | 回测归档根目录 | `docs/results/backtest_runs` |
-| `timestamp_timezone` | string | 否 | `local` | `local/utc` | 归档目录时间戳时区 | `utc` |
-| `output_json` | string | 是 | 无 | 文件路径 | JSON 输出文件名模板（目录部分忽略） | `docs/results/backtest_auto.json` |
-| `output_md` | string | 是 | 无 | 文件路径 | Markdown 输出文件名模板（目录部分忽略） | `docs/results/backtest_auto.md` |
-| `export_csv_dir` | string | 否 | 空 | 目录路径 | CSV 子目录模板（仅取 basename，落在本次 run 目录下） | `docs/results/backtest_auto_csv` |
+| `output_root_dir` | string | 否 | `docs/results/backtest_runs` | 目录路径 | 回测归档根目录（每次运行创建 `run_dir` 子目录） | `docs/results/backtest_runs` |
+| `timestamp_timezone` | string | 否 | `local` | `local/utc` | `run_dir` 时间戳时区（`utc` 带 `Z`） | `utc` |
+| `output_json` | string | 是 | 无 | 文件路径 | JSON 文件名模板（仅取 basename，写入本次 `run_dir`） | `docs/results/backtest_auto.json` |
+| `output_md` | string | 是 | 无 | 文件路径 | Markdown 文件名模板（仅取 basename，写入本次 `run_dir`） | `docs/results/backtest_auto.md` |
+| `export_csv_dir` | string | 否 | `csv` | 目录路径 | CSV 子目录模板（仅取 basename；空值也会使用默认 `csv`） | `docs/results/backtest_auto_csv` |
 | `run_id` | string | 否 | 空 | 任意字符串 | 回测运行 ID | `bt-20260221-001` |
 | `max_ticks` | int | 否 | 空 | `>0` | 最大回放 tick 数 | `5000` |
 | `start_date` | string | 否 | 空 | `YYYYMMDD` | 回测开始日期 | `20240101` |

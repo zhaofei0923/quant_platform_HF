@@ -45,6 +45,23 @@ std::string FormatDateTimeFromEpochNs(EpochNanos ts_ns) {
     return std::string(buffer);
 }
 
+std::string MarketRegimeToLabel(MarketRegime regime) {
+    switch (regime) {
+        case MarketRegime::kUnknown:
+            return "kUnknown";
+        case MarketRegime::kStrongTrend:
+            return "kStrongTrend";
+        case MarketRegime::kWeakTrend:
+            return "kWeakTrend";
+        case MarketRegime::kRanging:
+            return "kRanging";
+        case MarketRegime::kFlat:
+            return "kFlat";
+        default:
+            return "kUnknown";
+    }
+}
+
 #if QUANT_HFT_ENABLE_ARROW_PARQUET
 bool ExpectArrowStatus(const arrow::Status& status, const std::string& prefix, std::string* error) {
     if (status.ok()) {
@@ -151,9 +168,7 @@ bool SubStrategyIndicatorTraceParquetWriter::Close(std::string* error) {
     arrow::DoubleBuilder atr_builder;
     arrow::DoubleBuilder adx_builder;
     arrow::DoubleBuilder er_builder;
-    arrow::DoubleBuilder stop_loss_price_builder;
-    arrow::DoubleBuilder take_profit_price_builder;
-    arrow::UInt8Builder market_regime_builder;
+    arrow::StringBuilder market_regime_builder;
 
     const auto append_optional = [&](const std::optional<double>& value, arrow::DoubleBuilder* b,
                                      const std::string& field_name) -> bool {
@@ -190,15 +205,12 @@ bool SubStrategyIndicatorTraceParquetWriter::Close(std::string* error) {
             !ExpectArrowStatus(bar_volume_builder.Append(row.bar_volume),
                                "failed appending bar_volume", error) ||
             !ExpectArrowStatus(
-                market_regime_builder.Append(static_cast<std::uint8_t>(row.market_regime)),
+                market_regime_builder.Append(MarketRegimeToLabel(row.market_regime)),
                 "failed appending market_regime", error) ||
             !append_optional(row.kama, &kama_builder, "kama") ||
             !append_optional(row.atr, &atr_builder, "atr") ||
             !append_optional(row.adx, &adx_builder, "adx") ||
-            !append_optional(row.er, &er_builder, "er") ||
-            !append_optional(row.stop_loss_price, &stop_loss_price_builder, "stop_loss_price") ||
-            !append_optional(
-                row.take_profit_price, &take_profit_price_builder, "take_profit_price")) {
+            !append_optional(row.er, &er_builder, "er")) {
             return false;
         }
     }
@@ -218,8 +230,6 @@ bool SubStrategyIndicatorTraceParquetWriter::Close(std::string* error) {
     std::shared_ptr<arrow::Array> atr_array;
     std::shared_ptr<arrow::Array> adx_array;
     std::shared_ptr<arrow::Array> er_array;
-    std::shared_ptr<arrow::Array> stop_loss_price_array;
-    std::shared_ptr<arrow::Array> take_profit_price_array;
     std::shared_ptr<arrow::Array> market_regime_array;
 
     if (!FinishArray(&instrument_id_builder, "instrument_id", &instrument_id_array, error) ||
@@ -238,10 +248,6 @@ bool SubStrategyIndicatorTraceParquetWriter::Close(std::string* error) {
         !FinishArray(&atr_builder, "atr", &atr_array, error) ||
         !FinishArray(&adx_builder, "adx", &adx_array, error) ||
         !FinishArray(&er_builder, "er", &er_array, error) ||
-        !FinishArray(
-            &stop_loss_price_builder, "stop_loss_price", &stop_loss_price_array, error) ||
-        !FinishArray(&take_profit_price_builder, "take_profit_price", &take_profit_price_array,
-                     error) ||
         !FinishArray(&market_regime_builder, "market_regime", &market_regime_array, error)) {
         return false;
     }
@@ -262,9 +268,7 @@ bool SubStrategyIndicatorTraceParquetWriter::Close(std::string* error) {
         arrow::field("atr", arrow::float64(), true),
         arrow::field("adx", arrow::float64(), true),
         arrow::field("er", arrow::float64(), true),
-        arrow::field("stop_loss_price", arrow::float64(), true),
-        arrow::field("take_profit_price", arrow::float64(), true),
-        arrow::field("market_regime", arrow::uint8(), false),
+        arrow::field("market_regime", arrow::utf8(), false),
     });
 
     auto table = arrow::Table::Make(schema,
@@ -283,8 +287,6 @@ bool SubStrategyIndicatorTraceParquetWriter::Close(std::string* error) {
                                      atr_array,
                                      adx_array,
                                      er_array,
-                                     stop_loss_price_array,
-                                     take_profit_price_array,
                                      market_regime_array});
 
     const std::filesystem::path output_path(output_path_);

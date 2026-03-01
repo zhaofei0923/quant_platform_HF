@@ -123,8 +123,6 @@ TEST(SubStrategyIndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicator
     row1.atr = 1.2;
     row1.adx = 25.4;
     row1.er = 0.55;
-    row1.stop_loss_price = 98.5;
-    row1.take_profit_price = 105.0;
     row1.market_regime = MarketRegime::kWeakTrend;
     row1.dt_utc = "2023-11-14 22:14:20.123";
     ASSERT_TRUE(writer.Append(row1, &error)) << error;
@@ -143,19 +141,17 @@ TEST(SubStrategyIndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicator
     ASSERT_TRUE(parquet_reader->ReadTable(&table).ok());
     ASSERT_NE(table, nullptr);
     EXPECT_EQ(table->num_rows(), 2);
-    ASSERT_EQ(table->num_columns(), 18);
+    ASSERT_EQ(table->num_columns(), 16);
 
     const std::shared_ptr<arrow::Schema> schema = table->schema();
     ASSERT_NE(schema, nullptr);
-    ASSERT_EQ(schema->num_fields(), 18);
+    ASSERT_EQ(schema->num_fields(), 16);
     EXPECT_EQ(schema->field(2)->name(), "dt_utc");
     EXPECT_EQ(schema->field(3)->name(), "timeframe_minutes");
     EXPECT_EQ(schema->field(4)->name(), "strategy_id");
     EXPECT_EQ(schema->field(5)->name(), "strategy_type");
     EXPECT_EQ(schema->field(12)->name(), "atr");
-    EXPECT_EQ(schema->field(15)->name(), "stop_loss_price");
-    EXPECT_EQ(schema->field(16)->name(), "take_profit_price");
-    EXPECT_EQ(schema->field(17)->name(), "market_regime");
+    EXPECT_EQ(schema->field(15)->name(), "market_regime");
 
     const auto dt_utc_column = table->GetColumnByName("dt_utc");
     ASSERT_NE(dt_utc_column, nullptr);
@@ -177,8 +173,8 @@ TEST(SubStrategyIndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicator
     ASSERT_NE(strategy_id_column, nullptr);
     ASSERT_NE(kama_column, nullptr);
     ASSERT_NE(atr_column, nullptr);
-    ASSERT_NE(stop_loss_price_column, nullptr);
-    ASSERT_NE(take_profit_price_column, nullptr);
+    ASSERT_EQ(stop_loss_price_column, nullptr);
+    ASSERT_EQ(take_profit_price_column, nullptr);
     ASSERT_NE(regime_column, nullptr);
     const auto timeframe =
         std::static_pointer_cast<arrow::Int32Array>(timeframe_column->chunk(0));
@@ -186,25 +182,17 @@ TEST(SubStrategyIndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicator
         std::static_pointer_cast<arrow::StringArray>(strategy_id_column->chunk(0));
     const auto kama = std::static_pointer_cast<arrow::DoubleArray>(kama_column->chunk(0));
     const auto atr = std::static_pointer_cast<arrow::DoubleArray>(atr_column->chunk(0));
-    const auto stop_loss_price =
-        std::static_pointer_cast<arrow::DoubleArray>(stop_loss_price_column->chunk(0));
-    const auto take_profit_price =
-        std::static_pointer_cast<arrow::DoubleArray>(take_profit_price_column->chunk(0));
-    const auto regime = std::static_pointer_cast<arrow::UInt8Array>(regime_column->chunk(0));
+    const auto regime = std::static_pointer_cast<arrow::StringArray>(regime_column->chunk(0));
 
     EXPECT_EQ(timeframe->Value(0), 1);
     EXPECT_EQ(timeframe->Value(1), 1);
     EXPECT_EQ(strategy_id->GetString(0), "open_1");
     EXPECT_TRUE(kama->IsNull(0));
     EXPECT_TRUE(atr->IsNull(0));
-    EXPECT_TRUE(stop_loss_price->IsNull(0));
-    EXPECT_TRUE(take_profit_price->IsNull(0));
     EXPECT_DOUBLE_EQ(kama->Value(1), 100.8);
     EXPECT_DOUBLE_EQ(atr->Value(1), 1.2);
-    EXPECT_DOUBLE_EQ(stop_loss_price->Value(1), 98.5);
-    EXPECT_DOUBLE_EQ(take_profit_price->Value(1), 105.0);
-    EXPECT_EQ(regime->Value(0), static_cast<std::uint8_t>(MarketRegime::kUnknown));
-    EXPECT_EQ(regime->Value(1), static_cast<std::uint8_t>(MarketRegime::kWeakTrend));
+    EXPECT_EQ(regime->GetString(0), "kUnknown");
+    EXPECT_EQ(regime->GetString(1), "kWeakTrend");
 
     std::filesystem::remove(path, ec);
 #endif

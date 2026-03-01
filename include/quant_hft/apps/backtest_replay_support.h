@@ -581,6 +581,90 @@ inline std::string BuildReplayBarContextKey(const std::string& instrument_id,
     return instrument_id + "|" + minute_key;
 }
 
+inline std::filesystem::path AlternateProductConfigCandidate(
+    const std::filesystem::path& configured_path) {
+    const std::string filename = ToLower(configured_path.filename().string());
+    if (filename == "instrument_info.json") {
+        return configured_path.parent_path() / "products_info.yaml";
+    }
+    if (filename == "products_info.yaml" || filename == "products_info.yml") {
+        return configured_path.parent_path() / "instrument_info.json";
+    }
+    return {};
+}
+
+inline void AppendUniqueProductConfigCandidate(
+    std::vector<std::filesystem::path>* candidates, const std::filesystem::path& candidate) {
+    if (candidates == nullptr || candidate.empty()) {
+        return;
+    }
+    const std::filesystem::path normalized = candidate.lexically_normal();
+    if (std::find(candidates->begin(), candidates->end(), normalized) == candidates->end()) {
+        candidates->push_back(normalized);
+    }
+}
+
+inline bool ResolveBacktestProductConfigPath(const std::string& configured_path,
+                                             const std::string& strategy_main_config_path,
+                                             std::string* out_path, std::string* error) {
+    if (out_path == nullptr) {
+        if (error != nullptr) {
+            *error = "product config output path is null";
+        }
+        return false;
+    }
+
+    std::vector<std::filesystem::path> candidates;
+    if (!configured_path.empty()) {
+        const std::filesystem::path configured(configured_path);
+        AppendUniqueProductConfigCandidate(&candidates, configured);
+        AppendUniqueProductConfigCandidate(&candidates, AlternateProductConfigCandidate(configured));
+    } else {
+        AppendUniqueProductConfigCandidate(&candidates, "configs/strategies/instrument_info.json");
+        AppendUniqueProductConfigCandidate(&candidates, "configs/strategies/products_info.yaml");
+        if (!strategy_main_config_path.empty()) {
+            const std::filesystem::path main_config_parent =
+                std::filesystem::path(strategy_main_config_path).parent_path();
+            AppendUniqueProductConfigCandidate(&candidates,
+                                               main_config_parent / "instrument_info.json");
+            AppendUniqueProductConfigCandidate(&candidates,
+                                               main_config_parent / "products_info.yaml");
+        }
+    }
+
+    for (const auto& candidate : candidates) {
+        std::error_code ec;
+        const bool exists = std::filesystem::exists(candidate, ec);
+        if (ec || !exists) {
+            continue;
+        }
+        std::ifstream input(candidate);
+        if (!input.is_open()) {
+            if (error != nullptr) {
+                *error = "unable to read product config: " + candidate.string();
+            }
+            return false;
+        }
+        *out_path = candidate.string();
+        return true;
+    }
+
+    if (!configured_path.empty()) {
+        if (error != nullptr) {
+            if (candidates.size() >= 2) {
+                *error = "product config is required: missing " + candidates[0].string() +
+                         " and " + candidates[1].string();
+            } else {
+                *error = "product config is required: missing " + configured_path;
+            }
+        }
+        return false;
+    }
+
+    out_path->clear();
+    return true;
+}
+
 inline bool ResolveTradingSessionsConfigPathForParquetBacktest(std::string* out_path,
                                                                std::string* error) {
     if (out_path == nullptr) {
@@ -2969,8 +3053,14 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
 
     ProductFeeBook product_fee_book;
     bool has_product_fee = false;
-    if (!spec.product_config_path.empty()) {
-        if (!LoadProductFeeConfig(spec.product_config_path, &product_fee_book, error)) {
+    std::string resolved_product_config_path;
+    if (!detail::ResolveBacktestProductConfigPath(spec.product_config_path,
+                                                  spec.strategy_main_config_path,
+                                                  &resolved_product_config_path, error)) {
+        return false;
+    }
+    if (!resolved_product_config_path.empty()) {
+        if (!LoadProductFeeConfig(resolved_product_config_path, &product_fee_book, error)) {
             return false;
         }
         has_product_fee = true;

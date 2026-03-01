@@ -46,6 +46,7 @@ void KamaTrendStrategy::Init(const AtomicParams& params) {
     take_profit_atr_period_ = atomic_internal::GetInt(params, "take_profit_atr_period", 14);
     take_profit_atr_multiplier_ =
         atomic_internal::GetDouble(params, "take_profit_atr_multiplier", 3.0);
+    adx_period_ = atomic_internal::GetInt(params, "adx_period", 14);
 
     if (id_.empty()) {
         throw std::invalid_argument("KamaTrendStrategy id must not be empty");
@@ -62,6 +63,9 @@ void KamaTrendStrategy::Init(const AtomicParams& params) {
     }
     if (default_volume_ <= 0) {
         throw std::invalid_argument("KamaTrendStrategy default_volume must be positive");
+    }
+    if (adx_period_ <= 0) {
+        throw std::invalid_argument("KamaTrendStrategy adx_period must be positive");
     }
     if (stop_loss_mode_ != "none" && stop_loss_mode_ != "trailing_atr") {
         throw std::invalid_argument(
@@ -92,6 +96,7 @@ void KamaTrendStrategy::Init(const AtomicParams& params) {
     }
 
     kama_ = std::make_unique<KAMA>(er_period_, fast_period_, slow_period_);
+    adx_ = std::make_unique<ADX>(adx_period_);
     stop_loss_atr_.reset();
     take_profit_atr_.reset();
     if (stop_loss_mode_ == "trailing_atr") {
@@ -108,6 +113,7 @@ void KamaTrendStrategy::Init(const AtomicParams& params) {
     trailing_direction_by_instrument_.clear();
     last_kama_.reset();
     last_er_.reset();
+    last_adx_.reset();
     last_stop_atr_.reset();
     last_take_atr_.reset();
     last_stop_loss_price_.reset();
@@ -119,6 +125,9 @@ std::string KamaTrendStrategy::GetId() const { return id_; }
 void KamaTrendStrategy::Reset() {
     if (kama_ != nullptr) {
         kama_->Reset();
+    }
+    if (adx_ != nullptr) {
+        adx_->Reset();
     }
     if (stop_loss_atr_ != nullptr) {
         stop_loss_atr_->Reset();
@@ -134,6 +143,7 @@ void KamaTrendStrategy::Reset() {
     trailing_direction_by_instrument_.clear();
     last_kama_.reset();
     last_er_.reset();
+    last_adx_.reset();
     last_stop_atr_.reset();
     last_take_atr_.reset();
     last_stop_loss_price_.reset();
@@ -144,6 +154,7 @@ std::vector<SignalIntent> KamaTrendStrategy::OnState(const StateSnapshot7D& stat
                                                      const AtomicStrategyContext& ctx) {
     last_kama_.reset();
     last_er_.reset();
+    last_adx_.reset();
     last_stop_atr_.reset();
     last_take_atr_.reset();
     last_stop_loss_price_.reset();
@@ -155,6 +166,9 @@ std::vector<SignalIntent> KamaTrendStrategy::OnState(const StateSnapshot7D& stat
     }
 
     kama_->Update(state.bar_high, state.bar_low, state.bar_close, state.bar_volume);
+    if (adx_ != nullptr) {
+        adx_->Update(state.bar_high, state.bar_low, state.bar_close, state.bar_volume);
+    }
     if (stop_loss_atr_ != nullptr) {
         stop_loss_atr_->Update(state.bar_high, state.bar_low, state.bar_close, state.bar_volume);
     }
@@ -165,6 +179,9 @@ std::vector<SignalIntent> KamaTrendStrategy::OnState(const StateSnapshot7D& stat
     if (kama_->IsReady()) {
         last_kama_ = kama_->Value();
         last_er_ = kama_->EfficiencyRatio();
+    }
+    if (adx_ != nullptr && adx_->IsReady()) {
+        last_adx_ = adx_->Value();
     }
     if (stop_loss_atr_ != nullptr && stop_loss_atr_->IsReady()) {
         last_stop_atr_ = stop_loss_atr_->Value();
@@ -284,14 +301,15 @@ std::vector<SignalIntent> KamaTrendStrategy::OnState(const StateSnapshot7D& stat
 }
 
 std::optional<AtomicIndicatorSnapshot> KamaTrendStrategy::IndicatorSnapshot() const {
-    if (!last_kama_.has_value() && !last_er_.has_value() && !last_stop_atr_.has_value() &&
-        !last_take_atr_.has_value() && !last_stop_loss_price_.has_value() &&
-        !last_take_profit_price_.has_value()) {
+    if (!last_kama_.has_value() && !last_er_.has_value() && !last_adx_.has_value() &&
+        !last_stop_atr_.has_value() && !last_take_atr_.has_value() &&
+        !last_stop_loss_price_.has_value() && !last_take_profit_price_.has_value()) {
         return std::nullopt;
     }
     AtomicIndicatorSnapshot snapshot;
     snapshot.kama = last_kama_;
     snapshot.er = last_er_;
+    snapshot.adx = last_adx_;
     snapshot.atr = last_stop_atr_.has_value() ? last_stop_atr_ : last_take_atr_;
     snapshot.stop_loss_price = last_stop_loss_price_;
     snapshot.take_profit_price = last_take_profit_price_;

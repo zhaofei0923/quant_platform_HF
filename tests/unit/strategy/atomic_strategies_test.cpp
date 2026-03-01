@@ -57,6 +57,7 @@ AtomicParams MakeKamaParams() {
         {"take_profit_mode", "atr_target"},
         {"take_profit_atr_period", "2"},
         {"take_profit_atr_multiplier", "3.0"},
+        {"adx_period", "2"},
     };
 }
 
@@ -101,6 +102,7 @@ TEST(AtomicStrategiesTest, KamaTrendStrategyEmitsOpenWithRiskSizingAndSnapshot) 
     ASSERT_TRUE(snapshot.has_value());
     EXPECT_TRUE(snapshot->kama.has_value());
     EXPECT_TRUE(snapshot->atr.has_value());
+    EXPECT_TRUE(snapshot->adx.has_value());
     EXPECT_TRUE(snapshot->er.has_value());
     EXPECT_FALSE(snapshot->stop_loss_price.has_value());
     EXPECT_FALSE(snapshot->take_profit_price.has_value());

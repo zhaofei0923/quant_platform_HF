@@ -141,10 +141,12 @@ composite:
 ## 产品信息配置（YAML/JSON）
 
 支持 `instrument_id` 精确匹配和 `symbol` 前缀回退匹配。配置同时包含手续费、每手乘数、保证金率。
-手续费模式：
+手续费采用统一叠加公式：
 
-- `rate`: 按成交额比例
-- `per_lot`: 按手固定
+- `fee = price * volume * contract_multiplier * ratio_by_money`
+- `+ volume * contract_multiplier * ratio_by_volume`
+
+其中 `ratio_by_money` 与 `ratio_by_volume` 可同时配置并叠加。
 
 示例：
 
@@ -155,12 +157,13 @@ products:
     contract_multiplier: 10
     long_margin_ratio: 0.16
     short_margin_ratio: 0.16
-    open_mode: rate
-    open_value: 0.0001
-    close_mode: per_lot
-    close_value: 2
-    close_today_mode: per_lot
-    close_today_value: 3
+    commission:
+      open_ratio_by_money: 0.0001
+      open_ratio_by_volume: 0
+      close_ratio_by_money: 0
+      close_ratio_by_volume: 0.2
+      close_today_ratio_by_money: 0
+      close_today_ratio_by_volume: 0.3
 ```
 
 默认推荐直接使用 `instrument_info.json`（`volume_multiple + commission.*_ratio_by_*`）自动映射。

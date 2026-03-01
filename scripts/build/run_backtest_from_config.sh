@@ -21,6 +21,7 @@ dry_run=false
 skip_build=false
 quiet_backtest_stdout=true
 progress_only=true
+show_steps=true
 
 usage() {
   cat <<'EOF'
@@ -329,6 +330,13 @@ append_arg_if_set() {
   fi
 }
 
+emit_step() {
+  local message="$1"
+  if is_true "${show_steps}"; then
+    printf '[step] %s\n' "${message}" >&2
+  fi
+}
+
 load_config "${config_path}"
 
 build_dir="$(cfg_get "build_dir" "build-gcc")"
@@ -364,6 +372,7 @@ emit_sub_strategy_indicator_trace="$(cfg_get "emit_sub_strategy_indicator_trace"
 sub_strategy_indicator_trace_path_raw="$(cfg_get "sub_strategy_indicator_trace_path" "")"
 quiet_backtest_stdout="$(cfg_get "quiet_backtest_stdout" "true")"
 progress_only="$(cfg_get "progress_only" "true")"
+show_steps="$(cfg_get "show_steps" "true")"
 
 if [[ -z "${engine_mode}" || -z "${dataset_root_raw}" || -z "${strategy_main_config_path_raw}" ||
       -z "${output_json_raw}" || -z "${output_md_raw}" ]]; then
@@ -432,6 +441,7 @@ mkdir -p "${run_dir}"
 mkdir -p "$(dirname "${output_json}")"
 mkdir -p "$(dirname "${output_md}")"
 mkdir -p "${export_csv_dir}"
+emit_step "配置加载完成，输出目录已准备: ${run_dir}"
 
 jobs="4"
 if command -v nproc >/dev/null 2>&1; then
@@ -485,16 +495,22 @@ build_once() {
   fi
 
   if [[ "${needs_configure}" == true ]]; then
+    emit_step "执行 CMake 配置"
     if ! run_cmd "${configure_cmd[@]}"; then
       return 1
     fi
+  else
+    emit_step "复用已有 CMake 配置"
   fi
+  emit_step "编译 backtest_cli"
   run_cmd "${build_cmd[@]}"
 }
 
 if [[ "${skip_build}" != true ]]; then
+  emit_step "开始构建阶段"
   if ! build_once; then
     if is_true "${auto_install_arrow_parquet_deps}"; then
+      emit_step "首次构建失败，尝试安装 Arrow/Parquet 依赖后重试"
       echo "build failed, trying Arrow/Parquet dependency installation and one retry..." >&2
       if ! run_cmd bash scripts/build/install_arrow_parquet_deps.sh; then
         echo "error: failed to install Arrow/Parquet dependencies" >&2
@@ -587,4 +603,6 @@ if [[ "${dry_run}" == true ]] || ! is_true "${progress_only}"; then
   echo "quiet_backtest_stdout=${quiet_backtest_stdout}, progress_only=${progress_only}"
 fi
 
+emit_step "启动回测主程序"
 run_backtest_cmd "${backtest_cmd[@]}"
+emit_step "回测完成，结果文件: ${output_json} / ${output_md}"

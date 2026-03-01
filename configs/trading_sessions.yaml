@@ -97,10 +97,38 @@ sessions:
 
   # 大连商品交易所（统一夜盘至23:00）
   - exchange: DCE
+    instrument_prefix: "c"   # 玉米
+    day: "09:00-15:00"
+    night: "21:00-23:00"
+  - exchange: DCE
+    instrument_prefix: "eg"  # 乙二醇
+    day: "09:00-15:00"
+    night: "21:00-23:00"
+  - exchange: DCE
+    instrument_prefix: "m"   # 豆粕
+    day: "09:00-15:00"
+    night: "21:00-23:00"
+  - exchange: DCE
+    instrument_prefix: "pp"  # 聚丙烯
+    day: "09:00-15:00"
+    night: "21:00-23:00"
+  - exchange: DCE
+    instrument_prefix: "v"   # PVC
+    day: "09:00-15:00"
+    night: "21:00-23:00"
+  - exchange: DCE
     day: "09:00-15:00"
     night: "21:00-23:00"
 
   # 郑州商品交易所（统一夜盘至23:00）
+  - exchange: CZCE
+    instrument_prefix: "ma"  # 甲醇
+    day: "09:00-15:00"
+    night: "21:00-23:00"
+  - exchange: CZCE
+    instrument_prefix: "ta"  # PTA
+    day: "09:00-15:00"
+    night: "21:00-23:00"
   - exchange: CZCE
     day: "09:00-15:00"
     night: "21:00-23:00"

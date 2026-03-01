@@ -430,11 +430,11 @@ bool BarAggregator::ParseMinuteOfDay(const std::string& update_time, int* minute
     return true;
 }
 
-std::string BarAggregator::ResolveExchangeId(const MarketSnapshot& snapshot) {
+std::string BarAggregator::ResolveExchangeId(const MarketSnapshot& snapshot) const {
     if (!snapshot.exchange_id.empty()) {
         return snapshot.exchange_id;
     }
-    return InferExchangeIdFromDottedInstrument(snapshot.instrument_id);
+    return InferExchangeId(snapshot.instrument_id);
 }
 
 std::string BarAggregator::InferExchangeId(const std::string& instrument_id) const {

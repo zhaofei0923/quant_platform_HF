@@ -20,12 +20,12 @@ struct ProductFeeEntry {
     double contract_multiplier{0.0};
     double long_margin_ratio{0.0};
     double short_margin_ratio{0.0};
-    ProductFeeMode open_mode{ProductFeeMode::kRate};
-    double open_value{0.0};
-    ProductFeeMode close_mode{ProductFeeMode::kRate};
-    double close_value{0.0};
-    ProductFeeMode close_today_mode{ProductFeeMode::kRate};
-    double close_today_value{0.0};
+    double open_ratio_by_money{0.0};
+    double open_ratio_by_volume{0.0};
+    double close_ratio_by_money{0.0};
+    double close_ratio_by_volume{0.0};
+    double close_today_ratio_by_money{0.0};
+    double close_today_ratio_by_volume{0.0};
 };
 
 class ProductFeeBook {

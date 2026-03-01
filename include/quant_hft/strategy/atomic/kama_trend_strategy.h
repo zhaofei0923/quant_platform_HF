@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "quant_hft/indicators/adx.h"
 #include "quant_hft/indicators/atr.h"
 #include "quant_hft/indicators/kama.h"
 #include "quant_hft/strategy/atomic_strategy.h"
@@ -51,8 +52,10 @@ class KamaTrendStrategy final : public ISubStrategy, public IAtomicIndicatorTrac
     std::string take_profit_mode_{"atr_target"};
     int take_profit_atr_period_{14};
     double take_profit_atr_multiplier_{3.0};
+    int adx_period_{14};
 
     std::unique_ptr<KAMA> kama_;
+    std::unique_ptr<ADX> adx_;
     std::unique_ptr<ATR> stop_loss_atr_;
     std::unique_ptr<ATR> take_profit_atr_;
     std::deque<double> kama_recent_;
@@ -64,6 +67,7 @@ class KamaTrendStrategy final : public ISubStrategy, public IAtomicIndicatorTrac
 
     std::optional<double> last_kama_;
     std::optional<double> last_er_;
+    std::optional<double> last_adx_;
     std::optional<double> last_stop_atr_;
     std::optional<double> last_take_atr_;
     std::optional<double> last_stop_loss_price_;

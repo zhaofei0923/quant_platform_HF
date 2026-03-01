@@ -17,12 +17,12 @@ struct EntryBuildFlags {
     bool has_contract_multiplier{false};
     bool has_long_margin_ratio{false};
     bool has_short_margin_ratio{false};
-    bool has_open_mode{false};
-    bool has_open_value{false};
-    bool has_close_mode{false};
-    bool has_close_value{false};
-    bool has_close_today_mode{false};
-    bool has_close_today_value{false};
+    bool has_open_ratio_by_money{false};
+    bool has_open_ratio_by_volume{false};
+    bool has_close_ratio_by_money{false};
+    bool has_close_ratio_by_volume{false};
+    bool has_close_today_ratio_by_money{false};
+    bool has_close_today_ratio_by_volume{false};
 };
 
 struct CommissionPair {
@@ -147,38 +147,15 @@ std::string ExtractSymbolPrefix(const std::string& instrument_id) {
     return symbol;
 }
 
-bool ParseFeeMode(const std::string& text, ProductFeeMode* out) {
-    if (out == nullptr) {
-        return false;
-    }
-    const std::string mode = ToLower(Trim(text));
-    if (mode == "rate") {
-        *out = ProductFeeMode::kRate;
-        return true;
-    }
-    if (mode == "per_lot" || mode == "perlot") {
-        *out = ProductFeeMode::kPerLot;
-        return true;
-    }
-    return false;
-}
-
-bool ParseFeeModeValue(const simple_json::Value& value, ProductFeeMode* out) {
-    if (out == nullptr || !value.IsString()) {
-        return false;
-    }
-    return ParseFeeMode(value.string_value, out);
-}
-
 std::string FormatLineError(int line_no, const std::string& reason) {
     std::ostringstream oss;
     oss << "line " << line_no << ": " << reason;
     return oss.str();
 }
 
-bool ParseCommissionPair(const CommissionPair& pair, ProductFeeMode* out_mode, double* out_value,
+bool ParseCommissionPair(const CommissionPair& pair, double* out_money, double* out_volume,
                          const std::string& where, const std::string& label, std::string* error) {
-    if (out_mode == nullptr || out_value == nullptr) {
+    if (out_money == nullptr || out_volume == nullptr) {
         if (error != nullptr) {
             *error = where + ": internal null commission output";
         }
@@ -190,19 +167,8 @@ bool ParseCommissionPair(const CommissionPair& pair, ProductFeeMode* out_mode, d
         }
         return false;
     }
-    if ((pair.has_money && pair.money > 0.0) && (pair.has_volume && pair.volume > 0.0)) {
-        if (error != nullptr) {
-            *error = where + ": " + label + " commission money and volume cannot both be positive";
-        }
-        return false;
-    }
-    if (pair.has_money && pair.money > 0.0) {
-        *out_mode = ProductFeeMode::kRate;
-        *out_value = pair.money;
-        return true;
-    }
-    *out_mode = ProductFeeMode::kPerLot;
-    *out_value = pair.has_volume ? pair.volume : 0.0;
+    *out_money = pair.has_money ? pair.money : 0.0;
+    *out_volume = pair.has_volume ? pair.volume : 0.0;
     return true;
 }
 
@@ -216,25 +182,26 @@ bool ApplyCommissionFromPairs(ProductFeeEntry* entry, EntryBuildFlags* flags,
         }
         return false;
     }
-    if (!ParseCommissionPair(open, &entry->open_mode, &entry->open_value, where, "open", error)) {
+    if (!ParseCommissionPair(open, &entry->open_ratio_by_money, &entry->open_ratio_by_volume,
+                             where, "open", error)) {
         return false;
     }
-    flags->has_open_mode = true;
-    flags->has_open_value = true;
+    flags->has_open_ratio_by_money = true;
+    flags->has_open_ratio_by_volume = true;
 
-    if (!ParseCommissionPair(close, &entry->close_mode, &entry->close_value, where, "close",
-                             error)) {
+    if (!ParseCommissionPair(close, &entry->close_ratio_by_money, &entry->close_ratio_by_volume,
+                             where, "close", error)) {
         return false;
     }
-    flags->has_close_mode = true;
-    flags->has_close_value = true;
+    flags->has_close_ratio_by_money = true;
+    flags->has_close_ratio_by_volume = true;
 
-    if (!ParseCommissionPair(close_today, &entry->close_today_mode, &entry->close_today_value,
-                             where, "close_today", error)) {
+    if (!ParseCommissionPair(close_today, &entry->close_today_ratio_by_money,
+                             &entry->close_today_ratio_by_volume, where, "close_today", error)) {
         return false;
     }
-    flags->has_close_today_mode = true;
-    flags->has_close_today_value = true;
+    flags->has_close_today_ratio_by_money = true;
+    flags->has_close_today_ratio_by_volume = true;
     return true;
 }
 
@@ -283,14 +250,17 @@ bool ValidateEntry(ProductFeeEntry* entry, const EntryBuildFlags& flags, const s
         }
         return false;
     }
-    if (!flags.has_open_mode || !flags.has_open_value || !flags.has_close_mode ||
-        !flags.has_close_value || !flags.has_close_today_mode || !flags.has_close_today_value) {
+    if (!flags.has_open_ratio_by_money || !flags.has_open_ratio_by_volume ||
+        !flags.has_close_ratio_by_money || !flags.has_close_ratio_by_volume ||
+        !flags.has_close_today_ratio_by_money || !flags.has_close_today_ratio_by_volume) {
         if (error != nullptr) {
             *error = where + ": missing commission fields";
         }
         return false;
     }
-    if (entry->open_value < 0.0 || entry->close_value < 0.0 || entry->close_today_value < 0.0) {
+    if (entry->open_ratio_by_money < 0.0 || entry->open_ratio_by_volume < 0.0 ||
+        entry->close_ratio_by_money < 0.0 || entry->close_ratio_by_volume < 0.0 ||
+        entry->close_today_ratio_by_money < 0.0 || entry->close_today_ratio_by_volume < 0.0) {
         if (error != nullptr) {
             *error = where + ": commission value must be non-negative";
         }
@@ -363,76 +333,76 @@ bool ParseEntryField(ProductFeeEntry* entry, EntryBuildFlags* flags, const std::
         flags->has_short_margin_ratio = true;
         return true;
     }
-    if (key == "open_mode") {
-        ProductFeeMode mode = ProductFeeMode::kRate;
-        if (!ParseFeeMode(value, &mode)) {
-            if (error != nullptr) {
-                *error = where + ": invalid open_mode";
-            }
-            return false;
-        }
-        entry->open_mode = mode;
-        flags->has_open_mode = true;
-        return true;
-    }
-    if (key == "open_value") {
+    if (key == "open_ratio_by_money") {
         double parsed = 0.0;
         if (!ParseDoubleText(value, &parsed)) {
             if (error != nullptr) {
-                *error = where + ": invalid open_value";
+                *error = where + ": invalid open_ratio_by_money";
             }
             return false;
         }
-        entry->open_value = parsed;
-        flags->has_open_value = true;
+        entry->open_ratio_by_money = parsed;
+        flags->has_open_ratio_by_money = true;
         return true;
     }
-    if (key == "close_mode") {
-        ProductFeeMode mode = ProductFeeMode::kRate;
-        if (!ParseFeeMode(value, &mode)) {
-            if (error != nullptr) {
-                *error = where + ": invalid close_mode";
-            }
-            return false;
-        }
-        entry->close_mode = mode;
-        flags->has_close_mode = true;
-        return true;
-    }
-    if (key == "close_value") {
+    if (key == "open_ratio_by_volume") {
         double parsed = 0.0;
         if (!ParseDoubleText(value, &parsed)) {
             if (error != nullptr) {
-                *error = where + ": invalid close_value";
+                *error = where + ": invalid open_ratio_by_volume";
             }
             return false;
         }
-        entry->close_value = parsed;
-        flags->has_close_value = true;
+        entry->open_ratio_by_volume = parsed;
+        flags->has_open_ratio_by_volume = true;
         return true;
     }
-    if (key == "close_today_mode") {
-        ProductFeeMode mode = ProductFeeMode::kRate;
-        if (!ParseFeeMode(value, &mode)) {
-            if (error != nullptr) {
-                *error = where + ": invalid close_today_mode";
-            }
-            return false;
-        }
-        entry->close_today_mode = mode;
-        flags->has_close_today_mode = true;
-        return true;
-    }
-    if (key == "close_today_value") {
+    if (key == "close_ratio_by_money") {
         double parsed = 0.0;
         if (!ParseDoubleText(value, &parsed)) {
             if (error != nullptr) {
-                *error = where + ": invalid close_today_value";
+                *error = where + ": invalid close_ratio_by_money";
             }
             return false;
         }
-        entry->close_today_value = parsed;
-        flags->has_close_today_value = true;
+        entry->close_ratio_by_money = parsed;
+        flags->has_close_ratio_by_money = true;
+        return true;
+    }
+    if (key == "close_ratio_by_volume") {
+        double parsed = 0.0;
+        if (!ParseDoubleText(value, &parsed)) {
+            if (error != nullptr) {
+                *error = where + ": invalid close_ratio_by_volume";
+            }
+            return false;
+        }
+        entry->close_ratio_by_volume = parsed;
+        flags->has_close_ratio_by_volume = true;
+        return true;
+    }
+    if (key == "close_today_ratio_by_money") {
+        double parsed = 0.0;
+        if (!ParseDoubleText(value, &parsed)) {
+            if (error != nullptr) {
+                *error = where + ": invalid close_today_ratio_by_money";
+            }
+            return false;
+        }
+        entry->close_today_ratio_by_money = parsed;
+        flags->has_close_today_ratio_by_money = true;
+        return true;
+    }
+    if (key == "close_today_ratio_by_volume") {
+        double parsed = 0.0;
+        if (!ParseDoubleText(value, &parsed)) {
+            if (error != nullptr) {
+                *error = where + ": invalid close_today_ratio_by_volume";
+            }
+            return false;
+        }
+        entry->close_today_ratio_by_volume = parsed;
+        flags->has_close_today_ratio_by_volume = true;
         return true;
     }
     if (error != nullptr) {
@@ -787,76 +757,76 @@ bool ParseEntryFieldFromJson(ProductFeeEntry* entry, EntryBuildFlags* flags, con
         flags->has_short_margin_ratio = true;
         return true;
     }
-    if (key == "open_mode") {
-        ProductFeeMode mode = ProductFeeMode::kRate;
-        if (!ParseFeeModeValue(value, &mode)) {
-            if (error != nullptr) {
-                *error = where + ": invalid open_mode";
-            }
-            return false;
-        }
-        entry->open_mode = mode;
-        flags->has_open_mode = true;
-        return true;
-    }
-    if (key == "open_value") {
+    if (key == "open_ratio_by_money") {
         double parsed = 0.0;
         if (!ParseDoubleValue(value, &parsed)) {
             if (error != nullptr) {
-                *error = where + ": invalid open_value";
+                *error = where + ": invalid open_ratio_by_money";
             }
             return false;
         }
-        entry->open_value = parsed;
-        flags->has_open_value = true;
+        entry->open_ratio_by_money = parsed;
+        flags->has_open_ratio_by_money = true;
         return true;
     }
-    if (key == "close_mode") {
-        ProductFeeMode mode = ProductFeeMode::kRate;
-        if (!ParseFeeModeValue(value, &mode)) {
-            if (error != nullptr) {
-                *error = where + ": invalid close_mode";
-            }
-            return false;
-        }
-        entry->close_mode = mode;
-        flags->has_close_mode = true;
-        return true;
-    }
-    if (key == "close_value") {
+    if (key == "open_ratio_by_volume") {
         double parsed = 0.0;
         if (!ParseDoubleValue(value, &parsed)) {
             if (error != nullptr) {
-                *error = where + ": invalid close_value";
+                *error = where + ": invalid open_ratio_by_volume";
             }
             return false;
         }
-        entry->close_value = parsed;
-        flags->has_close_value = true;
+        entry->open_ratio_by_volume = parsed;
+        flags->has_open_ratio_by_volume = true;
         return true;
     }
-    if (key == "close_today_mode") {
-        ProductFeeMode mode = ProductFeeMode::kRate;
-        if (!ParseFeeModeValue(value, &mode)) {
-            if (error != nullptr) {
-                *error = where + ": invalid close_today_mode";
-            }
-            return false;
-        }
-        entry->close_today_mode = mode;
-        flags->has_close_today_mode = true;
-        return true;
-    }
-    if (key == "close_today_value") {
+    if (key == "close_ratio_by_money") {
         double parsed = 0.0;
         if (!ParseDoubleValue(value, &parsed)) {
             if (error != nullptr) {
-                *error = where + ": invalid close_today_value";
+                *error = where + ": invalid close_ratio_by_money";
             }
             return false;
         }
-        entry->close_today_value = parsed;
-        flags->has_close_today_value = true;
+        entry->close_ratio_by_money = parsed;
+        flags->has_close_ratio_by_money = true;
+        return true;
+    }
+    if (key == "close_ratio_by_volume") {
+        double parsed = 0.0;
+        if (!ParseDoubleValue(value, &parsed)) {
+            if (error != nullptr) {
+                *error = where + ": invalid close_ratio_by_volume";
+            }
+            return false;
+        }
+        entry->close_ratio_by_volume = parsed;
+        flags->has_close_ratio_by_volume = true;
+        return true;
+    }
+    if (key == "close_today_ratio_by_money") {
+        double parsed = 0.0;
+        if (!ParseDoubleValue(value, &parsed)) {
+            if (error != nullptr) {
+                *error = where + ": invalid close_today_ratio_by_money";
+            }
+            return false;
+        }
+        entry->close_today_ratio_by_money = parsed;
+        flags->has_close_today_ratio_by_money = true;
+        return true;
+    }
+    if (key == "close_today_ratio_by_volume") {
+        double parsed = 0.0;
+        if (!ParseDoubleValue(value, &parsed)) {
+            if (error != nullptr) {
+                *error = where + ": invalid close_today_ratio_by_volume";
+            }
+            return false;
+        }
+        entry->close_today_ratio_by_volume = parsed;
+        flags->has_close_today_ratio_by_volume = true;
         return true;
     }
     if (key == "commission") {
@@ -1053,24 +1023,25 @@ double ProductFeeBook::ComputeCommission(const ProductFeeEntry& entry, OffsetFla
         return 0.0;
     }
 
-    ProductFeeMode mode = entry.close_mode;
-    double value = entry.close_value;
+    double ratio_by_money = entry.close_ratio_by_money;
+    double ratio_by_volume = entry.close_ratio_by_volume;
     if (offset == OffsetFlag::kOpen) {
-        mode = entry.open_mode;
-        value = entry.open_value;
+        ratio_by_money = entry.open_ratio_by_money;
+        ratio_by_volume = entry.open_ratio_by_volume;
     } else if (offset == OffsetFlag::kCloseToday) {
-        mode = entry.close_today_mode;
-        value = entry.close_today_value;
+        ratio_by_money = entry.close_today_ratio_by_money;
+        ratio_by_volume = entry.close_today_ratio_by_volume;
     }
 
-    value = std::max(0.0, value);
-    if (mode == ProductFeeMode::kPerLot) {
-        return value * static_cast<double>(volume);
-    }
+    ratio_by_money = std::max(0.0, ratio_by_money);
+    ratio_by_volume = std::max(0.0, ratio_by_volume);
 
     const double notional =
         fill_price * static_cast<double>(volume) * std::max(0.0, entry.contract_multiplier);
-    return std::max(0.0, notional * value);
+    const double fee_by_money = notional * ratio_by_money;
+    const double fee_by_volume =
+        static_cast<double>(volume) * std::max(0.0, entry.contract_multiplier) * ratio_by_volume;
+    return std::max(0.0, fee_by_money) + std::max(0.0, fee_by_volume);
 }
 
 double ProductFeeBook::ComputePerLotMargin(const ProductFeeEntry& entry, Side side,

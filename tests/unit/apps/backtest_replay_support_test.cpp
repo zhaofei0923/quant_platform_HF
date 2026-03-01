@@ -520,6 +520,92 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecAllowsCliOverrideOverMainStr
     std::filesystem::remove(main_cfg, ec);
 }
 
+TEST(BacktestReplaySupportTest,
+     ResolveBacktestProductConfigPathFallsBackToYamlWhenInstrumentJsonIsMissing) {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto root =
+        std::filesystem::temp_directory_path() /
+        ("quant_hft_product_cfg_resolve_test_" + std::to_string(stamp));
+    std::filesystem::create_directories(root);
+
+    const auto yaml_path = root / "products_info.yaml";
+    std::ofstream yaml_out(yaml_path);
+    yaml_out << "products:\n"
+                "  rb:\n"
+                "    product: rb\n"
+                "    volume_multiple: 10\n"
+                "    long_margin_ratio: 0.16\n"
+                "    short_margin_ratio: 0.16\n"
+                "    commission:\n"
+                "      open_ratio_by_money: 0.0\n"
+                "      open_ratio_by_volume: 1.0\n"
+                "      close_ratio_by_money: 0.0\n"
+                "      close_ratio_by_volume: 1.0\n"
+                "      close_today_ratio_by_money: 0.0\n"
+                "      close_today_ratio_by_volume: 1.0\n";
+    yaml_out.close();
+
+    std::string resolved_path;
+    std::string error;
+    EXPECT_TRUE(detail::ResolveBacktestProductConfigPath((root / "instrument_info.json").string(),
+                                                         "", &resolved_path, &error))
+        << error;
+    EXPECT_EQ(std::filesystem::path(resolved_path).lexically_normal(),
+              yaml_path.lexically_normal());
+
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+}
+
+TEST(BacktestReplaySupportTest,
+     ResolveBacktestProductConfigPathUsesMainConfigSiblingWhenPathNotSpecified) {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto root =
+        std::filesystem::temp_directory_path() /
+        ("quant_hft_product_cfg_default_test_" + std::to_string(stamp));
+    std::filesystem::create_directories(root);
+
+    const auto main_cfg = root / "main_backtest_strategy.yaml";
+    std::ofstream main_out(main_cfg);
+    main_out << "run_type: backtest\n";
+    main_out.close();
+
+    const auto json_path = root / "instrument_info.json";
+    std::ofstream json_out(json_path);
+    json_out << "{\n"
+                "  \"rb\": {\n"
+                "    \"product\": \"rb\",\n"
+                "    \"volume_multiple\": 10,\n"
+                "    \"long_margin_ratio\": 0.16,\n"
+                "    \"short_margin_ratio\": 0.16,\n"
+                "    \"commission\": {\n"
+                "      \"open_ratio_by_money\": 0.0,\n"
+                "      \"open_ratio_by_volume\": 1.0,\n"
+                "      \"close_ratio_by_money\": 0.0,\n"
+                "      \"close_ratio_by_volume\": 1.0,\n"
+                "      \"close_today_ratio_by_money\": 0.0,\n"
+                "      \"close_today_ratio_by_volume\": 1.0\n"
+                "    }\n"
+                "  }\n"
+                "}\n";
+    json_out.close();
+
+    std::string resolved_path;
+    std::string error;
+    EXPECT_TRUE(detail::ResolveBacktestProductConfigPath("", main_cfg.string(), &resolved_path,
+                                                         &error))
+        << error;
+    const auto resolved_normalized = std::filesystem::path(resolved_path).lexically_normal();
+    const auto sibling_normalized = json_path.lexically_normal();
+    const auto default_normalized =
+        std::filesystem::path("configs/strategies/instrument_info.json").lexically_normal();
+    EXPECT_TRUE(resolved_normalized == sibling_normalized ||
+                resolved_normalized == default_normalized);
+
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+}
+
 TEST(BacktestReplaySupportTest, ParseBacktestCliSpecRejectsRemovedMaxLossPercentFlag) {
     ArgMap args;
     args["engine_mode"] = "csv";
@@ -1016,12 +1102,13 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecAccumulatesCommissionFromProductC
         "    contract_multiplier: 10\n"
         "    long_margin_ratio: 0.16\n"
         "    short_margin_ratio: 0.16\n"
-        "    open_mode: rate\n"
-        "    open_value: 0.001\n"
-        "    close_mode: per_lot\n"
-        "    close_value: 1\n"
-        "    close_today_mode: per_lot\n"
-        "    close_today_value: 1\n");
+        "    commission:\n"
+        "      open_ratio_by_money: 0.001\n"
+        "      open_ratio_by_volume: 0\n"
+        "      close_ratio_by_money: 0\n"
+        "      close_ratio_by_volume: 0.1\n"
+        "      close_today_ratio_by_money: 0\n"
+        "      close_today_ratio_by_volume: 0.1\n");
 
     BacktestCliSpec spec;
     spec.engine_mode = "csv";
@@ -1093,12 +1180,13 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecFailsWhenProductConfigMissingInst
         "    contract_multiplier: 15\n"
         "    long_margin_ratio: 0.16\n"
         "    short_margin_ratio: 0.16\n"
-        "    open_mode: rate\n"
-        "    open_value: 0.001\n"
-        "    close_mode: rate\n"
-        "    close_value: 0.001\n"
-        "    close_today_mode: rate\n"
-        "    close_today_value: 0.001\n");
+        "    commission:\n"
+        "      open_ratio_by_money: 0.001\n"
+        "      open_ratio_by_volume: 0\n"
+        "      close_ratio_by_money: 0.001\n"
+        "      close_ratio_by_volume: 0\n"
+        "      close_today_ratio_by_money: 0.001\n"
+        "      close_today_ratio_by_volume: 0\n");
 
     BacktestCliSpec spec;
     spec.engine_mode = "csv";
@@ -1126,12 +1214,13 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecEquityCurveUsesInitialEquityBasel
         "    contract_multiplier: 10\n"
         "    long_margin_ratio: 0.16\n"
         "    short_margin_ratio: 0.16\n"
-        "    open_mode: rate\n"
-        "    open_value: 0.001\n"
-        "    close_mode: per_lot\n"
-        "    close_value: 1\n"
-        "    close_today_mode: per_lot\n"
-        "    close_today_value: 1\n");
+        "    commission:\n"
+        "      open_ratio_by_money: 0.001\n"
+        "      open_ratio_by_volume: 0\n"
+        "      close_ratio_by_money: 0\n"
+        "      close_ratio_by_volume: 0.1\n"
+        "      close_today_ratio_by_money: 0\n"
+        "      close_today_ratio_by_volume: 0.1\n");
 
     BacktestCliSpec spec;
     spec.engine_mode = "csv";
@@ -1170,12 +1259,13 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecRejectsOpenWhenMarginInsufficient
         "    contract_multiplier: 100\n"
         "    long_margin_ratio: 1.0\n"
         "    short_margin_ratio: 1.0\n"
-        "    open_mode: rate\n"
-        "    open_value: 0.0001\n"
-        "    close_mode: rate\n"
-        "    close_value: 0.0001\n"
-        "    close_today_mode: rate\n"
-        "    close_today_value: 0.0001\n");
+        "    commission:\n"
+        "      open_ratio_by_money: 0.0001\n"
+        "      open_ratio_by_volume: 0\n"
+        "      close_ratio_by_money: 0.0001\n"
+        "      close_ratio_by_volume: 0\n"
+        "      close_today_ratio_by_money: 0.0001\n"
+        "      close_today_ratio_by_volume: 0\n");
 
     BacktestCliSpec spec;
     spec.engine_mode = "csv";
@@ -1213,12 +1303,13 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecClipsVolumeByMarginAndTracksUsage
         "    contract_multiplier: 10\n"
         "    long_margin_ratio: 0.2\n"
         "    short_margin_ratio: 0.2\n"
-        "    open_mode: rate\n"
-        "    open_value: 0.0001\n"
-        "    close_mode: rate\n"
-        "    close_value: 0.0001\n"
-        "    close_today_mode: rate\n"
-        "    close_today_value: 0.0001\n");
+        "    commission:\n"
+        "      open_ratio_by_money: 0.0001\n"
+        "      open_ratio_by_volume: 0\n"
+        "      close_ratio_by_money: 0.0001\n"
+        "      close_ratio_by_volume: 0\n"
+        "      close_today_ratio_by_money: 0.0001\n"
+        "      close_today_ratio_by_volume: 0\n");
 
     BacktestCliSpec spec;
     spec.engine_mode = "csv";

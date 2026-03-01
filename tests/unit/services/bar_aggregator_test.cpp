@@ -302,6 +302,30 @@ TEST(BarAggregatorTest, RepositoryTradingSessionsInferDceForCornSymbol) {
     EXPECT_FALSE(aggregator.ShouldProcessSnapshot(late_snapshot));
 }
 
+TEST(BarAggregatorTest, RepositoryTradingSessionsFilterPostClosePlainDceSymbolWithoutExchange) {
+    namespace fs = std::filesystem;
+    const fs::path config_path = fs::path(__FILE__)
+                                     .parent_path()
+                                     .parent_path()
+                                     .parent_path()
+                                     .parent_path() /
+                                 "configs" / "trading_sessions.yaml";
+    ASSERT_TRUE(fs::exists(config_path));
+
+    BarAggregatorConfig config;
+    config.trading_sessions_config_path = config_path.string();
+    config.use_default_session_fallback = true;
+    BarAggregator aggregator(config);
+
+    const auto open_snapshot =
+        MakeSnapshot("c2405", "20240102", "20240102", "14:59:00", 0, 2424.0, 1);
+    const auto late_snapshot =
+        MakeSnapshot("c2405", "20240102", "20240102", "15:02:00", 0, 2424.0, 1);
+
+    EXPECT_TRUE(aggregator.ShouldProcessSnapshot(open_snapshot));
+    EXPECT_FALSE(aggregator.ShouldProcessSnapshot(late_snapshot));
+}
+
 TEST(BarAggregatorTest, AggregatesOneMinuteBarsToHigherTimeframe) {
     std::vector<BarSnapshot> one_minute;
     one_minute.push_back(

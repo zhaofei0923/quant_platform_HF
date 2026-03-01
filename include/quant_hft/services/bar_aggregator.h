@@ -65,7 +65,7 @@ private:
     };
 
     static bool ParseMinuteOfDay(const std::string& update_time, int* minute_of_day);
-    static std::string ResolveExchangeId(const MarketSnapshot& snapshot);
+    std::string ResolveExchangeId(const MarketSnapshot& snapshot) const;
     static std::string ResolveProductCode(const MarketSnapshot& snapshot);
     static std::string ResolveTradingDay(const MarketSnapshot& snapshot);
     static std::string ResolveActionDay(const MarketSnapshot& snapshot);

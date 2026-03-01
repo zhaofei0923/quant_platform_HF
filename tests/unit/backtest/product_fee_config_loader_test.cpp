@@ -29,12 +29,13 @@ TEST(ProductFeeConfigLoaderTest, LoadsYamlAndSupportsInstrumentAndSymbolLookup) 
                                     "    contract_multiplier: 10\n"
                                     "    long_margin_ratio: 0.16\n"
                                     "    short_margin_ratio: 0.17\n"
-                                    "    open_mode: rate\n"
-                                    "    open_value: 0.0001\n"
-                                    "    close_mode: per_lot\n"
-                                    "    close_value: 2\n"
-                                    "    close_today_mode: per_lot\n"
-                                    "    close_today_value: 3\n");
+                                    "    commission:\n"
+                                    "      open_ratio_by_money: 0.0001\n"
+                                    "      open_ratio_by_volume: 0\n"
+                                    "      close_ratio_by_money: 0\n"
+                                    "      close_ratio_by_volume: 0.2\n"
+                                    "      close_today_ratio_by_money: 0\n"
+                                    "      close_today_ratio_by_volume: 0.3\n");
 
     ProductFeeBook book;
     std::string error;
@@ -51,10 +52,8 @@ TEST(ProductFeeConfigLoaderTest, LoadsYamlAndSupportsInstrumentAndSymbolLookup) 
     EXPECT_EQ(fallback->instrument_id, "rb2405");
 
     EXPECT_NEAR(ProductFeeBook::ComputeCommission(*exact, OffsetFlag::kOpen, 2, 100.0), 0.2, 1e-12);
-    EXPECT_NEAR(ProductFeeBook::ComputeCommission(*exact, OffsetFlag::kClose, 3, 100.0), 6.0,
-                1e-12);
-    EXPECT_NEAR(ProductFeeBook::ComputeCommission(*exact, OffsetFlag::kCloseToday, 1, 100.0), 3.0,
-                1e-12);
+    EXPECT_NEAR(ProductFeeBook::ComputeCommission(*exact, OffsetFlag::kClose, 3, 100.0), 6.0, 1e-12);
+    EXPECT_NEAR(ProductFeeBook::ComputeCommission(*exact, OffsetFlag::kCloseToday, 1, 100.0), 3.0, 1e-12);
     EXPECT_NEAR(ProductFeeBook::ComputePerLotMargin(*exact, Side::kBuy, 100.0), 160.0, 1e-12);
     EXPECT_NEAR(ProductFeeBook::ComputePerLotMargin(*exact, Side::kSell, 100.0), 170.0, 1e-12);
     EXPECT_NEAR(ProductFeeBook::ComputeRequiredMargin(*exact, Side::kSell, 3, 100.0), 510.0, 1e-12);
@@ -71,12 +70,14 @@ TEST(ProductFeeConfigLoaderTest, LoadsJsonConfig) {
                                     "      \"contract_multiplier\": 15,\n"
                                     "      \"long_margin_ratio\": 0.12,\n"
                                     "      \"short_margin_ratio\": 0.13,\n"
-                                    "      \"open_mode\": \"per_lot\",\n"
-                                    "      \"open_value\": 1.5,\n"
-                                    "      \"close_mode\": \"rate\",\n"
-                                    "      \"close_value\": 0.0002,\n"
-                                    "      \"close_today_mode\": \"rate\",\n"
-                                    "      \"close_today_value\": 0.0003\n"
+                                    "      \"commission\": {\n"
+                                    "        \"open_ratio_by_money\": 0,\n"
+                                    "        \"open_ratio_by_volume\": 0.1,\n"
+                                    "        \"close_ratio_by_money\": 0.0002,\n"
+                                    "        \"close_ratio_by_volume\": 0,\n"
+                                    "        \"close_today_ratio_by_money\": 0.0003,\n"
+                                    "        \"close_today_ratio_by_volume\": 0\n"
+                                    "      }\n"
                                     "    }\n"
                                     "  }\n"
                                     "}\n");
@@ -97,7 +98,7 @@ TEST(ProductFeeConfigLoaderTest, LoadsJsonConfig) {
     std::filesystem::remove(path);
 }
 
-TEST(ProductFeeConfigLoaderTest, RejectsInvalidMode) {
+TEST(ProductFeeConfigLoaderTest, RejectsUnsupportedCommissionField) {
     const auto path = WriteTempFile("quant_hft_product_fee", ".yaml",
                                     "products:\n"
                                     "  rb2405:\n"
@@ -105,17 +106,19 @@ TEST(ProductFeeConfigLoaderTest, RejectsInvalidMode) {
                                     "    contract_multiplier: 10\n"
                                     "    long_margin_ratio: 0.16\n"
                                     "    short_margin_ratio: 0.16\n"
-                                    "    open_mode: bad\n"
-                                    "    open_value: 0.1\n"
-                                    "    close_mode: per_lot\n"
-                                    "    close_value: 1\n"
-                                    "    close_today_mode: per_lot\n"
-                                    "    close_today_value: 1\n");
+                                    "    commission:\n"
+                                    "      unsupported_key: 0.1\n"
+                                    "      close_ratio_by_money: 0\n"
+                                    "      close_ratio_by_volume: 1\n"
+                                    "      close_today_ratio_by_money: 0\n"
+                                    "      close_today_ratio_by_volume: 1\n"
+                                    "      open_ratio_by_money: 0\n"
+                                    "      open_ratio_by_volume: 1\n");
 
     ProductFeeBook book;
     std::string error;
     EXPECT_FALSE(LoadProductFeeConfig(path.string(), &book, &error));
-    EXPECT_NE(error.find("mode"), std::string::npos);
+    EXPECT_NE(error.find("unsupported"), std::string::npos);
 
     std::filesystem::remove(path);
 }
@@ -148,12 +151,12 @@ TEST(ProductFeeConfigLoaderTest, LoadsInstrumentInfoSchemaAndMapsCommissionModes
     ASSERT_NE(entry, nullptr);
     EXPECT_EQ(entry->instrument_id, "RB");
     EXPECT_DOUBLE_EQ(entry->contract_multiplier, 10.0);
-    EXPECT_EQ(entry->open_mode, ProductFeeMode::kRate);
-    EXPECT_DOUBLE_EQ(entry->open_value, 0.0001);
-    EXPECT_EQ(entry->close_mode, ProductFeeMode::kPerLot);
-    EXPECT_DOUBLE_EQ(entry->close_value, 1.5);
-    EXPECT_EQ(entry->close_today_mode, ProductFeeMode::kPerLot);
-    EXPECT_DOUBLE_EQ(entry->close_today_value, 3.0);
+    EXPECT_DOUBLE_EQ(entry->open_ratio_by_money, 0.0001);
+    EXPECT_DOUBLE_EQ(entry->open_ratio_by_volume, 0.0);
+    EXPECT_DOUBLE_EQ(entry->close_ratio_by_money, 0.0);
+    EXPECT_DOUBLE_EQ(entry->close_ratio_by_volume, 1.5);
+    EXPECT_DOUBLE_EQ(entry->close_today_ratio_by_money, 0.0);
+    EXPECT_DOUBLE_EQ(entry->close_today_ratio_by_volume, 3.0);
 
     std::filesystem::remove(path);
 }
@@ -181,12 +184,12 @@ TEST(ProductFeeConfigLoaderTest, LoadsInstrumentInfoYamlSchemaAndMapsCommissionM
     ASSERT_NE(entry, nullptr);
     EXPECT_EQ(entry->instrument_id, "RB");
     EXPECT_DOUBLE_EQ(entry->contract_multiplier, 10.0);
-    EXPECT_EQ(entry->open_mode, ProductFeeMode::kRate);
-    EXPECT_DOUBLE_EQ(entry->open_value, 0.0001);
-    EXPECT_EQ(entry->close_mode, ProductFeeMode::kPerLot);
-    EXPECT_DOUBLE_EQ(entry->close_value, 1.5);
-    EXPECT_EQ(entry->close_today_mode, ProductFeeMode::kPerLot);
-    EXPECT_DOUBLE_EQ(entry->close_today_value, 3.0);
+    EXPECT_DOUBLE_EQ(entry->open_ratio_by_money, 0.0001);
+    EXPECT_DOUBLE_EQ(entry->open_ratio_by_volume, 0.0);
+    EXPECT_DOUBLE_EQ(entry->close_ratio_by_money, 0.0);
+    EXPECT_DOUBLE_EQ(entry->close_ratio_by_volume, 1.5);
+    EXPECT_DOUBLE_EQ(entry->close_today_ratio_by_money, 0.0);
+    EXPECT_DOUBLE_EQ(entry->close_today_ratio_by_volume, 3.0);
 
     std::filesystem::remove(path);
 }
@@ -218,8 +221,8 @@ TEST(ProductFeeConfigLoaderTest, LoadsRawInstrumentInfoJsonRootWithoutProducts) 
     ASSERT_NE(entry, nullptr);
     EXPECT_EQ(entry->instrument_id, "RB");
     EXPECT_DOUBLE_EQ(entry->contract_multiplier, 10.0);
-    EXPECT_EQ(entry->open_mode, ProductFeeMode::kRate);
-    EXPECT_EQ(entry->close_mode, ProductFeeMode::kPerLot);
+    EXPECT_DOUBLE_EQ(entry->open_ratio_by_money, 0.0001);
+    EXPECT_DOUBLE_EQ(entry->close_ratio_by_volume, 1.5);
 
     std::filesystem::remove(path);
 }
@@ -254,7 +257,7 @@ TEST(ProductFeeConfigLoaderTest, LoadsYamlWithTradingSessionsListIgnored) {
     std::filesystem::remove(path);
 }
 
-TEST(ProductFeeConfigLoaderTest, RejectsCommissionMoneyAndVolumeBothPositive) {
+TEST(ProductFeeConfigLoaderTest, AllowsCommissionMoneyAndVolumeBothPositiveAndAddsBoth) {
     const auto path = WriteTempFile("quant_hft_product_fee", ".json",
                                     "{\n"
                                     "  \"products\": {\n"
@@ -277,8 +280,11 @@ TEST(ProductFeeConfigLoaderTest, RejectsCommissionMoneyAndVolumeBothPositive) {
 
     ProductFeeBook book;
     std::string error;
-    EXPECT_FALSE(LoadProductFeeConfig(path.string(), &book, &error));
-    EXPECT_NE(error.find("both"), std::string::npos);
+    ASSERT_TRUE(LoadProductFeeConfig(path.string(), &book, &error)) << error;
+    const ProductFeeEntry* entry = book.Find("rb2405");
+    ASSERT_NE(entry, nullptr);
+    const double fee = ProductFeeBook::ComputeCommission(*entry, OffsetFlag::kOpen, 2, 100.0);
+    EXPECT_NEAR(fee, 2.2, 1e-12);
 
     std::filesystem::remove(path);
 }
@@ -289,12 +295,13 @@ TEST(ProductFeeConfigLoaderTest, RejectsMissingMarginRatio) {
                                     "  rb2405:\n"
                                     "    symbol: rb\n"
                                     "    contract_multiplier: 10\n"
-                                    "    open_mode: rate\n"
-                                    "    open_value: 0.0001\n"
-                                    "    close_mode: per_lot\n"
-                                    "    close_value: 2\n"
-                                    "    close_today_mode: per_lot\n"
-                                    "    close_today_value: 3\n");
+                                    "    commission:\n"
+                                    "      open_ratio_by_money: 0.0001\n"
+                                    "      open_ratio_by_volume: 0\n"
+                                    "      close_ratio_by_money: 0\n"
+                                    "      close_ratio_by_volume: 0.2\n"
+                                    "      close_today_ratio_by_money: 0\n"
+                                    "      close_today_ratio_by_volume: 0.3\n");
 
     ProductFeeBook book;
     std::string error;

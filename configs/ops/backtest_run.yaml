@@ -78,14 +78,14 @@ rollover_slippage_bps: 0
 emit_trades: true
 # emit_orders：是否输出 orders 明细；示例值：true
 # emit_orders：配置项说明；示例值：true
-emit_orders: true
+emit_orders: false
 # emit_position_history：是否输出持仓快照明细；示例值：false
 # emit_position_history：配置项说明；示例值：false
-emit_position_history: true
+emit_position_history: false
 # emit_indicator_trace：是否输出主策略指标追踪 parquet；示例值：false
 # emit_indicator_trace：配置项说明；示例值：false
 # emit_indicator_trace：说明：输出 schema 含 `timeframe_minutes` 列
-emit_indicator_trace: true
+emit_indicator_trace: false
 # indicator_trace_path：可选，主策略指标追踪文件名模板（仅取 basename 并落到本次 run_dir）；示例值：my_trace.parquet（留空用 indicator_trace.parquet）
 # indicator_trace_path：配置项说明；示例值：<空>
 indicator_trace_path: my_trace.parquet

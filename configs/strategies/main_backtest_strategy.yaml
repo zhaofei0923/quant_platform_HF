@@ -24,7 +24,7 @@ backtest:
   # backtest.start_date：配置项说明；示例值：20240101
   start_date: 20240101
   # backtest.end_date：配置项说明；示例值：20240131
-  end_date: 20240110
+  end_date: 20240131
   # backtest.product_config_path：配置项说明；示例值：./instrument_info.json
   product_config_path: ./instrument_info.json
 
@@ -64,7 +64,7 @@ composite:
       # composite.sub_strategies.enabled：配置项说明；示例值：false
       enabled: false
       # composite.sub_strategies.timeframe_minutes：配置项说明；示例值：5（默认 1）
-      timeframe_minutes: 5
+      timeframe_minutes: 1
       # composite.sub_strategies.type：配置项说明；示例值：TrendStrategy
       type: TrendStrategy
       # composite.sub_strategies.config_path：配置项说明；示例值：./sub/trend_1.yaml

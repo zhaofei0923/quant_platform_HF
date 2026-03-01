@@ -66,13 +66,14 @@ bool WriteTradesCsv(const BacktestCliResult& result, const std::filesystem::path
         return false;
     }
     out << "trade_id,order_id,symbol,exchange,side,offset,volume,price,timestamp_ns,commission,"
-           "slippage,realized_pnl,strategy_id,signal_type,regime_at_entry\n";
+           "timestamp_dt_utc,slippage,realized_pnl,strategy_id,signal_type,regime_at_entry\n";
     for (const TradeRecord& row : result.trades) {
         out << CsvEscape(row.trade_id) << ',' << CsvEscape(row.order_id) << ','
             << CsvEscape(row.symbol) << ',' << CsvEscape(row.exchange) << ','
             << CsvEscape(row.side) << ',' << CsvEscape(row.offset) << ',' << row.volume << ','
             << CsvDouble(row.price) << ',' << row.timestamp_ns << ',' << CsvDouble(row.commission)
-            << ',' << CsvDouble(row.slippage) << ',' << CsvDouble(row.realized_pnl) << ','
+            << ',' << CsvEscape(row.timestamp_dt_utc) << ',' << CsvDouble(row.slippage) << ','
+            << CsvDouble(row.realized_pnl) << ','
             << CsvEscape(row.strategy_id) << ',' << CsvEscape(row.signal_type) << ','
             << CsvEscape(row.regime_at_entry) << '\n';
     }
@@ -89,14 +90,16 @@ bool WriteOrdersCsv(const BacktestCliResult& result, const std::filesystem::path
         return false;
     }
     out << "order_id,client_order_id,symbol,type,side,offset,price,volume,status,filled_volume,"
-           "avg_fill_price,created_at_ns,last_update_ns,strategy_id,cancel_reason\n";
+           "avg_fill_price,created_at_ns,created_at_dt_utc,last_update_ns,last_update_dt_utc,"
+           "strategy_id,cancel_reason\n";
     for (const OrderRecord& row : result.orders) {
         out << CsvEscape(row.order_id) << ',' << CsvEscape(row.client_order_id) << ','
             << CsvEscape(row.symbol) << ',' << CsvEscape(row.type) << ',' << CsvEscape(row.side)
             << ',' << CsvEscape(row.offset) << ',' << CsvDouble(row.price) << ',' << row.volume
             << ',' << CsvEscape(row.status) << ',' << row.filled_volume << ','
             << CsvDouble(row.avg_fill_price) << ',' << row.created_at_ns << ','
-            << row.last_update_ns << ',' << CsvEscape(row.strategy_id) << ','
+            << CsvEscape(row.created_at_dt_utc) << ',' << row.last_update_ns << ','
+            << CsvEscape(row.last_update_dt_utc) << ',' << CsvEscape(row.strategy_id) << ','
             << CsvEscape(row.cancel_reason) << '\n';
     }
     return true;

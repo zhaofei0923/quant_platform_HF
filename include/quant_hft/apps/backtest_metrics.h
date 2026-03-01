@@ -18,6 +18,7 @@ struct TradeRecord {
     int volume{0};
     double price{0.0};
     EpochNanos timestamp_ns{0};
+    std::string timestamp_dt_utc;
     double commission{0.0};
     double slippage{0.0};
     double realized_pnl{0.0};
@@ -39,7 +40,9 @@ struct OrderRecord {
     int filled_volume{0};
     double avg_fill_price{0.0};
     EpochNanos created_at_ns{0};
+    std::string created_at_dt_utc;
     EpochNanos last_update_ns{0};
+    std::string last_update_dt_utc;
     std::string strategy_id;
     std::string cancel_reason;
 };

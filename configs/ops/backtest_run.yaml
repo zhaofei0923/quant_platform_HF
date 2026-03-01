@@ -78,7 +78,7 @@ rollover_slippage_bps: 0
 emit_trades: true
 # emit_orders：是否输出 orders 明细；示例值：true
 # emit_orders：配置项说明；示例值：true
-emit_orders: false
+emit_orders: true
 # emit_position_history：是否输出持仓快照明细；示例值：false
 # emit_position_history：配置项说明；示例值：false
 emit_position_history: false

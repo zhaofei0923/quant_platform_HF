@@ -488,6 +488,17 @@ inline std::string UpdateTimeFromEpochNs(EpochNanos ts_ns) {
     return oss.str();
 }
 
+inline std::string DateTimeFromEpochNs(EpochNanos ts_ns) {
+    if (ts_ns <= 0) {
+        return "";
+    }
+    const std::time_t seconds = static_cast<std::time_t>(ts_ns / kNanosPerSecond);
+    std::tm tm = *gmtime(&seconds);
+    std::ostringstream oss;
+    oss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
+    return oss.str();
+}
+
 inline std::string TickDateTimeFromTickFields(const std::string& trading_day,
                                               const std::string& update_time,
                                               int update_millisec, EpochNanos fallback_ts_ns) {
@@ -3245,13 +3256,34 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 close_order.offset = "Close";
                 close_order.price = close_price;
                 close_order.volume = previous_position;
-                close_order.status = "Filled";
-                close_order.filled_volume = previous_position;
-                close_order.avg_fill_price = close_price;
+                close_order.status = "Accepted";
+                close_order.filled_volume = 0;
+                close_order.avg_fill_price = 0.0;
                 close_order.created_at_ns = tick.ts_ns;
+                close_order.created_at_dt_utc = detail::DateTimeFromEpochNs(tick.ts_ns);
                 close_order.last_update_ns = tick.ts_ns;
+                close_order.last_update_dt_utc = detail::DateTimeFromEpochNs(tick.ts_ns);
                 close_order.strategy_id = "rollover";
                 orders.push_back(std::move(close_order));
+
+                OrderRecord close_order_filled;
+                close_order_filled.order_id = "rollover-order-" + std::to_string(order_seq);
+                close_order_filled.client_order_id = close_order_filled.order_id;
+                close_order_filled.symbol = previous_contract;
+                close_order_filled.type = "Market";
+                close_order_filled.side = SideToTitleString(close_side);
+                close_order_filled.offset = "Close";
+                close_order_filled.price = close_price;
+                close_order_filled.volume = previous_position;
+                close_order_filled.status = "Filled";
+                close_order_filled.filled_volume = previous_position;
+                close_order_filled.avg_fill_price = close_price;
+                close_order_filled.created_at_ns = tick.ts_ns;
+                close_order_filled.created_at_dt_utc = detail::DateTimeFromEpochNs(tick.ts_ns);
+                close_order_filled.last_update_ns = tick.ts_ns;
+                close_order_filled.last_update_dt_utc = detail::DateTimeFromEpochNs(tick.ts_ns);
+                close_order_filled.strategy_id = "rollover";
+                orders.push_back(std::move(close_order_filled));
 
                 OrderRecord open_order;
                 open_order.order_id = "rollover-order-" + std::to_string(++order_seq);
@@ -3262,13 +3294,34 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 open_order.offset = "Open";
                 open_order.price = open_price;
                 open_order.volume = previous_position;
-                open_order.status = "Filled";
-                open_order.filled_volume = previous_position;
-                open_order.avg_fill_price = open_price;
+                open_order.status = "Accepted";
+                open_order.filled_volume = 0;
+                open_order.avg_fill_price = 0.0;
                 open_order.created_at_ns = tick.ts_ns;
+                open_order.created_at_dt_utc = detail::DateTimeFromEpochNs(tick.ts_ns);
                 open_order.last_update_ns = tick.ts_ns;
+                open_order.last_update_dt_utc = detail::DateTimeFromEpochNs(tick.ts_ns);
                 open_order.strategy_id = "rollover";
                 orders.push_back(std::move(open_order));
+
+                OrderRecord open_order_filled;
+                open_order_filled.order_id = "rollover-order-" + std::to_string(order_seq);
+                open_order_filled.client_order_id = open_order_filled.order_id;
+                open_order_filled.symbol = current_contract;
+                open_order_filled.type = "Market";
+                open_order_filled.side = SideToTitleString(open_side);
+                open_order_filled.offset = "Open";
+                open_order_filled.price = open_price;
+                open_order_filled.volume = previous_position;
+                open_order_filled.status = "Filled";
+                open_order_filled.filled_volume = previous_position;
+                open_order_filled.avg_fill_price = open_price;
+                open_order_filled.created_at_ns = tick.ts_ns;
+                open_order_filled.created_at_dt_utc = detail::DateTimeFromEpochNs(tick.ts_ns);
+                open_order_filled.last_update_ns = tick.ts_ns;
+                open_order_filled.last_update_dt_utc = detail::DateTimeFromEpochNs(tick.ts_ns);
+                open_order_filled.strategy_id = "rollover";
+                orders.push_back(std::move(open_order_filled));
             }
 
             if (spec.emit_trades) {
@@ -3282,6 +3335,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 close_trade.volume = previous_position;
                 close_trade.price = close_price;
                 close_trade.timestamp_ns = tick.ts_ns;
+                close_trade.timestamp_dt_utc = detail::DateTimeFromEpochNs(tick.ts_ns);
                 close_trade.commission = 0.0;
                 close_trade.slippage = close_slip;
                 close_trade.realized_pnl = close_realized_pnl;
@@ -3300,6 +3354,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 open_trade.volume = previous_position;
                 open_trade.price = open_price;
                 open_trade.timestamp_ns = tick.ts_ns;
+                open_trade.timestamp_dt_utc = detail::DateTimeFromEpochNs(tick.ts_ns);
                 open_trade.commission = 0.0;
                 open_trade.slippage = open_slip;
                 open_trade.realized_pnl = open_realized_pnl;
@@ -3590,7 +3645,11 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                             rejected_order.filled_volume = 0;
                             rejected_order.avg_fill_price = 0.0;
                             rejected_order.created_at_ns = intent.ts_ns;
+                            rejected_order.created_at_dt_utc =
+                                detail::DateTimeFromEpochNs(intent.ts_ns);
                             rejected_order.last_update_ns = intent.ts_ns;
+                            rejected_order.last_update_dt_utc =
+                                detail::DateTimeFromEpochNs(intent.ts_ns);
                             rejected_order.strategy_id = intent.strategy_id;
                             rejected_order.cancel_reason = "margin_rejected";
                             orders.push_back(std::move(rejected_order));
@@ -3639,22 +3698,43 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 strategy->OnOrderEvent(filled_event);
 
                 if (spec.emit_orders) {
-                    OrderRecord order;
-                    order.order_id = order_id;
-                    order.client_order_id = client_order_id;
-                    order.symbol = intent.instrument_id;
-                    order.type = "Market";
-                    order.side = SideToTitleString(intent.side);
-                    order.offset = OffsetFlagToTitleString(intent.offset);
-                    order.price = fill_price;
-                    order.volume = exec_volume;
-                    order.status = "Filled";
-                    order.filled_volume = exec_volume;
-                    order.avg_fill_price = fill_price;
-                    order.created_at_ns = intent.ts_ns;
-                    order.last_update_ns = intent.ts_ns;
-                    order.strategy_id = intent.strategy_id;
-                    orders.push_back(std::move(order));
+                    OrderRecord accepted_order;
+                    accepted_order.order_id = order_id;
+                    accepted_order.client_order_id = client_order_id;
+                    accepted_order.symbol = intent.instrument_id;
+                    accepted_order.type = "Market";
+                    accepted_order.side = SideToTitleString(intent.side);
+                    accepted_order.offset = OffsetFlagToTitleString(intent.offset);
+                    accepted_order.price = fill_price;
+                    accepted_order.volume = exec_volume;
+                    accepted_order.status = "Accepted";
+                    accepted_order.filled_volume = 0;
+                    accepted_order.avg_fill_price = 0.0;
+                    accepted_order.created_at_ns = intent.ts_ns;
+                    accepted_order.created_at_dt_utc = detail::DateTimeFromEpochNs(intent.ts_ns);
+                    accepted_order.last_update_ns = intent.ts_ns;
+                    accepted_order.last_update_dt_utc = detail::DateTimeFromEpochNs(intent.ts_ns);
+                    accepted_order.strategy_id = intent.strategy_id;
+                    orders.push_back(std::move(accepted_order));
+
+                    OrderRecord filled_order;
+                    filled_order.order_id = order_id;
+                    filled_order.client_order_id = client_order_id;
+                    filled_order.symbol = intent.instrument_id;
+                    filled_order.type = "Market";
+                    filled_order.side = SideToTitleString(intent.side);
+                    filled_order.offset = OffsetFlagToTitleString(intent.offset);
+                    filled_order.price = fill_price;
+                    filled_order.volume = exec_volume;
+                    filled_order.status = "Filled";
+                    filled_order.filled_volume = exec_volume;
+                    filled_order.avg_fill_price = fill_price;
+                    filled_order.created_at_ns = intent.ts_ns;
+                    filled_order.created_at_dt_utc = detail::DateTimeFromEpochNs(intent.ts_ns);
+                    filled_order.last_update_ns = intent.ts_ns;
+                    filled_order.last_update_dt_utc = detail::DateTimeFromEpochNs(intent.ts_ns);
+                    filled_order.strategy_id = intent.strategy_id;
+                    orders.push_back(std::move(filled_order));
                 }
                 if (spec.emit_trades) {
                     double slippage = 0.0;
@@ -3673,6 +3753,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                     trade.volume = exec_volume;
                     trade.price = fill_price;
                     trade.timestamp_ns = intent.ts_ns;
+                    trade.timestamp_dt_utc = detail::DateTimeFromEpochNs(intent.ts_ns);
                     trade.commission = commission;
                     trade.slippage = slippage;
                     trade.realized_pnl = realized_delta;
@@ -4466,6 +4547,8 @@ inline std::string RenderBacktestJson(const BacktestCliResult& result) {
              << JsonEscape(row.side) << "\",\"offset\":\"" << JsonEscape(row.offset)
              << "\",\"volume\":" << row.volume << ",\"price\":"
              << detail::FormatDouble(row.price) << ",\"timestamp_ns\":" << row.timestamp_ns
+             << ",\"timestamp_dt_utc\":\"" << JsonEscape(row.timestamp_dt_utc)
+             << "\""
              << ",\"commission\":" << detail::FormatDouble(row.commission) << ",\"slippage\":"
              << detail::FormatDouble(row.slippage) << ",\"realized_pnl\":"
              << detail::FormatDouble(row.realized_pnl) << ",\"strategy_id\":\""
@@ -4488,7 +4571,11 @@ inline std::string RenderBacktestJson(const BacktestCliResult& result) {
              << ",\"status\":\"" << JsonEscape(row.status) << "\",\"filled_volume\":"
              << row.filled_volume << ",\"avg_fill_price\":"
              << detail::FormatDouble(row.avg_fill_price) << ",\"created_at_ns\":"
-             << row.created_at_ns << ",\"last_update_ns\":" << row.last_update_ns
+             << row.created_at_ns << ",\"created_at_dt_utc\":\""
+             << JsonEscape(row.created_at_dt_utc) << "\",\"last_update_ns\":"
+             << row.last_update_ns << ",\"last_update_dt_utc\":\""
+             << JsonEscape(row.last_update_dt_utc)
+             << "\""
              << ",\"strategy_id\":\"" << JsonEscape(row.strategy_id) << "\",\"cancel_reason\":\""
              << JsonEscape(row.cancel_reason) << "\"}";
     }

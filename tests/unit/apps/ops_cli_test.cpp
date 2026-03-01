@@ -519,11 +519,18 @@ TEST(OpsCli, BacktestCliExportsCsvArtifactsWithDetailFlags) {
     EXPECT_TRUE(std::filesystem::exists(output_csv_dir / "position_history.csv"));
 
     const std::string payload = ReadFile(output_json);
+    const std::string trades_csv = ReadFile(output_csv_dir / "trades.csv");
+    const std::string orders_csv = ReadFile(output_csv_dir / "orders.csv");
     EXPECT_NE(payload.find("\"hf_standard\""), std::string::npos);
     EXPECT_NE(payload.find("\"emit_position_history\": true"), std::string::npos);
     EXPECT_NE(payload.find("\"monte_carlo\""), std::string::npos);
     EXPECT_NE(payload.find("\"simulations\": 1000"), std::string::npos);
     EXPECT_NE(payload.find("\"factor_exposure\""), std::string::npos);
+    EXPECT_NE(payload.find("\"timestamp_dt_utc\""), std::string::npos);
+    EXPECT_NE(payload.find("\"created_at_dt_utc\""), std::string::npos);
+    EXPECT_NE(trades_csv.find("timestamp_dt_utc"), std::string::npos);
+    EXPECT_NE(orders_csv.find("created_at_dt_utc"), std::string::npos);
+    EXPECT_NE(orders_csv.find("last_update_dt_utc"), std::string::npos);
 }
 
 TEST(OpsCli, FactorEvalCliIncludesDetectorConfigInOutputJson) {

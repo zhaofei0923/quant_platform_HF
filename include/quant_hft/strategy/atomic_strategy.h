@@ -65,6 +65,12 @@ struct AtomicIndicatorSnapshot {
     std::optional<double> take_profit_price;
 };
 
+struct AtomicTickSnapshot {
+    std::string instrument_id;
+    EpochNanos ts_ns{0};
+    double last_price{0.0};
+};
+
 class IAtomicStrategy {
    public:
     virtual ~IAtomicStrategy() = default;
@@ -119,6 +125,13 @@ class IAtomicOrderAware {
    public:
     virtual ~IAtomicOrderAware() = default;
     virtual void OnOrderEvent(const OrderEvent& event, const AtomicStrategyContext& ctx) = 0;
+};
+
+class IAtomicBacktestTickAware {
+   public:
+    virtual ~IAtomicBacktestTickAware() = default;
+    virtual std::vector<SignalIntent> OnBacktestTick(const AtomicTickSnapshot& tick,
+                                                     const AtomicStrategyContext& ctx) = 0;
 };
 
 class IAtomicStateSerializable {

@@ -304,6 +304,9 @@
 - 参数合并顺序：`base params + overrides[run_mode].params`（后者覆盖前者）。
 - `entry_market_regimes` 仅影响 `kOpen`；`StopLoss/TakeProfit/Close/ForceClose` 不受该门控影响。
 - `timeframe_minutes` 默认为 `1`；必须是正整数；`CompositeStrategy` 仅在 `state.timeframe_minutes` 匹配时分发到对应子策略。
+- 子策略 `params` 支持额外的组合层控制字段：`allow_reverse_open`、`forbid_open_windows`、`force_close_windows`、`window_timezone`。
+- `forbid_open_windows/force_close_windows` 使用逗号分隔字符串，格式为 `HH:MM-HH:MM[,HH:MM-HH:MM...]`；支持跨夜区间；零长度区间会 fail-fast。
+- `force_close_windows` 当前只在 `backtest` 生效：窗口内禁止再开仓，并在持仓子策略进入窗口后的首个 tick 生成 `kForceClose`。
 
 升级后使用示例：
 
@@ -402,6 +405,10 @@ composite:
 | `params.kama_filter` | double | 否 | `0.5` | `>=0` | 趋势过滤阈值系数 | `0.5` |
 | `params.risk_per_trade_pct` | double | 否 | `0.01` | `(0,1]` | 单次风险资金比例 | `0.01` |
 | `params.default_volume` | int | 否 | `1` | `>0` | 默认开仓手数 | `1` |
+| `params.allow_reverse_open` | bool | 否 | `true` | `true/false` | 反向开仓开关；`false` 时遇到反向 `kOpen` 只忽略，不做先平后反开 | `true` |
+| `params.forbid_open_windows` | string | 否 | 空 | `HH:MM-HH:MM[,..]` | 禁止开仓时间窗口；按 `window_timezone` 解释 | `09:00-09:15,10:30-10:35` |
+| `params.force_close_windows` | string | 否 | 空 | `HH:MM-HH:MM[,..]` | 强制平仓时间窗口；窗口内同时禁止开仓；仅 `backtest` tick 级强平 | `14:55-15:00` |
+| `params.window_timezone` | string | 否 | `Asia/Shanghai` | `Asia/Shanghai/UTC` | 时间窗口时区 | `Asia/Shanghai` |
 | `params.stop_loss_mode` | string | 否 | `trailing_atr` | `trailing_atr/none` | 止损模型 | `trailing_atr` |
 | `params.stop_loss_atr_period` | int | 否 | `14` | `>0` | 止损 ATR 周期 | `14` |
 | `params.stop_loss_atr_multiplier` | double | 否 | `2.0` | `>0` | 止损 ATR 倍数 | `2.0` |
@@ -413,6 +420,7 @@ composite:
 
 - `contract_multiplier` 由 `product_config_path` 对应产品信息注入，不在子策略配置里维护。
 - 回测标的由主策略 `backtest.symbols` 控制，子策略默认按 `state.instrument_id` 工作。
+- 时间窗口参数属于组合层控制，不会传入 `KamaTrendStrategy` 内部指标计算；`force_close_windows` 仅在回测 replay 的 tick 循环生效。
 
 ## `configs/strategies/sub/trend_1.yaml`
 
@@ -430,6 +438,10 @@ composite:
 | `params.kama_filter` | double | 否 | `0.0` | `>=0` | 开仓阈值系数 | `0.0` |
 | `params.risk_per_trade_pct` | double | 否 | `0.01` | `(0,1]` | 单次风险资金比例 | `0.01` |
 | `params.default_volume` | int | 否 | `1` | `>0` | 默认开仓手数 | `1` |
+| `params.allow_reverse_open` | bool | 否 | `true` | `true/false` | 反向开仓开关；`false` 时反向 `kOpen` 不触发反手 | `true` |
+| `params.forbid_open_windows` | string | 否 | 空 | `HH:MM-HH:MM[,..]` | 禁止开仓时间窗口；按 `window_timezone` 解释 | `09:00-09:15,10:30-10:35` |
+| `params.force_close_windows` | string | 否 | 空 | `HH:MM-HH:MM[,..]` | 强制平仓时间窗口；窗口内同时禁止开仓；仅 `backtest` tick 级强平 | `14:55-15:00` |
+| `params.window_timezone` | string | 否 | `Asia/Shanghai` | `Asia/Shanghai/UTC` | 时间窗口时区 | `Asia/Shanghai` |
 | `params.stop_loss_mode` | string | 否 | `trailing_atr` | `trailing_atr/none` | 止损模型 | `trailing_atr` |
 | `params.stop_loss_atr_period` | int | 否 | `14` | `>0` | 止损 ATR 周期 | `14` |
 | `params.stop_loss_atr_multiplier` | double | 否 | `2.0` | `>0` | 止损 ATR 倍数 | `2.0` |
@@ -440,6 +452,7 @@ composite:
 说明：
 
 - 回测标的由主策略 `backtest.symbols` 控制，子策略默认按 `state.instrument_id` 工作。
+- 时间窗口参数属于组合层控制，不参与 `TrendStrategy` 自身指标计算；`force_close_windows` 仅在回测 replay 的 tick 循环生效。
 
 ## `configs/strategies/instrument_info.json`
 

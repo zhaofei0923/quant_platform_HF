@@ -72,6 +72,42 @@ TEST(BrokerTest, CommissionDeductedFromBalance) {
     EXPECT_LT(broker.GetAccountBalance(), 1000.0);
 }
 
+TEST(BrokerTest, CommissionUsesContractMultiplierNotional) {
+    BrokerConfig config;
+    config.initial_capital = 1000.0;
+    config.commission_rate = 0.001;
+    config.contract_multipliers["rb2405"] = 10.0;
+    SimulatedBroker broker(config);
+
+    broker.OnTick(BuildTick(99.0, 101.0));
+    broker.PlaceOrder(BuildIntent(Side::kBuy, OrderType::kMarket, 0.0, 1));
+
+    EXPECT_NEAR(broker.GetAccountBalance(), 1000.0 - 101.0 * 10.0 * 0.001, 1e-9);
+}
+
+TEST(BrokerTest, RealizedPnlUsesContractMultiplier) {
+    BrokerConfig config;
+    config.initial_capital = 1000.0;
+    config.partial_fill_enabled = false;
+    config.commission_rate = 0.0;
+    config.close_today_commission_rate = 0.0;
+    config.contract_multipliers["rb2405"] = 10.0;
+    SimulatedBroker broker(config);
+    std::vector<Trade> fills;
+    broker.SetFillCallback([&fills](const Trade& trade) { fills.push_back(trade); });
+
+    broker.OnTick(BuildTick(99.0, 101.0));
+    broker.PlaceOrder(BuildIntent(Side::kBuy, OrderType::kMarket, 0.0, 2));
+    EXPECT_DOUBLE_EQ(broker.GetAccountBalance(), 1000.0);
+
+    broker.OnTick(BuildTick(104.0, 106.0));
+    broker.PlaceOrder(BuildIntent(Side::kSell, OrderType::kMarket, 0.0, 2, OffsetFlag::kClose));
+
+    EXPECT_DOUBLE_EQ(broker.GetAccountBalance(), 1060.0);
+    ASSERT_EQ(fills.size(), 2U);
+    EXPECT_DOUBLE_EQ(fills.back().profit, 60.0);
+}
+
 TEST(BrokerTest, PartialFillLeavesPending) {
     BrokerConfig config;
     config.partial_fill_enabled = true;

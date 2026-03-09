@@ -12,7 +12,9 @@
 
 namespace quant_hft {
 
-class TrendStrategy final : public ISubStrategy, public IAtomicIndicatorTraceProvider {
+class TrendStrategy final : public ISubStrategy,
+                            public IAtomicBacktestTickAware,
+                            public IAtomicIndicatorTraceProvider {
    public:
     TrendStrategy() = default;
 
@@ -21,11 +23,16 @@ class TrendStrategy final : public ISubStrategy, public IAtomicIndicatorTracePro
     void Reset() override;
     std::vector<SignalIntent> OnState(const StateSnapshot7D& state,
                                       const AtomicStrategyContext& ctx) override;
+    std::vector<SignalIntent> OnBacktestTick(const AtomicTickSnapshot& tick,
+                                             const AtomicStrategyContext& ctx) override;
     std::optional<AtomicIndicatorSnapshot> IndicatorSnapshot() const override;
 
    private:
     int ComputeOrderVolume(const AtomicStrategyContext& ctx, const std::string& instrument_id,
                            double atr_value) const;
+    std::vector<SignalIntent> EvaluateRiskSignals(const AtomicStrategyContext& ctx,
+                                                  const std::string& instrument_id,
+                                                  double price, EpochNanos ts_ns) const;
     static std::string ExtractSymbolPrefixLower(const std::string& instrument_id);
     static std::string ToUpper(std::string text);
     static SignalIntent BuildCloseSignal(const std::string& strategy_id,

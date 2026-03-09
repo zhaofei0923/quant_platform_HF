@@ -22,6 +22,14 @@ StateSnapshot7D MakeBarState(const std::string& instrument, double high, double 
     return state;
 }
 
+AtomicTickSnapshot MakeTick(const std::string& instrument, double last_price, EpochNanos ts_ns = 0) {
+    AtomicTickSnapshot tick;
+    tick.instrument_id = instrument;
+    tick.last_price = last_price;
+    tick.ts_ns = ts_ns;
+    return tick;
+}
+
 AtomicStrategyContext MakeContext(const std::string& account_id) {
     AtomicStrategyContext ctx;
     ctx.account_id = account_id;
@@ -137,7 +145,7 @@ TEST(AtomicStrategiesTest, KamaTrendStrategySkipsOpenWhenRiskBudgetTooSmall) {
     EXPECT_TRUE(signals.empty());
 }
 
-TEST(AtomicStrategiesTest, KamaTrendStrategyTrailingStopOnlyTightensAndThenTriggers) {
+TEST(AtomicStrategiesTest, KamaTrendStrategyTrailingStopTightensOnBarsAndTriggersOnTick) {
     KamaTrendStrategy strategy;
     AtomicParams params = MakeKamaParams();
     params["take_profit_mode"] = "none";
@@ -145,6 +153,8 @@ TEST(AtomicStrategiesTest, KamaTrendStrategyTrailingStopOnlyTightensAndThenTrigg
 
     auto* provider = dynamic_cast<IAtomicIndicatorTraceProvider*>(&strategy);
     ASSERT_NE(provider, nullptr);
+    auto* tick_aware = dynamic_cast<IAtomicBacktestTickAware*>(&strategy);
+    ASSERT_NE(tick_aware, nullptr);
 
     AtomicStrategyContext ctx = MakeContext("acct");
     ctx.net_positions["IF2406"] = 1;
@@ -166,7 +176,7 @@ TEST(AtomicStrategiesTest, KamaTrendStrategyTrailingStopOnlyTightensAndThenTrigg
     EXPECT_DOUBLE_EQ(snapshot_after_pullback->stop_loss_price.value(), tightened_stop);
 
     const std::vector<SignalIntent> trigger =
-        strategy.OnState(MakeBarState("IF2406", 91.0, 89.0, 90.0, 5), ctx);
+        tick_aware->OnBacktestTick(MakeTick("IF2406", tightened_stop - 0.5, 5), ctx);
     ASSERT_EQ(trigger.size(), 1U);
     EXPECT_EQ(trigger.front().signal_type, SignalType::kStopLoss);
     EXPECT_EQ(trigger.front().side, Side::kSell);
@@ -174,9 +184,11 @@ TEST(AtomicStrategiesTest, KamaTrendStrategyTrailingStopOnlyTightensAndThenTrigg
     EXPECT_EQ(trigger.front().volume, 1);
 }
 
-TEST(AtomicStrategiesTest, TrendStrategyEmitsOpenAndTakeProfitSignals) {
+TEST(AtomicStrategiesTest, TrendStrategyEmitsOpenAndTakeProfitSignalsOnTick) {
     TrendStrategy strategy;
     strategy.Init(MakeTrendParams());
+    auto* tick_aware = dynamic_cast<IAtomicBacktestTickAware*>(&strategy);
+    ASSERT_NE(tick_aware, nullptr);
 
     AtomicStrategyContext ctx = MakeContext("acct");
     ctx.account_equity = 100000.0;
@@ -192,7 +204,7 @@ TEST(AtomicStrategiesTest, TrendStrategyEmitsOpenAndTakeProfitSignals) {
     FeedCloses(&strategy, "rb2405", &ctx, {104, 105});
 
     const std::vector<SignalIntent> take_profit_signals =
-        strategy.OnState(MakeBarState("rb2405", 108.0, 106.0, 107.0, 100), ctx);
+        tick_aware->OnBacktestTick(MakeTick("rb2405", 107.0, 100), ctx);
     ASSERT_EQ(take_profit_signals.size(), 1U);
     EXPECT_EQ(take_profit_signals.front().signal_type, SignalType::kTakeProfit);
     EXPECT_EQ(take_profit_signals.front().side, Side::kSell);
@@ -202,6 +214,62 @@ TEST(AtomicStrategiesTest, TrendStrategyEmitsOpenAndTakeProfitSignals) {
     const auto snapshot = provider->IndicatorSnapshot();
     ASSERT_TRUE(snapshot.has_value());
     EXPECT_TRUE(snapshot->take_profit_price.has_value());
+}
+
+TEST(AtomicStrategiesTest, KamaTrendStrategyEmitsReverseOpenWhenTrendFlipsWhileHoldingPosition) {
+    KamaTrendStrategy strategy;
+    AtomicParams params = MakeKamaParams();
+    params["stop_loss_mode"] = "none";
+    params["take_profit_mode"] = "none";
+    strategy.Init(params);
+
+    AtomicStrategyContext ctx = MakeContext("acct");
+    ctx.account_equity = 100000.0;
+    ctx.contract_multipliers["IF2406"] = 10.0;
+
+    const std::vector<SignalIntent> open_signals =
+        FeedCloses(&strategy, "IF2406", &ctx, {100, 101, 102, 103, 104, 105, 106, 107});
+    ASSERT_EQ(open_signals.size(), 1U);
+    EXPECT_EQ(open_signals.front().signal_type, SignalType::kOpen);
+    EXPECT_EQ(open_signals.front().side, Side::kBuy);
+
+    ctx.net_positions["IF2406"] = 1;
+    ctx.avg_open_prices["IF2406"] = 107.0;
+
+    const std::vector<SignalIntent> reverse_signals =
+        FeedCloses(&strategy, "IF2406", &ctx, {106, 105, 104, 103, 102, 101, 100, 99});
+    ASSERT_EQ(reverse_signals.size(), 1U);
+    EXPECT_EQ(reverse_signals.front().signal_type, SignalType::kOpen);
+    EXPECT_EQ(reverse_signals.front().side, Side::kSell);
+    EXPECT_EQ(reverse_signals.front().offset, OffsetFlag::kOpen);
+}
+
+TEST(AtomicStrategiesTest, TrendStrategyEmitsReverseOpenWhenTrendFlipsWhileHoldingPosition) {
+    TrendStrategy strategy;
+    AtomicParams params = MakeTrendParams();
+    params["stop_loss_mode"] = "none";
+    params["take_profit_mode"] = "none";
+    strategy.Init(params);
+
+    AtomicStrategyContext ctx = MakeContext("acct");
+    ctx.account_equity = 100000.0;
+    ctx.contract_multipliers["rb2405"] = 10.0;
+
+    const std::vector<SignalIntent> open_signals =
+        FeedCloses(&strategy, "rb2405", &ctx, {100, 101, 102, 103, 104});
+    ASSERT_EQ(open_signals.size(), 1U);
+    EXPECT_EQ(open_signals.front().signal_type, SignalType::kOpen);
+    EXPECT_EQ(open_signals.front().side, Side::kBuy);
+
+    ctx.net_positions["rb2405"] = 1;
+    ctx.avg_open_prices["rb2405"] = 104.0;
+
+    const std::vector<SignalIntent> reverse_signals =
+        FeedCloses(&strategy, "rb2405", &ctx, {103, 100, 97, 94, 91});
+    ASSERT_EQ(reverse_signals.size(), 1U);
+    EXPECT_EQ(reverse_signals.front().signal_type, SignalType::kOpen);
+    EXPECT_EQ(reverse_signals.front().side, Side::kSell);
+    EXPECT_EQ(reverse_signals.front().offset, OffsetFlag::kOpen);
 }
 
 }  // namespace quant_hft

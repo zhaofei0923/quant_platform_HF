@@ -64,7 +64,7 @@ composite:
       # composite.sub_strategies.enabled：配置项说明；示例值：false
       enabled: false
       # composite.sub_strategies.timeframe_minutes：配置项说明；示例值：5（默认 1）
-      timeframe_minutes: 1
+      timeframe_minutes: 5
       # composite.sub_strategies.type：配置项说明；示例值：TrendStrategy
       type: TrendStrategy
       # composite.sub_strategies.config_path：配置项说明；示例值：./sub/trend_1.yaml

@@ -10,7 +10,7 @@
   - 子策略周期路由（`timeframe_minutes`）
   - 开仓市场状态门控（`entry_market_regimes`，仅影响 `kOpen`）
   - 时间过滤器链（`ITimeFilterStrategy`）与风控策略链（`IRiskControlStrategy`）
-  - 信号合并与持仓归属/反手两步门控
+  - 信号合并与持仓归属/反手门控
   - 回测上下文注入（权益、合约乘数）
 - 默认仅允许 `run_type=backtest`；若配置 `enable_non_backtest: true`，才允许 `sim/live`。
 
@@ -151,7 +151,8 @@ params:
 
 - 优先级：`ForceClose > StopLoss > TakeProfit > Close > Open`
 - 同级 tie-break：`volume desc -> ts_ns desc -> trace_id asc`
-- 反手两步：先发平仓，仓位归零后的下一根 Bar 再发反向开仓。
+- 反手同轮：反向 `kOpen` 先参与优先级裁决；若对应的反手平仓胜出，则同一轮顺序发出 `Close -> Open`。
+- 粒度：开仓信号仍由 `OnState(bar)` 生成；回测 `deterministic_fills=true` 下，止损/止盈/时间强平会在 tick 路径优先检查。
 - 合并器当前实现：`kPriority`（可插拔，后续可扩展其它规则）。
 
 ## overrides 规则

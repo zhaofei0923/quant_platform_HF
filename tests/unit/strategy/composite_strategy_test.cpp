@@ -51,6 +51,7 @@ std::optional<double> ParseOptionalDouble(const AtomicParams& params, const std:
 }
 
 class ScriptedSubStrategy final : public ISubStrategy,
+                                 public IAtomicBacktestTickAware,
                                  public IAtomicOrderAware,
                                  public IAtomicIndicatorTraceProvider {
    public:
@@ -61,6 +62,9 @@ class ScriptedSubStrategy final : public ISubStrategy,
         emit_stop_loss_ = ParseBool(GetOrDefault(params, "emit_stop_loss", "0"));
         emit_take_profit_ = ParseBool(GetOrDefault(params, "emit_take_profit", "0"));
         emit_force_close_ = ParseBool(GetOrDefault(params, "emit_force_close", "0"));
+        emit_tick_stop_loss_ = ParseBool(GetOrDefault(params, "emit_tick_stop_loss", "0"));
+        emit_tick_take_profit_ = ParseBool(GetOrDefault(params, "emit_tick_take_profit", "0"));
+        max_open_emits_ = ParseInt(GetOrDefault(params, "max_open_emits", "-1"));
         volume_ = ParseInt(GetOrDefault(params, "volume", "1"));
         signal_ts_ns_ = std::stoll(GetOrDefault(params, "signal_ts_ns", "0"));
         trace_base_ = GetOrDefault(params, "trace", id_);
@@ -126,8 +130,38 @@ class ScriptedSubStrategy final : public ISubStrategy,
         if (emit_close_) {
             append_signal(SignalType::kClose, close_side_, OffsetFlag::kClose, "-close");
         }
-        if (emit_open_) {
+        if (emit_open_ && max_open_emits_ != 0) {
             append_signal(SignalType::kOpen, open_side_, OffsetFlag::kOpen, "-open");
+            if (max_open_emits_ > 0) {
+                --max_open_emits_;
+            }
+        }
+        return signals;
+    }
+
+    std::vector<SignalIntent> OnBacktestTick(const AtomicTickSnapshot& tick,
+                                             const AtomicStrategyContext& ctx) override {
+        (void)ctx;
+        std::vector<SignalIntent> signals;
+        auto append_signal = [&](SignalType type, Side side, OffsetFlag offset,
+                                 const std::string& suffix) {
+            SignalIntent signal;
+            signal.strategy_id = id_;
+            signal.instrument_id = tick.instrument_id;
+            signal.signal_type = type;
+            signal.side = side;
+            signal.offset = offset;
+            signal.volume = volume_;
+            signal.limit_price = tick.last_price;
+            signal.ts_ns = tick.ts_ns;
+            signal.trace_id = trace_base_ + suffix;
+            signals.push_back(signal);
+        };
+        if (emit_tick_stop_loss_) {
+            append_signal(SignalType::kStopLoss, close_side_, OffsetFlag::kClose, "-tick-stop");
+        }
+        if (emit_tick_take_profit_) {
+            append_signal(SignalType::kTakeProfit, close_side_, OffsetFlag::kClose, "-tick-take");
         }
         return signals;
     }
@@ -163,6 +197,9 @@ class ScriptedSubStrategy final : public ISubStrategy,
     bool emit_stop_loss_{false};
     bool emit_take_profit_{false};
     bool emit_force_close_{false};
+    bool emit_tick_stop_loss_{false};
+    bool emit_tick_take_profit_{false};
+    int max_open_emits_{-1};
     int volume_{1};
     EpochNanos signal_ts_ns_{0};
     std::string trace_base_{"trace"};
@@ -217,6 +254,17 @@ StateSnapshot7D MakeState(const std::string& instrument, EpochNanos ts_ns = 1,
     return state;
 }
 
+StateSnapshot7D MakeBarState(const std::string& instrument, double close, EpochNanos ts_ns,
+                             MarketRegime market_regime = MarketRegime::kUnknown,
+                             std::int32_t timeframe_minutes = 1) {
+    StateSnapshot7D state = MakeState(instrument, ts_ns, market_regime, timeframe_minutes);
+    state.bar_open = close;
+    state.bar_high = close + 1.0;
+    state.bar_low = close - 1.0;
+    state.bar_close = close;
+    return state;
+}
+
 StrategyContext MakeStrategyContext() {
     StrategyContext ctx;
     ctx.strategy_id = "composite";
@@ -227,7 +275,8 @@ StrategyContext MakeStrategyContext() {
 
 OrderEvent MakeOrderEvent(const std::string& strategy_id, const std::string& instrument_id,
                           Side side, OffsetFlag offset, std::int32_t filled_volume,
-                          double fill_price, const std::string& order_id) {
+                          double fill_price, const std::string& client_order_id,
+                          const std::string& exchange_order_id = "") {
     OrderEvent event;
     event.strategy_id = strategy_id;
     event.instrument_id = instrument_id;
@@ -235,8 +284,21 @@ OrderEvent MakeOrderEvent(const std::string& strategy_id, const std::string& ins
     event.offset = offset;
     event.filled_volume = filled_volume;
     event.avg_fill_price = fill_price;
-    event.client_order_id = order_id;
+    event.client_order_id = client_order_id;
+    event.exchange_order_id = exchange_order_id;
     return event;
+}
+
+AtomicParams MakeTrendParams() {
+    return {{"id", "trend_1"},
+            {"er_period", "2"},
+            {"fast_period", "2"},
+            {"slow_period", "4"},
+            {"kama_filter", "0.0"},
+            {"risk_per_trade_pct", "0.01"},
+            {"default_volume", "1"},
+            {"stop_loss_mode", "none"},
+            {"take_profit_mode", "none"}};
 }
 
 }  // namespace
@@ -338,7 +400,7 @@ TEST(CompositeStrategyTest, MarketRegimeFilterAppliesOnlyToOpenSignals) {
     EXPECT_EQ(signals.front().offset, OffsetFlag::kClose);
 }
 
-TEST(CompositeStrategyTest, KeepsOwnershipGateAndReverseTwoStep) {
+TEST(CompositeStrategyTest, EmitsSameCycleCloseAndReverseOpenForOwnedPosition) {
     const std::string sell_type = UniqueType("sell");
     RegisterScriptedType(sell_type);
 
@@ -353,18 +415,188 @@ TEST(CompositeStrategyTest, KeepsOwnershipGateAndReverseTwoStep) {
                                          "owner-open"));
 
     const std::vector<SignalIntent> first = strategy.OnState(MakeState("rb2405", 30));
-    ASSERT_EQ(first.size(), 1U);
+    ASSERT_EQ(first.size(), 2U);
     EXPECT_EQ(first.front().signal_type, SignalType::kClose);
     EXPECT_EQ(first.front().offset, OffsetFlag::kClose);
     EXPECT_EQ(first.front().side, Side::kSell);
+    EXPECT_EQ(first[1].signal_type, SignalType::kOpen);
+    EXPECT_EQ(first[1].offset, OffsetFlag::kOpen);
+    EXPECT_EQ(first[1].side, Side::kSell);
 
     strategy.OnOrderEvent(MakeOrderEvent("s1", "rb2405", Side::kSell, OffsetFlag::kClose, 1, 99.0,
                                          "owner-close"));
+    strategy.OnOrderEvent(MakeOrderEvent("s1", "rb2405", Side::kSell, OffsetFlag::kOpen, 1, 99.0,
+                                         "reverse-open"));
+
     const std::vector<SignalIntent> second = strategy.OnState(MakeState("rb2405", 31));
-    ASSERT_EQ(second.size(), 1U);
-    EXPECT_EQ(second.front().signal_type, SignalType::kOpen);
-    EXPECT_EQ(second.front().offset, OffsetFlag::kOpen);
-    EXPECT_EQ(second.front().side, Side::kSell);
+    EXPECT_TRUE(second.empty());
+}
+
+TEST(CompositeStrategyTest, ReverseOpenCanBeDisabledPerSubStrategy) {
+    const std::string sell_type = UniqueType("sell_no_reverse");
+    RegisterScriptedType(sell_type);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {MakeSubStrategy(
+        "s1", sell_type,
+        {{"id", "s1"},
+         {"emit_open", "1"},
+         {"max_open_emits", "1"},
+         {"open_side", "sell"},
+         {"allow_reverse_open", "false"},
+         {"volume", "1"}})};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+    strategy.OnOrderEvent(MakeOrderEvent("s1", "rb2405", Side::kBuy, OffsetFlag::kOpen, 1, 100.0,
+                                         "owner-open"));
+
+    const std::vector<SignalIntent> first = strategy.OnState(MakeState("rb2405", 30));
+    EXPECT_TRUE(first.empty());
+
+    strategy.OnOrderEvent(MakeOrderEvent("s1", "rb2405", Side::kSell, OffsetFlag::kClose, 1, 99.0,
+                                         "manual-close"));
+    const std::vector<SignalIntent> second = strategy.OnState(MakeState("rb2405", 31));
+    EXPECT_TRUE(second.empty());
+}
+
+TEST(CompositeStrategyTest, RepeatedReverseCloseTraceUsesUniqueExchangeOrderIdForPositionSync) {
+    const std::string sell_type = UniqueType("reverse_close_order_identity");
+    RegisterScriptedType(sell_type);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {MakeSubStrategy(
+        "s1", sell_type,
+        {{"id", "s1"}, {"emit_open", "1"}, {"open_side", "sell"}, {"volume", "8"}})};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+
+    strategy.OnOrderEvent(MakeOrderEvent("s1", "rb2405", Side::kBuy, OffsetFlag::kOpen, 7, 100.0,
+                                         "buy-open-1", "fill-1"));
+    strategy.OnOrderEvent(MakeOrderEvent("s1", "rb2405", Side::kSell, OffsetFlag::kClose, 7, 99.0,
+                                         "shared-reverse-close-trace", "fill-2"));
+    strategy.OnOrderEvent(MakeOrderEvent("s1", "rb2405", Side::kSell, OffsetFlag::kOpen, 8, 99.0,
+                                         "sell-open-1", "fill-3"));
+    strategy.OnOrderEvent(MakeOrderEvent("s1", "rb2405", Side::kBuy, OffsetFlag::kClose, 8, 98.0,
+                                         "shared-reverse-close-trace", "fill-4"));
+    strategy.OnOrderEvent(MakeOrderEvent("s1", "rb2405", Side::kBuy, OffsetFlag::kOpen, 8, 98.0,
+                                         "buy-open-2", "fill-5"));
+
+    const std::vector<SignalIntent> signals = strategy.OnState(MakeState("rb2405", 32));
+    ASSERT_EQ(signals.size(), 2U);
+    EXPECT_EQ(signals.front().signal_type, SignalType::kClose);
+    EXPECT_EQ(signals.front().offset, OffsetFlag::kClose);
+    EXPECT_EQ(signals.front().side, Side::kSell);
+    EXPECT_EQ(signals.front().volume, 8);
+    EXPECT_EQ(signals[1].signal_type, SignalType::kOpen);
+    EXPECT_EQ(signals[1].offset, OffsetFlag::kOpen);
+    EXPECT_EQ(signals[1].side, Side::kSell);
+    EXPECT_EQ(signals[1].volume, 8);
+}
+
+TEST(CompositeStrategyTest, ReverseOpenDoesNotBypassHigherPriorityCloseSignals) {
+    const std::string stop_and_sell_type = UniqueType("stop_and_sell");
+    RegisterScriptedType(stop_and_sell_type);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {MakeSubStrategy(
+        "s1", stop_and_sell_type,
+        {{"id", "s1"},
+         {"emit_open", "1"},
+         {"emit_stop_loss", "1"},
+         {"open_side", "sell"},
+         {"close_side", "sell"},
+         {"volume", "1"}})};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+    strategy.OnOrderEvent(MakeOrderEvent("s1", "rb2405", Side::kBuy, OffsetFlag::kOpen, 1, 100.0,
+                                         "owner-open"));
+
+    const std::vector<SignalIntent> signals = strategy.OnState(MakeState("rb2405", 30));
+    ASSERT_EQ(signals.size(), 1U);
+    EXPECT_EQ(signals.front().signal_type, SignalType::kStopLoss);
+    EXPECT_EQ(signals.front().offset, OffsetFlag::kClose);
+    EXPECT_EQ(signals.front().side, Side::kSell);
+}
+
+TEST(CompositeStrategyTest, BuiltinTrendStrategyReverseOpenHonorsAllowReverseSetting) {
+    auto run_until_reverse = [](bool allow_reverse_open) {
+        CompositeStrategyDefinition definition;
+        definition.run_type = "backtest";
+        AtomicParams params = MakeTrendParams();
+        params["allow_reverse_open"] = allow_reverse_open ? "true" : "false";
+        definition.sub_strategies = {MakeSubStrategy("trend_1", "TrendStrategy", params)};
+
+        CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+        StrategyContext ctx = MakeStrategyContext();
+        ctx.metadata["run_type"] = "backtest";
+        strategy.Initialize(ctx);
+        strategy.SetBacktestAccountSnapshot(100000.0, 0.0);
+        strategy.SetBacktestContractMultiplier("rb2405", 10.0);
+
+        std::vector<SignalIntent> open_signals;
+        const std::vector<double> rising = {100, 101, 102, 103, 104};
+        for (std::size_t i = 0; i < rising.size(); ++i) {
+            open_signals = strategy.OnState(
+                MakeBarState("rb2405", rising[i], static_cast<EpochNanos>(i + 1)));
+        }
+        EXPECT_EQ(open_signals.size(), 1U);
+        EXPECT_EQ(open_signals.front().signal_type, SignalType::kOpen);
+        EXPECT_EQ(open_signals.front().side, Side::kBuy);
+
+        strategy.OnOrderEvent(MakeOrderEvent("trend_1", "rb2405", Side::kBuy, OffsetFlag::kOpen,
+                                             1, 104.0, "open-fill"));
+
+        std::vector<SignalIntent> reverse_signals;
+        const std::vector<double> falling = {103, 100, 97, 94, 91};
+        for (std::size_t i = 0; i < falling.size(); ++i) {
+            reverse_signals = strategy.OnState(
+                MakeBarState("rb2405", falling[i], static_cast<EpochNanos>(100 + i)));
+        }
+        return reverse_signals;
+    };
+
+    const std::vector<SignalIntent> disabled_signals = run_until_reverse(false);
+    EXPECT_TRUE(disabled_signals.empty());
+
+    const std::vector<SignalIntent> enabled_signals = run_until_reverse(true);
+    ASSERT_EQ(enabled_signals.size(), 2U);
+    EXPECT_EQ(enabled_signals.front().signal_type, SignalType::kClose);
+    EXPECT_EQ(enabled_signals.front().offset, OffsetFlag::kClose);
+    EXPECT_EQ(enabled_signals.front().side, Side::kSell);
+    EXPECT_EQ(enabled_signals[1].signal_type, SignalType::kOpen);
+    EXPECT_EQ(enabled_signals[1].offset, OffsetFlag::kOpen);
+    EXPECT_EQ(enabled_signals[1].side, Side::kSell);
+}
+
+TEST(CompositeStrategyTest, TickAwareSubStrategySignalsExitThroughCompositeBacktestTick) {
+    const std::string tick_type = UniqueType("tick_exit");
+    RegisterScriptedType(tick_type);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {MakeSubStrategy("tick", tick_type,
+                                                 {{"id", "tick"},
+                                                  {"emit_tick_take_profit", "1"},
+                                                  {"volume", "1"}})};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+    strategy.OnOrderEvent(MakeOrderEvent("tick", "rb2405", Side::kBuy, OffsetFlag::kOpen, 1, 100.0,
+                                         "tick-open"));
+
+    const std::vector<SignalIntent> tick_signals =
+        strategy.OnBacktestTick("rb2405", 1000, 105.0);
+    ASSERT_EQ(tick_signals.size(), 1U);
+    EXPECT_EQ(tick_signals.front().strategy_id, "tick");
+    EXPECT_EQ(tick_signals.front().signal_type, SignalType::kTakeProfit);
+    EXPECT_EQ(tick_signals.front().offset, OffsetFlag::kClose);
+    EXPECT_EQ(tick_signals.front().side, Side::kSell);
 }
 
 TEST(CompositeStrategyTest, MergesByPriorityThenVolumeThenTimestampThenTraceId) {
@@ -484,6 +716,81 @@ TEST(CompositeStrategyTest, TimeFilterStrategiesCanBlockOpenSignals) {
 
     const std::vector<SignalIntent> blocked = strategy.OnState(MakeState("rb2405", 0));
     EXPECT_TRUE(blocked.empty());
+}
+
+TEST(CompositeStrategyTest, SubStrategyForbidOpenWindowsBlockOnlyMatchingStrategy) {
+    const std::string blocked_type = UniqueType("blocked_window");
+    const std::string allowed_type = UniqueType("allowed_window");
+    RegisterScriptedType(blocked_type);
+    RegisterScriptedType(allowed_type);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {
+        MakeSubStrategy("blocked", blocked_type,
+                        {{"id", "blocked"},
+                         {"emit_open", "1"},
+                         {"trace", "a"},
+                         {"forbid_open_windows", "00:00-01:00"},
+                         {"window_timezone", "UTC"}}),
+        MakeSubStrategy("allowed", allowed_type,
+                        {{"id", "allowed"}, {"emit_open", "1"}, {"trace", "z"}}),
+    };
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+
+    const EpochNanos blocked_ts_ns = 30LL * 60LL * 1'000'000'000LL;
+    const std::vector<SignalIntent> signals = strategy.OnState(MakeState("rb2405", blocked_ts_ns));
+    ASSERT_EQ(signals.size(), 1U);
+    EXPECT_EQ(signals.front().strategy_id, "allowed");
+    EXPECT_EQ(signals.front().signal_type, SignalType::kOpen);
+}
+
+TEST(CompositeStrategyTest, ForceCloseWindowsAlsoBlockOpeningSignals) {
+    const std::string open_type = UniqueType("force_close_window");
+    RegisterScriptedType(open_type);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {MakeSubStrategy("open", open_type,
+                                                 {{"id", "open"},
+                                                  {"emit_open", "1"},
+                                                  {"force_close_windows", "23:00-01:00"},
+                                                  {"window_timezone", "UTC"}})};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+
+    const EpochNanos inside_window_ts_ns = 30LL * 60LL * 1'000'000'000LL;
+    const std::vector<SignalIntent> blocked =
+        strategy.OnState(MakeState("rb2405", inside_window_ts_ns));
+    EXPECT_TRUE(blocked.empty());
+
+    const EpochNanos outside_window_ts_ns = 2LL * 60LL * 60LL * 1'000'000'000LL;
+    const std::vector<SignalIntent> allowed =
+        strategy.OnState(MakeState("rb2405", outside_window_ts_ns));
+    ASSERT_EQ(allowed.size(), 1U);
+    EXPECT_EQ(allowed.front().strategy_id, "open");
+    EXPECT_EQ(allowed.front().signal_type, SignalType::kOpen);
+}
+
+TEST(CompositeStrategyTest, RejectsInvalidSubStrategyTimeWindows) {
+    const std::string open_type = UniqueType("invalid_window");
+    RegisterScriptedType(open_type);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {
+        MakeSubStrategy("open", open_type,
+                        {{"id", "open"},
+                         {"emit_open", "1"},
+                         {"forbid_open_windows", "10:00-10:00"},
+                         {"window_timezone", "UTC"}}),
+    };
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    EXPECT_THROW(strategy.Initialize(MakeStrategyContext()), std::runtime_error);
 }
 
 TEST(CompositeStrategyTest, TimeFilterAppliesOnlyToMatchingTimeframe) {

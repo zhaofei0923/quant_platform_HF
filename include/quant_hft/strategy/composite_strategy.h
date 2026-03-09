@@ -71,12 +71,25 @@ class CompositeStrategy : public ILiveStrategy {
     std::vector<CompositeAtomicTraceRow> CollectAtomicIndicatorTrace() const;
     void SetBacktestAccountSnapshot(double equity, double pnl_after_cost);
     void SetBacktestContractMultiplier(const std::string& instrument_id, double multiplier);
+    std::vector<SignalIntent> OnBacktestTick(const std::string& instrument_id, EpochNanos now_ns,
+                                             double last_price);
 
    private:
+    struct TimeWindow {
+        std::int32_t start_minute{0};
+        std::int32_t end_minute{0};
+    };
+
     struct SubStrategySlot {
+        std::string strategy_id;
         ISubStrategy* strategy{nullptr};
+        IAtomicBacktestTickAware* backtest_tick_aware{nullptr};
         std::int32_t timeframe_minutes{1};
         std::vector<MarketRegime> entry_market_regimes;
+        bool allow_reverse_open{true};
+        std::int32_t timezone_offset_hours{8};
+        std::vector<TimeWindow> forbid_open_windows;
+        std::vector<TimeWindow> force_close_windows;
     };
 
     struct TimeFilterSlot {
@@ -95,17 +108,28 @@ class CompositeStrategy : public ILiveStrategy {
         IAtomicIndicatorTraceProvider* provider{nullptr};
     };
 
+    struct OpeningGateResult {
+        std::vector<SignalIntent> immediate_open_signals;
+        std::vector<SignalIntent> reverse_close_signals;
+        std::unordered_map<std::string, SignalIntent> reverse_open_by_close_trace;
+    };
+
     bool IsOpenSignalAllowedByRegime(const SubStrategySlot& slot, MarketRegime regime) const;
     bool AllowOpeningByTimeFilters(EpochNanos now_ns, std::int32_t timeframe_minutes);
+    bool IsOpenSignalBlockedByStrategyWindows(const SubStrategySlot& slot, EpochNanos now_ns) const;
     std::vector<SignalIntent> ApplyNonOpenSignalGate(const std::vector<SignalIntent>& signals);
-    std::vector<SignalIntent> ApplyOpeningGate(const std::vector<SignalIntent>& opening_signals,
-                                               const StateSnapshot7D& state);
+    OpeningGateResult ApplyOpeningGate(const std::vector<SignalIntent>& opening_signals,
+                                       const StateSnapshot7D& state);
     std::vector<SignalIntent> MergeSignals(const std::vector<SignalIntent>& signals) const;
     static AtomicParams MergeParamsForRunMode(const SubStrategyDefinition& definition,
                                               RunMode run_mode);
     static bool IsValidRunType(const std::string& run_type);
     void LoadDefinitionFromContext();
     void BuildAtomicStrategies();
+    const SubStrategySlot* FindSubStrategySlot(const std::string& strategy_id) const;
+    bool FindMatchingWindow(const std::vector<TimeWindow>& windows, EpochNanos now_ns,
+                            std::int32_t timezone_offset_hours,
+                            std::string* window_key = nullptr) const;
 
     StrategyContext strategy_context_;
     CompositeStrategyDefinition definition_;
@@ -120,9 +144,10 @@ class CompositeStrategy : public ILiveStrategy {
     std::vector<RiskControlSlot> risk_control_strategies_;
     std::vector<IAtomicOrderAware*> order_aware_strategies_;
     std::vector<AtomicTraceSlot> trace_providers_;
+    std::unordered_map<std::string, std::size_t> sub_strategy_slot_index_by_id_;
     std::unordered_map<std::string, std::int32_t> last_filled_volume_by_order_;
     std::unordered_map<std::string, std::string> position_owner_by_instrument_;
-    std::unordered_map<std::string, SignalIntent> pending_reverse_open_by_instrument_;
+    std::unordered_map<std::string, std::string> active_force_close_window_by_instrument_;
 };
 
 bool RegisterCompositeStrategy(std::string* error = nullptr);

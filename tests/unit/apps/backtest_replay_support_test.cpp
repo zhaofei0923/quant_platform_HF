@@ -2,12 +2,14 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <string>
 #include <system_error>
 #include <vector>
 
@@ -16,6 +18,8 @@
 #include <arrow/io/file.h>
 #include <parquet/arrow/reader.h>
 #endif
+
+#include "quant_hft/strategy/atomic_factory.h"
 
 namespace quant_hft::apps {
 namespace {
@@ -198,6 +202,117 @@ std::filesystem::path WriteTempCompositeConfig(int volume = 1, int timeframe_min
     return path;
 }
 
+class AlwaysOpenReplayStrategy final : public ISubStrategy {
+   public:
+    void Init(const AtomicParams& params) override {
+        const auto id_it = params.find("id");
+        if (id_it != params.end() && !id_it->second.empty()) {
+            id_ = id_it->second;
+        }
+        const auto volume_it = params.find("volume");
+        if (volume_it != params.end() && !volume_it->second.empty()) {
+            volume_ = std::stoi(volume_it->second);
+        }
+        const auto side_it = params.find("open_side");
+        if (side_it != params.end() && side_it->second == "sell") {
+            side_ = Side::kSell;
+        }
+    }
+
+    std::string GetId() const override { return id_; }
+
+    void Reset() override {}
+
+    std::vector<SignalIntent> OnState(const StateSnapshot7D& state,
+                                      const AtomicStrategyContext& ctx) override {
+        (void)ctx;
+        SignalIntent signal;
+        signal.strategy_id = id_;
+        signal.instrument_id = state.instrument_id;
+        signal.signal_type = SignalType::kOpen;
+        signal.side = side_;
+        signal.offset = OffsetFlag::kOpen;
+        signal.volume = volume_;
+        signal.limit_price = state.bar_close;
+        signal.ts_ns = state.ts_ns;
+        signal.trace_id = id_ + "-open";
+        return {signal};
+    }
+
+   private:
+    std::string id_{"always_open"};
+    std::int32_t volume_{1};
+    Side side_{Side::kBuy};
+};
+
+std::string UniqueAtomicType(const std::string& stem) {
+    static std::atomic<int> seq{0};
+    return "backtest_replay_support_test_" + stem + "_" + std::to_string(seq.fetch_add(1));
+}
+
+void RegisterAlwaysOpenReplayType(const std::string& type) {
+    AtomicFactory& factory = AtomicFactory::Instance();
+    if (factory.Has(type)) {
+        return;
+    }
+    std::string error;
+    ASSERT_TRUE(factory.Register(type, []() { return std::make_unique<AlwaysOpenReplayStrategy>(); },
+                                 &error))
+        << error;
+}
+
+std::filesystem::path WriteForceCloseWindowCompositeConfig(const std::string& strategy_type,
+                                                           const std::string& force_close_windows) {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto path =
+        std::filesystem::temp_directory_path() /
+        ("quant_hft_force_close_composite_test_" + std::to_string(stamp) + ".yaml");
+    std::ofstream out(path);
+    out << "composite:\n";
+    out << "  merge_rule: kPriority\n";
+    out << "  sub_strategies:\n";
+    out << "    - id: always_open\n";
+    out << "      enabled: true\n";
+    out << "      timeframe_minutes: 1\n";
+    out << "      type: " << strategy_type << "\n";
+    out << "      params:\n";
+    out << "        id: always_open\n";
+    out << "        volume: 1\n";
+    out << "        force_close_windows: \"" << force_close_windows << "\"\n";
+    out << "        window_timezone: UTC\n";
+    out.close();
+    return path;
+}
+
+std::filesystem::path WriteForceCloseWindowReplayCsv(const std::string& stem) {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto path =
+        std::filesystem::temp_directory_path() / (stem + "_" + std::to_string(stamp) + ".csv");
+    std::ofstream out(path);
+    out << "InstrumentID,ts_ns,LastPrice,Volume,BidPrice1,BidVolume1,AskPrice1,AskVolume1\n";
+    const std::vector<std::pair<std::string, double>> ticks = {
+        {"09:00:00", 100.0},
+        {"09:00:30", 101.0},
+        {"09:01:05", 102.0},
+        {"09:01:30", 103.0},
+        {"09:02:05", 104.0},
+        {"09:02:30", 105.0},
+        {"09:03:05", 106.0},
+        {"09:03:30", 107.0},
+        {"09:04:05", 108.0},
+        {"09:04:30", 109.0},
+    };
+    std::int64_t volume = 100;
+    for (const auto& [update_time, last_price] : ticks) {
+        const EpochNanos ts_ns = detail::ToEpochNs("20240103", update_time, 0);
+        out << "rb2405," << ts_ns << "," << last_price << "," << volume << "," << (last_price - 1.0)
+            << ",20," << (last_price + 1.0) << ",18\n";
+        ++volume;
+    }
+    out.close();
+    return path;
+}
+
 std::filesystem::path WriteTempMainStrategyConfig(const std::filesystem::path& composite_path,
                                                   const std::string& run_type = "backtest") {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
@@ -327,6 +442,22 @@ TEST(BacktestReplaySupportTest, BuildStateSnapshotFromBarUpdatesMarketRegimeWhen
     }
 
     EXPECT_EQ(state.market_regime, MarketRegime::kStrongTrend);
+}
+
+TEST(BacktestReplaySupportTest, PositionPnlUsesContractMultiplier) {
+    PositionState state;
+
+    ApplyTrade(&state, Side::kBuy, 2, 100.0, 10.0);
+    EXPECT_EQ(state.net_position, 2);
+    EXPECT_DOUBLE_EQ(state.avg_open_price, 100.0);
+    EXPECT_DOUBLE_EQ(state.realized_pnl, 0.0);
+
+    ApplyTrade(&state, Side::kSell, 1, 103.0, 10.0);
+    EXPECT_EQ(state.net_position, 1);
+    EXPECT_DOUBLE_EQ(state.avg_open_price, 100.0);
+    EXPECT_DOUBLE_EQ(state.realized_pnl, 30.0);
+    EXPECT_DOUBLE_EQ(ComputeUnrealized(state.net_position, state.avg_open_price, 104.0, 10.0),
+                     40.0);
 }
 
 TEST(BacktestReplaySupportTest, SelectParquetPartitionsForSymbolsSupportsProductAndInstrument) {
@@ -1060,6 +1191,105 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecDeterministicFillFeedsOrderEventT
         EXPECT_TRUE(std::isfinite(row.exposure));
         EXPECT_TRUE(std::isfinite(row.t_stat));
     }
+
+    std::error_code ec;
+    std::filesystem::remove(csv_path, ec);
+    std::filesystem::remove(composite_path, ec);
+}
+
+TEST(BacktestReplaySupportTest, RunBacktestSpecForceCloseWindowUsesFirstEligibleTickAndBlocksReopen) {
+    const std::string strategy_type = UniqueAtomicType("always_open_force_close");
+    RegisterAlwaysOpenReplayType(strategy_type);
+    const std::filesystem::path csv_path =
+        WriteForceCloseWindowReplayCsv("quant_hft_force_close_window");
+    const std::filesystem::path composite_path =
+        WriteForceCloseWindowCompositeConfig(strategy_type, "09:01-09:04");
+
+    BacktestCliSpec spec;
+    spec.engine_mode = "csv";
+    spec.csv_path = csv_path.string();
+    spec.run_id = "force-close-window-test";
+    spec.strategy_factory = "composite";
+    spec.strategy_composite_config = composite_path.string();
+
+    BacktestCliResult result;
+    std::string error;
+    ASSERT_TRUE(RunBacktestSpec(spec, &result, &error)) << error;
+    ASSERT_TRUE(result.has_deterministic);
+
+    const EpochNanos expected_force_close_ts = detail::ToEpochNs("20240103", "09:01:30", 0);
+    const EpochNanos window_end_ts = detail::ToEpochNs("20240103", "09:04:00", 0);
+
+    std::size_t force_close_count = 0;
+    bool saw_initial_open = false;
+    for (const TradeRecord& trade : result.trades) {
+        if (trade.signal_type == "kOpen" &&
+            trade.timestamp_ns == detail::ToEpochNs("20240103", "09:00:30", 0)) {
+            saw_initial_open = true;
+        }
+        if (trade.signal_type == "kForceClose") {
+            ++force_close_count;
+            EXPECT_EQ(trade.timestamp_ns, expected_force_close_ts);
+            EXPECT_DOUBLE_EQ(trade.price, 103.0);
+            EXPECT_EQ(trade.side, "Sell");
+            EXPECT_EQ(trade.offset, "Close");
+        }
+        if (trade.signal_type == "kOpen" && trade.timestamp_ns > expected_force_close_ts &&
+            trade.timestamp_ns < window_end_ts) {
+            ADD_FAILURE() << "unexpected reopen inside force close window at "
+                          << trade.timestamp_ns;
+        }
+    }
+
+    EXPECT_TRUE(saw_initial_open);
+    EXPECT_EQ(force_close_count, 1U);
+
+    std::error_code ec;
+    std::filesystem::remove(csv_path, ec);
+    std::filesystem::remove(composite_path, ec);
+}
+
+TEST(BacktestReplaySupportTest, RunBacktestSpecAssignsMonotonicFillAndOrderSequences) {
+    const std::string strategy_type = UniqueAtomicType("always_open_fill_seq");
+    RegisterAlwaysOpenReplayType(strategy_type);
+    const std::filesystem::path csv_path =
+        WriteForceCloseWindowReplayCsv("quant_hft_fill_order_sequence");
+    const std::filesystem::path composite_path =
+        WriteForceCloseWindowCompositeConfig(strategy_type, "09:01-09:04");
+
+    BacktestCliSpec spec;
+    spec.engine_mode = "csv";
+    spec.csv_path = csv_path.string();
+    spec.run_id = "fill-order-sequence-test";
+    spec.strategy_factory = "composite";
+    spec.strategy_composite_config = composite_path.string();
+
+    BacktestCliResult result;
+    std::string error;
+    ASSERT_TRUE(RunBacktestSpec(spec, &result, &error)) << error;
+    ASSERT_GE(result.orders.size(), 4U);
+    ASSERT_GE(result.trades.size(), 2U);
+
+    for (std::size_t i = 0; i < result.orders.size(); ++i) {
+        EXPECT_EQ(result.orders[i].order_seq, static_cast<std::int64_t>(i + 1))
+            << "order index=" << i;
+    }
+    for (std::size_t i = 0; i < result.trades.size(); ++i) {
+        EXPECT_EQ(result.trades[i].fill_seq, static_cast<std::int64_t>(i + 1))
+            << "trade index=" << i;
+    }
+
+    const std::string json = RenderBacktestJson(result);
+    const std::size_t order_seq_1 = json.find("\"order_seq\":1");
+    const std::size_t order_seq_2 = json.find("\"order_seq\":2");
+    const std::size_t fill_seq_1 = json.find("\"fill_seq\":1");
+    const std::size_t fill_seq_2 = json.find("\"fill_seq\":2");
+    ASSERT_NE(order_seq_1, std::string::npos);
+    ASSERT_NE(order_seq_2, std::string::npos);
+    ASSERT_NE(fill_seq_1, std::string::npos);
+    ASSERT_NE(fill_seq_2, std::string::npos);
+    EXPECT_LT(order_seq_1, order_seq_2);
+    EXPECT_LT(fill_seq_1, fill_seq_2);
 
     std::error_code ec;
     std::filesystem::remove(csv_path, ec);

@@ -16,6 +16,7 @@ struct BrokerConfig {
     double slippage{0.0};
     bool partial_fill_enabled{true};
     double close_today_commission_rate{0.0002};
+    std::unordered_map<std::string, double> contract_multipliers;
 };
 
 class SimulatedBroker {
@@ -52,7 +53,8 @@ private:
                              std::int32_t fill_qty,
                              double fill_price) const;
     double ApplySlippage(double raw_price, Side side) const;
-    void ApplyTradeToPosition(const Trade& trade);
+    double ApplyTradeToPosition(const Trade& trade);
+    double ResolveContractMultiplier(const std::string& symbol) const;
 
     BrokerConfig config_;
     std::vector<PendingOrder> buy_orders_;

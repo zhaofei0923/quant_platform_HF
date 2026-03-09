@@ -1,14 +1,40 @@
 #include "quant_hft/apps/backtest_replay_support.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <string>
 
 namespace quant_hft::apps {
 
 namespace {
+
+std::vector<TradeRecord> SortTradesForOutput(std::vector<TradeRecord> trades) {
+    std::stable_sort(trades.begin(), trades.end(), [](const TradeRecord& left,
+                                                      const TradeRecord& right) {
+        const std::int64_t left_seq = left.fill_seq > 0 ? left.fill_seq
+                                                        : std::numeric_limits<std::int64_t>::max();
+        const std::int64_t right_seq = right.fill_seq > 0 ? right.fill_seq
+                                                          : std::numeric_limits<std::int64_t>::max();
+        return left_seq < right_seq;
+    });
+    return trades;
+}
+
+std::vector<OrderRecord> SortOrdersForOutput(std::vector<OrderRecord> orders) {
+    std::stable_sort(orders.begin(), orders.end(), [](const OrderRecord& left,
+                                                      const OrderRecord& right) {
+        const std::int64_t left_seq = left.order_seq > 0 ? left.order_seq
+                                                         : std::numeric_limits<std::int64_t>::max();
+        const std::int64_t right_seq = right.order_seq > 0 ? right.order_seq
+                                                           : std::numeric_limits<std::int64_t>::max();
+        return left_seq < right_seq;
+    });
+    return orders;
+}
 
 std::string CsvEscape(const std::string& text) {
     if (text.find_first_of(",\"\n\r") == std::string::npos) {
@@ -65,10 +91,13 @@ bool WriteTradesCsv(const BacktestCliResult& result, const std::filesystem::path
         }
         return false;
     }
-    out << "trade_id,order_id,symbol,exchange,side,offset,volume,price,timestamp_ns,commission,"
-           "timestamp_dt_utc,slippage,realized_pnl,strategy_id,signal_type,regime_at_entry\n";
-    for (const TradeRecord& row : result.trades) {
-        out << CsvEscape(row.trade_id) << ',' << CsvEscape(row.order_id) << ','
+    out << "fill_seq,trade_id,order_id,symbol,exchange,side,offset,volume,price,timestamp_ns,"
+           "commission,timestamp_dt_utc,slippage,realized_pnl,strategy_id,signal_type,"
+           "regime_at_entry\n";
+    const std::vector<TradeRecord> sorted_trades = SortTradesForOutput(result.trades);
+    for (const TradeRecord& row : sorted_trades) {
+        out << row.fill_seq << ',' << CsvEscape(row.trade_id) << ',' << CsvEscape(row.order_id)
+            << ','
             << CsvEscape(row.symbol) << ',' << CsvEscape(row.exchange) << ','
             << CsvEscape(row.side) << ',' << CsvEscape(row.offset) << ',' << row.volume << ','
             << CsvDouble(row.price) << ',' << row.timestamp_ns << ',' << CsvDouble(row.commission)
@@ -89,11 +118,13 @@ bool WriteOrdersCsv(const BacktestCliResult& result, const std::filesystem::path
         }
         return false;
     }
-    out << "order_id,client_order_id,symbol,type,side,offset,price,volume,status,filled_volume,"
-           "avg_fill_price,created_at_ns,created_at_dt_utc,last_update_ns,last_update_dt_utc,"
-           "strategy_id,cancel_reason\n";
-    for (const OrderRecord& row : result.orders) {
-        out << CsvEscape(row.order_id) << ',' << CsvEscape(row.client_order_id) << ','
+    out << "order_seq,order_id,client_order_id,symbol,type,side,offset,price,volume,status,"
+           "filled_volume,avg_fill_price,created_at_ns,created_at_dt_utc,last_update_ns,"
+           "last_update_dt_utc,strategy_id,cancel_reason\n";
+    const std::vector<OrderRecord> sorted_orders = SortOrdersForOutput(result.orders);
+    for (const OrderRecord& row : sorted_orders) {
+        out << row.order_seq << ',' << CsvEscape(row.order_id) << ','
+            << CsvEscape(row.client_order_id) << ','
             << CsvEscape(row.symbol) << ',' << CsvEscape(row.type) << ',' << CsvEscape(row.side)
             << ',' << CsvEscape(row.offset) << ',' << CsvDouble(row.price) << ',' << row.volume
             << ',' << CsvEscape(row.status) << ',' << row.filled_volume << ','

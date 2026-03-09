@@ -1431,6 +1431,30 @@ struct BacktestSummary {
     double max_drawdown{0.0};
 };
 
+inline std::vector<TradeRecord> SortedTradesForOutput(std::vector<TradeRecord> trades) {
+    std::stable_sort(trades.begin(), trades.end(), [](const TradeRecord& left,
+                                                      const TradeRecord& right) {
+        const std::int64_t left_seq = left.fill_seq > 0 ? left.fill_seq
+                                                        : std::numeric_limits<std::int64_t>::max();
+        const std::int64_t right_seq = right.fill_seq > 0 ? right.fill_seq
+                                                          : std::numeric_limits<std::int64_t>::max();
+        return left_seq < right_seq;
+    });
+    return trades;
+}
+
+inline std::vector<OrderRecord> SortedOrdersForOutput(std::vector<OrderRecord> orders) {
+    std::stable_sort(orders.begin(), orders.end(), [](const OrderRecord& left,
+                                                      const OrderRecord& right) {
+        const std::int64_t left_seq = left.order_seq > 0 ? left.order_seq
+                                                         : std::numeric_limits<std::int64_t>::max();
+        const std::int64_t right_seq = right.order_seq > 0 ? right.order_seq
+                                                           : std::numeric_limits<std::int64_t>::max();
+        return left_seq < right_seq;
+    });
+    return orders;
+}
+
 bool ExportBacktestCsv(const BacktestCliResult& result, const std::string& out_dir,
                        std::string* error);
 
@@ -2651,11 +2675,33 @@ struct PositionState {
     double realized_pnl{0.0};
 };
 
-inline void ApplyTrade(PositionState* state, Side side, std::int32_t volume, double fill_price) {
+inline double NormalizeContractMultiplier(double contract_multiplier) {
+    return std::isfinite(contract_multiplier) && contract_multiplier > 0.0 ? contract_multiplier
+                                                                           : 1.0;
+}
+
+inline double ResolveContractMultiplier(const ProductFeeEntry* fee_entry) {
+    if (fee_entry == nullptr) {
+        return 1.0;
+    }
+    return NormalizeContractMultiplier(fee_entry->contract_multiplier);
+}
+
+inline double ResolveContractMultiplier(const ProductFeeBook* product_fee_book,
+                                        const std::string& instrument_id) {
+    if (product_fee_book == nullptr) {
+        return 1.0;
+    }
+    return ResolveContractMultiplier(product_fee_book->Find(instrument_id));
+}
+
+inline void ApplyTrade(PositionState* state, Side side, std::int32_t volume, double fill_price,
+                       double contract_multiplier = 1.0) {
     if (state == nullptr || volume <= 0) {
         return;
     }
 
+    const double effective_multiplier = NormalizeContractMultiplier(contract_multiplier);
     const std::int32_t signed_qty = side == Side::kBuy ? volume : -volume;
 
     if (state->net_position == 0 || ((state->net_position > 0) == (signed_qty > 0))) {
@@ -2673,15 +2719,15 @@ inline void ApplyTrade(PositionState* state, Side side, std::int32_t volume, dou
     std::int32_t remaining = std::abs(signed_qty);
     if (state->net_position > 0) {
         const std::int32_t close_qty = std::min(state->net_position, remaining);
-        state->realized_pnl +=
-            (fill_price - state->avg_open_price) * static_cast<double>(close_qty);
+        state->realized_pnl += (fill_price - state->avg_open_price) *
+                               static_cast<double>(close_qty) * effective_multiplier;
         state->net_position -= close_qty;
         remaining -= close_qty;
     } else {
         const std::int32_t short_abs = std::abs(state->net_position);
         const std::int32_t close_qty = std::min(short_abs, remaining);
-        state->realized_pnl +=
-            (state->avg_open_price - fill_price) * static_cast<double>(close_qty);
+        state->realized_pnl += (state->avg_open_price - fill_price) *
+                               static_cast<double>(close_qty) * effective_multiplier;
         state->net_position += close_qty;
         remaining -= close_qty;
     }
@@ -2697,18 +2743,22 @@ inline void ApplyTrade(PositionState* state, Side side, std::int32_t volume, dou
 }
 
 inline double ComputeUnrealized(std::int32_t net_position, double avg_open_price,
-                                double last_price) {
+                                double last_price, double contract_multiplier = 1.0) {
+    const double effective_multiplier = NormalizeContractMultiplier(contract_multiplier);
     if (net_position > 0) {
-        return (last_price - avg_open_price) * static_cast<double>(net_position);
+        return (last_price - avg_open_price) * static_cast<double>(net_position) *
+               effective_multiplier;
     }
     if (net_position < 0) {
-        return (avg_open_price - last_price) * static_cast<double>(std::abs(net_position));
+        return (avg_open_price - last_price) * static_cast<double>(std::abs(net_position)) *
+               effective_multiplier;
     }
     return 0.0;
 }
 
 inline double ComputeTotalPnl(const std::map<std::string, PositionState>& state_by_instrument,
-                              const std::map<std::string, double>& mark_price_by_instrument) {
+                              const std::map<std::string, double>& mark_price_by_instrument,
+                              const ProductFeeBook* product_fee_book = nullptr) {
     double total = 0.0;
     for (const auto& [instrument_id, state] : state_by_instrument) {
         double mark = state.avg_open_price;
@@ -2716,8 +2766,9 @@ inline double ComputeTotalPnl(const std::map<std::string, PositionState>& state_
         if (it != mark_price_by_instrument.end()) {
             mark = it->second;
         }
-        total +=
-            state.realized_pnl + ComputeUnrealized(state.net_position, state.avg_open_price, mark);
+        total += state.realized_pnl + ComputeUnrealized(state.net_position, state.avg_open_price,
+                                                        mark, ResolveContractMultiplier(
+                                                                  product_fee_book, instrument_id));
     }
     return total;
 }
@@ -2725,8 +2776,10 @@ inline double ComputeTotalPnl(const std::map<std::string, PositionState>& state_
 inline double ComputeTotalEquity(double initial_equity,
                                  const std::map<std::string, PositionState>& state_by_instrument,
                                  const std::map<std::string, double>& mark_price_by_instrument,
-                                 double total_commission) {
-    return initial_equity + ComputeTotalPnl(state_by_instrument, mark_price_by_instrument) -
+                                 double total_commission,
+                                 const ProductFeeBook* product_fee_book = nullptr) {
+    return initial_equity +
+           ComputeTotalPnl(state_by_instrument, mark_price_by_instrument, product_fee_book) -
            total_commission;
 }
 
@@ -3041,6 +3094,8 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     std::vector<PositionSnapshot> position_history;
     std::int64_t trade_seq = 0;
     std::int64_t order_seq = 0;
+    std::int64_t fill_record_seq = 0;
+    std::int64_t order_record_seq = 0;
     double total_commission = 0.0;
     double used_margin_total = 0.0;
     double max_margin_used = 0.0;
@@ -3158,7 +3213,9 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             const auto mark_it = mark_price.find(instrument_id);
             const double last_price =
                 mark_it != mark_price.end() ? mark_it->second : state.avg_open_price;
-            total += std::fabs(static_cast<double>(state.net_position)) * last_price;
+            total += std::fabs(static_cast<double>(state.net_position)) * last_price *
+                     ResolveContractMultiplier(has_product_fee ? &product_fee_book : nullptr,
+                                               instrument_id);
         }
         return total;
     };
@@ -3181,8 +3238,9 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         snapshot.symbol = instrument_id;
         snapshot.net_position = state.net_position;
         snapshot.avg_price = state.avg_open_price;
-        snapshot.unrealized_pnl =
-            ComputeUnrealized(state.net_position, state.avg_open_price, last_price);
+        snapshot.unrealized_pnl = ComputeUnrealized(
+            state.net_position, state.avg_open_price, last_price,
+            ResolveContractMultiplier(has_product_fee ? &product_fee_book : nullptr, instrument_id));
         position_history.push_back(std::move(snapshot));
     };
 
@@ -3239,8 +3297,12 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
 
             const double prev_realized_before = previous_state.realized_pnl;
             const double next_realized_before = next_state.realized_pnl;
-            ApplyTrade(&previous_state, close_side, previous_position, close_price);
-            ApplyTrade(&next_state, open_side, previous_position, open_price);
+            ApplyTrade(&previous_state, close_side, previous_position, close_price,
+                       ResolveContractMultiplier(has_product_fee ? &product_fee_book : nullptr,
+                                                 previous_contract));
+            ApplyTrade(&next_state, open_side, previous_position, open_price,
+                       ResolveContractMultiplier(has_product_fee ? &product_fee_book : nullptr,
+                                                 current_contract));
             rollover_slippage_cost +=
                 (close_slip + open_slip) * static_cast<double>(previous_position);
             const double close_realized_pnl = previous_state.realized_pnl - prev_realized_before;
@@ -3248,6 +3310,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
 
             if (spec.emit_orders) {
                 OrderRecord close_order;
+                close_order.order_seq = ++order_record_seq;
                 close_order.order_id = "rollover-order-" + std::to_string(++order_seq);
                 close_order.client_order_id = close_order.order_id;
                 close_order.symbol = previous_contract;
@@ -3267,6 +3330,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 orders.push_back(std::move(close_order));
 
                 OrderRecord close_order_filled;
+                close_order_filled.order_seq = ++order_record_seq;
                 close_order_filled.order_id = "rollover-order-" + std::to_string(order_seq);
                 close_order_filled.client_order_id = close_order_filled.order_id;
                 close_order_filled.symbol = previous_contract;
@@ -3286,6 +3350,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 orders.push_back(std::move(close_order_filled));
 
                 OrderRecord open_order;
+                open_order.order_seq = ++order_record_seq;
                 open_order.order_id = "rollover-order-" + std::to_string(++order_seq);
                 open_order.client_order_id = open_order.order_id;
                 open_order.symbol = current_contract;
@@ -3305,6 +3370,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 orders.push_back(std::move(open_order));
 
                 OrderRecord open_order_filled;
+                open_order_filled.order_seq = ++order_record_seq;
                 open_order_filled.order_id = "rollover-order-" + std::to_string(order_seq);
                 open_order_filled.client_order_id = open_order_filled.order_id;
                 open_order_filled.symbol = current_contract;
@@ -3326,6 +3392,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
 
             if (spec.emit_trades) {
                 TradeRecord close_trade;
+                close_trade.fill_seq = ++fill_record_seq;
                 close_trade.trade_id = "rollover-trade-" + std::to_string(++trade_seq);
                 close_trade.order_id = "rollover-order-close-" + std::to_string(trade_seq);
                 close_trade.symbol = previous_contract;
@@ -3345,6 +3412,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 trades.push_back(std::move(close_trade));
 
                 TradeRecord open_trade;
+                open_trade.fill_seq = ++fill_record_seq;
                 open_trade.trade_id = "rollover-trade-" + std::to_string(++trade_seq);
                 open_trade.order_id = "rollover-order-open-" + std::to_string(trade_seq);
                 open_trade.symbol = current_contract;
@@ -3474,6 +3542,216 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     };
 
     std::unordered_map<std::string, detail::ReplayBarTickContext> replay_bar_contexts;
+    auto process_deterministic_intents =
+        [&](const std::vector<SignalIntent>& intents, double fill_price,
+            MarketRegime market_regime) -> bool {
+        intents_processed += static_cast<std::int64_t>(intents.size());
+        for (const SignalIntent& intent : intents) {
+            const std::string client_order_id =
+                intent.trace_id.empty()
+                    ? ("det-order-" + std::to_string(intents_processed) + "-" +
+                       intent.instrument_id + "-" + std::to_string(intent.ts_ns))
+                    : intent.trace_id;
+            const std::string order_id = "order-" + std::to_string(++order_seq);
+            const ProductFeeEntry* fee_entry = nullptr;
+            if (has_product_fee) {
+                fee_entry = product_fee_book.Find(intent.instrument_id);
+                if (fee_entry == nullptr) {
+                    if (error != nullptr) {
+                        *error = "missing product fee config for instrument_id: " +
+                                 intent.instrument_id;
+                    }
+                    return false;
+                }
+            }
+
+            std::int32_t exec_volume = intent.volume;
+            if (fee_entry != nullptr && intent.offset == OffsetFlag::kOpen && exec_volume > 0) {
+                const double account_equity = ComputeTotalEquity(
+                    spec.initial_equity, position_state, mark_price, total_commission,
+                    has_product_fee ? &product_fee_book : nullptr);
+                const double available_margin = std::max(0.0, account_equity - used_margin_total);
+                const double per_lot_margin =
+                    ProductFeeBook::ComputePerLotMargin(*fee_entry, intent.side, fill_price);
+                std::int32_t max_openable = 0;
+                if (std::isfinite(per_lot_margin) && per_lot_margin > 0.0) {
+                    const double raw_openable = std::floor(available_margin / per_lot_margin);
+                    if (std::isfinite(raw_openable) && raw_openable > 0.0) {
+                        max_openable = static_cast<std::int32_t>(
+                            std::min<double>(raw_openable, std::numeric_limits<std::int32_t>::max()));
+                    }
+                }
+                if (max_openable < exec_volume) {
+                    ++margin_clipped_orders;
+                    exec_volume = std::max<std::int32_t>(0, max_openable);
+                }
+                if (exec_volume <= 0) {
+                    ++margin_rejected_orders;
+                    ++order_events;
+                    order_status_counts["REJECTED"] += 1;
+                    if (spec.emit_orders) {
+                        OrderRecord rejected_order;
+                        rejected_order.order_seq = ++order_record_seq;
+                        rejected_order.order_id = order_id;
+                        rejected_order.client_order_id = client_order_id;
+                        rejected_order.symbol = intent.instrument_id;
+                        rejected_order.type = "Market";
+                        rejected_order.side = SideToTitleString(intent.side);
+                        rejected_order.offset = OffsetFlagToTitleString(intent.offset);
+                        rejected_order.price = fill_price;
+                        rejected_order.volume = intent.volume;
+                        rejected_order.status = "Rejected";
+                        rejected_order.filled_volume = 0;
+                        rejected_order.avg_fill_price = 0.0;
+                        rejected_order.created_at_ns = intent.ts_ns;
+                        rejected_order.created_at_dt_utc = detail::DateTimeFromEpochNs(intent.ts_ns);
+                        rejected_order.last_update_ns = intent.ts_ns;
+                        rejected_order.last_update_dt_utc = detail::DateTimeFromEpochNs(intent.ts_ns);
+                        rejected_order.strategy_id = intent.strategy_id;
+                        rejected_order.cancel_reason = "margin_rejected";
+                        orders.push_back(std::move(rejected_order));
+                    }
+                    continue;
+                }
+            }
+
+            if (exec_volume <= 0) {
+                continue;
+            }
+
+            PositionState& pnl_state = position_state[intent.instrument_id];
+            const double realized_before = pnl_state.realized_pnl;
+            ApplyTrade(&pnl_state, intent.side, exec_volume, fill_price,
+                       ResolveContractMultiplier(fee_entry));
+            const double realized_delta = pnl_state.realized_pnl - realized_before;
+
+            double commission = 0.0;
+            if (fee_entry != nullptr) {
+                commission = ProductFeeBook::ComputeCommission(*fee_entry, intent.offset,
+                                                               exec_volume, fill_price);
+            }
+            total_commission += commission;
+            if (has_product_fee) {
+                used_margin_total =
+                    ComputeTotalMarginUsed(position_state, mark_price, product_fee_book);
+                max_margin_used = std::max(max_margin_used, used_margin_total);
+            }
+
+            order_events += 2;
+            order_status_counts["ACCEPTED"] += 1;
+            order_status_counts["FILLED"] += 1;
+
+            OrderEvent filled_event;
+            filled_event.account_id = spec.account_id;
+            filled_event.strategy_id = intent.strategy_id;
+            filled_event.client_order_id = client_order_id;
+            filled_event.exchange_order_id = order_id;
+            filled_event.instrument_id = intent.instrument_id;
+            filled_event.side = intent.side;
+            filled_event.offset = intent.offset;
+            filled_event.status = OrderStatus::kFilled;
+            filled_event.total_volume = exec_volume;
+            filled_event.filled_volume = exec_volume;
+            filled_event.avg_fill_price = fill_price;
+            filled_event.ts_ns = intent.ts_ns;
+            strategy->OnOrderEvent(filled_event);
+
+            if (spec.emit_orders) {
+                OrderRecord accepted_order;
+                accepted_order.order_seq = ++order_record_seq;
+                accepted_order.order_id = order_id;
+                accepted_order.client_order_id = client_order_id;
+                accepted_order.symbol = intent.instrument_id;
+                accepted_order.type = "Market";
+                accepted_order.side = SideToTitleString(intent.side);
+                accepted_order.offset = OffsetFlagToTitleString(intent.offset);
+                accepted_order.price = fill_price;
+                accepted_order.volume = exec_volume;
+                accepted_order.status = "Accepted";
+                accepted_order.filled_volume = 0;
+                accepted_order.avg_fill_price = 0.0;
+                accepted_order.created_at_ns = intent.ts_ns;
+                accepted_order.created_at_dt_utc = detail::DateTimeFromEpochNs(intent.ts_ns);
+                accepted_order.last_update_ns = intent.ts_ns;
+                accepted_order.last_update_dt_utc = detail::DateTimeFromEpochNs(intent.ts_ns);
+                accepted_order.strategy_id = intent.strategy_id;
+                orders.push_back(std::move(accepted_order));
+
+                OrderRecord filled_order;
+                filled_order.order_seq = ++order_record_seq;
+                filled_order.order_id = order_id;
+                filled_order.client_order_id = client_order_id;
+                filled_order.symbol = intent.instrument_id;
+                filled_order.type = "Market";
+                filled_order.side = SideToTitleString(intent.side);
+                filled_order.offset = OffsetFlagToTitleString(intent.offset);
+                filled_order.price = fill_price;
+                filled_order.volume = exec_volume;
+                filled_order.status = "Filled";
+                filled_order.filled_volume = exec_volume;
+                filled_order.avg_fill_price = fill_price;
+                filled_order.created_at_ns = intent.ts_ns;
+                filled_order.created_at_dt_utc = detail::DateTimeFromEpochNs(intent.ts_ns);
+                filled_order.last_update_ns = intent.ts_ns;
+                filled_order.last_update_dt_utc = detail::DateTimeFromEpochNs(intent.ts_ns);
+                filled_order.strategy_id = intent.strategy_id;
+                orders.push_back(std::move(filled_order));
+            }
+            if (spec.emit_trades) {
+                double slippage = 0.0;
+                if (intent.limit_price > 0.0) {
+                    slippage = intent.side == Side::kBuy ? fill_price - intent.limit_price
+                                                         : intent.limit_price - fill_price;
+                }
+
+                TradeRecord trade;
+                trade.fill_seq = ++fill_record_seq;
+                trade.trade_id = "trade-" + std::to_string(++trade_seq);
+                trade.order_id = order_id;
+                trade.symbol = intent.instrument_id;
+                trade.exchange = "";
+                trade.side = SideToTitleString(intent.side);
+                trade.offset = OffsetFlagToTitleString(intent.offset);
+                trade.volume = exec_volume;
+                trade.price = fill_price;
+                trade.timestamp_ns = intent.ts_ns;
+                trade.timestamp_dt_utc = detail::DateTimeFromEpochNs(intent.ts_ns);
+                trade.commission = commission;
+                trade.slippage = slippage;
+                trade.realized_pnl = realized_delta;
+                trade.strategy_id = intent.strategy_id;
+                trade.signal_type = SignalTypeToString(intent.signal_type);
+                trade.regime_at_entry = MarketRegimeToString(market_regime);
+                trades.push_back(std::move(trade));
+            }
+
+            record_position_snapshot(intent.instrument_id, intent.ts_ns);
+
+            if (wal_out.is_open()) {
+                const std::string accepted_line =
+                    "{\"seq\":" + std::to_string(wal_seq++) +
+                    ",\"kind\":\"order\",\"status\":1,\"instrument_id\":\"" +
+                    JsonEscape(intent.instrument_id) + "\",\"trace_id\":\"" +
+                    JsonEscape(client_order_id) + "\",\"ts_ns\":" +
+                    std::to_string(intent.ts_ns) + "}";
+                const std::string filled_line =
+                    "{\"seq\":" + std::to_string(wal_seq++) +
+                    ",\"kind\":\"trade\",\"status\":3,\"instrument_id\":\"" +
+                    JsonEscape(intent.instrument_id) + "\",\"trace_id\":\"" +
+                    JsonEscape(client_order_id) + "\",\"ts_ns\":" +
+                    std::to_string(intent.ts_ns) + ",\"price\":" +
+                    detail::FormatDouble(fill_price) + ",\"filled_volume\":" +
+                    std::to_string(exec_volume) + "}";
+                if (detail::WriteWalLine(&wal_out, accepted_line)) {
+                    ++wal_records;
+                }
+                if (detail::WriteWalLine(&wal_out, filled_line)) {
+                    ++wal_records;
+                }
+            }
+        }
+        return true;
+    };
 
     auto process_closed_bar = [&](const ReplayTick& first, const ReplayTick& last,
                                   const BarSnapshot& bar,
@@ -3536,7 +3814,8 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         }
         if (composite_strategy != nullptr) {
             const double equity = ComputeTotalEquity(spec.initial_equity, position_state,
-                                                     mark_price, total_commission);
+                                                     mark_price, total_commission,
+                                                     has_product_fee ? &product_fee_book : nullptr);
             composite_strategy->SetBacktestAccountSnapshot(equity, equity - spec.initial_equity);
         }
         std::vector<SignalIntent> intents = strategy->OnState(state);
@@ -3586,211 +3865,14 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         replay.intents_emitted += static_cast<std::int64_t>(intents.size());
 
         if (spec.deterministic_fills) {
-            intents_processed += static_cast<std::int64_t>(intents.size());
-            for (const SignalIntent& intent : intents) {
-                const double fill_price = last.last_price;
-                const std::string client_order_id =
-                    intent.trace_id.empty()
-                        ? ("det-order-" + std::to_string(intents_processed) + "-" +
-                           intent.instrument_id + "-" + std::to_string(intent.ts_ns))
-                        : intent.trace_id;
-                const std::string order_id = "order-" + std::to_string(++order_seq);
-                const ProductFeeEntry* fee_entry = nullptr;
-                if (has_product_fee) {
-                    fee_entry = product_fee_book.Find(intent.instrument_id);
-                    if (fee_entry == nullptr) {
-                        if (error != nullptr) {
-                            *error = "missing product fee config for instrument_id: " +
-                                     intent.instrument_id;
-                        }
-                        return false;
-                    }
-                }
-
-                std::int32_t exec_volume = intent.volume;
-                if (fee_entry != nullptr && intent.offset == OffsetFlag::kOpen && exec_volume > 0) {
-                    const double account_equity = ComputeTotalEquity(
-                        spec.initial_equity, position_state, mark_price, total_commission);
-                    const double available_margin =
-                        std::max(0.0, account_equity - used_margin_total);
-                    const double per_lot_margin =
-                        ProductFeeBook::ComputePerLotMargin(*fee_entry, intent.side, fill_price);
-                    std::int32_t max_openable = 0;
-                    if (std::isfinite(per_lot_margin) && per_lot_margin > 0.0) {
-                        const double raw_openable = std::floor(available_margin / per_lot_margin);
-                        if (std::isfinite(raw_openable) && raw_openable > 0.0) {
-                            max_openable = static_cast<std::int32_t>(std::min<double>(
-                                raw_openable, std::numeric_limits<std::int32_t>::max()));
-                        }
-                    }
-                    if (max_openable < exec_volume) {
-                        ++margin_clipped_orders;
-                        exec_volume = std::max<std::int32_t>(0, max_openable);
-                    }
-                    if (exec_volume <= 0) {
-                        ++margin_rejected_orders;
-                        ++order_events;
-                        order_status_counts["REJECTED"] += 1;
-                        if (spec.emit_orders) {
-                            OrderRecord rejected_order;
-                            rejected_order.order_id = order_id;
-                            rejected_order.client_order_id = client_order_id;
-                            rejected_order.symbol = intent.instrument_id;
-                            rejected_order.type = "Market";
-                            rejected_order.side = SideToTitleString(intent.side);
-                            rejected_order.offset = OffsetFlagToTitleString(intent.offset);
-                            rejected_order.price = fill_price;
-                            rejected_order.volume = intent.volume;
-                            rejected_order.status = "Rejected";
-                            rejected_order.filled_volume = 0;
-                            rejected_order.avg_fill_price = 0.0;
-                            rejected_order.created_at_ns = intent.ts_ns;
-                            rejected_order.created_at_dt_utc =
-                                detail::DateTimeFromEpochNs(intent.ts_ns);
-                            rejected_order.last_update_ns = intent.ts_ns;
-                            rejected_order.last_update_dt_utc =
-                                detail::DateTimeFromEpochNs(intent.ts_ns);
-                            rejected_order.strategy_id = intent.strategy_id;
-                            rejected_order.cancel_reason = "margin_rejected";
-                            orders.push_back(std::move(rejected_order));
-                        }
-                        continue;
-                    }
-                }
-
-                if (exec_volume <= 0) {
-                    continue;
-                }
-
-                PositionState& pnl_state = position_state[intent.instrument_id];
-                const double realized_before = pnl_state.realized_pnl;
-                ApplyTrade(&pnl_state, intent.side, exec_volume, fill_price);
-                const double realized_delta = pnl_state.realized_pnl - realized_before;
-
-                double commission = 0.0;
-                if (fee_entry != nullptr) {
-                    commission = ProductFeeBook::ComputeCommission(*fee_entry, intent.offset,
-                                                                   exec_volume, fill_price);
-                }
-                total_commission += commission;
-                if (has_product_fee) {
-                    used_margin_total =
-                        ComputeTotalMarginUsed(position_state, mark_price, product_fee_book);
-                    max_margin_used = std::max(max_margin_used, used_margin_total);
-                }
-
-                order_events += 2;
-                order_status_counts["ACCEPTED"] += 1;
-                order_status_counts["FILLED"] += 1;
-
-                OrderEvent filled_event;
-                filled_event.account_id = spec.account_id;
-                filled_event.strategy_id = intent.strategy_id;
-                filled_event.client_order_id = client_order_id;
-                filled_event.instrument_id = intent.instrument_id;
-                filled_event.side = intent.side;
-                filled_event.offset = intent.offset;
-                filled_event.status = OrderStatus::kFilled;
-                filled_event.total_volume = exec_volume;
-                filled_event.filled_volume = exec_volume;
-                filled_event.avg_fill_price = fill_price;
-                filled_event.ts_ns = intent.ts_ns;
-                strategy->OnOrderEvent(filled_event);
-
-                if (spec.emit_orders) {
-                    OrderRecord accepted_order;
-                    accepted_order.order_id = order_id;
-                    accepted_order.client_order_id = client_order_id;
-                    accepted_order.symbol = intent.instrument_id;
-                    accepted_order.type = "Market";
-                    accepted_order.side = SideToTitleString(intent.side);
-                    accepted_order.offset = OffsetFlagToTitleString(intent.offset);
-                    accepted_order.price = fill_price;
-                    accepted_order.volume = exec_volume;
-                    accepted_order.status = "Accepted";
-                    accepted_order.filled_volume = 0;
-                    accepted_order.avg_fill_price = 0.0;
-                    accepted_order.created_at_ns = intent.ts_ns;
-                    accepted_order.created_at_dt_utc = detail::DateTimeFromEpochNs(intent.ts_ns);
-                    accepted_order.last_update_ns = intent.ts_ns;
-                    accepted_order.last_update_dt_utc = detail::DateTimeFromEpochNs(intent.ts_ns);
-                    accepted_order.strategy_id = intent.strategy_id;
-                    orders.push_back(std::move(accepted_order));
-
-                    OrderRecord filled_order;
-                    filled_order.order_id = order_id;
-                    filled_order.client_order_id = client_order_id;
-                    filled_order.symbol = intent.instrument_id;
-                    filled_order.type = "Market";
-                    filled_order.side = SideToTitleString(intent.side);
-                    filled_order.offset = OffsetFlagToTitleString(intent.offset);
-                    filled_order.price = fill_price;
-                    filled_order.volume = exec_volume;
-                    filled_order.status = "Filled";
-                    filled_order.filled_volume = exec_volume;
-                    filled_order.avg_fill_price = fill_price;
-                    filled_order.created_at_ns = intent.ts_ns;
-                    filled_order.created_at_dt_utc = detail::DateTimeFromEpochNs(intent.ts_ns);
-                    filled_order.last_update_ns = intent.ts_ns;
-                    filled_order.last_update_dt_utc = detail::DateTimeFromEpochNs(intent.ts_ns);
-                    filled_order.strategy_id = intent.strategy_id;
-                    orders.push_back(std::move(filled_order));
-                }
-                if (spec.emit_trades) {
-                    double slippage = 0.0;
-                    if (intent.limit_price > 0.0) {
-                        slippage = intent.side == Side::kBuy ? fill_price - intent.limit_price
-                                                             : intent.limit_price - fill_price;
-                    }
-
-                    TradeRecord trade;
-                    trade.trade_id = "trade-" + std::to_string(++trade_seq);
-                    trade.order_id = order_id;
-                    trade.symbol = intent.instrument_id;
-                    trade.exchange = "";
-                    trade.side = SideToTitleString(intent.side);
-                    trade.offset = OffsetFlagToTitleString(intent.offset);
-                    trade.volume = exec_volume;
-                    trade.price = fill_price;
-                    trade.timestamp_ns = intent.ts_ns;
-                    trade.timestamp_dt_utc = detail::DateTimeFromEpochNs(intent.ts_ns);
-                    trade.commission = commission;
-                    trade.slippage = slippage;
-                    trade.realized_pnl = realized_delta;
-                    trade.strategy_id = intent.strategy_id;
-                    trade.signal_type = SignalTypeToString(intent.signal_type);
-                    trade.regime_at_entry = MarketRegimeToString(state.market_regime);
-                    trades.push_back(std::move(trade));
-                }
-
-                record_position_snapshot(intent.instrument_id, intent.ts_ns);
-
-                if (wal_out.is_open()) {
-                    const std::string accepted_line =
-                        "{\"seq\":" + std::to_string(wal_seq++) +
-                        ",\"kind\":\"order\",\"status\":1,\"instrument_id\":\"" +
-                        JsonEscape(intent.instrument_id) + "\",\"trace_id\":\"" +
-                        JsonEscape(client_order_id) +
-                        "\",\"ts_ns\":" + std::to_string(intent.ts_ns) + "}";
-                    const std::string filled_line =
-                        "{\"seq\":" + std::to_string(wal_seq++) +
-                        ",\"kind\":\"trade\",\"status\":3,\"instrument_id\":\"" +
-                        JsonEscape(intent.instrument_id) + "\",\"trace_id\":\"" +
-                        JsonEscape(client_order_id) +
-                        "\",\"ts_ns\":" + std::to_string(intent.ts_ns) +
-                        ",\"price\":" + detail::FormatDouble(fill_price) +
-                        ",\"filled_volume\":" + std::to_string(exec_volume) + "}";
-                    if (detail::WriteWalLine(&wal_out, accepted_line)) {
-                        ++wal_records;
-                    }
-                    if (detail::WriteWalLine(&wal_out, filled_line)) {
-                        ++wal_records;
-                    }
-                }
+            if (!process_deterministic_intents(intents, last.last_price, state.market_regime)) {
+                return false;
             }
 
             const double current_equity =
-                ComputeTotalEquity(spec.initial_equity, position_state, mark_price, total_commission);
+                ComputeTotalEquity(spec.initial_equity, position_state, mark_price,
+                                   total_commission,
+                                   has_product_fee ? &product_fee_book : nullptr);
             equity_points.push_back(current_equity);
             EquitySample sample;
             sample.ts_ns = state.ts_ns;
@@ -3870,6 +3952,31 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
 
         if (!replay_bar_aggregator->ShouldProcessSnapshot(snapshot)) {
             continue;
+        }
+
+        mark_price[tick.instrument_id] = tick.last_price;
+        if (spec.deterministic_fills && composite_strategy != nullptr) {
+            if (has_product_fee) {
+                used_margin_total =
+                    ComputeTotalMarginUsed(position_state, mark_price, product_fee_book);
+                max_margin_used = std::max(max_margin_used, used_margin_total);
+                const ProductFeeEntry* entry = product_fee_book.Find(tick.instrument_id);
+                if (entry != nullptr && entry->contract_multiplier > 0.0) {
+                    composite_strategy->SetBacktestContractMultiplier(tick.instrument_id,
+                                                                      entry->contract_multiplier);
+                }
+            }
+            const double equity =
+                ComputeTotalEquity(spec.initial_equity, position_state, mark_price, total_commission,
+                                   has_product_fee ? &product_fee_book : nullptr);
+            composite_strategy->SetBacktestAccountSnapshot(equity, equity - spec.initial_equity);
+            const std::vector<SignalIntent> tick_intents =
+                composite_strategy->OnBacktestTick(tick.instrument_id, tick.ts_ns, tick.last_price);
+            replay.intents_emitted += static_cast<std::int64_t>(tick_intents.size());
+            if (!process_deterministic_intents(tick_intents, tick.last_price,
+                                               MarketRegime::kUnknown)) {
+                return false;
+            }
         }
 
         ReplayTick context_tick = tick;
@@ -4004,8 +4111,9 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         const auto mark_it = mark_price.find(instrument_id);
         const double last_price =
             mark_it != mark_price.end() ? mark_it->second : state.avg_open_price;
-        const double unrealized =
-            ComputeUnrealized(state.net_position, state.avg_open_price, last_price);
+        const double unrealized = ComputeUnrealized(
+            state.net_position, state.avg_open_price, last_price,
+            ResolveContractMultiplier(has_product_fee ? &product_fee_book : nullptr, instrument_id));
 
         InstrumentPnlSnapshot snapshot;
         snapshot.net_position = state.net_position;
@@ -4534,14 +4642,18 @@ inline std::string RenderBacktestJson(const BacktestCliResult& result) {
              << ",\"turnover\":" << detail::FormatDouble(row.turnover) << ",\"market_regime\":\""
              << JsonEscape(row.market_regime) << "\"}";
     }
+    const std::vector<TradeRecord> sorted_trades = SortedTradesForOutput(result.trades);
+    const std::vector<OrderRecord> sorted_orders = SortedOrdersForOutput(result.orders);
+
     json << "],\n"
          << "    \"trades\": [";
-    for (std::size_t i = 0; i < result.trades.size(); ++i) {
+    for (std::size_t i = 0; i < sorted_trades.size(); ++i) {
         if (i > 0) {
             json << ", ";
         }
-        const TradeRecord& row = result.trades[i];
-        json << "{\"trade_id\":\"" << JsonEscape(row.trade_id) << "\",\"order_id\":\""
+        const TradeRecord& row = sorted_trades[i];
+        json << "{\"fill_seq\":" << row.fill_seq << ",\"trade_id\":\""
+             << JsonEscape(row.trade_id) << "\",\"order_id\":\""
              << JsonEscape(row.order_id) << "\",\"symbol\":\"" << JsonEscape(row.symbol)
              << "\",\"exchange\":\"" << JsonEscape(row.exchange) << "\",\"side\":\""
              << JsonEscape(row.side) << "\",\"offset\":\"" << JsonEscape(row.offset)
@@ -4558,18 +4670,19 @@ inline std::string RenderBacktestJson(const BacktestCliResult& result) {
     }
     json << "],\n"
          << "    \"orders\": [";
-    for (std::size_t i = 0; i < result.orders.size(); ++i) {
+    for (std::size_t i = 0; i < sorted_orders.size(); ++i) {
         if (i > 0) {
             json << ", ";
         }
-        const OrderRecord& row = result.orders[i];
-        json << "{\"order_id\":\"" << JsonEscape(row.order_id) << "\",\"client_order_id\":\""
+        const OrderRecord& row = sorted_orders[i];
+        json << "{\"order_seq\":" << row.order_seq << ",\"order_id\":\""
+             << JsonEscape(row.order_id) << "\",\"client_order_id\":\""
              << JsonEscape(row.client_order_id) << "\",\"symbol\":\"" << JsonEscape(row.symbol)
              << "\",\"type\":\"" << JsonEscape(row.type) << "\",\"side\":\""
              << JsonEscape(row.side) << "\",\"offset\":\"" << JsonEscape(row.offset)
-             << "\",\"price\":" << detail::FormatDouble(row.price) << ",\"volume\":" << row.volume
-             << ",\"status\":\"" << JsonEscape(row.status) << "\",\"filled_volume\":"
-             << row.filled_volume << ",\"avg_fill_price\":"
+             << "\",\"price\":" << detail::FormatDouble(row.price) << ",\"volume\":"
+             << row.volume << ",\"status\":\"" << JsonEscape(row.status)
+             << "\",\"filled_volume\":" << row.filled_volume << ",\"avg_fill_price\":"
              << detail::FormatDouble(row.avg_fill_price) << ",\"created_at_ns\":"
              << row.created_at_ns << ",\"created_at_dt_utc\":\""
              << JsonEscape(row.created_at_dt_utc) << "\",\"last_update_ns\":"

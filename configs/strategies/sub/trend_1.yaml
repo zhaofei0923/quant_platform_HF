@@ -11,6 +11,10 @@ params:
   kama_filter: 0.0
   risk_per_trade_pct: 0.01
   default_volume: 1
+  allow_reverse_open: true
+  forbid_open_windows: ""
+  force_close_windows: ""
+  window_timezone: Asia/Shanghai
   stop_loss_mode: trailing_atr
   stop_loss_atr_period: 14
   stop_loss_atr_multiplier: 2.0

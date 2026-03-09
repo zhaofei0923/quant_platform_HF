@@ -25,6 +25,7 @@ struct TradeRecord {
     std::string strategy_id;
     std::string signal_type;
     std::string regime_at_entry;
+    std::int64_t fill_seq{0};
 };
 
 struct OrderRecord {
@@ -45,6 +46,7 @@ struct OrderRecord {
     std::string last_update_dt_utc;
     std::string strategy_id;
     std::string cancel_reason;
+    std::int64_t order_seq{0};
 };
 
 struct DailyPerformance {

@@ -162,6 +162,33 @@ std::vector<SignalIntent> TrendStrategy::OnState(const StateSnapshot7D& state,
         last_take_atr_ = take_profit_atr_->Value();
     }
 
+    bool has_entry_signal = false;
+    SignalIntent entry_signal;
+    if (last_kama_.has_value() && std::isfinite(*last_kama_)) {
+        const double threshold = kama_filter_ * last_stop_atr_.value_or(0.0);
+        const double diff = state.bar_close - (*last_kama_);
+        Side open_side = Side::kBuy;
+        if (diff > threshold) {
+            open_side = Side::kBuy;
+        } else if (diff < -threshold) {
+            open_side = Side::kSell;
+        }
+
+        const int volume =
+            ComputeOrderVolume(ctx, state.instrument_id, last_stop_atr_.value_or(std::nan("")));
+        if ((diff > threshold || diff < -threshold) && volume > 0) {
+            entry_signal.strategy_id = id_;
+            entry_signal.instrument_id = state.instrument_id;
+            entry_signal.signal_type = SignalType::kOpen;
+            entry_signal.side = open_side;
+            entry_signal.offset = OffsetFlag::kOpen;
+            entry_signal.volume = volume;
+            entry_signal.limit_price = state.bar_close;
+            entry_signal.ts_ns = state.ts_ns;
+            has_entry_signal = true;
+        }
+    }
+
     std::vector<SignalIntent> signals;
     const std::int32_t position = ResolvePosition(ctx, state.instrument_id);
     if (position != 0) {
@@ -191,12 +218,6 @@ std::vector<SignalIntent> TrendStrategy::OnState(const StateSnapshot7D& state,
             trailing_stop_by_instrument_[state.instrument_id] = stop_price;
             trailing_direction_by_instrument_[state.instrument_id] = direction;
             last_stop_loss_price_ = stop_price;
-            const bool stop_triggered =
-                direction > 0 ? (state.bar_close <= stop_price) : (state.bar_close >= stop_price);
-            if (stop_triggered) {
-                signals.push_back(BuildCloseSignal(id_, state.instrument_id, SignalType::kStopLoss,
-                                                   position, state.bar_close, state.ts_ns));
-            }
         } else {
             trailing_stop_by_instrument_.erase(state.instrument_id);
             trailing_direction_by_instrument_.erase(state.instrument_id);
@@ -208,51 +229,37 @@ std::vector<SignalIntent> TrendStrategy::OnState(const StateSnapshot7D& state,
             const double take_price =
                 direction > 0 ? (avg_open_price + take_distance) : (avg_open_price - take_distance);
             last_take_profit_price_ = take_price;
-            const bool take_triggered =
-                direction > 0 ? (state.bar_close >= take_price) : (state.bar_close <= take_price);
-            if (take_triggered) {
-                signals.push_back(BuildCloseSignal(id_, state.instrument_id,
-                                                   SignalType::kTakeProfit, position,
-                                                   state.bar_close, state.ts_ns));
-            }
         }
 
-        return signals;
+        signals = EvaluateRiskSignals(ctx, state.instrument_id, state.bar_close, state.ts_ns);
+
+        if (!signals.empty()) {
+            return signals;
+        }
+        if (!has_entry_signal) {
+            return {};
+        }
+        const Side position_side = position > 0 ? Side::kBuy : Side::kSell;
+        if (entry_signal.side == position_side) {
+            return {};
+        }
+        return {entry_signal};
     }
 
     trailing_stop_by_instrument_.erase(state.instrument_id);
     trailing_direction_by_instrument_.erase(state.instrument_id);
-    if (!last_kama_.has_value() || !std::isfinite(*last_kama_)) {
+    if (!has_entry_signal) {
         return {};
     }
+    return {entry_signal};
+}
 
-    const double threshold = kama_filter_ * last_stop_atr_.value_or(0.0);
-    const double diff = state.bar_close - (*last_kama_);
-    Side open_side = Side::kBuy;
-    if (diff > threshold) {
-        open_side = Side::kBuy;
-    } else if (diff < -threshold) {
-        open_side = Side::kSell;
-    } else {
+std::vector<SignalIntent> TrendStrategy::OnBacktestTick(const AtomicTickSnapshot& tick,
+                                                        const AtomicStrategyContext& ctx) {
+    if (tick.instrument_id.empty() || !std::isfinite(tick.last_price)) {
         return {};
     }
-
-    const int volume =
-        ComputeOrderVolume(ctx, state.instrument_id, last_stop_atr_.value_or(std::nan("")));
-    if (volume <= 0) {
-        return {};
-    }
-
-    SignalIntent open_signal;
-    open_signal.strategy_id = id_;
-    open_signal.instrument_id = state.instrument_id;
-    open_signal.signal_type = SignalType::kOpen;
-    open_signal.side = open_side;
-    open_signal.offset = OffsetFlag::kOpen;
-    open_signal.volume = volume;
-    open_signal.limit_price = state.bar_close;
-    open_signal.ts_ns = state.ts_ns;
-    return {open_signal};
+    return EvaluateRiskSignals(ctx, tick.instrument_id, tick.last_price, tick.ts_ns);
 }
 
 std::optional<AtomicIndicatorSnapshot> TrendStrategy::IndicatorSnapshot() const {
@@ -316,6 +323,43 @@ int TrendStrategy::ComputeOrderVolume(const AtomicStrategyContext& ctx,
         return std::numeric_limits<int>::max();
     }
     return static_cast<int>(raw_volume);
+}
+
+std::vector<SignalIntent> TrendStrategy::EvaluateRiskSignals(const AtomicStrategyContext& ctx,
+                                                             const std::string& instrument_id,
+                                                             double price,
+                                                             EpochNanos ts_ns) const {
+    if (instrument_id.empty() || !std::isfinite(price)) {
+        return {};
+    }
+
+    const std::int32_t position = ResolvePosition(ctx, instrument_id);
+    if (position == 0) {
+        return {};
+    }
+
+    const int direction = position > 0 ? 1 : -1;
+    std::vector<SignalIntent> signals;
+
+    if (last_stop_loss_price_.has_value() && std::isfinite(*last_stop_loss_price_)) {
+        const bool stop_triggered =
+            direction > 0 ? (price <= *last_stop_loss_price_) : (price >= *last_stop_loss_price_);
+        if (stop_triggered) {
+            signals.push_back(BuildCloseSignal(id_, instrument_id, SignalType::kStopLoss, position,
+                                               price, ts_ns));
+        }
+    }
+
+    if (last_take_profit_price_.has_value() && std::isfinite(*last_take_profit_price_)) {
+        const bool take_triggered = direction > 0 ? (price >= *last_take_profit_price_)
+                                                  : (price <= *last_take_profit_price_);
+        if (take_triggered) {
+            signals.push_back(BuildCloseSignal(id_, instrument_id, SignalType::kTakeProfit, position,
+                                               price, ts_ns));
+        }
+    }
+
+    return signals;
 }
 
 std::string TrendStrategy::ExtractSymbolPrefixLower(const std::string& instrument_id) {

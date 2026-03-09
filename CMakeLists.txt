@@ -469,6 +469,9 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(backtest_metrics_test tests/unit/apps/backtest_metrics_test.cpp)
     target_link_libraries(backtest_metrics_test PRIVATE quant_hft_core GTest::gtest_main)
 
+    add_executable(backtest_result_export_test tests/unit/apps/backtest_result_export_test.cpp)
+    target_link_libraries(backtest_result_export_test PRIVATE quant_hft_core GTest::gtest_main)
+
     add_executable(base_strategy_test tests/unit/strategy/base_strategy_test.cpp)
     target_link_libraries(base_strategy_test PRIVATE quant_hft_core GTest::gtest_main)
 
@@ -661,6 +664,7 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(kama_test)
     gtest_discover_tests(adx_test)
     gtest_discover_tests(backtest_replay_support_test)
+    gtest_discover_tests(backtest_result_export_test)
     gtest_discover_tests(rolling_config_test)
     gtest_discover_tests(window_generator_test)
     gtest_discover_tests(metric_extractor_test)

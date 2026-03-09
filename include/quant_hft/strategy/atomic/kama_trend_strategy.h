@@ -14,7 +14,9 @@
 
 namespace quant_hft {
 
-class KamaTrendStrategy final : public ISubStrategy, public IAtomicIndicatorTraceProvider {
+class KamaTrendStrategy final : public ISubStrategy,
+                                public IAtomicBacktestTickAware,
+                                public IAtomicIndicatorTraceProvider {
    public:
     KamaTrendStrategy() = default;
 
@@ -23,6 +25,8 @@ class KamaTrendStrategy final : public ISubStrategy, public IAtomicIndicatorTrac
     void Reset() override;
     std::vector<SignalIntent> OnState(const StateSnapshot7D& state,
                                       const AtomicStrategyContext& ctx) override;
+    std::vector<SignalIntent> OnBacktestTick(const AtomicTickSnapshot& tick,
+                                             const AtomicStrategyContext& ctx) override;
     std::optional<AtomicIndicatorSnapshot> IndicatorSnapshot() const override;
 
    private:
@@ -30,6 +34,9 @@ class KamaTrendStrategy final : public ISubStrategy, public IAtomicIndicatorTrac
     int ComputeOrderVolume(const AtomicStrategyContext& ctx, const std::string& instrument_id,
                            double atr_value) const;
     double ComputeStdKama() const;
+    std::vector<SignalIntent> EvaluateRiskSignals(const AtomicStrategyContext& ctx,
+                                                  const std::string& instrument_id,
+                                                  double price, EpochNanos ts_ns) const;
     static std::string ExtractSymbolPrefixLower(const std::string& instrument_id);
     static std::string ToUpper(std::string text);
     static SignalIntent BuildCloseSignal(const std::string& strategy_id,

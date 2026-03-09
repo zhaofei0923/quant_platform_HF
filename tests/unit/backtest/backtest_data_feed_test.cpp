@@ -1,9 +1,9 @@
 #include <filesystem>
-#include <fstream>
 
 #include <gtest/gtest.h>
 
 #include "quant_hft/backtest/backtest_data_feed.h"
+#include "tick_partition_fixture.h"
 
 namespace fs = std::filesystem;
 
@@ -17,21 +17,38 @@ protected:
 
         partition_dir_ =
             temp_dir_ / "source=rb" / "trading_day=2024-01-01" / "instrument_id=rb2405";
-        fs::create_directories(partition_dir_);
-
         parquet_file_ = partition_dir_ / "part-0000.parquet";
-        std::ofstream parquet(parquet_file_);
-        parquet << "PAR1";
-
-        std::ofstream meta(parquet_file_.string() + ".meta");
-        meta << "min_ts_ns=1704067200000000000\n";
-        meta << "max_ts_ns=1704067201000000000\n";
-        meta << "row_count=2\n";
-
-        std::ofstream ticks(parquet_file_.string() + ".ticks.csv");
-        ticks << "symbol,exchange,ts_ns,last_price,last_volume,bid_price1,bid_volume1,ask_price1,ask_volume1,volume,turnover,open_interest\n";
-        ticks << "rb2405,SHFE,1704067200000000000,3500.0,1,3499.0,2,3501.0,3,100,350000.0,1200000\n";
-        ticks << "rb2405,SHFE,1704067201000000000,3501.0,1,3500.0,2,3502.0,3,101,353601.0,1200100\n";
+        std::string fixture_error;
+        ASSERT_TRUE(test::WriteTickPartitionFixture(
+            parquet_file_,
+            {
+                Tick{.symbol = "rb2405",
+                     .exchange = "SHFE",
+                     .ts_ns = 1704067200000000000,
+                     .last_price = 3500.0,
+                     .last_volume = 1,
+                     .ask_price1 = 3501.0,
+                     .ask_volume1 = 3,
+                     .bid_price1 = 3499.0,
+                     .bid_volume1 = 2,
+                     .volume = 100,
+                     .turnover = 350000.0,
+                     .open_interest = 1200000},
+                Tick{.symbol = "rb2405",
+                     .exchange = "SHFE",
+                     .ts_ns = 1704067201000000000,
+                     .last_price = 3501.0,
+                     .last_volume = 1,
+                     .ask_price1 = 3502.0,
+                     .ask_volume1 = 3,
+                     .bid_price1 = 3500.0,
+                     .bid_volume1 = 2,
+                     .volume = 101,
+                     .turnover = 353601.0,
+                     .open_interest = 1200100},
+            },
+            &fixture_error))
+            << fixture_error;
     }
 
     void TearDown() override {

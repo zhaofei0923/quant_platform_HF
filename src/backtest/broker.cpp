@@ -177,7 +177,8 @@ void SimulatedBroker::TryMatchOrder(PendingOrder* pending, const Tick& tick) {
     trade.trade_ts_ns = tick.ts_ns;
     trade.commission = commission;
 
-    ApplyTradeToPosition(trade);
+    trade.profit = ApplyTradeToPosition(trade);
+    account_balance_ += trade.profit;
     account_balance_ -= commission;
 
     if (order_callback_) {
@@ -191,7 +192,8 @@ void SimulatedBroker::TryMatchOrder(PendingOrder* pending, const Tick& tick) {
 double SimulatedBroker::ComputeCommission(const PendingOrder& pending,
                                           std::int32_t fill_qty,
                                           double fill_price) const {
-    const double amount = fill_price * static_cast<double>(fill_qty);
+    const double amount =
+        fill_price * static_cast<double>(fill_qty) * ResolveContractMultiplier(pending.order.symbol);
     const bool is_close = pending.offset != OffsetFlag::kOpen;
     const double rate = is_close ? config_.close_today_commission_rate : config_.commission_rate;
     return amount * rate;
@@ -204,8 +206,10 @@ double SimulatedBroker::ApplySlippage(double raw_price, Side side) const {
     return side == Side::kBuy ? raw_price + config_.slippage : raw_price - config_.slippage;
 }
 
-void SimulatedBroker::ApplyTradeToPosition(const Trade& trade) {
+double SimulatedBroker::ApplyTradeToPosition(const Trade& trade) {
     auto& lots = lots_by_symbol_[trade.symbol];
+    const double contract_multiplier = ResolveContractMultiplier(trade.symbol);
+    double realized_total = 0.0;
 
     auto consume_lots = [&](PositionDirection direction_to_consume, std::int32_t qty_to_close) {
         double realized = 0.0;
@@ -217,9 +221,11 @@ void SimulatedBroker::ApplyTradeToPosition(const Trade& trade) {
 
             const std::int32_t matched = std::min(lot_it->volume, qty_to_close);
             if (direction_to_consume == PositionDirection::kLong) {
-                realized += (trade.price - lot_it->open_price) * matched;
+                realized += (trade.price - lot_it->open_price) * static_cast<double>(matched) *
+                            contract_multiplier;
             } else {
-                realized += (lot_it->open_price - trade.price) * matched;
+                realized += (lot_it->open_price - trade.price) * static_cast<double>(matched) *
+                            contract_multiplier;
             }
             lot_it->volume -= matched;
             qty_to_close -= matched;
@@ -229,7 +235,7 @@ void SimulatedBroker::ApplyTradeToPosition(const Trade& trade) {
                 ++lot_it;
             }
         }
-        account_balance_ += realized;
+        realized_total += realized;
     };
 
     if (trade.offset == OffsetFlag::kOpen) {
@@ -238,7 +244,7 @@ void SimulatedBroker::ApplyTradeToPosition(const Trade& trade) {
         lot.volume = trade.quantity;
         lot.open_price = trade.price;
         lots.push_back(lot);
-        return;
+        return 0.0;
     }
 
     if (trade.side == Side::kSell) {
@@ -246,6 +252,16 @@ void SimulatedBroker::ApplyTradeToPosition(const Trade& trade) {
     } else {
         consume_lots(PositionDirection::kShort, trade.quantity);
     }
+
+    return realized_total;
+}
+
+double SimulatedBroker::ResolveContractMultiplier(const std::string& symbol) const {
+    const auto it = config_.contract_multipliers.find(symbol);
+    if (it == config_.contract_multipliers.end() || !std::isfinite(it->second) || it->second <= 0.0) {
+        return 1.0;
+    }
+    return it->second;
 }
 
 }  // namespace quant_hft::backtest

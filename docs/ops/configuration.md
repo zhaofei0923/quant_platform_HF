@@ -211,6 +211,7 @@ JSON 形态支持两种写法：
 - JSON/Markdown/CSV 明细/指标 trace 全部统一落盘到同一 `run_dir`。
 - `output_json` / `output_md` / `export_csv_dir` / trace 路径均按模板 `basename` 落盘，忽略模板中的目录。
 - 当 `export_csv_dir` 为空时，默认导出到 `run_dir/csv/`。
+- tick 输入保持 parquet-only；`trace_output_format` 只控制指标 trace 的输出格式，默认 `csv`。
 
 示例：
 
@@ -245,8 +246,8 @@ docs/results/backtest_runs/
       trades.csv
       orders.csv
       position_history.csv
-    indicator_trace.parquet
-    sub_strategy_indicator_trace.parquet
+    indicator_trace.csv
+    sub_strategy_indicator_trace.csv
 ```
 
 关键配置字段：
@@ -255,7 +256,7 @@ docs/results/backtest_runs/
 - 回测必填：`engine_mode=parquet`、`dataset_root`、`strategy_main_config_path`
 - 归档字段：`output_root_dir`、`timestamp_timezone`
 - 输出必填：`output_json`、`output_md`（仅取 basename，落到 run_dir）
-- 可选透传：`max_ticks`、`start_date`、`end_date`、`run_id`、`export_csv_dir`、`emit_*`、trace 路径字段
+- 可选透传：`max_ticks`、`start_date`、`end_date`、`run_id`、`export_csv_dir`、`emit_*`、`trace_output_format`、trace 路径字段
 
 `backtest_cli` 输出 `hf_standard` 的补充说明：
 
@@ -282,14 +283,15 @@ docs/results/backtest_runs/
 ## 研究回放指标轨迹落盘
 
 - 作用范围：仅 `backtest/factor_eval` 研究回放链路。
-- 输出格式：Parquet（单 run 单文件）。
+- 输出格式：默认 CSV，可选 `parquet` 或 `both`（单 run 单文件或双文件）。
 - 默认关闭：需显式开启对应开关。
-- 市场状态指标默认输出路径：`runtime/research/indicator_trace/<run_id>.parquet`。
-- 子策略指标默认输出路径：`runtime/research/sub_strategy_indicator_trace/<run_id>.parquet`。
+- 市场状态指标默认输出路径：`runtime/research/indicator_trace/<run_id>.csv`。
+- 子策略指标默认输出路径：`runtime/research/sub_strategy_indicator_trace/<run_id>.csv`。
 - 覆盖策略：目标文件已存在时直接报错退出（fail-fast）。
 
 支持参数：
 
+- `trace_output_format` / `trace-output-format`（`csv/parquet/both`，默认 `csv`）
 - `emit_indicator_trace` / `emit-indicator-trace`
 - `indicator_trace_path` / `indicator-trace-path`
 - `strategy_factory` / `strategy-factory`（默认 `demo`，子策略 trace 需 `composite`）
@@ -319,10 +321,11 @@ docs/results/backtest_runs/
   --run_id exp-kama-atr-adx \
   --strategy_factory composite \
   --strategy_composite_config configs/strategies/composite_strategy.yaml \
+  --trace_output_format csv \
   --emit_indicator_trace true \
-  --indicator_trace_path runtime/research/indicator_trace/exp-kama-atr-adx.parquet \
+  --indicator_trace_path runtime/research/indicator_trace/exp-kama-atr-adx.csv \
   --emit_sub_strategy_indicator_trace true \
-  --sub_strategy_indicator_trace_path runtime/research/sub_strategy_indicator_trace/exp-kama-atr-adx.parquet
+  --sub_strategy_indicator_trace_path runtime/research/sub_strategy_indicator_trace/exp-kama-atr-adx.csv
 ```
 
 ## 核心环境变量

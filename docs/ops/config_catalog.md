@@ -622,6 +622,7 @@ composite:
 - Consumer: `scripts/build/run_backtest_from_config.sh`。
 - 约束: `engine_mode` 必须为 `parquet`（parquet-only policy）。
 - 说明: 虽该脚本封装为 parquet-only，回测引擎内部 `csv/parquet` 已统一复用同一 Bar 聚合规则（`BarAggregator` + timeframe fanout）。
+- 补充: `trace_output_format` 仅影响指标 trace 的输出格式，不影响 parquet tick 输入链路。
 - 归档规则:
   - 每次回测创建 `run_dir = ${output_root_dir}/${sanitize(run_id)}_${timestamp}`。
   - 当 `run_id` 为空时，脚本自动生成 `backtest-${timestamp}` 并透传给 `backtest_cli`。
@@ -660,10 +661,11 @@ composite:
 | `emit_trades` | bool | 否 | `true` | `true/false` | 是否输出 trades 明细 | `true` |
 | `emit_orders` | bool | 否 | `true` | `true/false` | 是否输出 orders 明细 | `true` |
 | `emit_position_history` | bool | 否 | `false` | `true/false` | 是否输出持仓快照明细 | `false` |
-| `emit_indicator_trace` | bool | 否 | `false` | `true/false` | 是否输出主策略指标追踪 parquet | `true` |
-| `indicator_trace_path` | string | 否 | 空 | 文件路径 | 指标追踪文件名模板（仅取 basename，落在本次 run_dir） | `my_trace.parquet` |
-| `emit_sub_strategy_indicator_trace` | bool | 否 | `false` | `true/false` | 是否输出子策略指标追踪 parquet | `true` |
-| `sub_strategy_indicator_trace_path` | string | 否 | 空 | 文件路径 | 子策略指标追踪文件名模板（仅取 basename，落在本次 run_dir） | `my_sub_trace.parquet` |
+| `trace_output_format` | string | 否 | `csv` | `csv/parquet/both` | 指标 trace 输出格式 | `csv` |
+| `emit_indicator_trace` | bool | 否 | `false` | `true/false` | 是否输出主策略指标追踪 | `true` |
+| `indicator_trace_path` | string | 否 | 空 | 文件路径 | 指标追踪文件名模板（仅取 basename，落在本次 run_dir；扩展名按 `trace_output_format` 归一化） | `my_trace.csv` |
+| `emit_sub_strategy_indicator_trace` | bool | 否 | `false` | `true/false` | 是否输出子策略指标追踪 | `true` |
+| `sub_strategy_indicator_trace_path` | string | 否 | 空 | 文件路径 | 子策略指标追踪文件名模板（仅取 basename，落在本次 run_dir；扩展名按 `trace_output_format` 归一化） | `my_sub_trace.csv` |
 | `quiet_backtest_stdout` | bool | 否 | `true` | `true/false` | 是否抑制 `backtest_cli` 终端 JSON 输出 | `true` |
 | `progress_only` | bool | 否 | `true` | `true/false` | 是否仅显示进度条与百分比 | `true` |
 

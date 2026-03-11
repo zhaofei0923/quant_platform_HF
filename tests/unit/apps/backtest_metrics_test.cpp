@@ -137,5 +137,43 @@ TEST(BacktestMetricsTest, ComputeFactorExposureReturnsFiniteProxyFactors) {
     }
 }
 
+TEST(BacktestMetricsTest, ComputeDailyMetricsUsesTradeTradingDayWhenProvided) {
+    std::vector<EquitySample> equity_history;
+    equity_history.push_back(
+        EquitySample{1704880800000000000LL, "20240110", 105.0, 10.0, "kStrongTrend"});
+
+    TradeRecord night_trade{
+        "t-night", "o-night", "c2405", "", "Sell", "Close", 1, 100.0, 1704840666314000000LL, ""};
+    night_trade.trading_day = "20240110";
+
+    const std::vector<DailyPerformance> daily =
+        ComputeDailyMetrics(equity_history, {night_trade}, 100.0);
+
+    ASSERT_EQ(daily.size(), 1U);
+    EXPECT_EQ(daily[0].date, "20240110");
+    EXPECT_EQ(daily[0].trades_count, 1);
+}
+
+TEST(BacktestMetricsTest, ComputeRegimePerformanceUsesTradeTradingDayWhenProvided) {
+    TradeRecord night_trade{
+        "t-night", "o-night", "c2405", "", "Sell", "Close", 1, 100.0, 1704840666314000000LL, ""};
+    night_trade.regime_at_entry = "kWeakTrend";
+    night_trade.realized_pnl = 10.0;
+    night_trade.trading_day = "20240110";
+
+    TradeRecord day_trade{
+        "t-day", "o-day", "c2405", "", "Buy", "Open", 1, 101.0, 1704880200000000000LL, ""};
+    day_trade.regime_at_entry = "kWeakTrend";
+    day_trade.realized_pnl = -5.0;
+    day_trade.trading_day = "20240110";
+
+    const std::vector<RegimePerformance> performance =
+        ComputeRegimePerformance({night_trade, day_trade});
+
+    ASSERT_EQ(performance.size(), 1U);
+    EXPECT_EQ(performance[0].regime, "kWeakTrend");
+    EXPECT_EQ(performance[0].total_days, 1);
+}
+
 }  // namespace
 }  // namespace quant_hft::apps

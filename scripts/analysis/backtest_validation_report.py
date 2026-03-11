@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import math
 from collections import Counter, defaultdict
@@ -83,7 +84,7 @@ def extract_order_list(payload: dict[str, Any], deterministic: dict[str, Any]) -
     return []
 
 
-def analyze_sub_trace(path: Path) -> dict[str, Any]:
+def analyze_sub_trace_parquet(path: Path) -> dict[str, Any]:
     if pq is None:
         return {
             "enabled": False,
@@ -149,6 +150,71 @@ def analyze_sub_trace(path: Path) -> dict[str, Any]:
         metrics["by_strategy"] = by_strategy
 
     return metrics
+
+
+def analyze_sub_trace_csv(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8", newline="") as file:
+        reader = csv.DictReader(file)
+        fieldnames = reader.fieldnames or []
+        rows = list(reader)
+
+    columns = set(fieldnames)
+    row_count = len(rows)
+    metrics: dict[str, Any] = {
+        "enabled": True,
+        "rows": row_count,
+        "columns": sorted(columns),
+        "field_non_null": {},
+        "by_strategy": {},
+        "error": "",
+    }
+
+    tracked_fields = [
+        "kama",
+        "er",
+        "atr",
+        "adx",
+        "stop_loss_price",
+        "take_profit_price",
+    ]
+
+    for field in tracked_fields:
+        if field not in columns:
+            continue
+        non_null = sum(1 for row in rows if str(row.get(field, "")).strip() != "")
+        metrics["field_non_null"][field] = {
+            "non_null": non_null,
+            "null": row_count - non_null,
+            "ratio": (non_null / row_count) if row_count > 0 else 0.0,
+        }
+
+    if "strategy_id" in columns:
+        grouped_rows: dict[str, list[dict[str, str]]] = defaultdict(list)
+        for row in rows:
+            key = str(row.get("strategy_id", "") or "<NULL>")
+            grouped_rows[key].append(row)
+
+        by_strategy: dict[str, dict[str, Any]] = {}
+        for sid, strategy_rows in grouped_rows.items():
+            item: dict[str, Any] = {"rows": len(strategy_rows)}
+            for field in tracked_fields:
+                if field not in columns:
+                    continue
+                non_null = sum(1 for row in strategy_rows if str(row.get(field, "")).strip() != "")
+                item[field] = {
+                    "non_null": non_null,
+                    "ratio": (non_null / len(strategy_rows)) if strategy_rows else 0.0,
+                }
+            by_strategy[sid] = item
+        metrics["by_strategy"] = by_strategy
+
+    return metrics
+
+
+def analyze_sub_trace(path: Path) -> dict[str, Any]:
+    if path.suffix.lower() == ".csv":
+        return analyze_sub_trace_csv(path)
+    return analyze_sub_trace_parquet(path)
 
 
 def make_report(run_dir: Path, strict: bool) -> tuple[str, bool]:
@@ -259,7 +325,7 @@ def make_report(run_dir: Path, strict: bool) -> tuple[str, bool]:
             CheckResult(
                 "子策略追踪行数一致",
                 expected_rows == actual_rows,
-                f"expected_rows={expected_rows}, parquet_rows={actual_rows}",
+                f"expected_rows={expected_rows}, trace_rows={actual_rows}",
             )
         )
 

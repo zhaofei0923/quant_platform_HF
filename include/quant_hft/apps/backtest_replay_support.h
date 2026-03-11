@@ -27,9 +27,11 @@
 
 #include "quant_hft/apps/cli_support.h"
 #include "quant_hft/apps/backtest_metrics.h"
+#include "quant_hft/backtest/indicator_trace_csv_writer.h"
 #include "quant_hft/backtest/indicator_trace_parquet_writer.h"
 #include "quant_hft/backtest/parquet_data_feed.h"
 #include "quant_hft/backtest/product_fee_config_loader.h"
+#include "quant_hft/backtest/sub_strategy_indicator_trace_csv_writer.h"
 #include "quant_hft/backtest/sub_strategy_indicator_trace_parquet_writer.h"
 #include "quant_hft/common/timestamp.h"
 #include "quant_hft/services/bar_aggregator.h"
@@ -41,6 +43,8 @@
 #include "quant_hft/strategy/strategy_registry.h"
 
 namespace quant_hft::apps {
+
+struct ReplayTick;
 
 namespace detail {
 
@@ -575,6 +579,73 @@ inline std::string DeriveActionDayFromTradingDayAndUpdateTime(const std::string&
     return normalized_day;
 }
 
+inline std::string ResolveActionDay(const std::string& trading_day,
+                                    const std::string& action_day,
+                                    const std::string& update_time) {
+    const std::string normalized_action_day = NormalizeTradingDay(action_day);
+    if (!normalized_action_day.empty()) {
+        return normalized_action_day;
+    }
+    return DeriveActionDayFromTradingDayAndUpdateTime(trading_day, update_time);
+}
+
+inline std::string DateTimeFromDayAndUpdateTime(const std::string& day,
+                                                const std::string& update_time) {
+    const std::string normalized_day = NormalizeTradingDay(day);
+    int hour = 0;
+    int minute = 0;
+    int second = 0;
+    if (normalized_day.size() != 8 || !ParseTimeHms(update_time, &hour, &minute, &second)) {
+        return "";
+    }
+    std::ostringstream oss;
+    oss << normalized_day.substr(0, 4) << '-' << normalized_day.substr(4, 2) << '-'
+        << normalized_day.substr(6, 2) << ' ' << std::setw(2) << std::setfill('0') << hour
+        << ':' << std::setw(2) << std::setfill('0') << minute << ':' << std::setw(2)
+        << std::setfill('0') << second;
+    return oss.str();
+}
+
+inline std::string LocalDateTimeFromTradingDayAndUpdateTime(const std::string& trading_day,
+                                                            const std::string& action_day,
+                                                            const std::string& update_time,
+                                                            EpochNanos fallback_ts_ns) {
+    const std::string resolved_action_day = ResolveActionDay(trading_day, action_day, update_time);
+    const std::string display = DateTimeFromDayAndUpdateTime(resolved_action_day, update_time);
+    if (!display.empty()) {
+        return display;
+    }
+    return DateTimeFromEpochNs(fallback_ts_ns);
+}
+
+inline BarAggregator& SharedSessionResolver() {
+    static BarAggregator resolver([] {
+        BarAggregatorConfig config;
+        config.filter_non_trading_ticks = false;
+        config.is_backtest_mode = true;
+        return config;
+    }());
+    return resolver;
+}
+
+inline int ResolveSessionOrderForOutput(const std::string& exchange,
+                                        const std::string& symbol,
+                                        const std::string& update_time) {
+    std::string resolved_update_time = update_time;
+    if (resolved_update_time.empty()) {
+        return std::numeric_limits<int>::max();
+    }
+    return SharedSessionResolver().ResolveSessionOrder(exchange, symbol, resolved_update_time);
+}
+
+inline std::string ResolveSessionKey(const std::string& exchange_id,
+                                     const std::string& instrument_id,
+                                     const std::string& update_time) {
+    const std::string exchange =
+        exchange_id.empty() ? SharedSessionResolver().InferExchangeId(instrument_id) : exchange_id;
+    return SharedSessionResolver().ResolveSessionKey(exchange, instrument_id, update_time);
+}
+
 inline std::string BuildReplayMinuteKey(const std::string& trading_day,
                                         const std::string& update_time) {
     const std::string normalized_day = NormalizeTradingDay(trading_day);
@@ -819,6 +890,67 @@ inline bool WriteWalLine(std::ofstream* out, const std::string& line) {
     return out->good();
 }
 
+inline bool ParseTraceOutputFormat(const std::string& raw, std::string* out_value) {
+    if (out_value == nullptr) {
+        return false;
+    }
+    const std::string normalized = ToLower(Trim(raw));
+    if (normalized.empty() || normalized == "csv") {
+        *out_value = "csv";
+        return true;
+    }
+    if (normalized == "parquet" || normalized == "both") {
+        *out_value = normalized;
+        return true;
+    }
+    return false;
+}
+
+inline bool TraceOutputWritesCsv(const std::string& format) {
+    const std::string normalized = ToLower(Trim(format));
+    return normalized.empty() || normalized == "csv" || normalized == "both";
+}
+
+inline bool TraceOutputWritesParquet(const std::string& format) {
+    const std::string normalized = ToLower(Trim(format));
+    return normalized == "parquet" || normalized == "both";
+}
+
+struct TraceOutputPaths {
+    std::string primary_path;
+    std::string csv_path;
+    std::string parquet_path;
+};
+
+inline std::filesystem::path TraceBasePath(std::filesystem::path path) {
+    path.replace_extension();
+    return path;
+}
+
+inline TraceOutputPaths ResolveTraceOutputPaths(const std::string& requested_path,
+                                                const std::string& default_base_path,
+                                                const std::string& format) {
+    const std::filesystem::path base =
+        requested_path.empty() ? std::filesystem::path(default_base_path)
+                               : TraceBasePath(std::filesystem::path(requested_path));
+    TraceOutputPaths paths;
+    if (TraceOutputWritesCsv(format)) {
+        std::filesystem::path csv_path = base;
+        csv_path.replace_extension(".csv");
+        paths.csv_path = csv_path.string();
+        paths.primary_path = paths.csv_path;
+    }
+    if (TraceOutputWritesParquet(format)) {
+        std::filesystem::path parquet_path = base;
+        parquet_path.replace_extension(".parquet");
+        paths.parquet_path = parquet_path.string();
+        if (paths.primary_path.empty()) {
+            paths.primary_path = paths.parquet_path;
+        }
+    }
+    return paths;
+}
+
 inline std::size_t P95Index(std::size_t count) {
     if (count == 0) {
         return 0;
@@ -998,6 +1130,7 @@ struct BacktestCliSpec {
     std::string strategy_composite_config;
     bool emit_state_snapshots{false};
     bool emit_indicator_trace{false};
+    std::string trace_output_format{"csv"};
     std::string indicator_trace_path;
     bool emit_sub_strategy_indicator_trace{false};
     std::string sub_strategy_indicator_trace_path;
@@ -1028,6 +1161,21 @@ struct ReplayBarTickContext {
     ReplayTick first_tick;
     ReplayTick last_tick;
     bool initialized{false};
+};
+
+struct ReplaySignalTiming {
+    EpochNanos signal_ts_ns{0};
+    std::string signal_trading_day;
+    std::string signal_action_day;
+    std::string signal_update_time;
+    int signal_update_millisec{0};
+};
+
+struct PendingBarIntent {
+    SignalIntent intent;
+    ReplaySignalTiming timing;
+    std::string signal_session_key;
+    MarketRegime market_regime{MarketRegime::kUnknown};
 };
 
 inline bool TrackReplayBarTickContext(
@@ -1226,6 +1374,7 @@ class ReplayTimeframeFanout {
             bucket.bar.low = std::min(bucket.bar.low, one_minute_bar.low);
             bucket.bar.close = one_minute_bar.close;
             bucket.bar.volume += one_minute_bar.volume;
+            bucket.bar.ts_ns = one_minute_bar.ts_ns;
             if (!one_minute_bar.action_day.empty()) {
                 bucket.bar.action_day = one_minute_bar.action_day;
             }
@@ -1287,10 +1436,6 @@ class ReplayTimeframeFanout {
         bucket->timeframe_minutes = timeframe_minutes;
         bucket->bar = one_minute_bar;
         bucket->bar.minute = bucket_minute;
-        const EpochNanos start_ts_ns = ReplayMinuteStartEpochNs(bucket_minute);
-        if (start_ts_ns > 0) {
-            bucket->bar.ts_ns = start_ts_ns;
-        }
         bucket->context = context;
     }
 
@@ -1432,8 +1577,39 @@ struct BacktestSummary {
 };
 
 inline std::vector<TradeRecord> SortedTradesForOutput(std::vector<TradeRecord> trades) {
-    std::stable_sort(trades.begin(), trades.end(), [](const TradeRecord& left,
-                                                      const TradeRecord& right) {
+    auto trade_day = [](const TradeRecord& row) {
+        const std::string normalized = detail::NormalizeTradingDay(row.trading_day);
+        if (!normalized.empty()) {
+            return normalized;
+        }
+        return detail::TradingDayFromEpochNs(row.timestamp_ns);
+    };
+    auto trade_update_time = [](const TradeRecord& row) {
+        if (!row.update_time.empty()) {
+            return row.update_time;
+        }
+        return detail::UpdateTimeFromEpochNs(row.timestamp_ns);
+    };
+    std::stable_sort(trades.begin(), trades.end(), [&](const TradeRecord& left,
+                                                       const TradeRecord& right) {
+        const std::string left_day = trade_day(left);
+        const std::string right_day = trade_day(right);
+        if (left_day != right_day) {
+            return left_day < right_day;
+        }
+
+        const int left_session_order =
+            detail::ResolveSessionOrderForOutput(left.exchange, left.symbol, trade_update_time(left));
+        const int right_session_order = detail::ResolveSessionOrderForOutput(
+            right.exchange, right.symbol, trade_update_time(right));
+        if (left_session_order != right_session_order) {
+            return left_session_order < right_session_order;
+        }
+
+        if (left.timestamp_ns != right.timestamp_ns) {
+            return left.timestamp_ns < right.timestamp_ns;
+        }
+
         const std::int64_t left_seq = left.fill_seq > 0 ? left.fill_seq
                                                         : std::numeric_limits<std::int64_t>::max();
         const std::int64_t right_seq = right.fill_seq > 0 ? right.fill_seq
@@ -1444,8 +1620,39 @@ inline std::vector<TradeRecord> SortedTradesForOutput(std::vector<TradeRecord> t
 }
 
 inline std::vector<OrderRecord> SortedOrdersForOutput(std::vector<OrderRecord> orders) {
-    std::stable_sort(orders.begin(), orders.end(), [](const OrderRecord& left,
-                                                      const OrderRecord& right) {
+    auto order_day = [](const OrderRecord& row) {
+        const std::string normalized = detail::NormalizeTradingDay(row.trading_day);
+        if (!normalized.empty()) {
+            return normalized;
+        }
+        return detail::TradingDayFromEpochNs(row.created_at_ns);
+    };
+    auto order_update_time = [](const OrderRecord& row) {
+        if (!row.update_time.empty()) {
+            return row.update_time;
+        }
+        return detail::UpdateTimeFromEpochNs(row.created_at_ns);
+    };
+    std::stable_sort(orders.begin(), orders.end(), [&](const OrderRecord& left,
+                                                       const OrderRecord& right) {
+        const std::string left_day = order_day(left);
+        const std::string right_day = order_day(right);
+        if (left_day != right_day) {
+            return left_day < right_day;
+        }
+
+        const int left_session_order =
+            detail::ResolveSessionOrderForOutput("", left.symbol, order_update_time(left));
+        const int right_session_order =
+            detail::ResolveSessionOrderForOutput("", right.symbol, order_update_time(right));
+        if (left_session_order != right_session_order) {
+            return left_session_order < right_session_order;
+        }
+
+        if (left.created_at_ns != right.created_at_ns) {
+            return left.created_at_ns < right.created_at_ns;
+        }
+
         const std::int64_t left_seq = left.order_seq > 0 ? left.order_seq
                                                          : std::numeric_limits<std::int64_t>::max();
         const std::int64_t right_seq = right.order_seq > 0 ? right.order_seq
@@ -1608,6 +1815,18 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
             return false;
         }
         spec.emit_indicator_trace = parsed;
+    }
+    {
+        const std::string raw_format =
+            detail::GetArgAny(args, {"trace_output_format", "trace-output-format"}, "csv");
+        std::string parsed;
+        if (!detail::ParseTraceOutputFormat(raw_format, &parsed)) {
+            if (error != nullptr) {
+                *error = "invalid trace_output_format: " + raw_format;
+            }
+            return false;
+        }
+        spec.trace_output_format = parsed;
     }
     spec.indicator_trace_path =
         detail::GetArgAny(args, {"indicator_trace_path", "indicator-trace-path"});
@@ -1875,6 +2094,7 @@ inline std::string BuildInputSignature(const BacktestCliSpec& spec) {
         << "strategy_factory=" << spec.strategy_factory << ';'
         << "strategy_composite_config=" << spec.strategy_composite_config << ';'
         << "emit_state_snapshots=" << (spec.emit_state_snapshots ? "true" : "false") << ';'
+        << "trace_output_format=" << spec.trace_output_format << ';'
         << "emit_indicator_trace=" << (spec.emit_indicator_trace ? "true" : "false") << ';'
         << "indicator_trace_path=" << spec.indicator_trace_path << ';'
         << "emit_sub_strategy_indicator_trace="
@@ -2993,16 +3213,26 @@ inline std::string MarketRegimeToString(MarketRegime regime) {
     return "kUnknown";
 }
 
-inline std::string BuildDefaultIndicatorTracePath(const std::string& run_id) {
-    return (std::filesystem::path("runtime") / "research" / "indicator_trace" /
-            (run_id + ".parquet"))
+inline std::string BuildDefaultIndicatorTraceBasePath(const std::string& run_id) {
+    return (std::filesystem::path("runtime") / "research" / "indicator_trace" / run_id).string();
+}
+
+inline std::string BuildDefaultIndicatorTracePath(const std::string& run_id,
+                                                  const std::string& format = "csv") {
+    return detail::ResolveTraceOutputPaths("", BuildDefaultIndicatorTraceBasePath(run_id), format)
+        .primary_path;
+}
+
+inline std::string BuildDefaultSubStrategyIndicatorTraceBasePath(const std::string& run_id) {
+    return (std::filesystem::path("runtime") / "research" / "sub_strategy_indicator_trace" / run_id)
         .string();
 }
 
-inline std::string BuildDefaultSubStrategyIndicatorTracePath(const std::string& run_id) {
-    return (std::filesystem::path("runtime") / "research" / "sub_strategy_indicator_trace" /
-            (run_id + ".parquet"))
-        .string();
+inline std::string BuildDefaultSubStrategyIndicatorTracePath(const std::string& run_id,
+                                                             const std::string& format = "csv") {
+    return detail::ResolveTraceOutputPaths("", BuildDefaultSubStrategyIndicatorTraceBasePath(run_id),
+                                           format)
+        .primary_path;
 }
 
 inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
@@ -3163,26 +3393,48 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         }
     }
 
-    std::string indicator_trace_path = spec.indicator_trace_path;
-    IndicatorTraceParquetWriter indicator_trace_writer;
-    if (spec.emit_indicator_trace) {
-        if (indicator_trace_path.empty()) {
-            indicator_trace_path = BuildDefaultIndicatorTracePath(spec.run_id);
-        }
-        if (!indicator_trace_writer.Open(indicator_trace_path, error)) {
-            return false;
-        }
+    const detail::TraceOutputPaths indicator_trace_paths =
+        detail::ResolveTraceOutputPaths(spec.indicator_trace_path,
+                                        BuildDefaultIndicatorTraceBasePath(spec.run_id),
+                                        spec.trace_output_format);
+    std::string indicator_trace_path = indicator_trace_paths.primary_path;
+    IndicatorTraceCsvWriter indicator_trace_csv_writer;
+    IndicatorTraceParquetWriter indicator_trace_parquet_writer;
+    const bool emit_indicator_trace_csv =
+        spec.emit_indicator_trace && detail::TraceOutputWritesCsv(spec.trace_output_format);
+    const bool emit_indicator_trace_parquet =
+        spec.emit_indicator_trace && detail::TraceOutputWritesParquet(spec.trace_output_format);
+    if (emit_indicator_trace_csv &&
+        !indicator_trace_csv_writer.Open(indicator_trace_paths.csv_path, error)) {
+        return false;
     }
-    std::string sub_strategy_indicator_trace_path = spec.sub_strategy_indicator_trace_path;
-    SubStrategyIndicatorTraceParquetWriter sub_strategy_indicator_trace_writer;
-    if (spec.emit_sub_strategy_indicator_trace) {
-        if (sub_strategy_indicator_trace_path.empty()) {
-            sub_strategy_indicator_trace_path =
-                BuildDefaultSubStrategyIndicatorTracePath(spec.run_id);
-        }
-        if (!sub_strategy_indicator_trace_writer.Open(sub_strategy_indicator_trace_path, error)) {
-            return false;
-        }
+    if (emit_indicator_trace_parquet &&
+        !indicator_trace_parquet_writer.Open(indicator_trace_paths.parquet_path, error)) {
+        return false;
+    }
+
+    const detail::TraceOutputPaths sub_strategy_indicator_trace_paths =
+        detail::ResolveTraceOutputPaths(spec.sub_strategy_indicator_trace_path,
+                                        BuildDefaultSubStrategyIndicatorTraceBasePath(spec.run_id),
+                                        spec.trace_output_format);
+    std::string sub_strategy_indicator_trace_path = sub_strategy_indicator_trace_paths.primary_path;
+    SubStrategyIndicatorTraceCsvWriter sub_strategy_indicator_trace_csv_writer;
+    SubStrategyIndicatorTraceParquetWriter sub_strategy_indicator_trace_parquet_writer;
+    const bool emit_sub_strategy_indicator_trace_csv =
+        spec.emit_sub_strategy_indicator_trace &&
+        detail::TraceOutputWritesCsv(spec.trace_output_format);
+    const bool emit_sub_strategy_indicator_trace_parquet =
+        spec.emit_sub_strategy_indicator_trace &&
+        detail::TraceOutputWritesParquet(spec.trace_output_format);
+    if (emit_sub_strategy_indicator_trace_csv &&
+        !sub_strategy_indicator_trace_csv_writer.Open(sub_strategy_indicator_trace_paths.csv_path,
+                                                      error)) {
+        return false;
+    }
+    if (emit_sub_strategy_indicator_trace_parquet &&
+        !sub_strategy_indicator_trace_parquet_writer.Open(
+            sub_strategy_indicator_trace_paths.parquet_path, error)) {
+        return false;
     }
 
     const bool enable_rollover = spec.deterministic_fills && spec.engine_mode == "core_sim";
@@ -3542,15 +3794,92 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     };
 
     std::unordered_map<std::string, detail::ReplayBarTickContext> replay_bar_contexts;
-    auto process_deterministic_intents =
-        [&](const std::vector<SignalIntent>& intents, double fill_price,
+    std::unordered_map<std::string, std::vector<detail::PendingBarIntent>>
+        pending_bar_intents_by_instrument;
+
+    auto trading_day_from_tick = [&](const ReplayTick& tick) {
+        const std::string normalized = detail::NormalizeTradingDay(tick.trading_day);
+        if (!normalized.empty()) {
+            return normalized;
+        }
+        return detail::TradingDayFromEpochNs(tick.ts_ns);
+    };
+
+    auto action_day_from_tick = [&](const ReplayTick& tick) {
+        return detail::ResolveActionDay(trading_day_from_tick(tick), "", tick.update_time);
+    };
+
+    auto local_dt_from_tick = [&](const ReplayTick& tick) {
+        return detail::LocalDateTimeFromTradingDayAndUpdateTime(
+            trading_day_from_tick(tick), action_day_from_tick(tick), tick.update_time, tick.ts_ns);
+    };
+
+    auto exchange_from_tick = [&](const ReplayTick& tick) {
+        if (!tick.exchange_id.empty()) {
+            return tick.exchange_id;
+        }
+        return detail::SharedSessionResolver().InferExchangeId(tick.instrument_id);
+    };
+
+    auto signal_timing_from_tick = [&](const ReplayTick& tick) {
+        detail::ReplaySignalTiming timing;
+        timing.signal_ts_ns = tick.ts_ns;
+        timing.signal_trading_day = trading_day_from_tick(tick);
+        timing.signal_action_day = action_day_from_tick(tick);
+        timing.signal_update_time = tick.update_time;
+        timing.signal_update_millisec = tick.update_millisec;
+        return timing;
+    };
+
+    auto populate_order_timing = [&](OrderRecord* order, const ReplayTick& execution_tick) {
+        if (order == nullptr) {
+            return;
+        }
+        order->trading_day = trading_day_from_tick(execution_tick);
+        order->action_day = action_day_from_tick(execution_tick);
+        order->update_time = execution_tick.update_time;
+        order->created_at_dt_local = local_dt_from_tick(execution_tick);
+        order->last_update_dt_local = order->created_at_dt_local;
+    };
+
+    auto populate_trade_timing = [&](TradeRecord* trade,
+                                     const detail::ReplaySignalTiming& signal_timing,
+                                     const ReplayTick& execution_tick) {
+        if (trade == nullptr) {
+            return;
+        }
+        const EpochNanos signal_ts_ns =
+            signal_timing.signal_ts_ns > 0 ? signal_timing.signal_ts_ns : execution_tick.ts_ns;
+        const std::string signal_trading_day =
+            detail::NormalizeTradingDay(signal_timing.signal_trading_day).empty()
+                ? trading_day_from_tick(execution_tick)
+                : detail::NormalizeTradingDay(signal_timing.signal_trading_day);
+        const std::string signal_action_day = detail::ResolveActionDay(
+            signal_trading_day, signal_timing.signal_action_day, signal_timing.signal_update_time);
+        trade->signal_ts_ns = signal_ts_ns;
+        trade->signal_dt_local = detail::LocalDateTimeFromTradingDayAndUpdateTime(
+            signal_trading_day,
+            signal_action_day,
+            signal_timing.signal_update_time.empty() ? execution_tick.update_time
+                                                     : signal_timing.signal_update_time,
+            signal_ts_ns);
+        trade->trading_day = trading_day_from_tick(execution_tick);
+        trade->action_day = action_day_from_tick(execution_tick);
+        trade->update_time = execution_tick.update_time;
+        trade->timestamp_dt_local = local_dt_from_tick(execution_tick);
+    };
+
+    auto process_deterministic_intent =
+        [&](const SignalIntent& intent, const detail::ReplaySignalTiming& signal_timing,
+            const ReplayTick& execution_tick, double fill_price,
             MarketRegime market_regime) -> bool {
-        intents_processed += static_cast<std::int64_t>(intents.size());
-        for (const SignalIntent& intent : intents) {
+            ++intents_processed;
+            const EpochNanos signal_ts_ns =
+                signal_timing.signal_ts_ns > 0 ? signal_timing.signal_ts_ns : execution_tick.ts_ns;
             const std::string client_order_id =
                 intent.trace_id.empty()
                     ? ("det-order-" + std::to_string(intents_processed) + "-" +
-                       intent.instrument_id + "-" + std::to_string(intent.ts_ns))
+                       intent.instrument_id + "-" + std::to_string(signal_ts_ns))
                     : intent.trace_id;
             const std::string order_id = "order-" + std::to_string(++order_seq);
             const ProductFeeEntry* fee_entry = nullptr;
@@ -3603,20 +3932,23 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                         rejected_order.status = "Rejected";
                         rejected_order.filled_volume = 0;
                         rejected_order.avg_fill_price = 0.0;
-                        rejected_order.created_at_ns = intent.ts_ns;
-                        rejected_order.created_at_dt_utc = detail::DateTimeFromEpochNs(intent.ts_ns);
-                        rejected_order.last_update_ns = intent.ts_ns;
-                        rejected_order.last_update_dt_utc = detail::DateTimeFromEpochNs(intent.ts_ns);
+                        rejected_order.created_at_ns = execution_tick.ts_ns;
+                        rejected_order.created_at_dt_utc =
+                            detail::DateTimeFromEpochNs(execution_tick.ts_ns);
+                        rejected_order.last_update_ns = execution_tick.ts_ns;
+                        rejected_order.last_update_dt_utc =
+                            detail::DateTimeFromEpochNs(execution_tick.ts_ns);
                         rejected_order.strategy_id = intent.strategy_id;
                         rejected_order.cancel_reason = "margin_rejected";
+                        populate_order_timing(&rejected_order, execution_tick);
                         orders.push_back(std::move(rejected_order));
                     }
-                    continue;
+                    return true;
                 }
             }
 
             if (exec_volume <= 0) {
-                continue;
+                return true;
             }
 
             PositionState& pnl_state = position_state[intent.instrument_id];
@@ -3653,7 +3985,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             filled_event.total_volume = exec_volume;
             filled_event.filled_volume = exec_volume;
             filled_event.avg_fill_price = fill_price;
-            filled_event.ts_ns = intent.ts_ns;
+            filled_event.ts_ns = execution_tick.ts_ns;
             strategy->OnOrderEvent(filled_event);
 
             if (spec.emit_orders) {
@@ -3670,11 +4002,14 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 accepted_order.status = "Accepted";
                 accepted_order.filled_volume = 0;
                 accepted_order.avg_fill_price = 0.0;
-                accepted_order.created_at_ns = intent.ts_ns;
-                accepted_order.created_at_dt_utc = detail::DateTimeFromEpochNs(intent.ts_ns);
-                accepted_order.last_update_ns = intent.ts_ns;
-                accepted_order.last_update_dt_utc = detail::DateTimeFromEpochNs(intent.ts_ns);
+                accepted_order.created_at_ns = execution_tick.ts_ns;
+                accepted_order.created_at_dt_utc =
+                    detail::DateTimeFromEpochNs(execution_tick.ts_ns);
+                accepted_order.last_update_ns = execution_tick.ts_ns;
+                accepted_order.last_update_dt_utc =
+                    detail::DateTimeFromEpochNs(execution_tick.ts_ns);
                 accepted_order.strategy_id = intent.strategy_id;
+                populate_order_timing(&accepted_order, execution_tick);
                 orders.push_back(std::move(accepted_order));
 
                 OrderRecord filled_order;
@@ -3690,11 +4025,14 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 filled_order.status = "Filled";
                 filled_order.filled_volume = exec_volume;
                 filled_order.avg_fill_price = fill_price;
-                filled_order.created_at_ns = intent.ts_ns;
-                filled_order.created_at_dt_utc = detail::DateTimeFromEpochNs(intent.ts_ns);
-                filled_order.last_update_ns = intent.ts_ns;
-                filled_order.last_update_dt_utc = detail::DateTimeFromEpochNs(intent.ts_ns);
+                filled_order.created_at_ns = execution_tick.ts_ns;
+                filled_order.created_at_dt_utc =
+                    detail::DateTimeFromEpochNs(execution_tick.ts_ns);
+                filled_order.last_update_ns = execution_tick.ts_ns;
+                filled_order.last_update_dt_utc =
+                    detail::DateTimeFromEpochNs(execution_tick.ts_ns);
                 filled_order.strategy_id = intent.strategy_id;
+                populate_order_timing(&filled_order, execution_tick);
                 orders.push_back(std::move(filled_order));
             }
             if (spec.emit_trades) {
@@ -3714,18 +4052,20 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 trade.offset = OffsetFlagToTitleString(intent.offset);
                 trade.volume = exec_volume;
                 trade.price = fill_price;
-                trade.timestamp_ns = intent.ts_ns;
-                trade.timestamp_dt_utc = detail::DateTimeFromEpochNs(intent.ts_ns);
+                trade.timestamp_ns = execution_tick.ts_ns;
+                trade.timestamp_dt_utc = detail::DateTimeFromEpochNs(execution_tick.ts_ns);
                 trade.commission = commission;
                 trade.slippage = slippage;
                 trade.realized_pnl = realized_delta;
                 trade.strategy_id = intent.strategy_id;
                 trade.signal_type = SignalTypeToString(intent.signal_type);
                 trade.regime_at_entry = MarketRegimeToString(market_regime);
+                trade.exchange = exchange_from_tick(execution_tick);
+                populate_trade_timing(&trade, signal_timing, execution_tick);
                 trades.push_back(std::move(trade));
             }
 
-            record_position_snapshot(intent.instrument_id, intent.ts_ns);
+            record_position_snapshot(intent.instrument_id, execution_tick.ts_ns);
 
             if (wal_out.is_open()) {
                 const std::string accepted_line =
@@ -3733,13 +4073,13 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                     ",\"kind\":\"order\",\"status\":1,\"instrument_id\":\"" +
                     JsonEscape(intent.instrument_id) + "\",\"trace_id\":\"" +
                     JsonEscape(client_order_id) + "\",\"ts_ns\":" +
-                    std::to_string(intent.ts_ns) + "}";
+                    std::to_string(execution_tick.ts_ns) + "}";
                 const std::string filled_line =
                     "{\"seq\":" + std::to_string(wal_seq++) +
                     ",\"kind\":\"trade\",\"status\":3,\"instrument_id\":\"" +
                     JsonEscape(intent.instrument_id) + "\",\"trace_id\":\"" +
                     JsonEscape(client_order_id) + "\",\"ts_ns\":" +
-                    std::to_string(intent.ts_ns) + ",\"price\":" +
+                    std::to_string(execution_tick.ts_ns) + ",\"price\":" +
                     detail::FormatDouble(fill_price) + ",\"filled_volume\":" +
                     std::to_string(exec_volume) + "}";
                 if (detail::WriteWalLine(&wal_out, accepted_line)) {
@@ -3749,6 +4089,75 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                     ++wal_records;
                 }
             }
+            return true;
+        };
+
+    auto process_tick_intents = [&](const std::vector<SignalIntent>& intents,
+                                    const ReplayTick& execution_tick, double fill_price,
+                                    MarketRegime market_regime) -> bool {
+        const detail::ReplaySignalTiming timing = signal_timing_from_tick(execution_tick);
+        for (const SignalIntent& intent : intents) {
+            if (!process_deterministic_intent(intent, timing, execution_tick, fill_price,
+                                              market_regime)) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    auto enqueue_bar_intents = [&](const std::vector<SignalIntent>& intents,
+                                   const ReplayTick& signal_tick,
+                                   MarketRegime market_regime) {
+        if (intents.empty()) {
+            return;
+        }
+        const detail::ReplaySignalTiming timing = signal_timing_from_tick(signal_tick);
+        const std::string session_key =
+            detail::ResolveSessionKey(signal_tick.exchange_id,
+                                      signal_tick.instrument_id,
+                                      signal_tick.update_time);
+        for (const SignalIntent& intent : intents) {
+            detail::PendingBarIntent pending;
+            pending.intent = intent;
+            pending.timing = timing;
+            pending.signal_session_key = session_key;
+            pending.market_regime = market_regime;
+            pending_bar_intents_by_instrument[intent.instrument_id].push_back(std::move(pending));
+        }
+    };
+
+    auto process_pending_bar_intents = [&](const ReplayTick& execution_tick) -> bool {
+        const auto pending_it = pending_bar_intents_by_instrument.find(execution_tick.instrument_id);
+        if (pending_it == pending_bar_intents_by_instrument.end()) {
+            return true;
+        }
+
+        const std::string current_session_key =
+            detail::ResolveSessionKey(execution_tick.exchange_id,
+                                      execution_tick.instrument_id,
+                                      execution_tick.update_time);
+        std::vector<detail::PendingBarIntent> remaining;
+        remaining.reserve(pending_it->second.size());
+        for (const detail::PendingBarIntent& pending : pending_it->second) {
+            if (!pending.signal_session_key.empty() && !current_session_key.empty() &&
+                pending.signal_session_key != current_session_key) {
+                continue;
+            }
+            if (execution_tick.ts_ns <= pending.timing.signal_ts_ns) {
+                remaining.push_back(pending);
+                continue;
+            }
+            if (!process_deterministic_intent(
+                    pending.intent, pending.timing, execution_tick, execution_tick.last_price,
+                    pending.market_regime)) {
+                return false;
+            }
+        }
+
+        if (remaining.empty()) {
+            pending_bar_intents_by_instrument.erase(pending_it);
+        } else {
+            pending_it->second = std::move(remaining);
         }
         return true;
     };
@@ -3769,7 +4178,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                                       bar.high,
                                       bar.low,
                                       bar.volume,
-                                      bar.ts_ns,
+                                      last.ts_ns,
                                       timeframe_minutes,
                                       &detector_it->second);
 
@@ -3795,7 +4204,11 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             row.adx = detector_it->second.GetADX();
             row.er = detector_it->second.GetKAMAER();
             row.market_regime = state.market_regime;
-            if (!indicator_trace_writer.Append(row, error)) {
+            if (emit_indicator_trace_csv && !indicator_trace_csv_writer.Append(row, error)) {
+                return false;
+            }
+            if (emit_indicator_trace_parquet &&
+                !indicator_trace_parquet_writer.Append(row, error)) {
                 return false;
             }
         }
@@ -3856,7 +4269,12 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 row.stop_loss_price = atomic_trace.stop_loss_price;
                 row.take_profit_price = atomic_trace.take_profit_price;
                 row.market_regime = state.market_regime;
-                if (!sub_strategy_indicator_trace_writer.Append(row, error)) {
+                if (emit_sub_strategy_indicator_trace_csv &&
+                    !sub_strategy_indicator_trace_csv_writer.Append(row, error)) {
+                    return false;
+                }
+                if (emit_sub_strategy_indicator_trace_parquet &&
+                    !sub_strategy_indicator_trace_parquet_writer.Append(row, error)) {
                     return false;
                 }
             }
@@ -3865,9 +4283,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         replay.intents_emitted += static_cast<std::int64_t>(intents.size());
 
         if (spec.deterministic_fills) {
-            if (!process_deterministic_intents(intents, last.last_price, state.market_regime)) {
-                return false;
-            }
+            enqueue_bar_intents(intents, last, state.market_regime);
 
             const double current_equity =
                 ComputeTotalEquity(spec.initial_equity, position_state, mark_price,
@@ -3955,6 +4371,12 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         }
 
         mark_price[tick.instrument_id] = tick.last_price;
+        if (spec.deterministic_fills) {
+            if (!process_pending_bar_intents(tick)) {
+                return false;
+            }
+        }
+
         if (spec.deterministic_fills && composite_strategy != nullptr) {
             if (has_product_fee) {
                 used_margin_total =
@@ -3970,11 +4392,12 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 ComputeTotalEquity(spec.initial_equity, position_state, mark_price, total_commission,
                                    has_product_fee ? &product_fee_book : nullptr);
             composite_strategy->SetBacktestAccountSnapshot(equity, equity - spec.initial_equity);
+
             const std::vector<SignalIntent> tick_intents =
                 composite_strategy->OnBacktestTick(tick.instrument_id, tick.ts_ns, tick.last_price);
             replay.intents_emitted += static_cast<std::int64_t>(tick_intents.size());
-            if (!process_deterministic_intents(tick_intents, tick.last_price,
-                                               MarketRegime::kUnknown)) {
+            if (!process_tick_intents(tick_intents, tick, tick.last_price,
+                                      MarketRegime::kUnknown)) {
                 return false;
             }
         }
@@ -4025,12 +4448,20 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         }
         return false;
     }
+    pending_bar_intents_by_instrument.clear();
 
-    if (spec.emit_indicator_trace && !indicator_trace_writer.Close(error)) {
+    if (emit_indicator_trace_csv && !indicator_trace_csv_writer.Close(error)) {
         return false;
     }
-    if (spec.emit_sub_strategy_indicator_trace &&
-        !sub_strategy_indicator_trace_writer.Close(error)) {
+    if (emit_indicator_trace_parquet && !indicator_trace_parquet_writer.Close(error)) {
+        return false;
+    }
+    if (emit_sub_strategy_indicator_trace_csv &&
+        !sub_strategy_indicator_trace_csv_writer.Close(error)) {
+        return false;
+    }
+    if (emit_sub_strategy_indicator_trace_parquet &&
+        !sub_strategy_indicator_trace_parquet_writer.Close(error)) {
         return false;
     }
 
@@ -4050,6 +4481,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     result.spec = spec;
     result.spec.strategy_factory = spec.strategy_factory;
     result.spec.strategy_composite_config = spec.strategy_composite_config;
+    result.spec.trace_output_format = spec.trace_output_format;
     result.spec.indicator_trace_path = indicator_trace_path;
     result.spec.sub_strategy_indicator_trace_path = sub_strategy_indicator_trace_path;
     BacktestCliSpec signature_spec = spec;
@@ -4058,10 +4490,15 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     result.input_signature = BuildInputSignature(signature_spec);
     result.indicator_trace_enabled = spec.emit_indicator_trace;
     result.indicator_trace_path = indicator_trace_path;
-    result.indicator_trace_rows = indicator_trace_writer.rows_written();
+    result.indicator_trace_rows = emit_indicator_trace_csv ? indicator_trace_csv_writer.rows_written()
+                                                           : indicator_trace_parquet_writer
+                                                                 .rows_written();
     result.sub_strategy_indicator_trace_enabled = spec.emit_sub_strategy_indicator_trace;
     result.sub_strategy_indicator_trace_path = sub_strategy_indicator_trace_path;
-    result.sub_strategy_indicator_trace_rows = sub_strategy_indicator_trace_writer.rows_written();
+    result.sub_strategy_indicator_trace_rows =
+        emit_sub_strategy_indicator_trace_csv ? sub_strategy_indicator_trace_csv_writer.rows_written()
+                                              : sub_strategy_indicator_trace_parquet_writer
+                                                    .rows_written();
 
     if (data_source == "csv") {
         result.data_signature = ComputeFileDigest(spec.csv_path, error);
@@ -4312,6 +4749,8 @@ inline std::string RenderBacktestJson(const BacktestCliResult& result) {
          << "    \"strategy_factory\": \"" << JsonEscape(result.spec.strategy_factory) << "\",\n"
          << "    \"strategy_composite_config\": \""
          << JsonEscape(result.spec.strategy_composite_config) << "\",\n"
+         << "    \"trace_output_format\": \"" << JsonEscape(result.spec.trace_output_format)
+         << "\",\n"
          << "    \"market_state_detector\": {\n"
          << "      \"adx_period\": " << result.spec.detector_config.adx_period << ",\n"
          << "      \"adx_strong_threshold\": "
@@ -4659,6 +5098,12 @@ inline std::string RenderBacktestJson(const BacktestCliResult& result) {
              << JsonEscape(row.side) << "\",\"offset\":\"" << JsonEscape(row.offset)
              << "\",\"volume\":" << row.volume << ",\"price\":"
              << detail::FormatDouble(row.price) << ",\"timestamp_ns\":" << row.timestamp_ns
+             << ",\"signal_ts_ns\":" << row.signal_ts_ns << ",\"trading_day\":\""
+             << JsonEscape(row.trading_day) << "\",\"action_day\":\""
+             << JsonEscape(row.action_day) << "\",\"update_time\":\""
+             << JsonEscape(row.update_time) << "\",\"timestamp_dt_local\":\""
+             << JsonEscape(row.timestamp_dt_local) << "\",\"signal_dt_local\":\""
+             << JsonEscape(row.signal_dt_local) << "\""
              << ",\"timestamp_dt_utc\":\"" << JsonEscape(row.timestamp_dt_utc)
              << "\""
              << ",\"commission\":" << detail::FormatDouble(row.commission) << ",\"slippage\":"
@@ -4687,8 +5132,12 @@ inline std::string RenderBacktestJson(const BacktestCliResult& result) {
              << row.created_at_ns << ",\"created_at_dt_utc\":\""
              << JsonEscape(row.created_at_dt_utc) << "\",\"last_update_ns\":"
              << row.last_update_ns << ",\"last_update_dt_utc\":\""
-             << JsonEscape(row.last_update_dt_utc)
-             << "\""
+             << JsonEscape(row.last_update_dt_utc) << "\",\"trading_day\":\""
+             << JsonEscape(row.trading_day) << "\",\"action_day\":\""
+             << JsonEscape(row.action_day) << "\",\"update_time\":\""
+             << JsonEscape(row.update_time) << "\",\"created_at_dt_local\":\""
+             << JsonEscape(row.created_at_dt_local) << "\",\"last_update_dt_local\":\""
+             << JsonEscape(row.last_update_dt_local) << "\""
              << ",\"strategy_id\":\"" << JsonEscape(row.strategy_id) << "\",\"cancel_reason\":\""
              << JsonEscape(row.cancel_reason) << "\"}";
     }

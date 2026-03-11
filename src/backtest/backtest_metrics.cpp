@@ -210,7 +210,9 @@ std::vector<DailyPerformance> ComputeDailyMetrics(const std::vector<EquitySample
     std::map<std::string, int> day_trade_count;
     std::map<std::string, double> day_turnover;
     for (const TradeRecord& trade : trades) {
-        const std::string day = TradingDayFromEpochNs(trade.timestamp_ns);
+        const std::string day = NormalizeTradingDay(trade.trading_day).empty()
+                                    ? TradingDayFromEpochNs(trade.timestamp_ns)
+                                    : NormalizeTradingDay(trade.trading_day);
         day_trade_count[day] += 1;
         day_turnover[day] += std::fabs(trade.price * static_cast<double>(trade.volume));
     }
@@ -428,7 +430,9 @@ std::vector<RegimePerformance> ComputeRegimePerformance(const std::vector<TradeR
         const double return_pct = notional > 1e-12 ? trade.realized_pnl / notional * 100.0 : 0.0;
         agg.return_sum_pct += return_pct;
         agg.trade_returns_pct.push_back(return_pct);
-        agg.days.insert(TradingDayFromEpochNs(trade.timestamp_ns));
+        agg.days.insert(NormalizeTradingDay(trade.trading_day).empty()
+                            ? TradingDayFromEpochNs(trade.timestamp_ns)
+                            : NormalizeTradingDay(trade.trading_day));
         const double cumulative = agg.cumulative_pnl.empty() ? trade.realized_pnl
                                                              : agg.cumulative_pnl.back() + trade.realized_pnl;
         agg.cumulative_pnl.push_back(cumulative);

@@ -26,6 +26,12 @@ struct TradeRecord {
     std::string signal_type;
     std::string regime_at_entry;
     std::int64_t fill_seq{0};
+    EpochNanos signal_ts_ns{0};
+    std::string signal_dt_local;
+    std::string trading_day;
+    std::string action_day;
+    std::string update_time;
+    std::string timestamp_dt_local;
 };
 
 struct OrderRecord {
@@ -47,6 +53,11 @@ struct OrderRecord {
     std::string strategy_id;
     std::string cancel_reason;
     std::int64_t order_seq{0};
+    std::string trading_day;
+    std::string action_day;
+    std::string update_time;
+    std::string created_at_dt_local;
+    std::string last_update_dt_local;
 };
 
 struct DailyPerformance {

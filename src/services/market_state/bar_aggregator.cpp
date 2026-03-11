@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <fstream>
+#include <limits>
 #include <unordered_map>
 
 namespace quant_hft {
@@ -144,6 +145,17 @@ bool IsMinuteInInterval(const BarAggregator::SessionInterval& interval, int minu
         return minute_of_day >= interval.start_minute && minute_of_day <= interval.end_minute;
     }
     return minute_of_day >= interval.start_minute || minute_of_day <= interval.end_minute;
+}
+
+int SessionOrderKey(const BarAggregator::SessionInterval& interval) {
+    if (interval.start_minute > interval.end_minute || interval.start_minute >= 18 * 60) {
+        return interval.start_minute - 24 * 60;
+    }
+    return interval.start_minute;
+}
+
+std::string FormatSessionKey(const BarAggregator::SessionInterval& interval) {
+    return std::to_string(interval.start_minute) + "-" + std::to_string(interval.end_minute);
 }
 
 std::unordered_map<std::string, std::vector<BarAggregator::SessionRule>> BuildDefaultRules() {
@@ -411,6 +423,48 @@ bool BarAggregator::IsInTradingSession(const std::string& exchange_id,
     return IsInTradingSession(exchange_id, "", "", update_time);
 }
 
+std::string BarAggregator::ResolveSessionKey(const std::string& exchange_id,
+                                             const std::string& instrument_id,
+                                             const std::string& update_time) const {
+    MarketSnapshot snapshot;
+    snapshot.instrument_id = instrument_id;
+
+    SessionInterval interval;
+    const std::string resolved_exchange =
+        exchange_id.empty() ? InferExchangeId(instrument_id) : exchange_id;
+    if (!ResolveSessionInterval(resolved_exchange,
+                                instrument_id,
+                                ResolveProductCode(snapshot),
+                                update_time,
+                                &interval)) {
+        return "";
+    }
+    return FormatSessionKey(interval);
+}
+
+int BarAggregator::ResolveSessionOrder(const std::string& exchange_id,
+                                       const std::string& instrument_id,
+                                       const std::string& update_time) const {
+    MarketSnapshot snapshot;
+    snapshot.instrument_id = instrument_id;
+
+    SessionInterval interval;
+    const std::string resolved_exchange =
+        exchange_id.empty() ? InferExchangeId(instrument_id) : exchange_id;
+    if (!ResolveSessionInterval(resolved_exchange,
+                                instrument_id,
+                                ResolveProductCode(snapshot),
+                                update_time,
+                                &interval)) {
+        int minute_of_day = 24 * 60;
+        if (ParseMinuteOfDay(update_time, &minute_of_day)) {
+            return minute_of_day;
+        }
+        return std::numeric_limits<int>::max();
+    }
+    return SessionOrderKey(interval);
+}
+
 bool BarAggregator::ParseMinuteOfDay(const std::string& update_time, int* minute_of_day) {
     if (minute_of_day == nullptr || update_time.size() < 5) {
         return false;
@@ -530,6 +584,15 @@ bool BarAggregator::IsInTradingSession(const std::string& exchange_id,
                                        const std::string& instrument_id,
                                        const std::string& product,
                                        const std::string& update_time) const {
+    SessionInterval interval;
+    return ResolveSessionInterval(exchange_id, instrument_id, product, update_time, &interval);
+}
+
+bool BarAggregator::ResolveSessionInterval(const std::string& exchange_id,
+                                           const std::string& instrument_id,
+                                           const std::string& product,
+                                           const std::string& update_time,
+                                           SessionInterval* interval) const {
     int minute_of_day = 0;
     if (!ParseMinuteOfDay(update_time, &minute_of_day)) {
         return false;
@@ -538,8 +601,11 @@ bool BarAggregator::IsInTradingSession(const std::string& exchange_id,
     auto evaluate_rules = [&](const std::vector<SessionRule>& rules) {
         if (instrument_id.empty() && product.empty()) {
             for (const auto& rule : rules) {
-                for (const auto& interval : rule.intervals) {
-                    if (IsMinuteInInterval(interval, minute_of_day)) {
+                for (const auto& rule_interval : rule.intervals) {
+                    if (IsMinuteInInterval(rule_interval, minute_of_day)) {
+                        if (interval != nullptr) {
+                            *interval = rule_interval;
+                        }
                         return true;
                     }
                 }
@@ -564,8 +630,11 @@ bool BarAggregator::IsInTradingSession(const std::string& exchange_id,
                 continue;
             }
             has_specific_match = true;
-            for (const auto& interval : rule.intervals) {
-                if (IsMinuteInInterval(interval, minute_of_day)) {
+            for (const auto& rule_interval : rule.intervals) {
+                if (IsMinuteInInterval(rule_interval, minute_of_day)) {
+                    if (interval != nullptr) {
+                        *interval = rule_interval;
+                    }
                     return true;
                 }
             }
@@ -578,8 +647,11 @@ bool BarAggregator::IsInTradingSession(const std::string& exchange_id,
             if (!rule.instrument_prefix.empty() || !rule.product.empty()) {
                 continue;
             }
-            for (const auto& interval : rule.intervals) {
-                if (IsMinuteInInterval(interval, minute_of_day)) {
+            for (const auto& rule_interval : rule.intervals) {
+                if (IsMinuteInInterval(rule_interval, minute_of_day)) {
+                    if (interval != nullptr) {
+                        *interval = rule_interval;
+                    }
                     return true;
                 }
             }

@@ -129,6 +129,58 @@ to_cmake_bool() {
   fi
 }
 
+normalize_trace_output_format() {
+  local value
+  value="$(to_lower "$(trim "$1")")"
+  case "${value}" in
+    ""|csv)
+      printf 'csv'
+      ;;
+    parquet|both)
+      printf '%s' "${value}"
+      ;;
+    *)
+      echo "error: trace_output_format must be one of: csv, parquet, both (got: $1)" >&2
+      exit 2
+      ;;
+  esac
+}
+
+trace_primary_extension() {
+  case "$1" in
+    parquet) printf 'parquet' ;;
+    *) printf 'csv' ;;
+  esac
+}
+
+trace_stem_from_path() {
+  local value="$1"
+  local filename
+  filename="$(basename "${value}")"
+  if [[ "${filename}" == .* && "${filename#*.}" != *.* ]]; then
+    printf '%s' "${filename}"
+    return 0
+  fi
+  if [[ "${filename}" == *.* ]]; then
+    printf '%s' "${filename%.*}"
+  else
+    printf '%s' "${filename}"
+  fi
+}
+
+resolve_trace_output_path() {
+  local raw_path="$1"
+  local default_stem="$2"
+  local format="$3"
+  local stem="${default_stem}"
+  if [[ -n "${raw_path}" ]]; then
+    stem="$(trace_stem_from_path "${raw_path}")"
+  fi
+  local ext
+  ext="$(trace_primary_extension "${format}")"
+  printf '%s' "${run_dir}/${stem}.${ext}"
+}
+
 print_cmd() {
   local arg
   for arg in "$@"; do
@@ -367,6 +419,7 @@ emit_trades="$(cfg_get "emit_trades" "true")"
 emit_orders="$(cfg_get "emit_orders" "true")"
 emit_position_history="$(cfg_get "emit_position_history" "false")"
 emit_indicator_trace="$(cfg_get "emit_indicator_trace" "false")"
+trace_output_format="$(normalize_trace_output_format "$(cfg_get "trace_output_format" "csv")")"
 indicator_trace_path_raw="$(cfg_get "indicator_trace_path" "")"
 emit_sub_strategy_indicator_trace="$(cfg_get "emit_sub_strategy_indicator_trace" "false")"
 sub_strategy_indicator_trace_path_raw="$(cfg_get "sub_strategy_indicator_trace_path" "")"
@@ -409,21 +462,13 @@ else
 fi
 
 if is_true "${emit_indicator_trace}"; then
-  if [[ -z "${indicator_trace_path_raw}" ]]; then
-    indicator_trace_path="${run_dir}/indicator_trace.parquet"
-  else
-    indicator_trace_path="${run_dir}/$(basename "${indicator_trace_path_raw}")"
-  fi
+  indicator_trace_path="$(resolve_trace_output_path "${indicator_trace_path_raw}" "indicator_trace" "${trace_output_format}")"
 else
   indicator_trace_path=""
 fi
 
 if is_true "${emit_sub_strategy_indicator_trace}"; then
-  if [[ -z "${sub_strategy_indicator_trace_path_raw}" ]]; then
-    sub_strategy_indicator_trace_path="${run_dir}/sub_strategy_indicator_trace.parquet"
-  else
-    sub_strategy_indicator_trace_path="${run_dir}/$(basename "${sub_strategy_indicator_trace_path_raw}")"
-  fi
+  sub_strategy_indicator_trace_path="$(resolve_trace_output_path "${sub_strategy_indicator_trace_path_raw}" "sub_strategy_indicator_trace" "${trace_output_format}")"
 else
   sub_strategy_indicator_trace_path=""
 fi
@@ -572,6 +617,7 @@ append_arg_if_set backtest_cmd --rollover_slippage_bps "${rollover_slippage_bps}
 append_arg_if_set backtest_cmd --emit_trades "${emit_trades}"
 append_arg_if_set backtest_cmd --emit_orders "${emit_orders}"
 append_arg_if_set backtest_cmd --emit_position_history "${emit_position_history}"
+append_arg_if_set backtest_cmd --trace_output_format "${trace_output_format}"
 if is_true "${emit_indicator_trace}"; then
   backtest_cmd+=(--emit_indicator_trace true --indicator_trace_path "${indicator_trace_path}")
 fi
@@ -588,6 +634,7 @@ if [[ "${dry_run}" == true ]] || ! is_true "${progress_only}"; then
   echo "timestamp_timezone=${timestamp_timezone}"
   echo "run_id=${effective_run_id}"
   echo "run_dir=${run_dir}"
+  echo "trace_output_format=${trace_output_format}"
   echo "dataset_root=${dataset_root}"
   echo "strategy_main_config_path=${strategy_main_config_path}"
   echo "output_json=${output_json}"

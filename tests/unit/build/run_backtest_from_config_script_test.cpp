@@ -319,9 +319,9 @@ TEST(RunBacktestFromConfigScriptTest, SkipBuildRoutesAllArtifactsIntoSingleRunDi
                   "export_csv_dir: /tmp/templates/custom_csv\n"
                   "run_id: single-run\n"
                   "emit_indicator_trace: true\n"
-                  "indicator_trace_path: /tmp/templates/custom_trace.parquet\n"
+                  "indicator_trace_path: /tmp/templates/custom_trace.csv\n"
                   "emit_sub_strategy_indicator_trace: true\n"
-                  "sub_strategy_indicator_trace_path: /tmp/templates/custom_sub_trace.parquet\n");
+                  "sub_strategy_indicator_trace_path: /tmp/templates/custom_sub_trace.csv\n");
 
     const std::string command =
         "bash scripts/build/run_backtest_from_config.sh --config '" +
@@ -352,10 +352,10 @@ TEST(RunBacktestFromConfigScriptTest, SkipBuildRoutesAllArtifactsIntoSingleRunDi
     EXPECT_EQ(std::filesystem::path(*FindArgValue(args, "--export_csv_dir")).filename(),
               "custom_csv");
     EXPECT_EQ(std::filesystem::path(*FindArgValue(args, "--indicator_trace_path")).filename(),
-              "custom_trace.parquet");
+              "custom_trace.csv");
     EXPECT_EQ(
         std::filesystem::path(*FindArgValue(args, "--sub_strategy_indicator_trace_path")).filename(),
-        "custom_sub_trace.parquet");
+        "custom_sub_trace.csv");
 
     const std::regex run_dir_pattern("^single-run_[0-9]{8}T[0-9]{6}Z$");
     EXPECT_TRUE(std::regex_match(run_dir.filename().string(), run_dir_pattern));
@@ -483,9 +483,9 @@ TEST(RunBacktestFromConfigScriptTest, SkipBuildPassesIndicatorTraceArgsWhenEnabl
                   "output_md: /tmp/templates/trace_result.md\n"
                   "run_id: trace-run\n"
                   "emit_indicator_trace: true\n"
-                  "indicator_trace_path: /tmp/templates/main_trace.parquet\n"
+                  "indicator_trace_path: /tmp/templates/main_trace.csv\n"
                   "emit_sub_strategy_indicator_trace: true\n"
-                  "sub_strategy_indicator_trace_path: /tmp/templates/sub_trace.parquet\n");
+                  "sub_strategy_indicator_trace_path: /tmp/templates/sub_trace.csv\n");
 
     const std::string command =
         "bash scripts/build/run_backtest_from_config.sh --config '" +
@@ -511,10 +511,207 @@ TEST(RunBacktestFromConfigScriptTest, SkipBuildPassesIndicatorTraceArgsWhenEnabl
         std::filesystem::path(*FindArgValue(args, "--sub_strategy_indicator_trace_path")).parent_path(),
         run_dir);
     EXPECT_EQ(std::filesystem::path(*FindArgValue(args, "--indicator_trace_path")).filename(),
-              "main_trace.parquet");
+              "main_trace.csv");
     EXPECT_EQ(
         std::filesystem::path(*FindArgValue(args, "--sub_strategy_indicator_trace_path")).filename(),
-        "sub_trace.parquet");
+        "sub_trace.csv");
+}
+
+TEST(RunBacktestFromConfigScriptTest, SkipBuildDefaultsTraceOutputFormatToCsvAndCsvTracePaths) {
+    const auto root = MakeTempDir("trace_output_format_default");
+    const auto build_dir = root / "build-gcc";
+    const auto dataset_root = root / "parquet_v2";
+    const auto strategy_main = root / "main_backtest_strategy.yaml";
+    const auto config_path = root / "backtest_run.yaml";
+    const auto args_log = root / "captured_args.txt";
+    const auto output_root_dir = root / "backtest_runs";
+    const auto fake_cli = build_dir / "backtest_cli";
+
+    std::filesystem::create_directories(build_dir);
+    std::filesystem::create_directories(dataset_root);
+    WriteFile(strategy_main, "run_type: backtest\n");
+
+    WriteFile(fake_cli,
+              "#!/usr/bin/env bash\n"
+              "set -euo pipefail\n"
+              "args_file='" +
+                  args_log.string() +
+                  "'\n"
+                  ": >\"${args_file}\"\n"
+                  "for arg in \"$@\"; do\n"
+                  "  printf '%s\\n' \"${arg}\" >>\"${args_file}\"\n"
+                  "done\n");
+    std::filesystem::permissions(fake_cli,
+                                 std::filesystem::perms::owner_exec |
+                                     std::filesystem::perms::group_exec |
+                                     std::filesystem::perms::others_exec |
+                                     std::filesystem::perms::owner_read |
+                                     std::filesystem::perms::group_read |
+                                     std::filesystem::perms::others_read |
+                                     std::filesystem::perms::owner_write,
+                                 std::filesystem::perm_options::replace);
+
+    WriteFile(config_path,
+              "build_dir: " +
+                  build_dir.string() +
+                  "\n"
+                  "engine_mode: parquet\n"
+                  "dataset_root: " +
+                  dataset_root.string() +
+                  "\n"
+                  "strategy_main_config_path: " +
+                  strategy_main.string() +
+                  "\n"
+                  "output_root_dir: " +
+                  output_root_dir.string() +
+                  "\n"
+                  "timestamp_timezone: utc\n"
+                  "output_json: /tmp/templates/trace_result.json\n"
+                  "output_md: /tmp/templates/trace_result.md\n"
+                  "run_id: trace-run\n"
+                  "emit_indicator_trace: true\n"
+                  "emit_sub_strategy_indicator_trace: true\n");
+
+    const std::string command =
+        "bash scripts/build/run_backtest_from_config.sh --config '" +
+        EscapePathForShell(config_path) + "' --skip-build";
+    const int rc = RunCommand(command);
+    EXPECT_EQ(rc, 0);
+
+    const std::vector<std::string> args = ReadLines(args_log);
+    ASSERT_NE(FindArgValue(args, "--trace_output_format"), nullptr);
+    ASSERT_NE(FindArgValue(args, "--indicator_trace_path"), nullptr);
+    ASSERT_NE(FindArgValue(args, "--sub_strategy_indicator_trace_path"), nullptr);
+    EXPECT_EQ(*FindArgValue(args, "--trace_output_format"), "csv");
+    EXPECT_EQ(std::filesystem::path(*FindArgValue(args, "--indicator_trace_path")).filename(),
+              "indicator_trace.csv");
+    EXPECT_EQ(
+        std::filesystem::path(*FindArgValue(args, "--sub_strategy_indicator_trace_path")).filename(),
+        "sub_strategy_indicator_trace.csv");
+}
+
+TEST(RunBacktestFromConfigScriptTest, SkipBuildPassesTraceOutputFormatWhenConfigured) {
+    const auto root = MakeTempDir("trace_output_format_passthrough");
+    const auto build_dir = root / "build-gcc";
+    const auto dataset_root = root / "parquet_v2";
+    const auto strategy_main = root / "main_backtest_strategy.yaml";
+    const auto config_path = root / "backtest_run.yaml";
+    const auto args_log = root / "captured_args.txt";
+    const auto fake_cli = build_dir / "backtest_cli";
+
+    std::filesystem::create_directories(build_dir);
+    std::filesystem::create_directories(dataset_root);
+    WriteFile(strategy_main, "run_type: backtest\n");
+
+    WriteFile(fake_cli,
+              "#!/usr/bin/env bash\n"
+              "set -euo pipefail\n"
+              "args_file='" +
+                  args_log.string() +
+                  "'\n"
+                  ": >\"${args_file}\"\n"
+                  "for arg in \"$@\"; do\n"
+                  "  printf '%s\\n' \"${arg}\" >>\"${args_file}\"\n"
+                  "done\n");
+    std::filesystem::permissions(fake_cli,
+                                 std::filesystem::perms::owner_exec |
+                                     std::filesystem::perms::group_exec |
+                                     std::filesystem::perms::others_exec |
+                                     std::filesystem::perms::owner_read |
+                                     std::filesystem::perms::group_read |
+                                     std::filesystem::perms::others_read |
+                                     std::filesystem::perms::owner_write,
+                                 std::filesystem::perm_options::replace);
+
+    WriteFile(config_path,
+              "build_dir: " +
+                  build_dir.string() +
+                  "\n"
+                  "engine_mode: parquet\n"
+                  "dataset_root: " +
+                  dataset_root.string() +
+                  "\n"
+                  "strategy_main_config_path: " +
+                  strategy_main.string() +
+                  "\n"
+                  "output_json: /tmp/templates/trace_result.json\n"
+                  "output_md: /tmp/templates/trace_result.md\n"
+                  "trace_output_format: both\n");
+
+    const std::string command =
+        "bash scripts/build/run_backtest_from_config.sh --config '" +
+        EscapePathForShell(config_path) + "' --skip-build";
+    const int rc = RunCommand(command);
+    EXPECT_EQ(rc, 0);
+
+    const std::vector<std::string> args = ReadLines(args_log);
+    ASSERT_NE(FindArgValue(args, "--trace_output_format"), nullptr);
+    EXPECT_EQ(*FindArgValue(args, "--trace_output_format"), "both");
+}
+
+TEST(RunBacktestFromConfigScriptTest, ValidationReportReadsCsvTraceWithoutPyarrow) {
+    const auto root = MakeTempDir("validation_csv_trace");
+    const auto run_dir = root / "run";
+    const auto trace_path = run_dir / "sub_strategy_indicator_trace.csv";
+    const auto report_path = run_dir / "validation_report.md";
+    const auto json_path = run_dir / "backtest_auto.json";
+    const auto log_path = run_dir / "validation.log";
+
+    std::filesystem::create_directories(run_dir);
+    WriteFile(trace_path,
+              "instrument_id,ts_ns,dt_utc,timeframe_minutes,strategy_id,strategy_type,bar_open,"
+              "bar_high,bar_low,bar_close,bar_volume,kama,atr,adx,er,stop_loss_price,"
+              "take_profit_price,market_regime\n"
+              "rb2405,1704186000000000000,2024-01-02 09:00:00,1,open_1,TrendStrategy,100,101,99,"
+              "100.5,10,100.1,1.2,25.0,0.5,95,110,kWeakTrend\n"
+              "rb2405,1704186060000000000,2024-01-02 09:01:00,1,open_1,TrendStrategy,101,102,100,"
+              "101.5,11,100.4,1.3,26.0,0.6,95,110,kWeakTrend\n");
+    WriteFile(json_path,
+              "{\n"
+              "  \"run_id\": \"validation-csv-trace\",\n"
+              "  \"engine_mode\": \"parquet\",\n"
+              "  \"initial_equity\": 1000000,\n"
+              "  \"final_equity\": 1000010,\n"
+              "  \"spec\": {\"strategy_factory\": \"composite\", \"symbols\": [\"rb2405\"]},\n"
+              "  \"replay\": {\"ticks_read\": 10, \"bars_emitted\": 2},\n"
+              "  \"deterministic\": {\n"
+              "    \"intents_processed\": 1,\n"
+              "    \"order_events_emitted\": 1,\n"
+              "    \"invariant_violations\": [],\n"
+              "    \"performance\": {\n"
+              "      \"total_commission\": 1,\n"
+              "      \"total_realized_pnl\": 12,\n"
+              "      \"total_unrealized_pnl\": -1,\n"
+              "      \"total_pnl_after_cost\": 10,\n"
+              "      \"margin_clipped_orders\": 0,\n"
+              "      \"margin_rejected_orders\": 0\n"
+              "    },\n"
+              "    \"trades\": [\n"
+              "      {\"commission\": 1, \"signal_type\": \"kOpen\"}\n"
+              "    ],\n"
+              "    \"orders\": [\n"
+              "      {\"order_id\": \"order-1\"}\n"
+              "    ]\n"
+              "  },\n"
+              "  \"sub_strategy_indicator_trace\": {\n"
+              "    \"enabled\": true,\n"
+              "    \"path\": \"" +
+                  trace_path.string() +
+                  "\",\n"
+                  "    \"rows\": 2\n"
+                  "  }\n"
+                  "}\n");
+
+    const std::string command =
+        "python3 scripts/analysis/backtest_validation_report.py --run-dir '" +
+        EscapePathForShell(run_dir) + "' --output '" + EscapePathForShell(report_path) +
+        "' --strict >'" + EscapePathForShell(log_path) + "' 2>&1";
+    const int rc = RunCommand(command);
+    EXPECT_EQ(rc, 0);
+
+    const std::string report = ReadFile(report_path);
+    EXPECT_NE(report.find("[PASS] 子策略追踪行数一致"), std::string::npos);
+    EXPECT_NE(report.find("- rows: 2"), std::string::npos);
 }
 
 TEST(RunBacktestFromConfigScriptTest, InvalidTimestampTimezoneFailsFast) {

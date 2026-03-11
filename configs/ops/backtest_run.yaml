@@ -78,24 +78,27 @@ rollover_slippage_bps: 0
 emit_trades: true
 # emit_orders：是否输出 orders 明细；示例值：true
 # emit_orders：配置项说明；示例值：true
-emit_orders: false
+emit_orders: true
 # emit_position_history：是否输出持仓快照明细；示例值：false
 # emit_position_history：配置项说明；示例值：false
 emit_position_history: true
-# emit_indicator_trace：是否输出主策略指标追踪 parquet；示例值：false
+# trace_output_format：trace 输出格式；示例值：csv（可选 csv/parquet/both）
+# trace_output_format：配置项说明；示例值：csv
+trace_output_format: csv
+# emit_indicator_trace：是否输出主策略指标追踪；示例值：false
 # emit_indicator_trace：配置项说明；示例值：false
 # emit_indicator_trace：说明：输出 schema 含 `timeframe_minutes` 列
-emit_indicator_trace: false
-# indicator_trace_path：可选，主策略指标追踪文件名模板（仅取 basename 并落到本次 run_dir）；示例值：my_trace.parquet（留空用 indicator_trace.parquet）
+emit_indicator_trace: true
+# indicator_trace_path：可选，主策略指标追踪文件名模板（仅取 basename 并落到本次 run_dir）；示例值：my_trace.csv（留空用 indicator_trace.csv）
 # indicator_trace_path：配置项说明；示例值：<空>
-indicator_trace_path: my_trace.parquet
-# emit_sub_strategy_indicator_trace：是否输出子策略指标追踪 parquet；示例值：false
+indicator_trace_path: my_trace.csv
+# emit_sub_strategy_indicator_trace：是否输出子策略指标追踪；示例值：false
 # emit_sub_strategy_indicator_trace：配置项说明；示例值：false
 # emit_sub_strategy_indicator_trace：说明：输出 schema 含 `timeframe_minutes` 列
 emit_sub_strategy_indicator_trace: true
-# sub_strategy_indicator_trace_path：可选，子策略指标追踪文件名模板（仅取 basename 并落到本次 run_dir）；示例值：my_sub_trace.parquet（留空用 sub_strategy_indicator_trace.parquet）
+# sub_strategy_indicator_trace_path：可选，子策略指标追踪文件名模板（仅取 basename 并落到本次 run_dir）；示例值：my_sub_trace.csv（留空用 sub_strategy_indicator_trace.csv）
 # sub_strategy_indicator_trace_path：配置项说明；示例值：<空>
-sub_strategy_indicator_trace_path: my_sub_trace.parquet
+sub_strategy_indicator_trace_path: my_sub_trace.csv
 # quiet_backtest_stdout：是否抑制 backtest_cli 的 stdout JSON 输出（建议 true，结果看 output_json）；示例值：true
 quiet_backtest_stdout: true
 # progress_only：是否仅显示进度条和完成百分比（建议 true）；示例值：true

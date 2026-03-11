@@ -52,6 +52,12 @@ public:
     void ResetInstrument(const std::string& instrument_id);
     std::string InferExchangeId(const std::string& instrument_id) const;
     bool IsInTradingSession(const std::string& exchange_id, const std::string& update_time) const;
+    std::string ResolveSessionKey(const std::string& exchange_id,
+                                  const std::string& instrument_id,
+                                  const std::string& update_time) const;
+    int ResolveSessionOrder(const std::string& exchange_id,
+                            const std::string& instrument_id,
+                            const std::string& update_time) const;
     static std::vector<BarSnapshot> AggregateFromOneMinute(
         const std::vector<BarSnapshot>& one_minute_bars,
         std::int32_t timeframe_minutes);
@@ -75,6 +81,11 @@ private:
                             const std::string& instrument_id,
                             const std::string& product,
                             const std::string& update_time) const;
+    bool ResolveSessionInterval(const std::string& exchange_id,
+                                const std::string& instrument_id,
+                                const std::string& product,
+                                const std::string& update_time,
+                                SessionInterval* interval) const;
     void LoadTradingSessions();
 
     void ResetBucketLocked(MinuteBucket* bucket,

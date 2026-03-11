@@ -111,6 +111,19 @@ bool IsMinutePrecisionDateTime(const std::string& value) {
     return value[4] == '-' && value[7] == '-' && value[10] == ' ' && value[13] == ':';
 }
 
+std::vector<std::string> ReadLines(const std::filesystem::path& path) {
+    std::vector<std::string> lines;
+    std::ifstream input(path);
+    std::string line;
+    while (std::getline(input, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        lines.push_back(line);
+    }
+    return lines;
+}
+
 std::filesystem::path WriteTempDetectorConfig(const std::string& content) {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto path = std::filesystem::temp_directory_path() /
@@ -284,6 +297,27 @@ std::filesystem::path WriteForceCloseWindowCompositeConfig(const std::string& st
     return path;
 }
 
+std::filesystem::path WriteAlwaysOpenCompositeConfig(const std::string& strategy_type,
+                                                     int timeframe_minutes) {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto path =
+        std::filesystem::temp_directory_path() /
+        ("quant_hft_always_open_composite_test_" + std::to_string(stamp) + ".yaml");
+    std::ofstream out(path);
+    out << "composite:\n";
+    out << "  merge_rule: kPriority\n";
+    out << "  sub_strategies:\n";
+    out << "    - id: always_open\n";
+    out << "      enabled: true\n";
+    out << "      timeframe_minutes: " << timeframe_minutes << "\n";
+    out << "      type: " << strategy_type << "\n";
+    out << "      params:\n";
+    out << "        id: always_open\n";
+    out << "        volume: 1\n";
+    out.close();
+    return path;
+}
+
 std::filesystem::path WriteForceCloseWindowReplayCsv(const std::string& stem) {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto path =
@@ -307,6 +341,60 @@ std::filesystem::path WriteForceCloseWindowReplayCsv(const std::string& stem) {
         const EpochNanos ts_ns = detail::ToEpochNs("20240103", update_time, 0);
         out << "rb2405," << ts_ns << "," << last_price << "," << volume << "," << (last_price - 1.0)
             << ",20," << (last_price + 1.0) << ",18\n";
+        ++volume;
+    }
+    out.close();
+    return path;
+}
+
+std::filesystem::path WriteDeferredBarReplayCsv(const std::string& stem) {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto path =
+        std::filesystem::temp_directory_path() / (stem + "_" + std::to_string(stamp) + ".csv");
+    std::ofstream out(path);
+    out << "TradingDay,UpdateTime,InstrumentID,LastPrice,Volume,BidPrice1,BidVolume1,AskPrice1,"
+           "AskVolume1\n";
+    const std::vector<std::pair<std::string, double>> ticks = {
+        {"09:55:05", 100.0},
+        {"09:56:05", 101.0},
+        {"09:57:05", 102.0},
+        {"09:58:05", 103.0},
+        {"09:59:05", 104.0},
+        {"10:00:05", 105.0},
+        {"10:00:30", 106.0},
+        {"10:01:05", 107.0},
+        {"10:01:30", 108.0},
+    };
+    std::int64_t volume = 100;
+    for (const auto& [update_time, last_price] : ticks) {
+        out << "20240110," << update_time << ",rb2405," << last_price << "," << volume << ","
+            << (last_price - 1.0) << ",20," << (last_price + 1.0) << ",18\n";
+        ++volume;
+    }
+    out.close();
+    return path;
+}
+
+std::filesystem::path WriteCrossSessionPendingReplayCsv(const std::string& stem) {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto path =
+        std::filesystem::temp_directory_path() / (stem + "_" + std::to_string(stamp) + ".csv");
+    std::ofstream out(path);
+    out << "TradingDay,UpdateTime,InstrumentID,LastPrice,Volume,BidPrice1,BidVolume1,AskPrice1,"
+           "AskVolume1\n";
+    const std::vector<std::pair<std::string, double>> ticks = {
+        {"22:55:05", 100.0},
+        {"22:56:05", 101.0},
+        {"22:57:05", 102.0},
+        {"22:58:05", 103.0},
+        {"22:59:05", 104.0},
+        {"09:00:05", 105.0},
+        {"09:00:30", 106.0},
+    };
+    std::int64_t volume = 100;
+    for (const auto& [update_time, last_price] : ticks) {
+        out << "20240110," << update_time << ",c2405," << last_price << "," << volume << ","
+            << (last_price - 1.0) << ",20," << (last_price + 1.0) << ",18\n";
         ++volume;
     }
     out.close();
@@ -882,6 +970,7 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecIndicatorTraceFollowsArrowCapabil
     spec.csv_path = csv_path.string();
     spec.run_id = "indicator-trace-test";
     spec.emit_indicator_trace = true;
+    spec.trace_output_format = "parquet";
     spec.indicator_trace_path = trace_path.string();
     spec.max_ticks = 4;
 
@@ -947,6 +1036,7 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecSubStrategyTraceFollowsArrowCapab
     spec.strategy_factory = "composite";
     spec.strategy_composite_config = composite_path.string();
     spec.emit_sub_strategy_indicator_trace = true;
+    spec.trace_output_format = "parquet";
     spec.sub_strategy_indicator_trace_path = trace_path.string();
     spec.max_ticks = 4;
 
@@ -969,6 +1059,39 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecSubStrategyTraceFollowsArrowCapab
 
     std::filesystem::remove(csv_path, ec);
     std::filesystem::remove(composite_path, ec);
+    std::filesystem::remove(trace_path, ec);
+}
+
+TEST(BacktestReplaySupportTest, RunBacktestSpecIndicatorTraceWritesCsvWhenPathEndsWithCsv) {
+    const std::filesystem::path csv_path = WriteTempReplayCsv("quant_hft_indicator_trace_csv");
+    const std::filesystem::path trace_path =
+        std::filesystem::temp_directory_path() / "quant_hft_indicator_trace.csv";
+    std::error_code ec;
+    std::filesystem::remove(trace_path, ec);
+
+    BacktestCliSpec spec;
+    spec.engine_mode = "csv";
+    spec.csv_path = csv_path.string();
+    spec.run_id = "indicator-trace-csv-test";
+    spec.emit_indicator_trace = true;
+    spec.indicator_trace_path = trace_path.string();
+    spec.max_ticks = 4;
+
+    BacktestCliResult result;
+    std::string error;
+    ASSERT_TRUE(RunBacktestSpec(spec, &result, &error)) << error;
+    EXPECT_TRUE(result.indicator_trace_enabled);
+    EXPECT_EQ(result.indicator_trace_path, trace_path.string());
+    EXPECT_GT(result.indicator_trace_rows, 0);
+    ASSERT_TRUE(std::filesystem::exists(trace_path));
+
+    const std::vector<std::string> lines = ReadLines(trace_path);
+    ASSERT_GE(lines.size(), 2U);
+    EXPECT_EQ(lines.front(),
+              "instrument_id,ts_ns,dt_utc,timeframe_minutes,bar_open,bar_high,bar_low,bar_close,"
+              "bar_volume,kama,atr,adx,er,market_regime");
+
+    std::filesystem::remove(csv_path, ec);
     std::filesystem::remove(trace_path, ec);
 }
 
@@ -995,6 +1118,7 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecCompositeTraceCarriesSubscribedTi
     spec.strategy_factory = "composite";
     spec.strategy_composite_config = composite_path.string();
     spec.emit_indicator_trace = true;
+    spec.trace_output_format = "parquet";
     spec.indicator_trace_path = indicator_trace_path.string();
     spec.emit_sub_strategy_indicator_trace = true;
     spec.sub_strategy_indicator_trace_path = sub_trace_path.string();
@@ -1031,16 +1155,13 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecCompositeTraceCarriesSubscribedTi
 }
 
 TEST(BacktestReplaySupportTest, RunBacktestSpecSubStrategyTraceUsesDefaultPathWhenEnabled) {
-#if !QUANT_HFT_ENABLE_ARROW_PARQUET
-    GTEST_SKIP() << "Arrow parquet writer is disabled in this build";
-#else
     const std::filesystem::path csv_path =
         WriteTempReplayCsv("quant_hft_sub_strategy_trace_default");
     const std::filesystem::path composite_path = WriteTempCompositeConfig();
     const std::string run_id = UniqueRunId("sub-strategy-trace-default");
     const std::filesystem::path expected_path = std::filesystem::path("runtime") / "research" /
                                                 "sub_strategy_indicator_trace" /
-                                                (run_id + ".parquet");
+                                                (run_id + ".csv");
     std::error_code ec;
     std::filesystem::remove(expected_path, ec);
 
@@ -1062,7 +1183,6 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecSubStrategyTraceUsesDefaultPathWh
     std::filesystem::remove(csv_path, ec);
     std::filesystem::remove(composite_path, ec);
     std::filesystem::remove(expected_path, ec);
-#endif
 }
 
 TEST(BacktestReplaySupportTest, RunBacktestSpecSubStrategyTraceFailsWhenPathExists) {
@@ -1087,6 +1207,7 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecSubStrategyTraceFailsWhenPathExis
     spec.strategy_factory = "composite";
     spec.strategy_composite_config = composite_path.string();
     spec.emit_sub_strategy_indicator_trace = true;
+    spec.trace_output_format = "parquet";
     spec.sub_strategy_indicator_trace_path = trace_path.string();
     spec.max_ticks = 4;
 
@@ -1102,13 +1223,10 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecSubStrategyTraceFailsWhenPathExis
 }
 
 TEST(BacktestReplaySupportTest, RunBacktestSpecIndicatorTraceUsesDefaultPathWhenEnabled) {
-#if !QUANT_HFT_ENABLE_ARROW_PARQUET
-    GTEST_SKIP() << "Arrow parquet writer is disabled in this build";
-#else
     const std::filesystem::path csv_path = WriteTempReplayCsv("quant_hft_indicator_trace_default");
     const std::string run_id = UniqueRunId("indicator-trace-default");
     const std::filesystem::path expected_path =
-        std::filesystem::path("runtime") / "research" / "indicator_trace" / (run_id + ".parquet");
+        std::filesystem::path("runtime") / "research" / "indicator_trace" / (run_id + ".csv");
 
     std::error_code ec;
     std::filesystem::remove(expected_path, ec);
@@ -1128,7 +1246,45 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecIndicatorTraceUsesDefaultPathWhen
 
     std::filesystem::remove(csv_path, ec);
     std::filesystem::remove(expected_path, ec);
-#endif
+}
+
+TEST(BacktestReplaySupportTest, RunBacktestSpecSubStrategyTraceWritesCsvWhenPathEndsWithCsv) {
+    const std::filesystem::path csv_path =
+        WriteTempReplayCsv("quant_hft_sub_strategy_trace_composite_csv");
+    const std::filesystem::path composite_path = WriteTempCompositeConfig();
+    const std::filesystem::path trace_path =
+        std::filesystem::temp_directory_path() / "quant_hft_sub_strategy_trace.csv";
+    std::error_code ec;
+    std::filesystem::remove(trace_path, ec);
+
+    BacktestCliSpec spec;
+    spec.engine_mode = "csv";
+    spec.csv_path = csv_path.string();
+    spec.run_id = "sub-strategy-trace-csv-test";
+    spec.strategy_factory = "composite";
+    spec.strategy_composite_config = composite_path.string();
+    spec.emit_sub_strategy_indicator_trace = true;
+    spec.sub_strategy_indicator_trace_path = trace_path.string();
+    spec.max_ticks = 4;
+
+    BacktestCliResult result;
+    std::string error;
+    ASSERT_TRUE(RunBacktestSpec(spec, &result, &error)) << error;
+    EXPECT_TRUE(result.sub_strategy_indicator_trace_enabled);
+    EXPECT_EQ(result.sub_strategy_indicator_trace_path, trace_path.string());
+    EXPECT_GT(result.sub_strategy_indicator_trace_rows, 0);
+    ASSERT_TRUE(std::filesystem::exists(trace_path));
+
+    const std::vector<std::string> lines = ReadLines(trace_path);
+    ASSERT_GE(lines.size(), 2U);
+    EXPECT_EQ(lines.front(),
+              "instrument_id,ts_ns,dt_utc,timeframe_minutes,strategy_id,strategy_type,bar_open,"
+              "bar_high,bar_low,bar_close,bar_volume,kama,atr,adx,er,stop_loss_price,"
+              "take_profit_price,market_regime");
+
+    std::filesystem::remove(csv_path, ec);
+    std::filesystem::remove(composite_path, ec);
+    std::filesystem::remove(trace_path, ec);
 }
 
 TEST(BacktestReplaySupportTest, RunBacktestSpecIndicatorTraceFailsWhenPathExists) {
@@ -1150,6 +1306,7 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecIndicatorTraceFailsWhenPathExists
     spec.csv_path = csv_path.string();
     spec.run_id = "indicator-trace-existing-path";
     spec.emit_indicator_trace = true;
+    spec.trace_output_format = "parquet";
     spec.indicator_trace_path = trace_path.string();
     spec.max_ticks = 4;
 
@@ -1224,7 +1381,7 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecForceCloseWindowUsesFirstEligible
     bool saw_initial_open = false;
     for (const TradeRecord& trade : result.trades) {
         if (trade.signal_type == "kOpen" &&
-            trade.timestamp_ns == detail::ToEpochNs("20240103", "09:00:30", 0)) {
+            trade.timestamp_ns == detail::ToEpochNs("20240103", "09:01:30", 0)) {
             saw_initial_open = true;
         }
         if (trade.signal_type == "kForceClose") {
@@ -1290,6 +1447,64 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecAssignsMonotonicFillAndOrderSeque
     ASSERT_NE(fill_seq_2, std::string::npos);
     EXPECT_LT(order_seq_1, order_seq_2);
     EXPECT_LT(fill_seq_1, fill_seq_2);
+
+    std::error_code ec;
+    std::filesystem::remove(csv_path, ec);
+    std::filesystem::remove(composite_path, ec);
+}
+
+TEST(BacktestReplaySupportTest, RunBacktestSpecDefersFiveMinuteBarSignalUntilLaterTick) {
+    const std::string strategy_type = UniqueAtomicType("always_open_deferred_bar");
+    RegisterAlwaysOpenReplayType(strategy_type);
+    const std::filesystem::path csv_path = WriteDeferredBarReplayCsv("quant_hft_deferred_bar");
+    const std::filesystem::path composite_path =
+        WriteAlwaysOpenCompositeConfig(strategy_type, /*timeframe_minutes=*/5);
+
+    BacktestCliSpec spec;
+    spec.engine_mode = "csv";
+    spec.csv_path = csv_path.string();
+    spec.run_id = "deferred-bar-test";
+    spec.strategy_factory = "composite";
+    spec.strategy_composite_config = composite_path.string();
+
+    BacktestCliResult result;
+    std::string error;
+    ASSERT_TRUE(RunBacktestSpec(spec, &result, &error)) << error;
+    ASSERT_EQ(result.trades.size(), 1U);
+
+    const TradeRecord& trade = result.trades.front();
+    EXPECT_EQ(trade.signal_type, "kOpen");
+    EXPECT_EQ(trade.signal_ts_ns, detail::ToEpochNs("20240110", "09:59:05", 0));
+    EXPECT_EQ(trade.timestamp_ns, detail::ToEpochNs("20240110", "10:01:30", 0));
+    EXPECT_GT(trade.timestamp_ns, trade.signal_ts_ns);
+    EXPECT_EQ(trade.trading_day, "20240110");
+    EXPECT_EQ(trade.update_time, "10:01:30");
+    EXPECT_EQ(trade.timestamp_dt_local, "2024-01-10 10:01:30");
+
+    std::error_code ec;
+    std::filesystem::remove(csv_path, ec);
+    std::filesystem::remove(composite_path, ec);
+}
+
+TEST(BacktestReplaySupportTest, RunBacktestSpecExpiresPendingBarSignalAcrossSessionBoundary) {
+    const std::string strategy_type = UniqueAtomicType("always_open_session_expiry");
+    RegisterAlwaysOpenReplayType(strategy_type);
+    const std::filesystem::path csv_path =
+        WriteCrossSessionPendingReplayCsv("quant_hft_pending_session_expiry");
+    const std::filesystem::path composite_path =
+        WriteAlwaysOpenCompositeConfig(strategy_type, /*timeframe_minutes=*/5);
+
+    BacktestCliSpec spec;
+    spec.engine_mode = "csv";
+    spec.csv_path = csv_path.string();
+    spec.run_id = "pending-session-expiry-test";
+    spec.strategy_factory = "composite";
+    spec.strategy_composite_config = composite_path.string();
+
+    BacktestCliResult result;
+    std::string error;
+    ASSERT_TRUE(RunBacktestSpec(spec, &result, &error)) << error;
+    EXPECT_TRUE(result.trades.empty());
 
     std::error_code ec;
     std::filesystem::remove(csv_path, ec);

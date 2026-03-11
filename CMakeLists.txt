@@ -76,8 +76,10 @@ add_library(quant_hft_core STATIC
     src/strategy/atomic/time_filter.cpp
     src/strategy/atomic/max_position_risk_control.cpp
     src/strategy/atomic/register_builtin_atomic_strategies.cpp
+    src/core/backtest/indicator_trace_csv_writer.cpp
     src/core/backtest/indicator_trace_parquet_writer.cpp
     src/core/backtest/product_fee_config_loader.cpp
+    src/core/backtest/sub_strategy_indicator_trace_csv_writer.cpp
     src/core/backtest/sub_strategy_indicator_trace_parquet_writer.cpp
     src/core/backtest/parquet_data_feed.cpp
     src/core/common/callback_dispatcher.cpp
@@ -442,9 +444,18 @@ if(QUANT_HFT_BUILD_TESTS)
                    tests/unit/backtest/indicator_trace_parquet_writer_test.cpp)
     target_link_libraries(indicator_trace_parquet_writer_test PRIVATE quant_hft_core GTest::gtest_main)
 
+    add_executable(indicator_trace_csv_writer_test
+                   tests/unit/backtest/indicator_trace_csv_writer_test.cpp)
+    target_link_libraries(indicator_trace_csv_writer_test PRIVATE quant_hft_core GTest::gtest_main)
+
     add_executable(sub_strategy_indicator_trace_parquet_writer_test
                    tests/unit/backtest/sub_strategy_indicator_trace_parquet_writer_test.cpp)
     target_link_libraries(sub_strategy_indicator_trace_parquet_writer_test
+                          PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(sub_strategy_indicator_trace_csv_writer_test
+                   tests/unit/backtest/sub_strategy_indicator_trace_csv_writer_test.cpp)
+    target_link_libraries(sub_strategy_indicator_trace_csv_writer_test
                           PRIVATE quant_hft_core GTest::gtest_main)
 
     add_executable(product_fee_config_loader_test
@@ -638,7 +649,9 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(metric_registry_test)
     gtest_discover_tests(parquet_data_feed_test)
     gtest_discover_tests(indicator_trace_parquet_writer_test)
+    gtest_discover_tests(indicator_trace_csv_writer_test)
     gtest_discover_tests(sub_strategy_indicator_trace_parquet_writer_test)
+    gtest_discover_tests(sub_strategy_indicator_trace_csv_writer_test)
     gtest_discover_tests(product_fee_config_loader_test)
     gtest_discover_tests(backtest_data_feed_test)
     gtest_discover_tests(live_data_feed_test)

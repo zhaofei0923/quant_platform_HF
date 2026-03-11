@@ -52,6 +52,7 @@ void ApplySpecJsonToArgs(const std::string& json, quant_hft::apps::ArgMap* args)
     apply_string("strategy_main_config_path");
     apply_string("strategy_factory");
     apply_string("strategy_composite_config");
+    apply_string("trace_output_format");
     apply_string("indicator_trace_path");
     apply_string("sub_strategy_indicator_trace_path");
     apply_number("rollover_slippage_bps");

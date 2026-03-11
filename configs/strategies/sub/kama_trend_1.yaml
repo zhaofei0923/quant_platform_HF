@@ -12,7 +12,7 @@ params:
   kama_filter: 1
   risk_per_trade_pct: 0.005
   default_volume: 1
-  allow_reverse_open: false
+  allow_reverse_open: true
   forbid_open_windows: ""
   force_close_windows: ""
   window_timezone: Asia/Shanghai

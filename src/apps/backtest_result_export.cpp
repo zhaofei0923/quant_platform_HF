@@ -13,27 +13,11 @@ namespace quant_hft::apps {
 namespace {
 
 std::vector<TradeRecord> SortTradesForOutput(std::vector<TradeRecord> trades) {
-    std::stable_sort(trades.begin(), trades.end(), [](const TradeRecord& left,
-                                                      const TradeRecord& right) {
-        const std::int64_t left_seq = left.fill_seq > 0 ? left.fill_seq
-                                                        : std::numeric_limits<std::int64_t>::max();
-        const std::int64_t right_seq = right.fill_seq > 0 ? right.fill_seq
-                                                          : std::numeric_limits<std::int64_t>::max();
-        return left_seq < right_seq;
-    });
-    return trades;
+    return SortedTradesForOutput(std::move(trades));
 }
 
 std::vector<OrderRecord> SortOrdersForOutput(std::vector<OrderRecord> orders) {
-    std::stable_sort(orders.begin(), orders.end(), [](const OrderRecord& left,
-                                                      const OrderRecord& right) {
-        const std::int64_t left_seq = left.order_seq > 0 ? left.order_seq
-                                                         : std::numeric_limits<std::int64_t>::max();
-        const std::int64_t right_seq = right.order_seq > 0 ? right.order_seq
-                                                           : std::numeric_limits<std::int64_t>::max();
-        return left_seq < right_seq;
-    });
-    return orders;
+    return SortedOrdersForOutput(std::move(orders));
 }
 
 std::string CsvEscape(const std::string& text) {
@@ -92,6 +76,7 @@ bool WriteTradesCsv(const BacktestCliResult& result, const std::filesystem::path
         return false;
     }
     out << "fill_seq,trade_id,order_id,symbol,exchange,side,offset,volume,price,timestamp_ns,"
+           "signal_ts_ns,trading_day,action_day,update_time,timestamp_dt_local,signal_dt_local,"
            "commission,timestamp_dt_utc,slippage,realized_pnl,strategy_id,signal_type,"
            "regime_at_entry\n";
     const std::vector<TradeRecord> sorted_trades = SortTradesForOutput(result.trades);
@@ -100,11 +85,13 @@ bool WriteTradesCsv(const BacktestCliResult& result, const std::filesystem::path
             << ','
             << CsvEscape(row.symbol) << ',' << CsvEscape(row.exchange) << ','
             << CsvEscape(row.side) << ',' << CsvEscape(row.offset) << ',' << row.volume << ','
-            << CsvDouble(row.price) << ',' << row.timestamp_ns << ',' << CsvDouble(row.commission)
-            << ',' << CsvEscape(row.timestamp_dt_utc) << ',' << CsvDouble(row.slippage) << ','
-            << CsvDouble(row.realized_pnl) << ','
-            << CsvEscape(row.strategy_id) << ',' << CsvEscape(row.signal_type) << ','
-            << CsvEscape(row.regime_at_entry) << '\n';
+            << CsvDouble(row.price) << ',' << row.timestamp_ns << ',' << row.signal_ts_ns << ','
+            << CsvEscape(row.trading_day) << ',' << CsvEscape(row.action_day) << ','
+            << CsvEscape(row.update_time) << ',' << CsvEscape(row.timestamp_dt_local) << ','
+            << CsvEscape(row.signal_dt_local) << ',' << CsvDouble(row.commission) << ','
+            << CsvEscape(row.timestamp_dt_utc) << ',' << CsvDouble(row.slippage) << ','
+            << CsvDouble(row.realized_pnl) << ',' << CsvEscape(row.strategy_id) << ','
+            << CsvEscape(row.signal_type) << ',' << CsvEscape(row.regime_at_entry) << '\n';
     }
     return true;
 }
@@ -120,7 +107,8 @@ bool WriteOrdersCsv(const BacktestCliResult& result, const std::filesystem::path
     }
     out << "order_seq,order_id,client_order_id,symbol,type,side,offset,price,volume,status,"
            "filled_volume,avg_fill_price,created_at_ns,created_at_dt_utc,last_update_ns,"
-           "last_update_dt_utc,strategy_id,cancel_reason\n";
+           "last_update_dt_utc,trading_day,action_day,update_time,created_at_dt_local,"
+           "last_update_dt_local,strategy_id,cancel_reason\n";
     const std::vector<OrderRecord> sorted_orders = SortOrdersForOutput(result.orders);
     for (const OrderRecord& row : sorted_orders) {
         out << row.order_seq << ',' << CsvEscape(row.order_id) << ','
@@ -130,7 +118,10 @@ bool WriteOrdersCsv(const BacktestCliResult& result, const std::filesystem::path
             << ',' << CsvEscape(row.status) << ',' << row.filled_volume << ','
             << CsvDouble(row.avg_fill_price) << ',' << row.created_at_ns << ','
             << CsvEscape(row.created_at_dt_utc) << ',' << row.last_update_ns << ','
-            << CsvEscape(row.last_update_dt_utc) << ',' << CsvEscape(row.strategy_id) << ','
+            << CsvEscape(row.last_update_dt_utc) << ',' << CsvEscape(row.trading_day) << ','
+            << CsvEscape(row.action_day) << ',' << CsvEscape(row.update_time) << ','
+            << CsvEscape(row.created_at_dt_local) << ','
+            << CsvEscape(row.last_update_dt_local) << ',' << CsvEscape(row.strategy_id) << ','
             << CsvEscape(row.cancel_reason) << '\n';
     }
     return true;

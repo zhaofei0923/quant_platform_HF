@@ -10,9 +10,13 @@ from typing import Any, Sequence
 import pandas as pd
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_RUNS_ROOT = Path("docs/results/backtest_runs")
 DEFAULT_TRACE_NAME = "my_sub_trace.csv"
+DISPLAY_DT_FORMAT = "%Y-%m-%d %H:%M"
+MAX_AXIS_TICKS = 12
 REQUIRED_COLUMNS = {
+    "ts_ns",
     "dt_utc",
     "instrument_id",
     "strategy_id",
@@ -40,6 +44,153 @@ NUMERIC_COLUMNS = [
     "er",
     "adx",
 ]
+TRADE_EVENT_COLUMNS = [
+    "fill_seq",
+    "trade_id",
+    "symbol",
+    "side",
+    "offset",
+    "volume",
+    "price",
+    "timestamp_dt_local",
+    "timestamp_dt_utc",
+    "trading_day",
+    "action_day",
+    "update_time",
+    "signal_dt_local",
+    "strategy_id",
+    "signal_type",
+    "realized_pnl",
+]
+MARKER_STYLE_MAP = {
+    "Open": {"symbol": "triangle-up", "color": "#2ca02c", "size": 12},
+    "Close": {"symbol": "diamond", "color": "#5f6b7a", "size": 11},
+    "StopLoss": {"symbol": "x", "color": "#d62728", "size": 12},
+    "TakeProfit": {"symbol": "star", "color": "#d4a017", "size": 13},
+}
+MARKER_TRACE_ORDER = ["Open", "Close", "StopLoss", "TakeProfit"]
+MARKER_OFFSET_SCALE = 0.6
+
+
+def empty_trade_events_frame() -> pd.DataFrame:
+    return pd.DataFrame(columns=TRADE_EVENT_COLUMNS)
+
+
+def trades_csv_path(run: dict[str, Any]) -> Path:
+    return Path(run["run_dir"]) / "csv" / "trades.csv"
+
+
+def has_trade_event_source(run: dict[str, Any]) -> bool:
+    trade_csv = trades_csv_path(run)
+    if trade_csv.exists():
+        return True
+    payload = load_json(Path(run["metadata_path"]))
+    trades = payload.get("trades")
+    return isinstance(trades, list) and bool(trades)
+
+
+def normalize_trade_events(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return empty_trade_events_frame()
+
+    normalized = frame.copy()
+    for column in TRADE_EVENT_COLUMNS:
+        if column not in normalized.columns:
+            normalized[column] = ""
+
+    numeric_columns = ("fill_seq", "volume", "price", "realized_pnl")
+    for column in numeric_columns:
+        normalized[column] = pd.to_numeric(normalized[column], errors="coerce")
+
+    return normalized[TRADE_EVENT_COLUMNS].copy()
+
+
+def load_trade_events(run: dict[str, Any], strategy_id: str, instrument_id: str) -> pd.DataFrame:
+    trade_csv = trades_csv_path(run)
+    if trade_csv.exists():
+        frame = pd.read_csv(trade_csv)
+    else:
+        payload = load_json(Path(run["metadata_path"]))
+        trades = payload.get("trades")
+        if not isinstance(trades, list) or not trades:
+            return empty_trade_events_frame()
+        frame = pd.DataFrame(trades)
+
+    if frame.empty:
+        return empty_trade_events_frame()
+
+    normalized = normalize_trade_events(frame)
+    filtered = normalized.copy()
+    filtered["strategy_id"] = filtered["strategy_id"].astype(str)
+    filtered["symbol"] = filtered["symbol"].astype(str)
+    filtered = filtered[
+        (filtered["strategy_id"] == str(strategy_id)) & (filtered["symbol"] == str(instrument_id))
+    ].copy()
+    if filtered.empty:
+        return empty_trade_events_frame()
+    return filtered.reset_index(drop=True)
+
+
+def normalize_clock_time(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if " " in text:
+        text = text.split(" ", maxsplit=1)[1]
+    if len(text) == 5:
+        return f"{text}:00"
+    return text if len(text) == 8 else None
+
+
+def classify_marker_kind(signal_type: Any, offset: Any) -> str:
+    signal_text = str(signal_type or "").casefold()
+    offset_text = str(offset or "").casefold()
+    if "stop" in signal_text:
+        return "StopLoss"
+    if "takeprofit" in signal_text or "take_profit" in signal_text or "profit" in signal_text:
+        return "TakeProfit"
+    if offset_text == "open" or signal_text.endswith("open"):
+        return "Open"
+    return "Close"
+
+
+def build_marker_hover_html(group: pd.DataFrame, marker_kind: str) -> str:
+    first = group.iloc[0]
+    details = []
+    for _, row in group.iterrows():
+        price = "" if pd.isna(row["price"]) else f"{float(row['price']):g}"
+        volume = "" if pd.isna(row["volume"]) else f"{float(row['volume']):g}"
+        pnl = "" if pd.isna(row["realized_pnl"]) else f"{float(row['realized_pnl']):g}"
+        details.append(
+            " | ".join(
+                [
+                    str(row["trade_id"]),
+                    str(row["signal_type"]),
+                    f"vol={volume}",
+                    f"price={price}",
+                    f"pnl={pnl}",
+                    f"signal={row['signal_dt_local']}",
+                    f"fill={row['timestamp_dt_local']}",
+                ]
+            )
+        )
+
+    total_volume = group["volume"].fillna(0).sum()
+    return (
+        f"Time={first['event_bar_text']}<br>"
+        f"Type={marker_kind}<br>"
+        f"Side={first['side']}<br>"
+        f"Offset={first['offset']}<br>"
+        f"Count={len(group)}<br>"
+        f"TotalVolume={total_volume:g}<br>"
+        + "<br>".join(details)
+    )
+
+
+def resolve_runs_root(runs_root: Path) -> Path:
+    if runs_root.is_absolute():
+        return runs_root
+    return REPO_ROOT / runs_root
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -64,7 +215,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--runs-root",
         type=Path,
-        default=DEFAULT_RUNS_ROOT,
         help=f"Backtest runs root directory. Defaults to {DEFAULT_RUNS_ROOT}.",
     )
     parser.add_argument(
@@ -89,11 +239,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        help="Optional HTML output path. Defaults to <trace_stem>_<run_id>.html in run directory.",
+        help=(
+            "Optional HTML output path. Defaults to <trace_stem>_<run_id>.html in the selected "
+            "run directory."
+        ),
     )
     args = parser.parse_args(argv)
+    if args.runs_root is None:
+        args.runs_root = resolve_runs_root(DEFAULT_RUNS_ROOT)
     if not args.list_runs and not args.latest and not args.run_id:
-        parser.error("one of --list-runs, --latest, or --run-id is required")
+        args.latest = True
     return args
 
 
@@ -182,9 +337,54 @@ def parse_optional_time(value: str | None, name: str) -> pd.Timestamp | None:
     if value is None:
         return None
     try:
-        return pd.to_datetime(value, format="%Y-%m-%d %H:%M", errors="raise")
+        return pd.to_datetime(value, format=DISPLAY_DT_FORMAT, errors="raise")
     except ValueError as exc:
         raise ValueError(f"{name} must match YYYY-MM-DD HH:MM: {value}") from exc
+
+
+def thin_tick_positions(positions: Sequence[int], max_ticks: int) -> list[int]:
+    ordered = sorted(dict.fromkeys(int(position) for position in positions))
+    if len(ordered) <= max_ticks:
+        return ordered
+    if max_ticks <= 1:
+        return ordered[:1]
+    if max_ticks == 2:
+        return [ordered[0], ordered[-1]]
+
+    middle = ordered[1:-1]
+    slots = max_ticks - 2
+    if not middle or slots <= 0:
+        return [ordered[0], ordered[-1]]
+
+    selected = [ordered[0]]
+    if slots == 1:
+        selected.append(middle[len(middle) // 2])
+    else:
+        for slot in range(slots):
+            middle_index = round(slot * (len(middle) - 1) / (slots - 1))
+            selected.append(middle[middle_index])
+    selected.append(ordered[-1])
+    return sorted(dict.fromkeys(selected))
+
+
+def build_axis_ticks(
+    frame: pd.DataFrame, timeframe_minutes: int, max_ticks: int = MAX_AXIS_TICKS
+) -> tuple[list[int], list[str]]:
+    if frame.empty:
+        return [], []
+
+    expected_gap = pd.Timedelta(minutes=timeframe_minutes)
+    candidate_positions: list[int] = [0, len(frame) - 1]
+    display_dt = frame["display_dt"].reset_index(drop=True)
+    for index in range(1, len(frame)):
+        gap = display_dt.iloc[index] - display_dt.iloc[index - 1]
+        if gap <= pd.Timedelta(0) or gap != expected_gap:
+            candidate_positions.extend([index - 1, index])
+
+    chosen_positions = thin_tick_positions(candidate_positions, max_ticks)
+    tickvals = [int(frame.iloc[position]["plot_index"]) for position in chosen_positions]
+    ticktext = [str(frame.iloc[position]["display_dt_text"]) for position in chosen_positions]
+    return tickvals, ticktext
 
 
 def filter_unique_value(
@@ -208,6 +408,57 @@ def filter_unique_value(
     return filtered, requested_value
 
 
+def prepare_plot_frame(
+    frame: pd.DataFrame,
+    strategy_id: str | None,
+    timeframe_minutes: int | None,
+    start: str | None,
+    end: str | None,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    working = frame.copy()
+    require_columns(working, REQUIRED_COLUMNS)
+
+    working["display_dt_text"] = working["dt_utc"].astype(str)
+    working["display_dt"] = pd.to_datetime(
+        working["display_dt_text"], format=DISPLAY_DT_FORMAT, errors="raise"
+    )
+    working["ts_ns"] = pd.to_numeric(working["ts_ns"], errors="raise")
+    for column in NUMERIC_COLUMNS:
+        working[column] = pd.to_numeric(working[column], errors="coerce")
+
+    working, selected_strategy = filter_unique_value(working, "strategy_id", strategy_id)
+    working, selected_timeframe = filter_unique_value(
+        working, "timeframe_minutes", timeframe_minutes
+    )
+    selected_timeframe = int(selected_timeframe)
+
+    start_ts = parse_optional_time(start, "start")
+    end_ts = parse_optional_time(end, "end")
+    if start_ts is not None and end_ts is not None and start_ts > end_ts:
+        raise ValueError("start must be less than or equal to end")
+    if start_ts is not None:
+        working = working[working["display_dt"] >= start_ts].copy()
+    if end_ts is not None:
+        working = working[working["display_dt"] <= end_ts].copy()
+    if working.empty:
+        raise ValueError("no trace rows remain after applying filters")
+
+    working = working.sort_values("ts_ns", kind="stable").reset_index(drop=True)
+    working["plot_index"] = list(range(len(working)))
+    tickvals, ticktext = build_axis_ticks(working, timeframe_minutes=selected_timeframe)
+
+    metadata = {
+        "instrument_id": str(working.get("instrument_id", pd.Series([""])).iloc[0]),
+        "strategy_id": selected_strategy,
+        "timeframe_minutes": selected_timeframe,
+        "start_label": str(working["display_dt_text"].iloc[0]),
+        "end_label": str(working["display_dt_text"].iloc[-1]),
+        "tickvals": tickvals,
+        "ticktext": ticktext,
+    }
+    return working, metadata
+
+
 def load_trace_frame(
     trace_path: Path,
     strategy_id: str | None,
@@ -219,38 +470,157 @@ def load_trace_frame(
         raise FileNotFoundError(f"trace file does not exist: {trace_path}")
 
     frame = pd.read_csv(trace_path)
-    require_columns(frame, REQUIRED_COLUMNS)
-
-    frame["dt_utc"] = pd.to_datetime(frame["dt_utc"], format="%Y-%m-%d %H:%M", errors="raise")
-    for column in NUMERIC_COLUMNS:
-        frame[column] = pd.to_numeric(frame[column], errors="coerce")
-    frame = frame.sort_values("dt_utc").reset_index(drop=True)
-
-    frame, selected_strategy = filter_unique_value(frame, "strategy_id", strategy_id)
-    frame, selected_timeframe = filter_unique_value(frame, "timeframe_minutes", timeframe_minutes)
-
-    start_ts = parse_optional_time(start, "start")
-    end_ts = parse_optional_time(end, "end")
-    if start_ts is not None and end_ts is not None and start_ts > end_ts:
-        raise ValueError("start must be less than or equal to end")
-    if start_ts is not None:
-        frame = frame[frame["dt_utc"] >= start_ts].copy()
-    if end_ts is not None:
-        frame = frame[frame["dt_utc"] <= end_ts].copy()
-    if frame.empty:
-        raise ValueError("no trace rows remain after applying filters")
-
-    metadata = {
-        "instrument_id": str(frame.get("instrument_id", pd.Series([""])).iloc[0]),
-        "strategy_id": selected_strategy,
-        "timeframe_minutes": int(selected_timeframe),
-        "start_dt": frame["dt_utc"].iloc[0],
-        "end_dt": frame["dt_utc"].iloc[-1],
-    }
-    return frame, metadata
+    return prepare_plot_frame(
+        frame,
+        strategy_id=strategy_id,
+        timeframe_minutes=timeframe_minutes,
+        start=start,
+        end=end,
+    )
 
 
-def build_figure(frame: pd.DataFrame, run_id: str, metadata: dict[str, Any]):
+def prepare_trade_markers(
+    frame: pd.DataFrame, trade_events: pd.DataFrame, metadata: dict[str, Any]
+) -> pd.DataFrame:
+    if trade_events.empty:
+        return pd.DataFrame(
+            columns=[
+                "plot_index",
+                "event_bar_text",
+                "marker_kind",
+                "side",
+                "marker_y",
+                "event_count",
+                "count_text",
+                "hover_html",
+            ]
+        )
+
+    working = trade_events.copy()
+    for column in ("fill_seq", "volume", "price", "realized_pnl"):
+        if column in working.columns:
+            working[column] = pd.to_numeric(working[column], errors="coerce")
+    signal_local_dt = pd.to_datetime(working["signal_dt_local"], errors="coerce")
+    trading_day_dt = pd.to_datetime(working["trading_day"], format="%Y%m%d", errors="coerce")
+    signal_time_text = signal_local_dt.dt.strftime("%H:%M:%S")
+    signal_time_text = signal_time_text.where(signal_local_dt.notna())
+    fallback_time = working["update_time"].map(normalize_clock_time)
+    working["event_time_text"] = signal_time_text.fillna(fallback_time)
+    working["event_display_dt"] = pd.to_datetime(
+        trading_day_dt.dt.strftime("%Y-%m-%d") + " " + working["event_time_text"],
+        format="%Y-%m-%d %H:%M:%S",
+        errors="coerce",
+    )
+    working = working[working["event_display_dt"].notna()].copy()
+    if working.empty:
+        return pd.DataFrame()
+
+    timeframe_minutes = int(metadata["timeframe_minutes"])
+    working["event_bar_dt"] = working["event_display_dt"].dt.floor(f"{timeframe_minutes}min")
+    working["event_bar_text"] = working["event_bar_dt"].dt.strftime(DISPLAY_DT_FORMAT)
+    working["marker_kind"] = [
+        classify_marker_kind(signal_type, offset)
+        for signal_type, offset in zip(working["signal_type"], working["offset"])
+    ]
+
+    bar_lookup = frame[
+        [
+            "display_dt_text",
+            "plot_index",
+            "bar_low",
+            "bar_high",
+            "bar_close",
+            "atr",
+        ]
+    ].copy()
+    working = working.merge(
+        bar_lookup,
+        left_on="event_bar_text",
+        right_on="display_dt_text",
+        how="inner",
+    )
+    if working.empty:
+        return pd.DataFrame()
+
+    bar_low = pd.to_numeric(working["bar_low"], errors="coerce")
+    bar_high = pd.to_numeric(working["bar_high"], errors="coerce")
+    atr = pd.to_numeric(working["atr"], errors="coerce").abs()
+    close = pd.to_numeric(working["bar_close"], errors="coerce").abs()
+    bar_range = (bar_high - bar_low).abs()
+    y_offset = pd.concat([bar_range, atr, close * 0.001], axis=1).max(axis=1).fillna(1.0)
+    y_offset = y_offset.where(y_offset > 0, 1.0) * MARKER_OFFSET_SCALE
+    working["marker_y"] = bar_high + y_offset
+    buy_mask = working["side"].astype(str).str.casefold() == "buy"
+    working.loc[buy_mask, "marker_y"] = bar_low[buy_mask] - y_offset[buy_mask]
+
+    grouped_rows: list[dict[str, Any]] = []
+    group_columns = ["plot_index", "event_bar_text", "marker_kind", "side"]
+    sort_columns = ["plot_index", "marker_kind", "side", "fill_seq", "trade_id"]
+    for group_key, group in working.sort_values(sort_columns, kind="stable").groupby(
+        group_columns, sort=True
+    ):
+        plot_index, event_bar_text, marker_kind, side = group_key
+        first = group.iloc[0]
+        grouped_rows.append(
+            {
+                "plot_index": int(plot_index),
+                "event_bar_text": str(event_bar_text),
+                "marker_kind": str(marker_kind),
+                "side": str(side),
+                "marker_y": float(first["marker_y"]),
+                "event_count": int(len(group)),
+                "count_text": str(len(group)) if len(group) > 1 else "",
+                "hover_html": build_marker_hover_html(group, str(marker_kind)),
+            }
+        )
+
+    if not grouped_rows:
+        return pd.DataFrame()
+
+    marker_frame = pd.DataFrame(grouped_rows)
+    return marker_frame.sort_values(["plot_index", "marker_kind", "side"], kind="stable").reset_index(
+        drop=True
+    )
+
+
+def build_trade_marker_traces(marker_frame: pd.DataFrame) -> list[dict[str, Any]]:
+    if marker_frame.empty:
+        return []
+
+    traces: list[dict[str, Any]] = []
+    for marker_kind in MARKER_TRACE_ORDER:
+        marker_rows = marker_frame[marker_frame["marker_kind"] == marker_kind]
+        if marker_rows.empty:
+            continue
+        style = MARKER_STYLE_MAP[marker_kind]
+        traces.append(
+            {
+                "x": marker_rows["plot_index"].tolist(),
+                "y": marker_rows["marker_y"].tolist(),
+                "name": marker_kind,
+                "mode": "markers+text",
+                "text": marker_rows["count_text"].tolist(),
+                "textposition": "middle center",
+                "textfont": {"color": "#ffffff", "size": 10},
+                "marker": {
+                    "symbol": style["symbol"],
+                    "color": style["color"],
+                    "size": style["size"],
+                    "line": {"color": "#ffffff", "width": 1},
+                },
+                "customdata": marker_rows[["hover_html"]].to_numpy(),
+                "hovertemplate": "%{customdata[0]}<extra></extra>",
+            }
+        )
+    return traces
+
+
+def build_figure(
+    frame: pd.DataFrame,
+    run_id: str,
+    metadata: dict[str, Any],
+    trade_marker_traces: Sequence[dict[str, Any]] | None = None,
+):
     try:
         import plotly.graph_objects as go
         from plotly.subplots import make_subplots
@@ -260,8 +630,16 @@ def build_figure(frame: pd.DataFrame, run_id: str, metadata: dict[str, Any]):
             "python3 -m pip install pandas plotly"
         ) from exc
 
+    x_values = frame["plot_index"].tolist()
     customdata = frame[
-        ["instrument_id", "strategy_id", "timeframe_minutes", "market_regime", "bar_volume"]
+        [
+            "instrument_id",
+            "strategy_id",
+            "timeframe_minutes",
+            "market_regime",
+            "bar_volume",
+            "display_dt_text",
+        ]
     ].fillna("")
     customdata = customdata.to_numpy()
 
@@ -280,7 +658,7 @@ def build_figure(frame: pd.DataFrame, run_id: str, metadata: dict[str, Any]):
     )
 
     hover_template = (
-        "Time=%{x}<br>"
+        "Time=%{customdata[5]}<br>"
         "Open=%{open}<br>"
         "High=%{high}<br>"
         "Low=%{low}<br>"
@@ -293,7 +671,7 @@ def build_figure(frame: pd.DataFrame, run_id: str, metadata: dict[str, Any]):
     )
     fig.add_trace(
         go.Candlestick(
-            x=frame["dt_utc"],
+            x=x_values,
             open=frame["bar_open"],
             high=frame["bar_high"],
             low=frame["bar_low"],
@@ -307,20 +685,22 @@ def build_figure(frame: pd.DataFrame, run_id: str, metadata: dict[str, Any]):
     )
     fig.add_trace(
         go.Scatter(
-            x=frame["dt_utc"],
+            x=x_values,
             y=frame["kama"],
             name="KAMA",
             mode="lines",
             line={"color": "#ff7f0e", "width": 1.8},
             customdata=customdata,
             hovertemplate=(
-                "Time=%{x}<br>KAMA=%{y:.6f}<br>"
+                "Time=%{customdata[5]}<br>KAMA=%{y:.6f}<br>"
                 "Strategy=%{customdata[1]}<br>Regime=%{customdata[3]}<extra></extra>"
             ),
         ),
         row=1,
         col=1,
     )
+    for marker_trace in trade_marker_traces or []:
+        fig.add_trace(go.Scatter(**marker_trace), row=1, col=1)
     for row_index, field, color in (
         (2, "atr", "#2ca02c"),
         (3, "er", "#1f77b4"),
@@ -328,14 +708,14 @@ def build_figure(frame: pd.DataFrame, run_id: str, metadata: dict[str, Any]):
     ):
         fig.add_trace(
             go.Scatter(
-                x=frame["dt_utc"],
+                x=x_values,
                 y=frame[field],
                 name=field.upper(),
                 mode="lines",
                 line={"color": color, "width": 1.4},
                 customdata=customdata,
                 hovertemplate=(
-                    f"Time=%{{x}}<br>{field.upper()}=%{{y:.6f}}<br>"
+                    f"Time=%{{customdata[5]}}<br>{field.upper()}=%{{y:.6f}}<br>"
                     "Strategy=%{customdata[1]}<br>Regime=%{customdata[3]}<extra></extra>"
                 ),
             ),
@@ -343,30 +723,39 @@ def build_figure(frame: pd.DataFrame, run_id: str, metadata: dict[str, Any]):
             col=1,
         )
 
-    start_label = metadata["start_dt"].strftime("%Y-%m-%d %H:%M")
-    end_label = metadata["end_dt"].strftime("%Y-%m-%d %H:%M")
-    title = (
+    start_label = metadata["start_label"]
+    end_label = metadata["end_label"]
+    title_text = (
         f"Sub Strategy Trace: {metadata['instrument_id']} / {metadata['strategy_id']} / "
         f"{metadata['timeframe_minutes']}m / {run_id}<br>"
         f"<sup>{start_label} to {end_label}</sup>"
     )
     fig.update_layout(
-        title=title,
-        hovermode="x unified",
-        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "x": 0.0},
-        xaxis4={
-            "rangeslider": {"visible": True},
-            "rangeselector": {
-                "buttons": [
-                    {"count": 1, "label": "1D", "step": "day", "stepmode": "backward"},
-                    {"count": 3, "label": "3D", "step": "day", "stepmode": "backward"},
-                    {"count": 7, "label": "1W", "step": "day", "stepmode": "backward"},
-                    {"count": 1, "label": "1M", "step": "month", "stepmode": "backward"},
-                    {"label": "All", "step": "all"},
-                ]
-            },
+        title={
+            "text": title_text,
+            "x": 0.02,
+            "xanchor": "left",
+            "y": 0.985,
+            "yanchor": "top",
+            "pad": {"b": 18},
         },
-        margin={"l": 60, "r": 20, "t": 90, "b": 60},
+        hovermode="x unified",
+        legend={
+            "orientation": "h",
+            "yanchor": "top",
+            "y": 1.04,
+            "x": 0.0,
+            "xanchor": "left",
+            "bgcolor": "rgba(255,255,255,0.85)",
+        },
+        xaxis={
+            "type": "linear",
+            "tickmode": "array",
+            "tickvals": metadata["tickvals"],
+            "ticktext": metadata["ticktext"],
+            "rangeslider": {"visible": False},
+        },
+        margin={"l": 60, "r": 20, "t": 150, "b": 60},
         template="plotly_white",
         height=1100,
     )
@@ -374,7 +763,15 @@ def build_figure(frame: pd.DataFrame, run_id: str, metadata: dict[str, Any]):
     fig.update_yaxes(title_text="ATR", row=2, col=1)
     fig.update_yaxes(title_text="ER", range=[0, 1], row=3, col=1)
     fig.update_yaxes(title_text="ADX", range=[0, 100], row=4, col=1)
-    fig.update_xaxes(showspikes=True, spikemode="across", spikesnap="cursor")
+    fig.update_xaxes(
+        type="linear",
+        tickmode="array",
+        tickvals=metadata["tickvals"],
+        ticktext=metadata["ticktext"],
+        showspikes=True,
+        spikemode="across",
+        spikesnap="cursor",
+    )
     return fig
 
 
@@ -398,7 +795,22 @@ def generate_chart(
         start=start,
         end=end,
     )
-    fig = build_figure(frame, str(run["run_id"]), metadata)
+    trade_events = load_trade_events(
+        run,
+        strategy_id=str(metadata["strategy_id"]),
+        instrument_id=str(metadata["instrument_id"]),
+    )
+    if trade_events.empty and not has_trade_event_source(run):
+        print("trade markers unavailable: no trades data found for selected run")
+
+    marker_frame = prepare_trade_markers(frame, trade_events, metadata)
+    trade_marker_traces = build_trade_marker_traces(marker_frame)
+    fig = build_figure(
+        frame,
+        str(run["run_id"]),
+        metadata,
+        trade_marker_traces=trade_marker_traces,
+    )
     destination = output_path if output_path is not None else default_output_path(run)
     destination.parent.mkdir(parents=True, exist_ok=True)
     fig.write_html(destination, include_plotlyjs=True, full_html=True)

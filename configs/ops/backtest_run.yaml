@@ -27,6 +27,9 @@ dataset_root: backtest_data/parquet_v2
 # strategy_main_config_path：配置项说明；示例值：configs/strategies/main_backtest_strategy.yaml
 # strategy_main_config_path：说明：子策略 `timeframe_minutes` 订阅在该文件配置
 strategy_main_config_path: configs/strategies/main_backtest_strategy.yaml
+# detector_config：可选，市场状态检测器配置文件；示例值：configs/sim/ctp.yaml
+# detector_config：配置项说明；示例值：configs/sim/ctp.yaml
+detector_config: configs/sim/ctp.yaml
 
 # output_json：回测 JSON 输出文件名模板（仅取 basename，最终落盘到 output_root_dir/<run_id>_<timestamp>/）；示例值：docs/results/backtest_auto.json
 # output_json：配置项说明；示例值：docs/results/backtest_auto.json

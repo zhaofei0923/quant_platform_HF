@@ -328,12 +328,48 @@ TEST(BarAggregatorTest, RepositoryTradingSessionsFilterPostClosePlainDceSymbolWi
 
 TEST(BarAggregatorTest, AggregatesOneMinuteBarsToHigherTimeframe) {
     std::vector<BarSnapshot> one_minute;
-    one_minute.push_back(
-        BarSnapshot{"SHFE.ag2406", "SHFE", "20260211", "20260211", "20260211 09:00", 10, 12, 9, 11, 5});
-    one_minute.push_back(
-        BarSnapshot{"SHFE.ag2406", "SHFE", "20260211", "20260211", "20260211 09:01", 11, 13, 10, 12, 7});
-    one_minute.push_back(
-        BarSnapshot{"SHFE.ag2406", "SHFE", "20260211", "20260211", "20260211 09:02", 12, 14, 11, 13, 6});
+    BarSnapshot bar0;
+    bar0.instrument_id = "SHFE.ag2406";
+    bar0.exchange_id = "SHFE";
+    bar0.trading_day = "20260211";
+    bar0.action_day = "20260211";
+    bar0.minute = "20260211 09:00";
+    bar0.open = 10.0;
+    bar0.high = 12.0;
+    bar0.low = 9.0;
+    bar0.close = 11.0;
+    bar0.analysis_open = 10.0;
+    bar0.analysis_high = 12.0;
+    bar0.analysis_low = 9.0;
+    bar0.analysis_close = 11.0;
+    bar0.volume = 5;
+    one_minute.push_back(bar0);
+
+    BarSnapshot bar1 = bar0;
+    bar1.minute = "20260211 09:01";
+    bar1.open = 11.0;
+    bar1.high = 13.0;
+    bar1.low = 10.0;
+    bar1.close = 12.0;
+    bar1.analysis_open = 11.0;
+    bar1.analysis_high = 13.0;
+    bar1.analysis_low = 10.0;
+    bar1.analysis_close = 12.0;
+    bar1.volume = 7;
+    one_minute.push_back(bar1);
+
+    BarSnapshot bar2 = bar1;
+    bar2.minute = "20260211 09:02";
+    bar2.open = 12.0;
+    bar2.high = 14.0;
+    bar2.low = 11.0;
+    bar2.close = 13.0;
+    bar2.analysis_open = 12.0;
+    bar2.analysis_high = 14.0;
+    bar2.analysis_low = 11.0;
+    bar2.analysis_close = 13.0;
+    bar2.volume = 6;
+    one_minute.push_back(bar2);
 
     const auto bars = BarAggregator::AggregateFromOneMinute(one_minute, 2);
     ASSERT_EQ(bars.size(), 2U);

@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cmath>
 #include <cstdint>
+#include <limits>
 #include <string>
 
 namespace quant_hft {
@@ -232,10 +234,31 @@ struct StateSnapshot7D {
     double bar_high{0.0};
     double bar_low{0.0};
     double bar_close{0.0};
+    double analysis_bar_open{std::numeric_limits<double>::quiet_NaN()};
+    double analysis_bar_high{std::numeric_limits<double>::quiet_NaN()};
+    double analysis_bar_low{std::numeric_limits<double>::quiet_NaN()};
+    double analysis_bar_close{std::numeric_limits<double>::quiet_NaN()};
+    double analysis_price_offset{0.0};
     double bar_volume{0.0};
     bool has_bar{false};
     MarketRegime market_regime{MarketRegime::kUnknown};
     EpochNanos ts_ns{0};
+
+    double effective_bar_open() const noexcept {
+        return std::isfinite(analysis_bar_open) ? analysis_bar_open : bar_open;
+    }
+
+    double effective_bar_high() const noexcept {
+        return std::isfinite(analysis_bar_high) ? analysis_bar_high : bar_high;
+    }
+
+    double effective_bar_low() const noexcept {
+        return std::isfinite(analysis_bar_low) ? analysis_bar_low : bar_low;
+    }
+
+    double effective_bar_close() const noexcept {
+        return std::isfinite(analysis_bar_close) ? analysis_bar_close : bar_close;
+    }
 };
 
 struct SignalIntent {

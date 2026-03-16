@@ -1,3 +1,5 @@
+#include <gtest/gtest.h>
+
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -6,13 +8,9 @@
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
-
 namespace {
 
-int RunCommand(const std::string& command) {
-    return std::system(command.c_str());
-}
+int RunCommand(const std::string& command) { return std::system(command.c_str()); }
 
 std::filesystem::path MakeTempDir(const std::string& suffix) {
     const auto path =
@@ -107,13 +105,11 @@ TEST(RunBacktestFromConfigScriptTest, DryRunSucceedsWithMinimalConfig) {
                   output_json.string() +
                   "\n"
                   "output_md: " +
-                  output_md.string() +
-                  "\n");
+                  output_md.string() + "\n");
 
-    const std::string command =
-        "bash scripts/build/run_backtest_from_config.sh --config '" +
-        EscapePathForShell(config_path) + "' --dry-run >'" + EscapePathForShell(log_file) +
-        "' 2>&1";
+    const std::string command = "bash scripts/build/run_backtest_from_config.sh --config '" +
+                                EscapePathForShell(config_path) + "' --dry-run >'" +
+                                EscapePathForShell(log_file) + "' 2>&1";
     const int rc = RunCommand(command);
     EXPECT_EQ(rc, 0);
 
@@ -142,12 +138,11 @@ TEST(RunBacktestFromConfigScriptTest, MissingRequiredFieldFailsFast) {
                   (root / "result.json").string() +
                   "\n"
                   "output_md: " +
-                  (root / "result.md").string() +
-                  "\n");
+                  (root / "result.md").string() + "\n");
 
-    const std::string command =
-        "bash scripts/build/run_backtest_from_config.sh --config '" +
-        EscapePathForShell(config_path) + "' >'" + EscapePathForShell(log_file) + "' 2>&1";
+    const std::string command = "bash scripts/build/run_backtest_from_config.sh --config '" +
+                                EscapePathForShell(config_path) + "' >'" +
+                                EscapePathForShell(log_file) + "' 2>&1";
     const int rc = RunCommand(command);
     EXPECT_NE(rc, 0);
 
@@ -182,49 +177,44 @@ TEST(RunBacktestFromConfigScriptTest, SkipBuildPassesThroughOptionalArgs) {
                   "for arg in \"$@\"; do\n"
                   "  printf '%s\\n' \"${arg}\" >>\"${args_file}\"\n"
                   "done\n");
-    std::filesystem::permissions(fake_cli,
-                                 std::filesystem::perms::owner_exec |
-                                     std::filesystem::perms::group_exec |
-                                     std::filesystem::perms::others_exec |
-                                     std::filesystem::perms::owner_read |
-                                     std::filesystem::perms::group_read |
-                                     std::filesystem::perms::others_read |
-                                     std::filesystem::perms::owner_write,
-                                 std::filesystem::perm_options::replace);
+    std::filesystem::permissions(
+        fake_cli,
+        std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec |
+            std::filesystem::perms::others_exec | std::filesystem::perms::owner_read |
+            std::filesystem::perms::group_read | std::filesystem::perms::others_read |
+            std::filesystem::perms::owner_write,
+        std::filesystem::perm_options::replace);
 
-    WriteFile(config_path,
-              "build_dir: " +
-                  build_dir.string() +
-                  "\n"
-                  "engine_mode: parquet\n"
-                  "dataset_root: " +
-                  dataset_root.string() +
-                  "\n"
-                  "strategy_main_config_path: " +
-                  strategy_main.string() +
-                  "\n"
-                  "output_root_dir: " +
-                  output_root_dir.string() +
-                  "\n"
-                  "timestamp_timezone: utc\n"
-                  "output_json: " +
-                  output_json.string() +
-                  "\n"
-                  "output_md: " +
-                  output_md.string() +
-                  "\n"
-                  "export_csv_dir: " +
-                  export_csv_dir.string() +
-                  "\n"
-                  "run_id: passthrough-run\n"
-                  "max_ticks: 123\n"
-                  "start_date: 20240101\n"
-                  "end_date: 20240131\n"
-                  "emit_position_history: true\n");
+    WriteFile(config_path, "build_dir: " + build_dir.string() +
+                               "\n"
+                               "engine_mode: parquet\n"
+                               "dataset_root: " +
+                               dataset_root.string() +
+                               "\n"
+                               "strategy_main_config_path: " +
+                               strategy_main.string() +
+                               "\n"
+                               "output_root_dir: " +
+                               output_root_dir.string() +
+                               "\n"
+                               "timestamp_timezone: utc\n"
+                               "output_json: " +
+                               output_json.string() +
+                               "\n"
+                               "output_md: " +
+                               output_md.string() +
+                               "\n"
+                               "export_csv_dir: " +
+                               export_csv_dir.string() +
+                               "\n"
+                               "run_id: passthrough-run\n"
+                               "max_ticks: 123\n"
+                               "start_date: 20240101\n"
+                               "end_date: 20240131\n"
+                               "emit_position_history: true\n");
 
-    const std::string command =
-        "bash scripts/build/run_backtest_from_config.sh --config '" +
-        EscapePathForShell(config_path) + "' --skip-build";
+    const std::string command = "bash scripts/build/run_backtest_from_config.sh --config '" +
+                                EscapePathForShell(config_path) + "' --skip-build";
     const int rc = RunCommand(command);
     EXPECT_EQ(rc, 0);
 
@@ -289,19 +279,16 @@ TEST(RunBacktestFromConfigScriptTest, SkipBuildRoutesAllArtifactsIntoSingleRunDi
                   "for arg in \"$@\"; do\n"
                   "  printf '%s\\n' \"${arg}\" >>\"${args_file}\"\n"
                   "done\n");
-    std::filesystem::permissions(fake_cli,
-                                 std::filesystem::perms::owner_exec |
-                                     std::filesystem::perms::group_exec |
-                                     std::filesystem::perms::others_exec |
-                                     std::filesystem::perms::owner_read |
-                                     std::filesystem::perms::group_read |
-                                     std::filesystem::perms::others_read |
-                                     std::filesystem::perms::owner_write,
-                                 std::filesystem::perm_options::replace);
+    std::filesystem::permissions(
+        fake_cli,
+        std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec |
+            std::filesystem::perms::others_exec | std::filesystem::perms::owner_read |
+            std::filesystem::perms::group_read | std::filesystem::perms::others_read |
+            std::filesystem::perms::owner_write,
+        std::filesystem::perm_options::replace);
 
     WriteFile(config_path,
-              "build_dir: " +
-                  build_dir.string() +
+              "build_dir: " + build_dir.string() +
                   "\n"
                   "engine_mode: parquet\n"
                   "dataset_root: " +
@@ -323,9 +310,8 @@ TEST(RunBacktestFromConfigScriptTest, SkipBuildRoutesAllArtifactsIntoSingleRunDi
                   "emit_sub_strategy_indicator_trace: true\n"
                   "sub_strategy_indicator_trace_path: /tmp/templates/custom_sub_trace.csv\n");
 
-    const std::string command =
-        "bash scripts/build/run_backtest_from_config.sh --config '" +
-        EscapePathForShell(config_path) + "' --skip-build";
+    const std::string command = "bash scripts/build/run_backtest_from_config.sh --config '" +
+                                EscapePathForShell(config_path) + "' --skip-build";
     const int rc = RunCommand(command);
     EXPECT_EQ(rc, 0);
 
@@ -340,12 +326,13 @@ TEST(RunBacktestFromConfigScriptTest, SkipBuildRoutesAllArtifactsIntoSingleRunDi
 
     EXPECT_EQ(run_dir.parent_path(), output_root_dir);
     EXPECT_EQ(std::filesystem::path(*FindArgValue(args, "--output_md")).parent_path(), run_dir);
-    EXPECT_EQ(std::filesystem::path(*FindArgValue(args, "--export_csv_dir")).parent_path(), run_dir);
+    EXPECT_EQ(std::filesystem::path(*FindArgValue(args, "--export_csv_dir")).parent_path(),
+              run_dir);
     EXPECT_EQ(std::filesystem::path(*FindArgValue(args, "--indicator_trace_path")).parent_path(),
               run_dir);
-    EXPECT_EQ(
-        std::filesystem::path(*FindArgValue(args, "--sub_strategy_indicator_trace_path")).parent_path(),
-        run_dir);
+    EXPECT_EQ(std::filesystem::path(*FindArgValue(args, "--sub_strategy_indicator_trace_path"))
+                  .parent_path(),
+              run_dir);
     EXPECT_EQ(output_json_path.filename(), "custom_result.json");
     EXPECT_EQ(std::filesystem::path(*FindArgValue(args, "--output_md")).filename(),
               "custom_result.md");
@@ -353,9 +340,9 @@ TEST(RunBacktestFromConfigScriptTest, SkipBuildRoutesAllArtifactsIntoSingleRunDi
               "custom_csv");
     EXPECT_EQ(std::filesystem::path(*FindArgValue(args, "--indicator_trace_path")).filename(),
               "custom_trace.csv");
-    EXPECT_EQ(
-        std::filesystem::path(*FindArgValue(args, "--sub_strategy_indicator_trace_path")).filename(),
-        "custom_sub_trace.csv");
+    EXPECT_EQ(std::filesystem::path(*FindArgValue(args, "--sub_strategy_indicator_trace_path"))
+                  .filename(),
+              "custom_sub_trace.csv");
 
     const std::regex run_dir_pattern("^single-run_[0-9]{8}T[0-9]{6}Z$");
     EXPECT_TRUE(std::regex_match(run_dir.filename().string(), run_dir_pattern));
@@ -385,38 +372,33 @@ TEST(RunBacktestFromConfigScriptTest, SkipBuildDefaultsCsvDirWhenExportCsvDirEmp
                   "for arg in \"$@\"; do\n"
                   "  printf '%s\\n' \"${arg}\" >>\"${args_file}\"\n"
                   "done\n");
-    std::filesystem::permissions(fake_cli,
-                                 std::filesystem::perms::owner_exec |
-                                     std::filesystem::perms::group_exec |
-                                     std::filesystem::perms::others_exec |
-                                     std::filesystem::perms::owner_read |
-                                     std::filesystem::perms::group_read |
-                                     std::filesystem::perms::others_read |
-                                     std::filesystem::perms::owner_write,
-                                 std::filesystem::perm_options::replace);
+    std::filesystem::permissions(
+        fake_cli,
+        std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec |
+            std::filesystem::perms::others_exec | std::filesystem::perms::owner_read |
+            std::filesystem::perms::group_read | std::filesystem::perms::others_read |
+            std::filesystem::perms::owner_write,
+        std::filesystem::perm_options::replace);
 
-    WriteFile(config_path,
-              "build_dir: " +
-                  build_dir.string() +
-                  "\n"
-                  "engine_mode: parquet\n"
-                  "dataset_root: " +
-                  dataset_root.string() +
-                  "\n"
-                  "strategy_main_config_path: " +
-                  strategy_main.string() +
-                  "\n"
-                  "output_root_dir: " +
-                  output_root_dir.string() +
-                  "\n"
-                  "timestamp_timezone: utc\n"
-                  "output_json: /tmp/templates/default_csv_result.json\n"
-                  "output_md: /tmp/templates/default_csv_result.md\n"
-                  "run_id: default-csv\n");
+    WriteFile(config_path, "build_dir: " + build_dir.string() +
+                               "\n"
+                               "engine_mode: parquet\n"
+                               "dataset_root: " +
+                               dataset_root.string() +
+                               "\n"
+                               "strategy_main_config_path: " +
+                               strategy_main.string() +
+                               "\n"
+                               "output_root_dir: " +
+                               output_root_dir.string() +
+                               "\n"
+                               "timestamp_timezone: utc\n"
+                               "output_json: /tmp/templates/default_csv_result.json\n"
+                               "output_md: /tmp/templates/default_csv_result.md\n"
+                               "run_id: default-csv\n");
 
-    const std::string command =
-        "bash scripts/build/run_backtest_from_config.sh --config '" +
-        EscapePathForShell(config_path) + "' --skip-build";
+    const std::string command = "bash scripts/build/run_backtest_from_config.sh --config '" +
+                                EscapePathForShell(config_path) + "' --skip-build";
     const int rc = RunCommand(command);
     EXPECT_EQ(rc, 0);
 
@@ -454,42 +436,37 @@ TEST(RunBacktestFromConfigScriptTest, SkipBuildPassesIndicatorTraceArgsWhenEnabl
                   "for arg in \"$@\"; do\n"
                   "  printf '%s\\n' \"${arg}\" >>\"${args_file}\"\n"
                   "done\n");
-    std::filesystem::permissions(fake_cli,
-                                 std::filesystem::perms::owner_exec |
-                                     std::filesystem::perms::group_exec |
-                                     std::filesystem::perms::others_exec |
-                                     std::filesystem::perms::owner_read |
-                                     std::filesystem::perms::group_read |
-                                     std::filesystem::perms::others_read |
-                                     std::filesystem::perms::owner_write,
-                                 std::filesystem::perm_options::replace);
+    std::filesystem::permissions(
+        fake_cli,
+        std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec |
+            std::filesystem::perms::others_exec | std::filesystem::perms::owner_read |
+            std::filesystem::perms::group_read | std::filesystem::perms::others_read |
+            std::filesystem::perms::owner_write,
+        std::filesystem::perm_options::replace);
 
-    WriteFile(config_path,
-              "build_dir: " +
-                  build_dir.string() +
-                  "\n"
-                  "engine_mode: parquet\n"
-                  "dataset_root: " +
-                  dataset_root.string() +
-                  "\n"
-                  "strategy_main_config_path: " +
-                  strategy_main.string() +
-                  "\n"
-                  "output_root_dir: " +
-                  output_root_dir.string() +
-                  "\n"
-                  "timestamp_timezone: utc\n"
-                  "output_json: /tmp/templates/trace_result.json\n"
-                  "output_md: /tmp/templates/trace_result.md\n"
-                  "run_id: trace-run\n"
-                  "emit_indicator_trace: true\n"
-                  "indicator_trace_path: /tmp/templates/main_trace.csv\n"
-                  "emit_sub_strategy_indicator_trace: true\n"
-                  "sub_strategy_indicator_trace_path: /tmp/templates/sub_trace.csv\n");
+    WriteFile(config_path, "build_dir: " + build_dir.string() +
+                               "\n"
+                               "engine_mode: parquet\n"
+                               "dataset_root: " +
+                               dataset_root.string() +
+                               "\n"
+                               "strategy_main_config_path: " +
+                               strategy_main.string() +
+                               "\n"
+                               "output_root_dir: " +
+                               output_root_dir.string() +
+                               "\n"
+                               "timestamp_timezone: utc\n"
+                               "output_json: /tmp/templates/trace_result.json\n"
+                               "output_md: /tmp/templates/trace_result.md\n"
+                               "run_id: trace-run\n"
+                               "emit_indicator_trace: true\n"
+                               "indicator_trace_path: /tmp/templates/main_trace.csv\n"
+                               "emit_sub_strategy_indicator_trace: true\n"
+                               "sub_strategy_indicator_trace_path: /tmp/templates/sub_trace.csv\n");
 
-    const std::string command =
-        "bash scripts/build/run_backtest_from_config.sh --config '" +
-        EscapePathForShell(config_path) + "' --skip-build";
+    const std::string command = "bash scripts/build/run_backtest_from_config.sh --config '" +
+                                EscapePathForShell(config_path) + "' --skip-build";
     const int rc = RunCommand(command);
     EXPECT_EQ(rc, 0);
 
@@ -507,14 +484,74 @@ TEST(RunBacktestFromConfigScriptTest, SkipBuildPassesIndicatorTraceArgsWhenEnabl
         std::filesystem::path(*FindArgValue(args, "--output_json")).parent_path();
     EXPECT_EQ(std::filesystem::path(*FindArgValue(args, "--indicator_trace_path")).parent_path(),
               run_dir);
-    EXPECT_EQ(
-        std::filesystem::path(*FindArgValue(args, "--sub_strategy_indicator_trace_path")).parent_path(),
-        run_dir);
+    EXPECT_EQ(std::filesystem::path(*FindArgValue(args, "--sub_strategy_indicator_trace_path"))
+                  .parent_path(),
+              run_dir);
     EXPECT_EQ(std::filesystem::path(*FindArgValue(args, "--indicator_trace_path")).filename(),
               "main_trace.csv");
-    EXPECT_EQ(
-        std::filesystem::path(*FindArgValue(args, "--sub_strategy_indicator_trace_path")).filename(),
-        "sub_trace.csv");
+    EXPECT_EQ(std::filesystem::path(*FindArgValue(args, "--sub_strategy_indicator_trace_path"))
+                  .filename(),
+              "sub_trace.csv");
+}
+
+TEST(RunBacktestFromConfigScriptTest, SkipBuildPassesDetectorConfigArgWhenConfigured) {
+    const auto root = MakeTempDir("detector_passthrough");
+    const auto build_dir = root / "build-gcc";
+    const auto dataset_root = root / "parquet_v2";
+    const auto strategy_main = root / "main_backtest_strategy.yaml";
+    const auto detector_config = root / "detector.yaml";
+    const auto config_path = root / "backtest_run.yaml";
+    const auto args_log = root / "captured_args.txt";
+    const auto fake_cli = build_dir / "backtest_cli";
+
+    std::filesystem::create_directories(build_dir);
+    std::filesystem::create_directories(dataset_root);
+    WriteFile(strategy_main, "run_type: backtest\n");
+    WriteFile(detector_config,
+              "market_state_detector:\n"
+              "  adx_period: 7\n"
+              "  atr_period: 5\n");
+
+    WriteFile(fake_cli,
+              "#!/usr/bin/env bash\n"
+              "set -euo pipefail\n"
+              "args_file='" +
+                  args_log.string() +
+                  "'\n"
+                  ": >\"${args_file}\"\n"
+                  "for arg in \"$@\"; do\n"
+                  "  printf '%s\\n' \"${arg}\" >>\"${args_file}\"\n"
+                  "done\n");
+    std::filesystem::permissions(
+        fake_cli,
+        std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec |
+            std::filesystem::perms::others_exec | std::filesystem::perms::owner_read |
+            std::filesystem::perms::group_read | std::filesystem::perms::others_read |
+            std::filesystem::perms::owner_write,
+        std::filesystem::perm_options::replace);
+
+    WriteFile(config_path, "build_dir: " + build_dir.string() +
+                               "\n"
+                               "engine_mode: parquet\n"
+                               "dataset_root: " +
+                               dataset_root.string() +
+                               "\n"
+                               "strategy_main_config_path: " +
+                               strategy_main.string() +
+                               "\n"
+                               "output_json: /tmp/templates/detector_result.json\n"
+                               "output_md: /tmp/templates/detector_result.md\n"
+                               "detector_config: " +
+                               detector_config.string() + "\n");
+
+    const std::string command = "bash scripts/build/run_backtest_from_config.sh --config '" +
+                                EscapePathForShell(config_path) + "' --skip-build";
+    const int rc = RunCommand(command);
+    EXPECT_EQ(rc, 0);
+
+    const std::vector<std::string> args = ReadLines(args_log);
+    ASSERT_NE(FindArgValue(args, "--detector_config"), nullptr);
+    EXPECT_EQ(*FindArgValue(args, "--detector_config"), detector_config.string());
 }
 
 TEST(RunBacktestFromConfigScriptTest, SkipBuildDefaultsTraceOutputFormatToCsvAndCsvTracePaths) {
@@ -541,40 +578,35 @@ TEST(RunBacktestFromConfigScriptTest, SkipBuildDefaultsTraceOutputFormatToCsvAnd
                   "for arg in \"$@\"; do\n"
                   "  printf '%s\\n' \"${arg}\" >>\"${args_file}\"\n"
                   "done\n");
-    std::filesystem::permissions(fake_cli,
-                                 std::filesystem::perms::owner_exec |
-                                     std::filesystem::perms::group_exec |
-                                     std::filesystem::perms::others_exec |
-                                     std::filesystem::perms::owner_read |
-                                     std::filesystem::perms::group_read |
-                                     std::filesystem::perms::others_read |
-                                     std::filesystem::perms::owner_write,
-                                 std::filesystem::perm_options::replace);
+    std::filesystem::permissions(
+        fake_cli,
+        std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec |
+            std::filesystem::perms::others_exec | std::filesystem::perms::owner_read |
+            std::filesystem::perms::group_read | std::filesystem::perms::others_read |
+            std::filesystem::perms::owner_write,
+        std::filesystem::perm_options::replace);
 
-    WriteFile(config_path,
-              "build_dir: " +
-                  build_dir.string() +
-                  "\n"
-                  "engine_mode: parquet\n"
-                  "dataset_root: " +
-                  dataset_root.string() +
-                  "\n"
-                  "strategy_main_config_path: " +
-                  strategy_main.string() +
-                  "\n"
-                  "output_root_dir: " +
-                  output_root_dir.string() +
-                  "\n"
-                  "timestamp_timezone: utc\n"
-                  "output_json: /tmp/templates/trace_result.json\n"
-                  "output_md: /tmp/templates/trace_result.md\n"
-                  "run_id: trace-run\n"
-                  "emit_indicator_trace: true\n"
-                  "emit_sub_strategy_indicator_trace: true\n");
+    WriteFile(config_path, "build_dir: " + build_dir.string() +
+                               "\n"
+                               "engine_mode: parquet\n"
+                               "dataset_root: " +
+                               dataset_root.string() +
+                               "\n"
+                               "strategy_main_config_path: " +
+                               strategy_main.string() +
+                               "\n"
+                               "output_root_dir: " +
+                               output_root_dir.string() +
+                               "\n"
+                               "timestamp_timezone: utc\n"
+                               "output_json: /tmp/templates/trace_result.json\n"
+                               "output_md: /tmp/templates/trace_result.md\n"
+                               "run_id: trace-run\n"
+                               "emit_indicator_trace: true\n"
+                               "emit_sub_strategy_indicator_trace: true\n");
 
-    const std::string command =
-        "bash scripts/build/run_backtest_from_config.sh --config '" +
-        EscapePathForShell(config_path) + "' --skip-build";
+    const std::string command = "bash scripts/build/run_backtest_from_config.sh --config '" +
+                                EscapePathForShell(config_path) + "' --skip-build";
     const int rc = RunCommand(command);
     EXPECT_EQ(rc, 0);
 
@@ -585,9 +617,9 @@ TEST(RunBacktestFromConfigScriptTest, SkipBuildDefaultsTraceOutputFormatToCsvAnd
     EXPECT_EQ(*FindArgValue(args, "--trace_output_format"), "csv");
     EXPECT_EQ(std::filesystem::path(*FindArgValue(args, "--indicator_trace_path")).filename(),
               "indicator_trace.csv");
-    EXPECT_EQ(
-        std::filesystem::path(*FindArgValue(args, "--sub_strategy_indicator_trace_path")).filename(),
-        "sub_strategy_indicator_trace.csv");
+    EXPECT_EQ(std::filesystem::path(*FindArgValue(args, "--sub_strategy_indicator_trace_path"))
+                  .filename(),
+              "sub_strategy_indicator_trace.csv");
 }
 
 TEST(RunBacktestFromConfigScriptTest, SkipBuildPassesTraceOutputFormatWhenConfigured) {
@@ -613,34 +645,29 @@ TEST(RunBacktestFromConfigScriptTest, SkipBuildPassesTraceOutputFormatWhenConfig
                   "for arg in \"$@\"; do\n"
                   "  printf '%s\\n' \"${arg}\" >>\"${args_file}\"\n"
                   "done\n");
-    std::filesystem::permissions(fake_cli,
-                                 std::filesystem::perms::owner_exec |
-                                     std::filesystem::perms::group_exec |
-                                     std::filesystem::perms::others_exec |
-                                     std::filesystem::perms::owner_read |
-                                     std::filesystem::perms::group_read |
-                                     std::filesystem::perms::others_read |
-                                     std::filesystem::perms::owner_write,
-                                 std::filesystem::perm_options::replace);
+    std::filesystem::permissions(
+        fake_cli,
+        std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec |
+            std::filesystem::perms::others_exec | std::filesystem::perms::owner_read |
+            std::filesystem::perms::group_read | std::filesystem::perms::others_read |
+            std::filesystem::perms::owner_write,
+        std::filesystem::perm_options::replace);
 
-    WriteFile(config_path,
-              "build_dir: " +
-                  build_dir.string() +
-                  "\n"
-                  "engine_mode: parquet\n"
-                  "dataset_root: " +
-                  dataset_root.string() +
-                  "\n"
-                  "strategy_main_config_path: " +
-                  strategy_main.string() +
-                  "\n"
-                  "output_json: /tmp/templates/trace_result.json\n"
-                  "output_md: /tmp/templates/trace_result.md\n"
-                  "trace_output_format: both\n");
+    WriteFile(config_path, "build_dir: " + build_dir.string() +
+                               "\n"
+                               "engine_mode: parquet\n"
+                               "dataset_root: " +
+                               dataset_root.string() +
+                               "\n"
+                               "strategy_main_config_path: " +
+                               strategy_main.string() +
+                               "\n"
+                               "output_json: /tmp/templates/trace_result.json\n"
+                               "output_md: /tmp/templates/trace_result.md\n"
+                               "trace_output_format: both\n");
 
-    const std::string command =
-        "bash scripts/build/run_backtest_from_config.sh --config '" +
-        EscapePathForShell(config_path) + "' --skip-build";
+    const std::string command = "bash scripts/build/run_backtest_from_config.sh --config '" +
+                                EscapePathForShell(config_path) + "' --skip-build";
     const int rc = RunCommand(command);
     EXPECT_EQ(rc, 0);
 
@@ -729,39 +756,34 @@ TEST(RunBacktestFromConfigScriptTest, InvalidTimestampTimezoneFailsFast) {
     std::filesystem::create_directories(dataset_root);
     WriteFile(strategy_main, "run_type: backtest\n");
     WriteFile(fake_cli, "#!/usr/bin/env bash\nset -euo pipefail\n");
-    std::filesystem::permissions(fake_cli,
-                                 std::filesystem::perms::owner_exec |
-                                     std::filesystem::perms::group_exec |
-                                     std::filesystem::perms::others_exec |
-                                     std::filesystem::perms::owner_read |
-                                     std::filesystem::perms::group_read |
-                                     std::filesystem::perms::others_read |
-                                     std::filesystem::perms::owner_write,
-                                 std::filesystem::perm_options::replace);
+    std::filesystem::permissions(
+        fake_cli,
+        std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec |
+            std::filesystem::perms::others_exec | std::filesystem::perms::owner_read |
+            std::filesystem::perms::group_read | std::filesystem::perms::others_read |
+            std::filesystem::perms::owner_write,
+        std::filesystem::perm_options::replace);
 
-    WriteFile(config_path,
-              "build_dir: " +
-                  build_dir.string() +
-                  "\n"
-                  "engine_mode: parquet\n"
-                  "dataset_root: " +
-                  dataset_root.string() +
-                  "\n"
-                  "strategy_main_config_path: " +
-                  strategy_main.string() +
-                  "\n"
-                  "output_json: " +
-                  output_json.string() +
-                  "\n"
-                  "output_md: " +
-                  output_md.string() +
-                  "\n"
-                  "timestamp_timezone: moon\n");
+    WriteFile(config_path, "build_dir: " + build_dir.string() +
+                               "\n"
+                               "engine_mode: parquet\n"
+                               "dataset_root: " +
+                               dataset_root.string() +
+                               "\n"
+                               "strategy_main_config_path: " +
+                               strategy_main.string() +
+                               "\n"
+                               "output_json: " +
+                               output_json.string() +
+                               "\n"
+                               "output_md: " +
+                               output_md.string() +
+                               "\n"
+                               "timestamp_timezone: moon\n");
 
-    const std::string command =
-        "bash scripts/build/run_backtest_from_config.sh --config '" +
-        EscapePathForShell(config_path) + "' --skip-build >'" + EscapePathForShell(log_file) +
-        "' 2>&1";
+    const std::string command = "bash scripts/build/run_backtest_from_config.sh --config '" +
+                                EscapePathForShell(config_path) + "' --skip-build >'" +
+                                EscapePathForShell(log_file) + "' 2>&1";
     const int rc = RunCommand(command);
     EXPECT_NE(rc, 0);
     const std::string payload = ReadFile(log_file);
@@ -795,10 +817,9 @@ TEST(RunBacktestFromConfigScriptTest, DryRunPrintsResolvedRunDirSummary) {
                   "emit_indicator_trace: true\n"
                   "emit_sub_strategy_indicator_trace: true\n");
 
-    const std::string command =
-        "bash scripts/build/run_backtest_from_config.sh --config '" +
-        EscapePathForShell(config_path) + "' --dry-run >'" + EscapePathForShell(log_file) +
-        "' 2>&1";
+    const std::string command = "bash scripts/build/run_backtest_from_config.sh --config '" +
+                                EscapePathForShell(config_path) + "' --dry-run >'" +
+                                EscapePathForShell(log_file) + "' 2>&1";
     const int rc = RunCommand(command);
     EXPECT_EQ(rc, 0);
 
@@ -810,6 +831,58 @@ TEST(RunBacktestFromConfigScriptTest, DryRunPrintsResolvedRunDirSummary) {
     EXPECT_NE(payload.find("export_csv_dir="), std::string::npos);
     EXPECT_NE(payload.find("indicator_trace_path="), std::string::npos);
     EXPECT_NE(payload.find("sub_strategy_indicator_trace_path="), std::string::npos);
+}
+
+TEST(RunBacktestFromConfigScriptTest, InvalidDetectorConfigPathFailsFast) {
+    const auto root = MakeTempDir("invalid_detector_config");
+    const auto build_dir = root / "build-gcc";
+    const auto dataset_root = root / "parquet_v2";
+    const auto strategy_main = root / "main_backtest_strategy.yaml";
+    const auto config_path = root / "backtest_run.yaml";
+    const auto output_json = root / "result" / "result.json";
+    const auto output_md = root / "result" / "result.md";
+    const auto log_file = root / "invalid_detector.log";
+    const auto fake_cli = build_dir / "backtest_cli";
+    const auto detector_config = root / "missing_detector.yaml";
+
+    std::filesystem::create_directories(build_dir);
+    std::filesystem::create_directories(dataset_root);
+    WriteFile(strategy_main, "run_type: backtest\n");
+    WriteFile(fake_cli, "#!/usr/bin/env bash\nset -euo pipefail\n");
+    std::filesystem::permissions(
+        fake_cli,
+        std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec |
+            std::filesystem::perms::others_exec | std::filesystem::perms::owner_read |
+            std::filesystem::perms::group_read | std::filesystem::perms::others_read |
+            std::filesystem::perms::owner_write,
+        std::filesystem::perm_options::replace);
+
+    WriteFile(config_path, "build_dir: " + build_dir.string() +
+                               "\n"
+                               "engine_mode: parquet\n"
+                               "dataset_root: " +
+                               dataset_root.string() +
+                               "\n"
+                               "strategy_main_config_path: " +
+                               strategy_main.string() +
+                               "\n"
+                               "output_json: " +
+                               output_json.string() +
+                               "\n"
+                               "output_md: " +
+                               output_md.string() +
+                               "\n"
+                               "detector_config: " +
+                               detector_config.string() + "\n");
+
+    const std::string command = "bash scripts/build/run_backtest_from_config.sh --config '" +
+                                EscapePathForShell(config_path) + "' --skip-build >'" +
+                                EscapePathForShell(log_file) + "' 2>&1";
+    const int rc = RunCommand(command);
+    EXPECT_NE(rc, 0);
+
+    const std::string payload = ReadFile(log_file);
+    EXPECT_NE(payload.find("detector_config does not exist"), std::string::npos);
 }
 
 TEST(RunBacktestFromConfigScriptTest, SkipBuildShowsProgressAndCanSilenceBacktestStdout) {
@@ -832,40 +905,35 @@ TEST(RunBacktestFromConfigScriptTest, SkipBuildShowsProgressAndCanSilenceBacktes
               "set -euo pipefail\n"
               "sleep 0.2\n"
               "echo '{\"status\":\"ok\",\"pnl\":123}'\n");
-    std::filesystem::permissions(fake_cli,
-                                 std::filesystem::perms::owner_exec |
-                                     std::filesystem::perms::group_exec |
-                                     std::filesystem::perms::others_exec |
-                                     std::filesystem::perms::owner_read |
-                                     std::filesystem::perms::group_read |
-                                     std::filesystem::perms::others_read |
-                                     std::filesystem::perms::owner_write,
-                                 std::filesystem::perm_options::replace);
+    std::filesystem::permissions(
+        fake_cli,
+        std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec |
+            std::filesystem::perms::others_exec | std::filesystem::perms::owner_read |
+            std::filesystem::perms::group_read | std::filesystem::perms::others_read |
+            std::filesystem::perms::owner_write,
+        std::filesystem::perm_options::replace);
 
-    WriteFile(config_path,
-              "build_dir: " +
-                  build_dir.string() +
-                  "\n"
-                  "engine_mode: parquet\n"
-                  "dataset_root: " +
-                  dataset_root.string() +
-                  "\n"
-                  "strategy_main_config_path: " +
-                  strategy_main.string() +
-                  "\n"
-                  "output_json: " +
-                  output_json.string() +
-                  "\n"
-                  "output_md: " +
-                  output_md.string() +
-                  "\n"
-                  "quiet_backtest_stdout: true\n"
-                  "progress_only: true\n");
+    WriteFile(config_path, "build_dir: " + build_dir.string() +
+                               "\n"
+                               "engine_mode: parquet\n"
+                               "dataset_root: " +
+                               dataset_root.string() +
+                               "\n"
+                               "strategy_main_config_path: " +
+                               strategy_main.string() +
+                               "\n"
+                               "output_json: " +
+                               output_json.string() +
+                               "\n"
+                               "output_md: " +
+                               output_md.string() +
+                               "\n"
+                               "quiet_backtest_stdout: true\n"
+                               "progress_only: true\n");
 
-    const std::string command =
-        "bash scripts/build/run_backtest_from_config.sh --config '" +
-        EscapePathForShell(config_path) + "' --skip-build >'" + EscapePathForShell(log_file) +
-        "' 2>&1";
+    const std::string command = "bash scripts/build/run_backtest_from_config.sh --config '" +
+                                EscapePathForShell(config_path) + "' --skip-build >'" +
+                                EscapePathForShell(log_file) + "' 2>&1";
     const int rc = RunCommand(command);
     EXPECT_EQ(rc, 0);
 
@@ -898,40 +966,35 @@ TEST(RunBacktestFromConfigScriptTest, SkipBuildShowsErrorWhenProgressOnlyEnabled
               "set -euo pipefail\n"
               "echo 'fatal: replay failed at row 12' >&2\n"
               "exit 7\n");
-    std::filesystem::permissions(fake_cli,
-                                 std::filesystem::perms::owner_exec |
-                                     std::filesystem::perms::group_exec |
-                                     std::filesystem::perms::others_exec |
-                                     std::filesystem::perms::owner_read |
-                                     std::filesystem::perms::group_read |
-                                     std::filesystem::perms::others_read |
-                                     std::filesystem::perms::owner_write,
-                                 std::filesystem::perm_options::replace);
+    std::filesystem::permissions(
+        fake_cli,
+        std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec |
+            std::filesystem::perms::others_exec | std::filesystem::perms::owner_read |
+            std::filesystem::perms::group_read | std::filesystem::perms::others_read |
+            std::filesystem::perms::owner_write,
+        std::filesystem::perm_options::replace);
 
-    WriteFile(config_path,
-              "build_dir: " +
-                  build_dir.string() +
-                  "\n"
-                  "engine_mode: parquet\n"
-                  "dataset_root: " +
-                  dataset_root.string() +
-                  "\n"
-                  "strategy_main_config_path: " +
-                  strategy_main.string() +
-                  "\n"
-                  "output_json: " +
-                  output_json.string() +
-                  "\n"
-                  "output_md: " +
-                  output_md.string() +
-                  "\n"
-                  "quiet_backtest_stdout: true\n"
-                  "progress_only: true\n");
+    WriteFile(config_path, "build_dir: " + build_dir.string() +
+                               "\n"
+                               "engine_mode: parquet\n"
+                               "dataset_root: " +
+                               dataset_root.string() +
+                               "\n"
+                               "strategy_main_config_path: " +
+                               strategy_main.string() +
+                               "\n"
+                               "output_json: " +
+                               output_json.string() +
+                               "\n"
+                               "output_md: " +
+                               output_md.string() +
+                               "\n"
+                               "quiet_backtest_stdout: true\n"
+                               "progress_only: true\n");
 
-    const std::string command =
-        "bash scripts/build/run_backtest_from_config.sh --config '" +
-        EscapePathForShell(config_path) + "' --skip-build >'" + EscapePathForShell(log_file) +
-        "' 2>&1";
+    const std::string command = "bash scripts/build/run_backtest_from_config.sh --config '" +
+                                EscapePathForShell(config_path) + "' --skip-build >'" +
+                                EscapePathForShell(log_file) + "' 2>&1";
     const int rc = RunCommand(command);
     EXPECT_NE(rc, 0);
 

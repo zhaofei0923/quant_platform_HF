@@ -402,6 +402,7 @@ timestamp_timezone="$(to_lower "$(cfg_get "timestamp_timezone" "local")")"
 engine_mode="$(to_lower "$(cfg_get "engine_mode" "parquet")")"
 dataset_root_raw="$(cfg_get "dataset_root" "")"
 strategy_main_config_path_raw="$(cfg_get "strategy_main_config_path" "")"
+detector_config_raw="$(cfg_get "detector_config" "")"
 output_json_raw="$(cfg_get "output_json" "")"
 output_md_raw="$(cfg_get "output_md" "")"
 
@@ -440,6 +441,7 @@ fi
 
 dataset_root="$(to_abs_path "${dataset_root_raw}")"
 strategy_main_config_path="$(to_abs_path "${strategy_main_config_path_raw}")"
+detector_config="$(to_abs_path "${detector_config_raw}")"
 output_root_dir="$(to_abs_path "${output_root_dir_raw}")"
 
 run_timestamp="$(timestamp_now "${timestamp_timezone}")"
@@ -479,6 +481,10 @@ if [[ ! -f "${strategy_main_config_path}" ]]; then
 fi
 if [[ ! -d "${dataset_root}" ]]; then
   echo "error: dataset_root does not exist: ${dataset_root}" >&2
+  exit 2
+fi
+if [[ -n "${detector_config}" && ! -f "${detector_config}" ]]; then
+  echo "error: detector_config does not exist: ${detector_config}" >&2
   exit 2
 fi
 
@@ -609,6 +615,7 @@ append_arg_if_set backtest_cmd --export_csv_dir "${export_csv_dir}"
 append_arg_if_set backtest_cmd --max_ticks "${max_ticks}"
 append_arg_if_set backtest_cmd --start_date "${start_date}"
 append_arg_if_set backtest_cmd --end_date "${end_date}"
+append_arg_if_set backtest_cmd --detector_config "${detector_config}"
 append_arg_if_set backtest_cmd --deterministic_fills "${deterministic_fills}"
 append_arg_if_set backtest_cmd --strict_parquet "${strict_parquet}"
 append_arg_if_set backtest_cmd --rollover_mode "${rollover_mode}"
@@ -637,6 +644,7 @@ if [[ "${dry_run}" == true ]] || ! is_true "${progress_only}"; then
   echo "trace_output_format=${trace_output_format}"
   echo "dataset_root=${dataset_root}"
   echo "strategy_main_config_path=${strategy_main_config_path}"
+  echo "detector_config=${detector_config}"
   echo "output_json=${output_json}"
   echo "output_md=${output_md}"
   echo "export_csv_dir=${export_csv_dir}"

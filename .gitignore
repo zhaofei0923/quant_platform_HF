@@ -37,3 +37,4 @@ worktrees/
 logs/
 *.wal
 *.db
+/docs/results/backtest_runs/

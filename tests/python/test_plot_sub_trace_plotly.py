@@ -107,9 +107,10 @@ def make_trace_row(
     atr: str = "3.2",
     adx: str = "25.6",
     er: str = "0.45",
+    instrument_id: str = "c2405",
 ) -> dict[str, str]:
     return {
-        "instrument_id": "c2405",
+        "instrument_id": instrument_id,
         "ts_ns": str(ts_ns),
         "dt_utc": dt_utc,
         "timeframe_minutes": str(timeframe_minutes),
@@ -311,7 +312,7 @@ class PlotSubTracePlotlyTest(unittest.TestCase):
             trade_frame = module.load_trade_events(
                 {"run_dir": run_dir, "metadata_path": run_dir / "backtest_auto.json"},
                 strategy_id="kama_trend_1",
-                instrument_id="c2405",
+                instrument_ids=["c2405"],
             )
 
         self.assertEqual(trade_frame["trade_id"].tolist(), ["csv-trade"])
@@ -333,12 +334,65 @@ class PlotSubTracePlotlyTest(unittest.TestCase):
             trade_frame = module.load_trade_events(
                 {"run_dir": run_dir, "metadata_path": run_dir / "backtest_auto.json"},
                 strategy_id="kama_trend_1",
-                instrument_id="c2405",
+                instrument_ids=["c2405"],
             )
 
         self.assertEqual(trade_frame["trade_id"].tolist(), ["json-trade"])
 
-    def test_prepare_trade_markers_maps_signal_time_to_signal_bar(self) -> None:
+    def test_load_trade_events_includes_trace_instruments_and_rollover_strategy(self) -> None:
+        module = load_script_module()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            run_dir = write_run(
+                root,
+                "backtest-20260313T210119_20260313T210119",
+                "backtest-20260313T210119",
+                [
+                    make_trace_row("2024-01-02 13:55", 1704203700000000000, instrument_id="c2405"),
+                    make_trace_row("2024-04-01 09:00", 1711933200000000000, instrument_id="c2407"),
+                ],
+                trade_rows=[
+                    make_trade_row(1, "alpha-open", "2024-01-02 13:59:59", symbol="c2405"),
+                    make_trade_row(2, "alpha-open-next", "2024-04-01 09:00:01", symbol="c2407"),
+                    make_trade_row(
+                        3,
+                        "roll-close",
+                        "2024-04-01 09:00:00",
+                        strategy_id="rollover",
+                        symbol="c2405",
+                        offset="Close",
+                        signal_type="rollover_close",
+                        side="Sell",
+                    ),
+                    make_trade_row(
+                        4,
+                        "roll-open",
+                        "2024-04-01 09:00:00",
+                        strategy_id="rollover",
+                        symbol="c2407",
+                        offset="Open",
+                        signal_type="rollover_open",
+                        side="Buy",
+                    ),
+                    make_trade_row(5, "other-strategy", "2024-04-01 09:00:01", strategy_id="beta"),
+                    make_trade_row(6, "other-symbol", "2024-04-01 09:00:01", symbol="rb2405"),
+                ],
+                write_trade_csv_file=True,
+            )
+
+            trade_frame = module.load_trade_events(
+                {"run_dir": run_dir, "metadata_path": run_dir / "backtest_auto.json"},
+                strategy_id="kama_trend_1",
+                instrument_ids=["c2405", "c2407"],
+            )
+
+        self.assertEqual(
+            trade_frame["trade_id"].tolist(),
+            ["alpha-open", "alpha-open-next", "roll-close", "roll-open"],
+        )
+
+    def test_prepare_trade_markers_maps_update_time_to_bar(self) -> None:
         module = load_script_module()
         frame, metadata = module.prepare_plot_frame(
             pd.DataFrame(
@@ -361,7 +415,9 @@ class PlotSubTracePlotlyTest(unittest.TestCase):
                         1,
                         "trade-1",
                         "2024-01-02 13:59:59",
+                        timestamp_dt_local="2024-01-02 14:00:01",
                         trading_day="20240102",
+                        update_time="14:00:01",
                         signal_type="kOpen",
                         offset="Open",
                         side="Buy",
@@ -371,11 +427,156 @@ class PlotSubTracePlotlyTest(unittest.TestCase):
             metadata,
         )
 
-        self.assertEqual(markers["plot_index"].tolist(), [0])
-        self.assertEqual(markers["event_bar_text"].tolist(), ["2024-01-02 13:55"])
+        self.assertEqual(markers["plot_index"].tolist(), [1])
+        self.assertEqual(markers["event_bar_text"].tolist(), ["2024-01-02 14:00"])
         self.assertEqual(markers["marker_kind"].tolist(), ["Open"])
 
-    def test_prepare_trade_markers_maps_session_boundary_event_to_first_new_session_bar(self) -> None:
+    def test_prepare_trade_markers_matches_execution_bar_by_instrument(self) -> None:
+        module = load_script_module()
+        frame, metadata = module.prepare_plot_frame(
+            pd.DataFrame(
+                [
+                    make_trace_row("2024-04-01 09:00", 100, instrument_id="c2405"),
+                    make_trace_row("2024-04-01 09:00", 200, instrument_id="c2407"),
+                ]
+            ),
+            strategy_id=None,
+            timeframe_minutes=None,
+            start=None,
+            end=None,
+        )
+
+        markers = module.prepare_trade_markers(
+            frame,
+            pd.DataFrame(
+                [
+                    make_trade_row(
+                        1,
+                        "roll-open",
+                        "2024-04-01 09:00:00",
+                        timestamp_dt_local="2024-04-01 09:00:01",
+                        trading_day="20240401",
+                        symbol="c2407",
+                        strategy_id="rollover",
+                        signal_type="rollover_open",
+                        offset="Open",
+                        side="Buy",
+                    )
+                ]
+            ),
+            metadata,
+        )
+
+        self.assertEqual(markers["plot_index"].tolist(), [1])
+        self.assertEqual(markers["marker_kind"].tolist(), ["RolloverOpen"])
+
+    def test_prepare_trade_markers_maps_rollover_close_to_last_bar_of_previous_contract(self) -> None:
+        module = load_script_module()
+        frame, metadata = module.prepare_plot_frame(
+            pd.DataFrame(
+                [
+                    make_trace_row("2024-03-29 14:55", 100, instrument_id="c2405"),
+                    make_trace_row("2024-04-01 21:00", 200, instrument_id="c2407"),
+                ]
+            ),
+            strategy_id=None,
+            timeframe_minutes=None,
+            start=None,
+            end=None,
+        )
+
+        markers = module.prepare_trade_markers(
+            frame,
+            pd.DataFrame(
+                [
+                    make_trade_row(
+                        1,
+                        "roll-close",
+                        "2024-03-31 21:00:00",
+                        trading_day="20240401",
+                        action_day="20240331",
+                        update_time="21:00:00",
+                        symbol="c2405",
+                        strategy_id="rollover",
+                        signal_type="rollover_close",
+                        offset="Close",
+                        side="Sell",
+                    ),
+                    make_trade_row(
+                        2,
+                        "roll-open",
+                        "2024-03-31 21:00:00",
+                        trading_day="20240401",
+                        action_day="20240331",
+                        update_time="21:00:00",
+                        symbol="c2407",
+                        strategy_id="rollover",
+                        signal_type="rollover_open",
+                        offset="Open",
+                        side="Buy",
+                    ),
+                ]
+            ),
+            metadata,
+        )
+
+        self.assertEqual(markers["plot_index"].tolist(), [0, 1])
+        self.assertEqual(markers["marker_kind"].tolist(), ["RolloverClose", "RolloverOpen"])
+        self.assertEqual(markers["event_bar_text"].tolist(), ["2024-03-29 14:55", "2024-04-01 21:00"])
+
+    def test_prepare_trade_markers_classifies_rollover_markers(self) -> None:
+        module = load_script_module()
+        frame, metadata = module.prepare_plot_frame(
+            pd.DataFrame(
+                [
+                    make_trace_row("2024-04-01 09:00", 100, instrument_id="c2405"),
+                    make_trace_row("2024-04-01 09:05", 200, instrument_id="c2407"),
+                ]
+            ),
+            strategy_id=None,
+            timeframe_minutes=None,
+            start=None,
+            end=None,
+        )
+
+        markers = module.prepare_trade_markers(
+            frame,
+            pd.DataFrame(
+                [
+                    make_trade_row(
+                        1,
+                        "roll-close",
+                        "2024-04-01 09:00:00",
+                        timestamp_dt_local="2024-04-01 09:00:01",
+                        trading_day="20240401",
+                        symbol="c2405",
+                        strategy_id="rollover",
+                        signal_type="rollover_close",
+                        offset="Close",
+                        side="Sell",
+                    ),
+                    make_trade_row(
+                        2,
+                        "roll-open",
+                        "2024-04-01 09:05:00",
+                        timestamp_dt_local="2024-04-01 09:05:01",
+                        trading_day="20240401",
+                        symbol="c2407",
+                        strategy_id="rollover",
+                        signal_type="rollover_open",
+                        offset="Open",
+                        side="Buy",
+                    ),
+                ]
+            ),
+            metadata,
+        )
+
+        self.assertEqual(markers["marker_kind"].tolist(), ["RolloverClose", "RolloverOpen"])
+
+    def test_prepare_trade_markers_maps_update_time_at_session_boundary_to_first_new_session_bar(
+        self,
+    ) -> None:
         module = load_script_module()
         frame, metadata = module.prepare_plot_frame(
             pd.DataFrame(
@@ -399,8 +600,10 @@ class PlotSubTracePlotlyTest(unittest.TestCase):
                     make_trade_row(
                         1,
                         "stop-1",
-                        "2024-01-11 13:30:00",
+                        "2024-01-11 11:29:59",
+                        timestamp_dt_local="2024-01-11 13:30:00",
                         trading_day="20240111",
+                        update_time="13:30:00",
                         signal_type="kStopLoss",
                         offset="Close",
                         side="Buy",
@@ -413,7 +616,7 @@ class PlotSubTracePlotlyTest(unittest.TestCase):
         self.assertEqual(markers["plot_index"].tolist(), [2])
         self.assertEqual(markers["event_bar_text"].tolist(), ["2024-01-11 13:30"])
 
-    def test_prepare_trade_markers_maps_night_session_event_to_trading_day_bar(self) -> None:
+    def test_prepare_trade_markers_maps_night_session_execution_to_trading_day_bar(self) -> None:
         module = load_script_module()
         frame, metadata = module.prepare_plot_frame(
             pd.DataFrame(
@@ -436,9 +639,11 @@ class PlotSubTracePlotlyTest(unittest.TestCase):
                     make_trade_row(
                         1,
                         "night-stop",
-                        "2024-01-31 21:02:05",
+                        "2024-01-31 15:00:00",
+                        timestamp_dt_local="2024-02-01 21:02:05",
                         trading_day="20240201",
                         action_day="20240131",
+                        update_time="21:02:05",
                         signal_type="kStopLoss",
                         offset="Close",
                         side="Sell",
@@ -450,6 +655,182 @@ class PlotSubTracePlotlyTest(unittest.TestCase):
 
         self.assertEqual(markers["plot_index"].tolist(), [1])
         self.assertEqual(markers["event_bar_text"].tolist(), ["2024-02-01 21:00"])
+
+    def test_prepare_trade_markers_falls_back_to_trading_day_when_fill_time_uses_action_day(self) -> None:
+        module = load_script_module()
+        frame, metadata = module.prepare_plot_frame(
+            pd.DataFrame(
+                [
+                    make_trace_row("2024-05-13 21:55", 100, instrument_id="c2407"),
+                    make_trace_row("2024-05-13 22:00", 200, instrument_id="c2407"),
+                ]
+            ),
+            strategy_id=None,
+            timeframe_minutes=None,
+            start=None,
+            end=None,
+        )
+
+        markers = module.prepare_trade_markers(
+            frame,
+            pd.DataFrame(
+                [
+                    make_trade_row(
+                        1,
+                        "trade-130",
+                        "2024-05-12 21:54:59",
+                        timestamp_dt_local="2024-05-12 21:56:04",
+                        trading_day="20240513",
+                        action_day="20240512",
+                        update_time="21:56:04",
+                        symbol="c2407",
+                        signal_type="kOpen",
+                        offset="Open",
+                        side="Sell",
+                    )
+                ]
+            ),
+            metadata,
+        )
+
+        self.assertEqual(markers["plot_index"].tolist(), [0])
+        self.assertEqual(markers["event_bar_text"].tolist(), ["2024-05-13 21:55"])
+        self.assertEqual(markers["marker_kind"].tolist(), ["Open"])
+
+    def test_prepare_trade_markers_does_not_use_fill_date_when_action_day_bar_exists(self) -> None:
+        module = load_script_module()
+        frame, metadata = module.prepare_plot_frame(
+            pd.DataFrame(
+                [
+                    make_trace_row("2024-05-12 21:55", 100, instrument_id="c2407"),
+                    make_trace_row("2024-05-13 21:55", 200, instrument_id="c2407"),
+                ]
+            ),
+            strategy_id=None,
+            timeframe_minutes=None,
+            start=None,
+            end=None,
+        )
+
+        markers = module.prepare_trade_markers(
+            frame,
+            pd.DataFrame(
+                [
+                    make_trade_row(
+                        1,
+                        "action-day-mismatch",
+                        "2024-05-12 21:54:59",
+                        timestamp_dt_local="2024-05-12 21:56:04",
+                        trading_day="20240513",
+                        action_day="20240512",
+                        update_time="21:56:04",
+                        symbol="c2407",
+                        signal_type="kOpen",
+                        offset="Open",
+                        side="Sell",
+                    )
+                ]
+            ),
+            metadata,
+        )
+
+        self.assertEqual(markers["plot_index"].tolist(), [1])
+        self.assertEqual(markers["event_bar_text"].tolist(), ["2024-05-13 21:55"])
+
+    def test_prepare_trade_markers_skips_unmatched_bar_and_warns(self) -> None:
+        module = load_script_module()
+        frame, metadata = module.prepare_plot_frame(
+            pd.DataFrame(
+                [
+                    make_trace_row("2024-05-13 21:55", 100, instrument_id="c2407"),
+                    make_trace_row("2024-05-13 22:00", 200, instrument_id="c2407"),
+                ]
+            ),
+            strategy_id=None,
+            timeframe_minutes=None,
+            start=None,
+            end=None,
+        )
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            markers = module.prepare_trade_markers(
+                frame,
+                pd.DataFrame(
+                    [
+                        make_trade_row(
+                            1,
+                            "missing-bar",
+                            "2024-05-12 21:54:59",
+                            timestamp_dt_local="2024-05-12 21:56:04",
+                            trading_day="20240513",
+                            action_day="20240512",
+                            update_time="20:56:04",
+                            symbol="c2407",
+                            signal_type="kOpen",
+                            offset="Open",
+                            side="Sell",
+                        )
+                    ]
+                ),
+                metadata,
+            )
+
+        self.assertTrue(markers.empty)
+        self.assertIn("trade markers skipped", stderr.getvalue())
+        self.assertIn("missing-bar", stderr.getvalue())
+
+    def test_prepare_trade_markers_keeps_buy_and_sell_on_same_execution_bar(self) -> None:
+        module = load_script_module()
+        frame, metadata = module.prepare_plot_frame(
+            pd.DataFrame(
+                [
+                    make_trace_row("2024-01-03 09:00", 100),
+                    make_trace_row("2024-01-03 09:05", 200),
+                ]
+            ),
+            strategy_id=None,
+            timeframe_minutes=None,
+            start=None,
+            end=None,
+        )
+
+        markers = module.prepare_trade_markers(
+            frame,
+            pd.DataFrame(
+                [
+                    make_trade_row(
+                        1,
+                        "buy-open",
+                        "2024-01-03 08:59:58",
+                        timestamp_dt_local="2024-01-03 09:04:59",
+                        trading_day="20240103",
+                        update_time="09:04:59",
+                        signal_type="kOpen",
+                        offset="Open",
+                        side="Buy",
+                    ),
+                    make_trade_row(
+                        2,
+                        "sell-open",
+                        "2024-01-03 08:59:59",
+                        timestamp_dt_local="2024-01-03 09:04:59",
+                        trading_day="20240103",
+                        update_time="09:04:59",
+                        signal_type="kOpen",
+                        offset="Open",
+                        side="Sell",
+                    ),
+                ]
+            ),
+            metadata,
+        )
+
+        self.assertEqual(markers["plot_index"].tolist(), [0, 0])
+        self.assertEqual(markers["marker_kind"].tolist(), ["Open", "Open"])
+        self.assertEqual(markers["side"].tolist(), ["Buy", "Sell"])
+        self.assertTrue(markers.iloc[0]["marker_y"] < 2419.0)
+        self.assertTrue(markers.iloc[1]["marker_y"] > 2425.0)
 
     def test_prepare_trade_markers_aggregates_same_bar_and_separates_reverse_close_and_open(self) -> None:
         module = load_script_module()
@@ -652,6 +1033,209 @@ class PlotSubTracePlotlyTest(unittest.TestCase):
         self.assertGreaterEqual(figure.layout["legend"]["y"], 1.03)
         self.assertGreaterEqual(figure.layout["margin"]["t"], 130)
         self.assertNotIn("rangeselector", figure.layout["xaxis"])
+
+    def test_build_figure_uses_instrument_chain_label_for_multi_instrument_trace(self) -> None:
+        module = load_script_module()
+
+        class FakeTrace:
+            def __init__(self, **kwargs) -> None:
+                self.kwargs = kwargs
+
+        class FakeCandlestick(FakeTrace):
+            pass
+
+        class FakeScatter(FakeTrace):
+            pass
+
+        class FakeFigure:
+            def __init__(self, **kwargs) -> None:
+                self.layout: dict[str, object] = {}
+
+            def add_trace(self, trace, row: int, col: int) -> None:
+                pass
+
+            def update_layout(self, **kwargs) -> None:
+                self.layout.update(kwargs)
+
+            def update_yaxes(self, **kwargs) -> None:
+                pass
+
+            def update_xaxes(self, **kwargs) -> None:
+                pass
+
+        fake_plotly = types.ModuleType("plotly")
+        fake_go = types.ModuleType("plotly.graph_objects")
+        fake_subplots = types.ModuleType("plotly.subplots")
+        fake_go.Candlestick = FakeCandlestick
+        fake_go.Scatter = FakeScatter
+        fake_subplots.make_subplots = lambda **kwargs: FakeFigure(**kwargs)
+        fake_plotly.graph_objects = fake_go
+        fake_plotly.subplots = fake_subplots
+
+        frame = pd.DataFrame(
+            [
+                {
+                    "instrument_id": "c2405",
+                    "strategy_id": "kama_trend_1",
+                    "timeframe_minutes": 5,
+                    "market_regime": "kRanging",
+                    "bar_volume": 1000.0,
+                    "plot_index": 0,
+                    "display_dt_text": "2024-03-29 14:55",
+                    "dt_utc": pd.Timestamp("2024-03-29 14:55"),
+                    "bar_open": 1.0,
+                    "bar_high": 2.0,
+                    "bar_low": 0.5,
+                    "bar_close": 1.5,
+                    "kama": 1.4,
+                    "atr": 0.2,
+                    "er": 0.3,
+                    "adx": 20.0,
+                },
+                {
+                    "instrument_id": "c2407",
+                    "strategy_id": "kama_trend_1",
+                    "timeframe_minutes": 5,
+                    "market_regime": "kRanging",
+                    "bar_volume": 1005.0,
+                    "plot_index": 1,
+                    "display_dt_text": "2024-04-01 09:00",
+                    "dt_utc": pd.Timestamp("2024-04-01 09:00"),
+                    "bar_open": 1.5,
+                    "bar_high": 2.1,
+                    "bar_low": 1.2,
+                    "bar_close": 1.8,
+                    "kama": 1.6,
+                    "atr": 0.25,
+                    "er": 0.31,
+                    "adx": 22.0,
+                },
+            ]
+        )
+        metadata = {
+            "instrument_id": "c2405",
+            "instrument_ids": ["c2405", "c2407"],
+            "instrument_label": "c2405->c2407",
+            "strategy_id": "kama_trend_1",
+            "timeframe_minutes": 5,
+            "start_label": "2024-03-29 14:55",
+            "end_label": "2024-04-01 09:00",
+            "tickvals": [0, 1],
+            "ticktext": ["2024-03-29 14:55", "2024-04-01 09:00"],
+        }
+
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "plotly": fake_plotly,
+                "plotly.graph_objects": fake_go,
+                "plotly.subplots": fake_subplots,
+            },
+        ):
+            figure = module.build_figure(frame, "backtest-20260314T191513", metadata)
+
+        self.assertIn("c2405->c2407", str(figure.layout["title"]["text"]))
+
+    def test_build_figure_prefers_analysis_bars_and_hover_shows_raw_prices(self) -> None:
+        module = load_script_module()
+
+        class FakeTrace:
+            def __init__(self, **kwargs) -> None:
+                self.kwargs = kwargs
+
+        class FakeCandlestick(FakeTrace):
+            pass
+
+        class FakeScatter(FakeTrace):
+            pass
+
+        class FakeFigure:
+            def __init__(self, **kwargs) -> None:
+                self.traces: list[dict[str, object]] = []
+                self.layout: dict[str, object] = {}
+
+            def add_trace(self, trace, row: int, col: int) -> None:
+                self.traces.append(
+                    {
+                        "type": trace.__class__.__name__,
+                        "kwargs": trace.kwargs,
+                        "row": row,
+                        "col": col,
+                    }
+                )
+
+            def update_layout(self, **kwargs) -> None:
+                self.layout.update(kwargs)
+
+            def update_yaxes(self, **kwargs) -> None:
+                pass
+
+            def update_xaxes(self, **kwargs) -> None:
+                pass
+
+        fake_plotly = types.ModuleType("plotly")
+        fake_go = types.ModuleType("plotly.graph_objects")
+        fake_subplots = types.ModuleType("plotly.subplots")
+        fake_go.Candlestick = FakeCandlestick
+        fake_go.Scatter = FakeScatter
+        fake_subplots.make_subplots = lambda **kwargs: FakeFigure(**kwargs)
+        fake_plotly.graph_objects = fake_go
+        fake_plotly.subplots = fake_subplots
+
+        frame = pd.DataFrame(
+            [
+                {
+                    "instrument_id": "c2407",
+                    "strategy_id": "kama_trend_1",
+                    "timeframe_minutes": 5,
+                    "market_regime": "kWeakTrend",
+                    "bar_volume": 1000.0,
+                    "plot_index": 0,
+                    "display_dt_text": "2024-04-01 21:00",
+                    "dt_utc": pd.Timestamp("2024-04-01 21:00"),
+                    "bar_open": 200.0,
+                    "bar_high": 205.0,
+                    "bar_low": 198.0,
+                    "bar_close": 204.0,
+                    "analysis_bar_open": 104.0,
+                    "analysis_bar_high": 109.0,
+                    "analysis_bar_low": 102.0,
+                    "analysis_bar_close": 108.0,
+                    "analysis_price_offset": -96.0,
+                    "kama": 107.0,
+                    "atr": 3.0,
+                    "er": 0.45,
+                    "adx": 25.0,
+                }
+            ]
+        )
+        metadata = {
+            "instrument_id": "c2407",
+            "instrument_ids": ["c2407"],
+            "instrument_label": "c2407",
+            "strategy_id": "kama_trend_1",
+            "timeframe_minutes": 5,
+            "start_label": "2024-04-01 21:00",
+            "end_label": "2024-04-01 21:00",
+            "tickvals": [0],
+            "ticktext": ["2024-04-01 21:00"],
+        }
+
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "plotly": fake_plotly,
+                "plotly.graph_objects": fake_go,
+                "plotly.subplots": fake_subplots,
+            },
+        ):
+            figure = module.build_figure(frame, "backtest-20260316T152348", metadata)
+
+        candlestick = figure.traces[0]["kwargs"]
+        self.assertEqual(list(candlestick["open"]), [104.0])
+        self.assertEqual(list(candlestick["close"]), [108.0])
+        self.assertIn("Raw Close=%{customdata[9]}", candlestick["hovertemplate"])
+        self.assertIn("Analysis Close=%{close}", candlestick["hovertemplate"])
 
     def test_resolve_runs_root_defaults_relative_to_repo_root(self) -> None:
         module = load_script_module()

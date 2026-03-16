@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -20,6 +21,7 @@
 #endif
 
 #include "quant_hft/strategy/atomic_factory.h"
+#include "../backtest/tick_partition_fixture.h"
 
 namespace quant_hft::apps {
 namespace {
@@ -166,6 +168,32 @@ std::filesystem::path WriteMultiMinuteReplayCsv(const std::string& stem) {
     return path;
 }
 
+std::filesystem::path WriteInstrumentSwitchReplayCsv(const std::string& stem) {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto path =
+        std::filesystem::temp_directory_path() / (stem + "_" + std::to_string(stamp) + ".csv");
+    std::ofstream out(path);
+    out << "InstrumentID,ts_ns,LastPrice,Volume,BidPrice1,BidVolume1,AskPrice1,AskVolume1\n";
+    out << "rb2405,1704186000000000000,100,100,99,20,101,18\n";
+    out << "rb2405,1704186001000000000,101,101,100,21,102,19\n";
+    out << "rb2405,1704186060000000000,102,102,101,22,103,20\n";
+    out << "rb2405,1704186061000000000,103,103,102,23,104,21\n";
+    out << "rb2409,1704186300000000000,200,200,199,20,201,18\n";
+    out << "rb2409,1704186301000000000,201,201,200,21,202,19\n";
+    out << "rb2409,1704186360000000000,202,202,201,22,203,20\n";
+    out << "rb2409,1704186361000000000,203,203,202,23,204,21\n";
+    out << "rb2409,1704186420000000000,204,204,203,24,205,22\n";
+    out << "rb2409,1704186421000000000,205,205,204,25,206,23\n";
+    out << "rb2409,1704186480000000000,206,206,205,26,207,24\n";
+    out << "rb2409,1704186481000000000,207,207,206,27,208,25\n";
+    out << "rb2409,1704186540000000000,208,208,207,28,209,26\n";
+    out << "rb2409,1704186541000000000,209,209,208,29,210,27\n";
+    out << "rb2409,1704186600000000000,210,210,209,30,211,28\n";
+    out << "rb2409,1704186601000000000,211,211,210,31,212,29\n";
+    out.close();
+    return path;
+}
+
 std::filesystem::path WriteFlatReplayCsv(const std::string& stem, double price = 100.0) {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto path =
@@ -187,6 +215,16 @@ std::filesystem::path WriteFlatReplayCsv(const std::string& stem, double price =
 std::string UniqueRunId(const std::string& stem) {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
     return stem + "-" + std::to_string(stamp);
+}
+
+std::vector<std::string> SplitCsvLine(const std::string& line) {
+    std::vector<std::string> fields;
+    std::stringstream stream(line);
+    std::string field;
+    while (std::getline(stream, field, ',')) {
+        fields.push_back(field);
+    }
+    return fields;
 }
 
 std::filesystem::path WriteTempCompositeConfig(int volume = 1, int timeframe_minutes = 1) {
@@ -316,6 +354,119 @@ std::filesystem::path WriteAlwaysOpenCompositeConfig(const std::string& strategy
     out << "        volume: 1\n";
     out.close();
     return path;
+}
+
+std::filesystem::path MakeTempDir(const std::string& stem) {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto dir =
+        std::filesystem::temp_directory_path() / (stem + "_" + std::to_string(stamp));
+    std::filesystem::create_directories(dir);
+    return dir;
+}
+
+Tick MakeParquetTick(const std::string& instrument_id,
+                     const std::string& trading_day,
+                     const std::string& update_time,
+                     double last_price,
+                     std::int64_t volume) {
+    Tick tick;
+    tick.symbol = instrument_id;
+    tick.exchange = "DCE";
+    tick.ts_ns = detail::ToEpochNs(trading_day, update_time, 0);
+    tick.last_price = last_price;
+    tick.last_volume = 1;
+    tick.bid_price1 = last_price - 1.0;
+    tick.bid_volume1 = 10;
+    tick.ask_price1 = last_price + 1.0;
+    tick.ask_volume1 = 10;
+    tick.volume = volume;
+    tick.turnover = last_price * static_cast<double>(volume);
+    tick.open_interest = volume;
+    return tick;
+}
+
+std::filesystem::path WriteParquetManifest(
+    const std::filesystem::path& dataset_root,
+    const std::vector<std::tuple<std::string, std::string, std::string, std::vector<Tick>>>&
+        partitions,
+    std::string* error) {
+    const auto manifest = dataset_root / "_manifest" / "partitions.jsonl";
+    std::filesystem::create_directories(manifest.parent_path());
+
+    std::ofstream out(manifest);
+    if (!out.is_open()) {
+        if (error != nullptr) {
+            *error = "unable to open manifest for write: " + manifest.string();
+        }
+        return {};
+    }
+
+    for (const auto& [source, trading_day, instrument_id, ticks] : partitions) {
+        if (ticks.empty()) {
+            if (error != nullptr) {
+                *error = "parquet partition fixture requires ticks";
+            }
+            return {};
+        }
+
+        const std::filesystem::path relative_path =
+            std::filesystem::path("source=" + source) / ("trading_day=" + trading_day) /
+            ("instrument_id=" + instrument_id) / "part-0000.parquet";
+        const std::filesystem::path parquet_path = dataset_root / relative_path;
+
+        if (!quant_hft::backtest::test::WriteTickPartitionFixture(parquet_path, ticks, error)) {
+            return {};
+        }
+
+        auto [min_it, max_it] = std::minmax_element(
+            ticks.begin(), ticks.end(),
+            [](const Tick& left, const Tick& right) { return left.ts_ns < right.ts_ns; });
+        {
+            std::ofstream meta(parquet_path.string() + ".meta", std::ios::out | std::ios::trunc);
+            if (!meta.is_open()) {
+                if (error != nullptr) {
+                    *error = "unable to open parquet meta for write: " + parquet_path.string();
+                }
+                return {};
+            }
+            meta << "min_ts_ns=" << min_it->ts_ns << '\n';
+            meta << "max_ts_ns=" << max_it->ts_ns << '\n';
+            meta << "row_count=" << ticks.size() << '\n';
+            meta << "schema_version=v3\n";
+            meta << "source_csv_fingerprint=test-fixture\n";
+            if (!meta.good()) {
+                if (error != nullptr) {
+                    *error = "failed to write parquet meta: " + parquet_path.string();
+                }
+                return {};
+            }
+        }
+        out << "{\"file_path\":\"" << relative_path.generic_string() << "\","
+            << "\"source\":\"" << source << "\","
+            << "\"trading_day\":\"" << trading_day << "\","
+            << "\"instrument_id\":\"" << instrument_id << "\","
+            << "\"min_ts_ns\":" << min_it->ts_ns << ','
+            << "\"max_ts_ns\":" << max_it->ts_ns << ','
+            << "\"row_count\":" << ticks.size() << "}\n";
+    }
+
+    if (!out.good()) {
+        if (error != nullptr) {
+            *error = "failed to write manifest: " + manifest.string();
+        }
+        return {};
+    }
+    return manifest;
+}
+
+std::int32_t LastNetPosition(const std::vector<PositionSnapshot>& rows, const std::string& symbol) {
+    std::int32_t last = 0;
+    for (const PositionSnapshot& row : rows) {
+        if (row.symbol == symbol) {
+            last = row.net_position;
+        }
+    }
+    return last;
 }
 
 std::filesystem::path WriteForceCloseWindowReplayCsv(const std::string& stem) {
@@ -492,6 +643,11 @@ TEST(BacktestReplaySupportTest, BuildStateSnapshotFromBarPopulatesBarFields) {
     EXPECT_DOUBLE_EQ(state.bar_high, 106.0);
     EXPECT_DOUBLE_EQ(state.bar_low, 99.0);
     EXPECT_DOUBLE_EQ(state.bar_close, 105.0);
+    EXPECT_DOUBLE_EQ(state.analysis_bar_open, 100.0);
+    EXPECT_DOUBLE_EQ(state.analysis_bar_high, 106.0);
+    EXPECT_DOUBLE_EQ(state.analysis_bar_low, 99.0);
+    EXPECT_DOUBLE_EQ(state.analysis_bar_close, 105.0);
+    EXPECT_DOUBLE_EQ(state.analysis_price_offset, 0.0);
     EXPECT_DOUBLE_EQ(state.bar_volume, 60.0);
     EXPECT_EQ(state.timeframe_minutes, 1);
     EXPECT_TRUE(state.has_bar);
@@ -598,6 +754,330 @@ TEST(BacktestReplaySupportTest, SelectParquetPartitionsForSymbolsSupportsProduct
     EXPECT_EQ(mixed[0].instrument_id, "c2405");
     EXPECT_EQ(mixed[1].instrument_id, "c2409");
     EXPECT_EQ(mixed[2].instrument_id, "rb2405");
+}
+
+TEST(BacktestReplaySupportTest, RunBacktestSpecParquetProductSymbolStrictRolloverGeneratesSyntheticTrades) {
+    const std::string strategy_type = UniqueAtomicType("always_open_parquet_strict_rollover");
+    RegisterAlwaysOpenReplayType(strategy_type);
+
+    const auto dataset_root = MakeTempDir("quant_hft_parquet_strict_rollover");
+    const auto composite_path = WriteAlwaysOpenCompositeConfig(strategy_type, /*timeframe_minutes=*/1);
+
+    std::string error;
+    const auto manifest = WriteParquetManifest(
+        dataset_root,
+        {
+            {"c",
+             "20240102",
+             "c2405",
+             {
+                 MakeParquetTick("c2405", "20240102", "09:00:00", 100.0, 10),
+                 MakeParquetTick("c2405", "20240102", "09:00:30", 101.0, 11),
+                 MakeParquetTick("c2405", "20240102", "09:01:00", 102.0, 12),
+                 MakeParquetTick("c2405", "20240102", "09:01:30", 103.0, 13),
+             }},
+            {"c",
+             "20240103",
+             "c2407",
+             {
+                 MakeParquetTick("c2407", "20240103", "08:59:00", 119.0, 19),
+                 MakeParquetTick("c2407", "20240103", "09:00:00", 120.0, 20),
+                 MakeParquetTick("c2407", "20240103", "09:00:30", 121.0, 21),
+                 MakeParquetTick("c2407", "20240103", "09:01:00", 122.0, 22),
+                 MakeParquetTick("c2407", "20240103", "09:01:30", 123.0, 23),
+             }},
+        },
+        &error);
+    ASSERT_FALSE(manifest.empty()) << error;
+
+    BacktestCliSpec spec;
+    spec.engine_mode = "parquet";
+    spec.dataset_root = dataset_root.string();
+    spec.dataset_manifest = manifest.string();
+    spec.run_id = UniqueRunId("parquet-strict-rollover");
+    spec.strategy_factory = "composite";
+    spec.strategy_composite_config = composite_path.string();
+    spec.symbols = {"c"};
+    spec.rollover_mode = "strict";
+    spec.emit_trades = true;
+    spec.emit_orders = true;
+    spec.emit_position_history = true;
+
+    BacktestCliResult result;
+    ASSERT_TRUE(RunBacktestSpec(spec, &result, &error)) << error;
+    ASSERT_TRUE(result.has_deterministic);
+    EXPECT_EQ(result.deterministic.rollover_events.size(), 1U);
+    ASSERT_EQ(result.deterministic.rollover_actions.size(), 2U);
+    EXPECT_EQ(result.deterministic.rollover_actions[0].action, "close");
+    EXPECT_EQ(result.deterministic.rollover_actions[1].action, "open");
+
+    int rollover_trade_count = 0;
+    const TradeRecord* rollover_close_trade = nullptr;
+    const TradeRecord* rollover_open_trade = nullptr;
+    for (const TradeRecord& trade : result.trades) {
+        if (trade.strategy_id == "rollover") {
+            ++rollover_trade_count;
+            if (trade.signal_type == "rollover_close") {
+                rollover_close_trade = &trade;
+            } else if (trade.signal_type == "rollover_open") {
+                rollover_open_trade = &trade;
+            }
+        }
+    }
+    EXPECT_EQ(rollover_trade_count, 2);
+    ASSERT_NE(rollover_close_trade, nullptr);
+    ASSERT_NE(rollover_open_trade, nullptr);
+    EXPECT_EQ(rollover_close_trade->trading_day, "20240103");
+    EXPECT_EQ(rollover_close_trade->action_day, "20240103");
+    EXPECT_EQ(rollover_close_trade->update_time, "09:00:00");
+    EXPECT_EQ(rollover_close_trade->timestamp_dt_local, "2024-01-03 09:00:00");
+    EXPECT_EQ(rollover_close_trade->signal_dt_local, "2024-01-03 09:00:00");
+    EXPECT_EQ(rollover_open_trade->trading_day, "20240103");
+    EXPECT_EQ(rollover_open_trade->action_day, "20240103");
+    EXPECT_EQ(rollover_open_trade->update_time, "09:00:00");
+    EXPECT_EQ(rollover_open_trade->timestamp_dt_local, "2024-01-03 09:00:00");
+    EXPECT_EQ(rollover_open_trade->signal_dt_local, "2024-01-03 09:00:00");
+
+    int rollover_order_count = 0;
+    for (const OrderRecord& order : result.orders) {
+        if (order.strategy_id != "rollover") {
+            continue;
+        }
+        ++rollover_order_count;
+        EXPECT_EQ(order.trading_day, "20240103");
+        EXPECT_EQ(order.action_day, "20240103");
+        EXPECT_EQ(order.update_time, "09:00:00");
+        EXPECT_EQ(order.created_at_dt_local, "2024-01-03 09:00:00");
+        EXPECT_EQ(order.last_update_dt_local, "2024-01-03 09:00:00");
+    }
+    EXPECT_EQ(rollover_order_count, 4);
+    EXPECT_EQ(LastNetPosition(result.position_history, "c2405"), 0);
+    EXPECT_GT(LastNetPosition(result.position_history, "c2407"), 0);
+
+    std::error_code ec;
+    std::filesystem::remove(composite_path, ec);
+    std::filesystem::remove_all(dataset_root, ec);
+}
+
+TEST(BacktestReplaySupportTest, RunBacktestSpecParquetProductSymbolCarryRolloverTransfersPositionWithoutSyntheticTrades) {
+    const std::string strategy_type = UniqueAtomicType("always_open_parquet_carry_rollover");
+    RegisterAlwaysOpenReplayType(strategy_type);
+
+    const auto dataset_root = MakeTempDir("quant_hft_parquet_carry_rollover");
+    const auto composite_path = WriteAlwaysOpenCompositeConfig(strategy_type, /*timeframe_minutes=*/1);
+
+    std::string error;
+    const auto manifest = WriteParquetManifest(
+        dataset_root,
+        {
+            {"c",
+             "20240102",
+             "c2405",
+             {
+                 MakeParquetTick("c2405", "20240102", "09:00:00", 100.0, 10),
+                 MakeParquetTick("c2405", "20240102", "09:00:30", 101.0, 11),
+                 MakeParquetTick("c2405", "20240102", "09:01:00", 102.0, 12),
+                 MakeParquetTick("c2405", "20240102", "09:01:30", 103.0, 13),
+             }},
+            {"c",
+             "20240103",
+             "c2407",
+             {
+                 MakeParquetTick("c2407", "20240103", "09:00:00", 120.0, 20),
+                 MakeParquetTick("c2407", "20240103", "09:00:30", 121.0, 21),
+                 MakeParquetTick("c2407", "20240103", "09:01:00", 122.0, 22),
+                 MakeParquetTick("c2407", "20240103", "09:01:30", 123.0, 23),
+             }},
+        },
+        &error);
+    ASSERT_FALSE(manifest.empty()) << error;
+
+    BacktestCliSpec spec;
+    spec.engine_mode = "parquet";
+    spec.dataset_root = dataset_root.string();
+    spec.dataset_manifest = manifest.string();
+    spec.run_id = UniqueRunId("parquet-carry-rollover");
+    spec.strategy_factory = "composite";
+    spec.strategy_composite_config = composite_path.string();
+    spec.symbols = {"c"};
+    spec.rollover_mode = "carry";
+    spec.emit_trades = true;
+    spec.emit_orders = true;
+    spec.emit_position_history = true;
+
+    BacktestCliResult result;
+    ASSERT_TRUE(RunBacktestSpec(spec, &result, &error)) << error;
+    ASSERT_TRUE(result.has_deterministic);
+    EXPECT_EQ(result.deterministic.rollover_events.size(), 1U);
+    ASSERT_EQ(result.deterministic.rollover_actions.size(), 1U);
+    EXPECT_EQ(result.deterministic.rollover_actions[0].action, "carry");
+
+    int rollover_trade_count = 0;
+    for (const TradeRecord& trade : result.trades) {
+        if (trade.strategy_id == "rollover") {
+            ++rollover_trade_count;
+        }
+    }
+    EXPECT_EQ(rollover_trade_count, 0);
+    EXPECT_EQ(LastNetPosition(result.position_history, "c2405"), 0);
+    EXPECT_GT(LastNetPosition(result.position_history, "c2407"), 0);
+
+    std::error_code ec;
+    std::filesystem::remove(composite_path, ec);
+    std::filesystem::remove_all(dataset_root, ec);
+}
+
+TEST(BacktestReplaySupportTest, RunBacktestSpecParquetExplicitInstrumentDoesNotAutoRollover) {
+    const std::string strategy_type = UniqueAtomicType("always_open_parquet_single_contract");
+    RegisterAlwaysOpenReplayType(strategy_type);
+
+    const auto dataset_root = MakeTempDir("quant_hft_parquet_single_contract");
+    const auto composite_path = WriteAlwaysOpenCompositeConfig(strategy_type, /*timeframe_minutes=*/1);
+
+    std::string error;
+    const auto manifest = WriteParquetManifest(
+        dataset_root,
+        {
+            {"c",
+             "20240102",
+             "c2405",
+             {
+                 MakeParquetTick("c2405", "20240102", "09:00:00", 100.0, 10),
+                 MakeParquetTick("c2405", "20240102", "09:00:30", 101.0, 11),
+                 MakeParquetTick("c2405", "20240102", "09:01:00", 102.0, 12),
+                 MakeParquetTick("c2405", "20240102", "09:01:30", 103.0, 13),
+             }},
+            {"c",
+             "20240103",
+             "c2407",
+             {
+                 MakeParquetTick("c2407", "20240103", "09:00:00", 120.0, 20),
+                 MakeParquetTick("c2407", "20240103", "09:00:30", 121.0, 21),
+             }},
+        },
+        &error);
+    ASSERT_FALSE(manifest.empty()) << error;
+
+    BacktestCliSpec spec;
+    spec.engine_mode = "parquet";
+    spec.dataset_root = dataset_root.string();
+    spec.dataset_manifest = manifest.string();
+    spec.run_id = UniqueRunId("parquet-single-contract");
+    spec.strategy_factory = "composite";
+    spec.strategy_composite_config = composite_path.string();
+    spec.symbols = {"c2405"};
+    spec.rollover_mode = "strict";
+    spec.emit_trades = true;
+    spec.emit_orders = true;
+    spec.emit_position_history = true;
+
+    BacktestCliResult result;
+    ASSERT_TRUE(RunBacktestSpec(spec, &result, &error)) << error;
+    ASSERT_TRUE(result.has_deterministic);
+    EXPECT_EQ(result.deterministic.rollover_events.size(), 0U);
+    EXPECT_EQ(result.deterministic.rollover_actions.size(), 0U);
+
+    int rollover_trade_count = 0;
+    for (const TradeRecord& trade : result.trades) {
+        if (trade.strategy_id == "rollover") {
+            ++rollover_trade_count;
+        }
+    }
+    EXPECT_EQ(rollover_trade_count, 0);
+    EXPECT_GT(LastNetPosition(result.position_history, "c2405"), 0);
+    EXPECT_EQ(LastNetPosition(result.position_history, "c2407"), 0);
+
+    std::error_code ec;
+    std::filesystem::remove(composite_path, ec);
+    std::filesystem::remove_all(dataset_root, ec);
+}
+
+TEST(BacktestReplaySupportTest,
+     RunBacktestSpecParquetContinuousAdjustedSubTraceKeepsAnalysisSeriesContinuousAcrossRoll) {
+    const auto dataset_root = MakeTempDir("quant_hft_parquet_continuous_adjusted_trace");
+    const auto composite_path = WriteTempCompositeConfig(/*volume=*/1, /*timeframe_minutes=*/5);
+    const auto trace_path =
+        std::filesystem::temp_directory_path() / "quant_hft_continuous_adjusted_trace.csv";
+
+    std::error_code ec;
+    std::filesystem::remove(trace_path, ec);
+
+    std::string error;
+    const auto manifest = WriteParquetManifest(
+        dataset_root,
+        {
+            {"c",
+             "20240102",
+             "c2405",
+             {
+                 MakeParquetTick("c2405", "20240102", "09:00:00", 100.0, 10),
+                 MakeParquetTick("c2405", "20240102", "09:01:00", 101.0, 11),
+                 MakeParquetTick("c2405", "20240102", "09:02:00", 102.0, 12),
+                 MakeParquetTick("c2405", "20240102", "09:03:00", 103.0, 13),
+                 MakeParquetTick("c2405", "20240102", "09:04:00", 104.0, 14),
+             }},
+            {"c",
+             "20240103",
+             "c2407",
+             {
+                 MakeParquetTick("c2407", "20240103", "09:00:00", 200.0, 20),
+                 MakeParquetTick("c2407", "20240103", "09:01:00", 201.0, 21),
+                 MakeParquetTick("c2407", "20240103", "09:02:00", 202.0, 22),
+                 MakeParquetTick("c2407", "20240103", "09:03:00", 203.0, 23),
+                 MakeParquetTick("c2407", "20240103", "09:04:00", 204.0, 24),
+             }},
+        },
+        &error);
+    ASSERT_FALSE(manifest.empty()) << error;
+
+    BacktestCliSpec spec;
+    spec.engine_mode = "parquet";
+    spec.dataset_root = dataset_root.string();
+    spec.dataset_manifest = manifest.string();
+    spec.run_id = UniqueRunId("parquet-continuous-adjusted-trace");
+    spec.strategy_factory = "composite";
+    spec.strategy_composite_config = composite_path.string();
+    spec.symbols = {"c"};
+    spec.product_series_mode = "continuous_adjusted";
+    spec.emit_sub_strategy_indicator_trace = true;
+    spec.sub_strategy_indicator_trace_path = trace_path.string();
+
+    BacktestCliResult result;
+    ASSERT_TRUE(RunBacktestSpec(spec, &result, &error)) << error;
+    ASSERT_TRUE(std::filesystem::exists(trace_path));
+
+    const std::vector<std::string> lines = ReadLines(trace_path);
+    ASSERT_EQ(lines.size(), 3U);
+
+    const std::vector<std::string> header = SplitCsvLine(lines[0]);
+    const auto find_column = [&](const std::string& name) -> std::size_t {
+        const auto it = std::find(header.begin(), header.end(), name);
+        EXPECT_NE(it, header.end()) << name;
+        return static_cast<std::size_t>(std::distance(header.begin(), it));
+    };
+
+    const std::size_t instrument_index = find_column("instrument_id");
+    const std::size_t bar_close_index = find_column("bar_close");
+    const std::size_t analysis_bar_close_index = find_column("analysis_bar_close");
+    const std::size_t analysis_offset_index = find_column("analysis_price_offset");
+
+    const std::vector<std::string> first_row = SplitCsvLine(lines[1]);
+    const std::vector<std::string> second_row = SplitCsvLine(lines[2]);
+
+    ASSERT_GT(first_row.size(), analysis_offset_index);
+    ASSERT_GT(second_row.size(), analysis_offset_index);
+    EXPECT_EQ(first_row[instrument_index], "c2405");
+    EXPECT_EQ(second_row[instrument_index], "c2407");
+    EXPECT_EQ(first_row[bar_close_index], "104");
+    EXPECT_EQ(second_row[bar_close_index], "204");
+    EXPECT_EQ(first_row[analysis_bar_close_index], "104");
+    EXPECT_EQ(second_row[analysis_bar_close_index], "108");
+    EXPECT_EQ(first_row[analysis_offset_index], "0");
+    EXPECT_EQ(second_row[analysis_offset_index], "-96");
+
+    std::filesystem::remove(trace_path, ec);
+    std::filesystem::remove(composite_path, ec);
+    std::filesystem::remove_all(dataset_root, ec);
 }
 
 TEST(BacktestReplaySupportTest, ParseBacktestCliSpecLoadsDetectorConfigFile) {
@@ -1089,7 +1569,8 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecIndicatorTraceWritesCsvWhenPathEn
     ASSERT_GE(lines.size(), 2U);
     EXPECT_EQ(lines.front(),
               "instrument_id,ts_ns,dt_utc,timeframe_minutes,bar_open,bar_high,bar_low,bar_close,"
-              "bar_volume,kama,atr,adx,er,market_regime");
+              "bar_volume,analysis_bar_open,analysis_bar_high,analysis_bar_low,"
+              "analysis_bar_close,analysis_price_offset,kama,atr,adx,er,market_regime");
 
     std::filesystem::remove(csv_path, ec);
     std::filesystem::remove(trace_path, ec);
@@ -1152,6 +1633,60 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecCompositeTraceCarriesSubscribedTi
     std::filesystem::remove(indicator_trace_path, ec);
     std::filesystem::remove(sub_trace_path, ec);
 #endif
+}
+
+TEST(BacktestReplaySupportTest,
+     RunBacktestSpecSubStrategyTraceFlushesExpiredInstrumentBucketsBeforeFutureBars) {
+    const std::filesystem::path csv_path =
+        WriteInstrumentSwitchReplayCsv("quant_hft_sub_trace_instrument_switch");
+    const std::filesystem::path composite_path =
+        WriteTempCompositeConfig(/*volume=*/1, /*timeframe_minutes=*/5);
+    const std::filesystem::path trace_path =
+        std::filesystem::temp_directory_path() / "quant_hft_sub_trace_instrument_switch.csv";
+    std::error_code ec;
+    std::filesystem::remove(trace_path, ec);
+
+    BacktestCliSpec spec;
+    spec.engine_mode = "csv";
+    spec.csv_path = csv_path.string();
+    spec.run_id = "sub-trace-instrument-switch";
+    spec.strategy_factory = "composite";
+    spec.strategy_composite_config = composite_path.string();
+    spec.emit_sub_strategy_indicator_trace = true;
+    spec.sub_strategy_indicator_trace_path = trace_path.string();
+    spec.max_ticks = 16;
+
+    BacktestCliResult result;
+    std::string error;
+    ASSERT_TRUE(RunBacktestSpec(spec, &result, &error)) << error;
+    ASSERT_TRUE(std::filesystem::exists(trace_path));
+
+    const std::vector<std::string> lines = ReadLines(trace_path);
+    ASSERT_EQ(lines.size(), 4U);
+
+    std::vector<std::string> dt_values;
+    std::vector<std::string> instrument_ids;
+    dt_values.reserve(lines.size() - 1U);
+    instrument_ids.reserve(lines.size() - 1U);
+    for (std::size_t index = 1; index < lines.size(); ++index) {
+        const std::vector<std::string> fields = SplitCsvLine(lines[index]);
+        ASSERT_GE(fields.size(), 3U);
+        instrument_ids.push_back(fields[0]);
+        dt_values.push_back(fields[2]);
+    }
+
+    EXPECT_EQ(dt_values[0], "2024-01-02 09:00");
+    EXPECT_EQ(dt_values[1], "2024-01-02 09:05");
+    EXPECT_EQ(dt_values[2], "2024-01-02 09:10");
+    EXPECT_EQ(instrument_ids[0], "rb2405");
+    EXPECT_EQ(instrument_ids[1], "rb2409");
+    EXPECT_EQ(instrument_ids[2], "rb2409");
+    EXPECT_LE(dt_values[0], dt_values[1]);
+    EXPECT_LE(dt_values[1], dt_values[2]);
+
+    std::filesystem::remove(csv_path, ec);
+    std::filesystem::remove(composite_path, ec);
+    std::filesystem::remove(trace_path, ec);
 }
 
 TEST(BacktestReplaySupportTest, RunBacktestSpecSubStrategyTraceUsesDefaultPathWhenEnabled) {
@@ -1279,8 +1814,9 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecSubStrategyTraceWritesCsvWhenPath
     ASSERT_GE(lines.size(), 2U);
     EXPECT_EQ(lines.front(),
               "instrument_id,ts_ns,dt_utc,timeframe_minutes,strategy_id,strategy_type,bar_open,"
-              "bar_high,bar_low,bar_close,bar_volume,kama,atr,adx,er,stop_loss_price,"
-              "take_profit_price,market_regime");
+              "bar_high,bar_low,bar_close,bar_volume,analysis_bar_open,analysis_bar_high,"
+              "analysis_bar_low,analysis_bar_close,analysis_price_offset,kama,atr,adx,er,"
+              "stop_loss_price,take_profit_price,market_regime");
 
     std::filesystem::remove(csv_path, ec);
     std::filesystem::remove(composite_path, ec);

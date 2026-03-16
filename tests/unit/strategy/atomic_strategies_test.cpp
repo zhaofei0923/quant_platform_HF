@@ -18,6 +18,9 @@ StateSnapshot7D MakeBarState(const std::string& instrument, double high, double 
     state.bar_high = high;
     state.bar_low = low;
     state.bar_close = close;
+    state.analysis_bar_high = high;
+    state.analysis_bar_low = low;
+    state.analysis_bar_close = close;
     state.ts_ns = ts_ns;
     return state;
 }
@@ -252,7 +255,7 @@ TEST(AtomicStrategiesTest, TrendStrategyEmitsReverseOpenWhenTrendFlipsWhileHoldi
     strategy.Init(params);
 
     AtomicStrategyContext ctx = MakeContext("acct");
-    ctx.account_equity = 100000.0;
+    ctx.account_equity = 0.0;
     ctx.contract_multipliers["rb2405"] = 10.0;
 
     const std::vector<SignalIntent> open_signals =
@@ -270,6 +273,41 @@ TEST(AtomicStrategiesTest, TrendStrategyEmitsReverseOpenWhenTrendFlipsWhileHoldi
     EXPECT_EQ(reverse_signals.front().signal_type, SignalType::kOpen);
     EXPECT_EQ(reverse_signals.front().side, Side::kSell);
     EXPECT_EQ(reverse_signals.front().offset, OffsetFlag::kOpen);
+}
+
+TEST(AtomicStrategiesTest, TrendStrategyUsesAnalysisBarForSignalButKeepsRawLimitPrice) {
+    TrendStrategy strategy;
+    AtomicParams params = MakeTrendParams();
+    params["stop_loss_mode"] = "none";
+    params["take_profit_mode"] = "none";
+    strategy.Init(params);
+
+    AtomicStrategyContext ctx = MakeContext("acct");
+    ctx.account_equity = 100000.0;
+    ctx.contract_multipliers["rb2405"] = 10.0;
+
+    for (std::size_t index = 0; index < 4; ++index) {
+        const double close = 100.0 + static_cast<double>(index);
+        (void)strategy.OnState(
+            MakeBarState("rb2405", close + 1.0, close - 1.0, close, index + 1), ctx);
+    }
+
+    StateSnapshot7D rollover_state;
+    rollover_state.instrument_id = "rb2405";
+    rollover_state.has_bar = true;
+    rollover_state.bar_high = 201.0;
+    rollover_state.bar_low = 199.0;
+    rollover_state.bar_close = 200.0;
+    rollover_state.analysis_bar_high = 100.0;
+    rollover_state.analysis_bar_low = 98.0;
+    rollover_state.analysis_bar_close = 99.0;
+    rollover_state.ts_ns = 10;
+
+    const std::vector<SignalIntent> signals = strategy.OnState(rollover_state, ctx);
+    ASSERT_EQ(signals.size(), 1U);
+    EXPECT_EQ(signals.front().signal_type, SignalType::kOpen);
+    EXPECT_EQ(signals.front().side, Side::kSell);
+    EXPECT_DOUBLE_EQ(signals.front().limit_price, 200.0);
 }
 
 }  // namespace quant_hft

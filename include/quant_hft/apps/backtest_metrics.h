@@ -134,6 +134,7 @@ struct Parameters {
     double initial_capital{0.0};
     std::string engine_mode;
     std::string rollover_mode;
+    std::string product_series_mode;
     std::string strategy_factory;
 };
 

@@ -9,6 +9,7 @@ namespace quant_hft {
 
 struct StrategyMainBacktestConfig {
     double initial_equity{0.0};
+    std::string product_series_mode{"raw"};
     std::vector<std::string> symbols;
     std::string start_date;
     std::string end_date;

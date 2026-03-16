@@ -43,6 +43,52 @@ def load_json(path: Path) -> dict[str, Any]:
         return json.load(file)
 
 
+def instrument_product_prefix(symbol: Any) -> str:
+    text = str(symbol or "").strip()
+    prefix_chars: list[str] = []
+    for char in text:
+        if char.isdigit():
+            break
+        prefix_chars.append(char)
+    return "".join(prefix_chars)
+
+
+def is_product_symbol(symbol: Any) -> bool:
+    text = str(symbol or "").strip()
+    return bool(text) and not any(char.isdigit() for char in text)
+
+
+def summarize_final_positions(position_history: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    latest_by_symbol: dict[str, dict[str, Any]] = {}
+    for row in position_history:
+        symbol = str(row.get("symbol", "")).strip()
+        if not symbol:
+            continue
+        latest_by_symbol[symbol] = row
+    return latest_by_symbol
+
+
+def find_multi_contract_residuals(
+    position_history: list[dict[str, Any]],
+) -> dict[str, list[tuple[str, float]]]:
+    latest_by_symbol = summarize_final_positions(position_history)
+    active_by_product: dict[str, list[tuple[str, float]]] = defaultdict(list)
+    for symbol, row in latest_by_symbol.items():
+        net_position = as_float(row.get("net_position"))
+        if approx_equal(net_position, 0.0):
+            continue
+        product = instrument_product_prefix(symbol)
+        if not product:
+            continue
+        active_by_product[product].append((symbol, net_position))
+
+    residuals: dict[str, list[tuple[str, float]]] = {}
+    for product, positions in active_by_product.items():
+        if len(positions) > 1:
+            residuals[product] = sorted(positions, key=lambda item: item[0])
+    return residuals
+
+
 def find_latest_run(root_dir: Path) -> Path:
     runs = sorted([path for path in root_dir.glob("backtest-*") if path.is_dir()])
     if not runs:
@@ -56,6 +102,12 @@ def summarize_signal_counts(trades: list[dict[str, Any]]) -> dict[str, int]:
         signal_type = str(trade.get("signal_type", "UNKNOWN"))
         counter[signal_type] += 1
     return dict(counter)
+
+
+def is_rollover_trade(trade: dict[str, Any]) -> bool:
+    strategy_id = str(trade.get("strategy_id", "")).strip().casefold()
+    signal_type = str(trade.get("signal_type", "")).strip().casefold()
+    return strategy_id == "rollover" or signal_type.startswith("rollover_")
 
 
 def extract_trade_list(payload: dict[str, Any], deterministic: dict[str, Any]) -> list[dict[str, Any]]:
@@ -227,6 +279,9 @@ def make_report(run_dir: Path, strict: bool) -> tuple[str, bool]:
     performance = deterministic.get("performance", {}) or {}
     replay = payload.get("replay", {}) or {}
     spec = payload.get("spec", {}) or {}
+    position_history = payload.get("position_history", []) or []
+    rollover_events = deterministic.get("rollover_events", []) or []
+    rollover_actions = deterministic.get("rollover_actions", []) or []
 
     initial_equity = as_float(payload.get("initial_equity"))
     final_equity = as_float(payload.get("final_equity"))
@@ -278,11 +333,15 @@ def make_report(run_dir: Path, strict: bool) -> tuple[str, bool]:
     )
 
     intents_processed = int(deterministic.get("intents_processed", 0) or 0)
+    rollover_trade_count = sum(1 for trade in trades if is_rollover_trade(trade))
+    strategy_trade_count = len(trades) - rollover_trade_count
     checks.append(
         CheckResult(
             "意图与成交数量关系",
-            intents_processed >= len(trades),
-            f"intents_processed={intents_processed}, trades={len(trades)}",
+            intents_processed >= strategy_trade_count,
+            "intents_processed="
+            f"{intents_processed}, strategy_trades={strategy_trade_count}, "
+            f"rollover_trades={rollover_trade_count}, trades={len(trades)}",
         )
     )
 
@@ -312,6 +371,25 @@ def make_report(run_dir: Path, strict: bool) -> tuple[str, bool]:
             f"margin_clipped_orders={margin_clipped}, margin_rejected_orders={margin_rejected}",
         )
     )
+
+    residual_positions = find_multi_contract_residuals(position_history)
+    product_symbol_selection = any(is_product_symbol(symbol) for symbol in spec.get("symbols", []))
+    if product_symbol_selection and str(payload.get("engine_mode", "")).lower() == "parquet":
+        if residual_positions:
+            residual_detail = "; ".join(
+                f"{product}: "
+                + ", ".join(f"{symbol}={net_position:g}" for symbol, net_position in positions)
+                for product, positions in sorted(residual_positions.items())
+            )
+        else:
+            residual_detail = "no residual multi-contract positions"
+        checks.append(
+            CheckResult(
+                "主力链旧合约残留仓位",
+                not residual_positions,
+                residual_detail,
+            )
+        )
 
     sub_trace_cfg = payload.get("sub_strategy_indicator_trace", {}) or {}
     sub_trace_enabled = bool(sub_trace_cfg.get("enabled", False))
@@ -364,7 +442,17 @@ def make_report(run_dir: Path, strict: bool) -> tuple[str, bool]:
     lines.append(f"- total_unrealized_pnl: {total_unrealized:.6f}")
     lines.append(f"- total_commission: {total_commission:.6f}")
     lines.append(f"- trades: {len(trades)}; orders: {len(orders)}")
+    lines.append(f"- rollover_events: {len(rollover_events)}; rollover_actions: {len(rollover_actions)}")
     lines.append(f"- signal_type_count: {signal_counts}")
+    if residual_positions:
+        lines.append(
+            "- residual_multi_contract_positions: "
+            + "; ".join(
+                f"{product}: "
+                + ", ".join(f"{symbol}={net_position:g}" for symbol, net_position in positions)
+                for product, positions in sorted(residual_positions.items())
+            )
+        )
     lines.append("")
 
     lines.append("## 4) 过程数据覆盖（sub-strategy trace）")

@@ -313,6 +313,10 @@ std::vector<BarSnapshot> BarAggregator::OnMarketSnapshot(const MarketSnapshot& s
     bucket.bar.high = std::max(bucket.bar.high, snapshot.last_price);
     bucket.bar.low = std::min(bucket.bar.low, snapshot.last_price);
     bucket.bar.close = snapshot.last_price;
+    bucket.bar.analysis_high = bucket.bar.high;
+    bucket.bar.analysis_low = bucket.bar.low;
+    bucket.bar.analysis_close = bucket.bar.close;
+    bucket.bar.analysis_price_offset = 0.0;
     bucket.bar.volume += volume_delta;
     bucket.bar.ts_ns = ResolveTimestamp(snapshot);
     return emitted;
@@ -329,6 +333,39 @@ std::vector<BarSnapshot> BarAggregator::Flush() {
             }
         }
         buckets_.clear();
+    }
+    std::sort(
+        bars.begin(),
+        bars.end(),
+        [](const BarSnapshot& lhs, const BarSnapshot& rhs) {
+            if (lhs.instrument_id != rhs.instrument_id) {
+                return lhs.instrument_id < rhs.instrument_id;
+            }
+            return lhs.minute < rhs.minute;
+        });
+    return bars;
+}
+
+std::vector<BarSnapshot> BarAggregator::FlushFinished(
+    const std::unordered_map<std::string, EpochNanos>& instrument_last_tick_ts_ns,
+    EpochNanos cutoff_ts_ns) {
+    std::vector<BarSnapshot> bars;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto it = buckets_.begin(); it != buckets_.end();) {
+            if (!it->second.initialized) {
+                it = buckets_.erase(it);
+                continue;
+            }
+            const auto last_tick_it = instrument_last_tick_ts_ns.find(it->first);
+            if (last_tick_it == instrument_last_tick_ts_ns.end() ||
+                last_tick_it->second > cutoff_ts_ns) {
+                ++it;
+                continue;
+            }
+            bars.push_back(it->second.bar);
+            it = buckets_.erase(it);
+        }
     }
     std::sort(
         bars.begin(),
@@ -405,6 +442,10 @@ std::vector<BarSnapshot> BarAggregator::AggregateFromOneMinute(
         active_bar.high = std::max(active_bar.high, bar.high);
         active_bar.low = std::min(active_bar.low, bar.low);
         active_bar.close = bar.close;
+        active_bar.analysis_high = std::max(active_bar.analysis_high, bar.analysis_high);
+        active_bar.analysis_low = std::min(active_bar.analysis_low, bar.analysis_low);
+        active_bar.analysis_close = bar.analysis_close;
+        active_bar.analysis_price_offset = bar.analysis_price_offset;
         active_bar.volume += bar.volume;
         active_bar.ts_ns = std::max(active_bar.ts_ns, bar.ts_ns);
         if (!bar.action_day.empty()) {
@@ -797,6 +838,11 @@ void BarAggregator::ResetBucketLocked(MinuteBucket* bucket,
     bucket->bar.high = snapshot.last_price;
     bucket->bar.low = snapshot.last_price;
     bucket->bar.close = snapshot.last_price;
+    bucket->bar.analysis_open = snapshot.last_price;
+    bucket->bar.analysis_high = snapshot.last_price;
+    bucket->bar.analysis_low = snapshot.last_price;
+    bucket->bar.analysis_close = snapshot.last_price;
+    bucket->bar.analysis_price_offset = 0.0;
     bucket->bar.volume = 0;
     bucket->bar.ts_ns = ResolveTimestamp(snapshot);
 }

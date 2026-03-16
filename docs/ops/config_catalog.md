@@ -644,6 +644,7 @@ composite:
 | `engine_mode` | string | 是 | 无 | `parquet` | 回测数据引擎模式 | `parquet` |
 | `dataset_root` | string | 是 | 无 | 目录路径 | Parquet 数据根目录 | `backtest_data/parquet_v2` |
 | `strategy_main_config_path` | string | 是 | 无 | 文件路径 | 主策略配置文件 | `configs/strategies/main_backtest_strategy.yaml` |
+| `detector_config` | string | 否 | 空 | 文件路径 | 市场状态检测器配置文件路径；透传给 `backtest_cli --detector_config` | `configs/sim/ctp.yaml` |
 | `output_root_dir` | string | 否 | `docs/results/backtest_runs` | 目录路径 | 回测归档根目录（每次运行创建 `run_dir` 子目录） | `docs/results/backtest_runs` |
 | `timestamp_timezone` | string | 否 | `local` | `local/utc` | `run_dir` 时间戳时区（`utc` 带 `Z`） | `utc` |
 | `output_json` | string | 是 | 无 | 文件路径 | JSON 文件名模板（仅取 basename，写入本次 `run_dir`） | `docs/results/backtest_auto.json` |
@@ -668,6 +669,11 @@ composite:
 | `sub_strategy_indicator_trace_path` | string | 否 | 空 | 文件路径 | 子策略指标追踪文件名模板（仅取 basename，落在本次 run_dir；扩展名按 `trace_output_format` 归一化） | `my_sub_trace.csv` |
 | `quiet_backtest_stdout` | bool | 否 | `true` | `true/false` | 是否抑制 `backtest_cli` 终端 JSON 输出 | `true` |
 | `progress_only` | bool | 否 | `true` | `true/false` | 是否仅显示进度条与百分比 | `true` |
+
+说明：
+
+- `detector_config` 是路径字段，不支持在 `backtest_run.yaml` 内联 `market_state_detector` 配置块。
+- `run_backtest_with_validation.sh` 直接转调 `run_backtest_from_config.sh`，因此会自动继承该字段。
 
 ## `configs/ops/rolling_backtest.yaml`
 

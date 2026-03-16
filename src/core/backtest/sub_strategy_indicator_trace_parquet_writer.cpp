@@ -164,6 +164,11 @@ bool SubStrategyIndicatorTraceParquetWriter::Close(std::string* error) {
     arrow::DoubleBuilder bar_low_builder;
     arrow::DoubleBuilder bar_close_builder;
     arrow::DoubleBuilder bar_volume_builder;
+    arrow::DoubleBuilder analysis_bar_open_builder;
+    arrow::DoubleBuilder analysis_bar_high_builder;
+    arrow::DoubleBuilder analysis_bar_low_builder;
+    arrow::DoubleBuilder analysis_bar_close_builder;
+    arrow::DoubleBuilder analysis_price_offset_builder;
     arrow::DoubleBuilder kama_builder;
     arrow::DoubleBuilder atr_builder;
     arrow::DoubleBuilder adx_builder;
@@ -204,6 +209,16 @@ bool SubStrategyIndicatorTraceParquetWriter::Close(std::string* error) {
                                "failed appending bar_close", error) ||
             !ExpectArrowStatus(bar_volume_builder.Append(row.bar_volume),
                                "failed appending bar_volume", error) ||
+            !ExpectArrowStatus(analysis_bar_open_builder.Append(row.analysis_bar_open),
+                               "failed appending analysis_bar_open", error) ||
+            !ExpectArrowStatus(analysis_bar_high_builder.Append(row.analysis_bar_high),
+                               "failed appending analysis_bar_high", error) ||
+            !ExpectArrowStatus(analysis_bar_low_builder.Append(row.analysis_bar_low),
+                               "failed appending analysis_bar_low", error) ||
+            !ExpectArrowStatus(analysis_bar_close_builder.Append(row.analysis_bar_close),
+                               "failed appending analysis_bar_close", error) ||
+            !ExpectArrowStatus(analysis_price_offset_builder.Append(row.analysis_price_offset),
+                               "failed appending analysis_price_offset", error) ||
             !ExpectArrowStatus(
                 market_regime_builder.Append(MarketRegimeToLabel(row.market_regime)),
                 "failed appending market_regime", error) ||
@@ -226,6 +241,11 @@ bool SubStrategyIndicatorTraceParquetWriter::Close(std::string* error) {
     std::shared_ptr<arrow::Array> bar_low_array;
     std::shared_ptr<arrow::Array> bar_close_array;
     std::shared_ptr<arrow::Array> bar_volume_array;
+    std::shared_ptr<arrow::Array> analysis_bar_open_array;
+    std::shared_ptr<arrow::Array> analysis_bar_high_array;
+    std::shared_ptr<arrow::Array> analysis_bar_low_array;
+    std::shared_ptr<arrow::Array> analysis_bar_close_array;
+    std::shared_ptr<arrow::Array> analysis_price_offset_array;
     std::shared_ptr<arrow::Array> kama_array;
     std::shared_ptr<arrow::Array> atr_array;
     std::shared_ptr<arrow::Array> adx_array;
@@ -244,6 +264,16 @@ bool SubStrategyIndicatorTraceParquetWriter::Close(std::string* error) {
         !FinishArray(&bar_low_builder, "bar_low", &bar_low_array, error) ||
         !FinishArray(&bar_close_builder, "bar_close", &bar_close_array, error) ||
         !FinishArray(&bar_volume_builder, "bar_volume", &bar_volume_array, error) ||
+        !FinishArray(&analysis_bar_open_builder, "analysis_bar_open", &analysis_bar_open_array,
+                     error) ||
+        !FinishArray(&analysis_bar_high_builder, "analysis_bar_high", &analysis_bar_high_array,
+                     error) ||
+        !FinishArray(&analysis_bar_low_builder, "analysis_bar_low", &analysis_bar_low_array,
+                     error) ||
+        !FinishArray(&analysis_bar_close_builder, "analysis_bar_close", &analysis_bar_close_array,
+                     error) ||
+        !FinishArray(&analysis_price_offset_builder, "analysis_price_offset",
+                     &analysis_price_offset_array, error) ||
         !FinishArray(&kama_builder, "kama", &kama_array, error) ||
         !FinishArray(&atr_builder, "atr", &atr_array, error) ||
         !FinishArray(&adx_builder, "adx", &adx_array, error) ||
@@ -264,6 +294,11 @@ bool SubStrategyIndicatorTraceParquetWriter::Close(std::string* error) {
         arrow::field("bar_low", arrow::float64(), false),
         arrow::field("bar_close", arrow::float64(), false),
         arrow::field("bar_volume", arrow::float64(), false),
+        arrow::field("analysis_bar_open", arrow::float64(), false),
+        arrow::field("analysis_bar_high", arrow::float64(), false),
+        arrow::field("analysis_bar_low", arrow::float64(), false),
+        arrow::field("analysis_bar_close", arrow::float64(), false),
+        arrow::field("analysis_price_offset", arrow::float64(), false),
         arrow::field("kama", arrow::float64(), true),
         arrow::field("atr", arrow::float64(), true),
         arrow::field("adx", arrow::float64(), true),
@@ -283,6 +318,11 @@ bool SubStrategyIndicatorTraceParquetWriter::Close(std::string* error) {
                                      bar_low_array,
                                      bar_close_array,
                                      bar_volume_array,
+                                     analysis_bar_open_array,
+                                     analysis_bar_high_array,
+                                     analysis_bar_low_array,
+                                     analysis_bar_close_array,
+                                     analysis_price_offset_array,
                                      kama_array,
                                      atr_array,
                                      adx_array,

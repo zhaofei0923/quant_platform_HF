@@ -20,6 +20,11 @@ struct BarSnapshot {
     double high{0.0};
     double low{0.0};
     double close{0.0};
+    double analysis_open{0.0};
+    double analysis_high{0.0};
+    double analysis_low{0.0};
+    double analysis_close{0.0};
+    double analysis_price_offset{0.0};
     std::int64_t volume{0};
     EpochNanos ts_ns{0};
 };
@@ -48,6 +53,9 @@ public:
 
     bool ShouldProcessSnapshot(const MarketSnapshot& snapshot) const;
     std::vector<BarSnapshot> OnMarketSnapshot(const MarketSnapshot& snapshot);
+    std::vector<BarSnapshot> FlushFinished(
+        const std::unordered_map<std::string, EpochNanos>& instrument_last_tick_ts_ns,
+        EpochNanos cutoff_ts_ns);
     std::vector<BarSnapshot> Flush();
     void ResetInstrument(const std::string& instrument_id);
     std::string InferExchangeId(const std::string& instrument_id) const;

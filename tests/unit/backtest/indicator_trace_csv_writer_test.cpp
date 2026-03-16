@@ -63,6 +63,11 @@ TEST(IndicatorTraceCsvWriterTest, WritesHeaderAndNullableIndicatorColumns) {
     row0.bar_low = 99.0;
     row0.bar_close = 100.5;
     row0.bar_volume = 10.0;
+    row0.analysis_bar_open = 100.0;
+    row0.analysis_bar_high = 101.0;
+    row0.analysis_bar_low = 99.0;
+    row0.analysis_bar_close = 100.5;
+    row0.analysis_price_offset = 0.0;
     row0.market_regime = MarketRegime::kUnknown;
     ASSERT_TRUE(writer.Append(row0, &error)) << error;
 
@@ -82,12 +87,14 @@ TEST(IndicatorTraceCsvWriterTest, WritesHeaderAndNullableIndicatorColumns) {
     ASSERT_EQ(lines.size(), 3U);
     EXPECT_EQ(lines[0],
               "instrument_id,ts_ns,dt_utc,timeframe_minutes,bar_open,bar_high,bar_low,bar_close,"
-              "bar_volume,kama,atr,adx,er,market_regime");
+              "bar_volume,analysis_bar_open,analysis_bar_high,analysis_bar_low,"
+              "analysis_bar_close,analysis_price_offset,kama,atr,adx,er,market_regime");
     EXPECT_EQ(lines[1],
-              "rb2405,1700000000000000000,2023-11-14 22:13:20,1,100,101,99,100.5,10,,,,,kUnknown");
+              "rb2405,1700000000000000000,2023-11-14 22:13:20,1,100,101,99,100.5,10,100,101,99,"
+              "100.5,0,,,,,kUnknown");
     EXPECT_EQ(lines[2],
-              "rb2405,1700000060000000000,2023-11-14 22:14:20,1,100,101,99,100.5,10,100.8,1.2,"
-              "25.4,0.55,kWeakTrend");
+              "rb2405,1700000060000000000,2023-11-14 22:14:20,1,100,101,99,100.5,10,100,101,99,"
+              "100.5,0,100.8,1.2,25.4,0.55,kWeakTrend");
 
     std::filesystem::remove(path, ec);
 }

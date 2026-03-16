@@ -41,6 +41,7 @@ void ApplySpecJsonToArgs(const std::string& json, quant_hft::apps::ArgMap* args)
     apply_string("dataset_root");
     apply_string("engine_mode");
     apply_string("rollover_mode");
+    apply_string("product_series_mode");
     apply_string("rollover_price_mode");
     apply_string("detector_config");
     apply_string("start_date");

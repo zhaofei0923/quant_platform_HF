@@ -138,17 +138,20 @@ std::vector<SignalIntent> TrendStrategy::OnState(const StateSnapshot7D& state,
     last_stop_loss_price_.reset();
     last_take_profit_price_.reset();
 
-    if (kama_ == nullptr || !state.has_bar || !std::isfinite(state.bar_high) ||
-        !std::isfinite(state.bar_low) || !std::isfinite(state.bar_close)) {
+    const double analysis_high = state.effective_bar_high();
+    const double analysis_low = state.effective_bar_low();
+    const double analysis_close = state.effective_bar_close();
+    if (kama_ == nullptr || !state.has_bar || !std::isfinite(analysis_high) ||
+        !std::isfinite(analysis_low) || !std::isfinite(analysis_close)) {
         return {};
     }
 
-    kama_->Update(state.bar_high, state.bar_low, state.bar_close, state.bar_volume);
+    kama_->Update(analysis_high, analysis_low, analysis_close, state.bar_volume);
     if (stop_loss_atr_ != nullptr) {
-        stop_loss_atr_->Update(state.bar_high, state.bar_low, state.bar_close, state.bar_volume);
+        stop_loss_atr_->Update(analysis_high, analysis_low, analysis_close, state.bar_volume);
     }
     if (take_profit_atr_ != nullptr) {
-        take_profit_atr_->Update(state.bar_high, state.bar_low, state.bar_close, state.bar_volume);
+        take_profit_atr_->Update(analysis_high, analysis_low, analysis_close, state.bar_volume);
     }
 
     if (kama_->IsReady()) {
@@ -166,7 +169,7 @@ std::vector<SignalIntent> TrendStrategy::OnState(const StateSnapshot7D& state,
     SignalIntent entry_signal;
     if (last_kama_.has_value() && std::isfinite(*last_kama_)) {
         const double threshold = kama_filter_ * last_stop_atr_.value_or(0.0);
-        const double diff = state.bar_close - (*last_kama_);
+        const double diff = analysis_close - (*last_kama_);
         Side open_side = Side::kBuy;
         if (diff > threshold) {
             open_side = Side::kBuy;

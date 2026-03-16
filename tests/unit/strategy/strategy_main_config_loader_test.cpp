@@ -46,6 +46,7 @@ TEST(StrategyMainConfigLoaderTest, LoadsYamlMainConfigWithV2SubStrategies) {
                   "market_state_mode: true\n"
                   "backtest:\n"
                   "  initial_equity: 1000000\n"
+                  "  product_series_mode: continuous_adjusted\n"
                   "  symbols: [rb2405, ag2406]\n"
                   "  start_date: 20240101\n"
                   "  end_date: 20240131\n"
@@ -70,6 +71,7 @@ TEST(StrategyMainConfigLoaderTest, LoadsYamlMainConfigWithV2SubStrategies) {
     EXPECT_EQ(config.run_type, "backtest");
     EXPECT_TRUE(config.market_state_mode);
     EXPECT_DOUBLE_EQ(config.backtest.initial_equity, 1000000.0);
+    EXPECT_EQ(config.backtest.product_series_mode, "continuous_adjusted");
     ASSERT_EQ(config.backtest.symbols.size(), 2U);
     EXPECT_EQ(config.backtest.symbols[0], "rb2405");
     EXPECT_EQ(config.backtest.symbols[1], "ag2406");
@@ -147,6 +149,7 @@ TEST(StrategyMainConfigLoaderTest, LoadsJsonMainConfigWithV2SubStrategies) {
                   "  \"market_state_mode\": true,\n"
                   "  \"backtest\": {\n"
                   "    \"initial_equity\": 500000,\n"
+                  "    \"product_series_mode\": \"continuous_adjusted\",\n"
                   "    \"symbols\": [\"rb2405\"],\n"
                   "    \"start_date\": \"20240101\",\n"
                   "    \"end_date\": \"20240110\",\n"
@@ -173,6 +176,7 @@ TEST(StrategyMainConfigLoaderTest, LoadsJsonMainConfigWithV2SubStrategies) {
     EXPECT_EQ(config.run_type, "backtest");
     EXPECT_TRUE(config.market_state_mode);
     EXPECT_DOUBLE_EQ(config.backtest.initial_equity, 500000.0);
+    EXPECT_EQ(config.backtest.product_series_mode, "continuous_adjusted");
     ASSERT_EQ(config.backtest.symbols.size(), 1U);
     EXPECT_EQ(config.backtest.symbols[0], "rb2405");
     ASSERT_EQ(config.composite.sub_strategies.size(), 1U);

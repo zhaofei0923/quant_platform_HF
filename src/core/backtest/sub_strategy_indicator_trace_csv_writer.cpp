@@ -98,8 +98,9 @@ bool SubStrategyIndicatorTraceCsvWriter::Open(const std::string& output_path, st
     }
 
     out_ << "instrument_id,ts_ns,dt_utc,timeframe_minutes,strategy_id,strategy_type,bar_open,"
-            "bar_high,bar_low,bar_close,bar_volume,kama,atr,adx,er,stop_loss_price,"
-            "take_profit_price,market_regime\n";
+            "bar_high,bar_low,bar_close,bar_volume,analysis_bar_open,analysis_bar_high,"
+            "analysis_bar_low,analysis_bar_close,analysis_price_offset,kama,atr,adx,er,"
+            "stop_loss_price,take_profit_price,market_regime\n";
     if (!out_.good()) {
         out_.close();
         return SetError("failed to write sub-strategy indicator trace csv header", error);
@@ -131,7 +132,10 @@ bool SubStrategyIndicatorTraceCsvWriter::Append(const SubStrategyIndicatorTraceR
          << CsvEscape(row.strategy_id) << ',' << CsvEscape(row.strategy_type) << ','
          << FormatNumber(row.bar_open) << ',' << FormatNumber(row.bar_high) << ','
          << FormatNumber(row.bar_low) << ',' << FormatNumber(row.bar_close) << ','
-         << FormatNumber(row.bar_volume) << ',' << FormatOptional(row.kama) << ','
+         << FormatNumber(row.bar_volume) << ',' << FormatNumber(row.analysis_bar_open) << ','
+         << FormatNumber(row.analysis_bar_high) << ',' << FormatNumber(row.analysis_bar_low)
+         << ',' << FormatNumber(row.analysis_bar_close) << ','
+         << FormatNumber(row.analysis_price_offset) << ',' << FormatOptional(row.kama) << ','
          << FormatOptional(row.atr) << ',' << FormatOptional(row.adx) << ','
          << FormatOptional(row.er) << ',' << FormatOptional(row.stop_loss_price) << ','
          << FormatOptional(row.take_profit_price) << ','

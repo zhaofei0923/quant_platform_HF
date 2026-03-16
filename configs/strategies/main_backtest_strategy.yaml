@@ -19,12 +19,14 @@ market_state_mode: false
 backtest:
   # backtest.initial_equity：配置项说明；示例值：200000
   initial_equity: 200000
+  # backtest.product_series_mode：配置项说明；示例值：continuous_adjusted（主力链分析价连续）
+  product_series_mode: continuous_adjusted
   # backtest.symbols：配置项说明；示例值：[c]
   symbols: [c]
   # backtest.start_date：配置项说明；示例值：20240101
   start_date: 20240101
   # backtest.end_date：配置项说明；示例值：20240131
-  end_date: 20240131
+  end_date: 20241231
   # backtest.product_config_path：配置项说明；示例值：./instrument_info.json
   product_config_path: ./instrument_info.json
 

@@ -111,6 +111,11 @@ TEST(IndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicatorsWhenEnable
     row0.bar_low = 99.0;
     row0.bar_close = 100.5;
     row0.bar_volume = 10.0;
+    row0.analysis_bar_open = 100.0;
+    row0.analysis_bar_high = 101.0;
+    row0.analysis_bar_low = 99.0;
+    row0.analysis_bar_close = 100.5;
+    row0.analysis_price_offset = 0.0;
     row0.market_regime = MarketRegime::kUnknown;
     row0.dt_utc = "2023-11-14 22:13:20";
     ASSERT_TRUE(writer.Append(row0, &error)) << error;
@@ -118,6 +123,7 @@ TEST(IndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicatorsWhenEnable
     IndicatorTraceRow row1 = row0;
     row1.ts_ns += 60'000'000'000LL;
     row1.bar_close = 101.5;
+    row1.analysis_bar_close = 101.5;
     row1.kama = 100.8;
     row1.atr = 1.2;
     row1.adx = 25.4;
@@ -129,6 +135,7 @@ TEST(IndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicatorsWhenEnable
     IndicatorTraceRow row2 = row1;
     row2.ts_ns += 60'000'000'000LL;
     row2.bar_close = 103.0;
+    row2.analysis_bar_close = 103.0;
     row2.kama = 101.6;
     row2.atr = 1.5;
     row2.adx = 42.0;
@@ -151,20 +158,21 @@ TEST(IndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicatorsWhenEnable
     ASSERT_TRUE(parquet_reader->ReadTable(&table).ok());
     ASSERT_NE(table, nullptr);
     EXPECT_EQ(table->num_rows(), 3);
-    ASSERT_EQ(table->num_columns(), 14);
+    ASSERT_EQ(table->num_columns(), 19);
 
     const std::shared_ptr<arrow::Schema> schema = table->schema();
     ASSERT_NE(schema, nullptr);
-    ASSERT_EQ(schema->num_fields(), 14);
+    ASSERT_EQ(schema->num_fields(), 19);
     EXPECT_EQ(schema->field(0)->name(), "instrument_id");
     EXPECT_EQ(schema->field(2)->name(), "dt_utc");
     EXPECT_EQ(schema->field(3)->name(), "timeframe_minutes");
-    EXPECT_EQ(schema->field(9)->name(), "kama");
-    EXPECT_EQ(schema->field(13)->name(), "market_regime");
+    EXPECT_EQ(schema->field(9)->name(), "analysis_bar_open");
+    EXPECT_EQ(schema->field(14)->name(), "kama");
+    EXPECT_EQ(schema->field(18)->name(), "market_regime");
     EXPECT_FALSE(schema->field(0)->nullable());
     EXPECT_FALSE(schema->field(2)->nullable());
     EXPECT_FALSE(schema->field(3)->nullable());
-    EXPECT_TRUE(schema->field(9)->nullable());
+    EXPECT_TRUE(schema->field(14)->nullable());
 
     const auto dt_utc_column = table->GetColumnByName("dt_utc");
     ASSERT_NE(dt_utc_column, nullptr);
@@ -177,12 +185,14 @@ TEST(IndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicatorsWhenEnable
     EXPECT_EQ(dt_utc->GetString(2), row2.dt_utc);
 
     const auto timeframe_column = table->GetColumnByName("timeframe_minutes");
+    const auto analysis_offset_column = table->GetColumnByName("analysis_price_offset");
     const auto kama_column = table->GetColumnByName("kama");
     const auto atr_column = table->GetColumnByName("atr");
     const auto adx_column = table->GetColumnByName("adx");
     const auto er_column = table->GetColumnByName("er");
     const auto regime_column = table->GetColumnByName("market_regime");
     ASSERT_NE(timeframe_column, nullptr);
+    ASSERT_NE(analysis_offset_column, nullptr);
     ASSERT_NE(kama_column, nullptr);
     ASSERT_NE(atr_column, nullptr);
     ASSERT_NE(adx_column, nullptr);
@@ -190,6 +200,8 @@ TEST(IndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicatorsWhenEnable
     ASSERT_NE(regime_column, nullptr);
     const auto timeframe =
         std::static_pointer_cast<arrow::Int32Array>(timeframe_column->chunk(0));
+    const auto analysis_offset =
+        std::static_pointer_cast<arrow::DoubleArray>(analysis_offset_column->chunk(0));
     const auto kama = std::static_pointer_cast<arrow::DoubleArray>(kama_column->chunk(0));
     const auto atr = std::static_pointer_cast<arrow::DoubleArray>(atr_column->chunk(0));
     const auto adx = std::static_pointer_cast<arrow::DoubleArray>(adx_column->chunk(0));
@@ -199,6 +211,7 @@ TEST(IndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicatorsWhenEnable
     EXPECT_EQ(timeframe->Value(0), 1);
     EXPECT_EQ(timeframe->Value(1), 1);
     EXPECT_EQ(timeframe->Value(2), 1);
+    EXPECT_DOUBLE_EQ(analysis_offset->Value(0), 0.0);
     EXPECT_TRUE(kama->IsNull(0));
     EXPECT_TRUE(atr->IsNull(0));
     EXPECT_TRUE(adx->IsNull(0));

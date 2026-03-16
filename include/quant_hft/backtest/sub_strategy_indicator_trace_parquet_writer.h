@@ -21,6 +21,11 @@ struct SubStrategyIndicatorTraceRow {
     double bar_low{0.0};
     double bar_close{0.0};
     double bar_volume{0.0};
+    double analysis_bar_open{0.0};
+    double analysis_bar_high{0.0};
+    double analysis_bar_low{0.0};
+    double analysis_bar_close{0.0};
+    double analysis_price_offset{0.0};
     std::optional<double> kama;
     std::optional<double> atr;
     std::optional<double> adx;

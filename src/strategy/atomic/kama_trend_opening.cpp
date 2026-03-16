@@ -90,13 +90,16 @@ void KamaTrendOpening::Reset() {
 
 std::vector<SignalIntent> KamaTrendOpening::OnState(const StateSnapshot7D& state,
                                                     const AtomicStrategyContext& ctx) {
-    if (kama_ == nullptr || atr_ == nullptr || !state.has_bar || !std::isfinite(state.bar_high) ||
-        !std::isfinite(state.bar_low) || !std::isfinite(state.bar_close)) {
+    const double analysis_high = state.effective_bar_high();
+    const double analysis_low = state.effective_bar_low();
+    const double analysis_close = state.effective_bar_close();
+    if (kama_ == nullptr || atr_ == nullptr || !state.has_bar || !std::isfinite(analysis_high) ||
+        !std::isfinite(analysis_low) || !std::isfinite(analysis_close)) {
         return {};
     }
 
-    kama_->Update(state.bar_high, state.bar_low, state.bar_close, state.bar_volume);
-    atr_->Update(state.bar_high, state.bar_low, state.bar_close, state.bar_volume);
+    kama_->Update(analysis_high, analysis_low, analysis_close, state.bar_volume);
+    atr_->Update(analysis_high, analysis_low, analysis_close, state.bar_volume);
 
     if (!kama_->IsReady() || !atr_->IsReady()) {
         return {};

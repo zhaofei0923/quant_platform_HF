@@ -39,15 +39,18 @@ void TrendOpening::Reset() {
 
 std::vector<SignalIntent> TrendOpening::OnState(const StateSnapshot7D& state,
                                                 const AtomicStrategyContext& ctx) {
-    if (kama_ == nullptr || !state.has_bar || !std::isfinite(state.bar_high) ||
-        !std::isfinite(state.bar_low) || !std::isfinite(state.bar_close)) {
+    const double analysis_high = state.effective_bar_high();
+    const double analysis_low = state.effective_bar_low();
+    const double analysis_close = state.effective_bar_close();
+    if (kama_ == nullptr || !state.has_bar || !std::isfinite(analysis_high) ||
+        !std::isfinite(analysis_low) || !std::isfinite(analysis_close)) {
         return {};
     }
     if (!instrument_id_.empty() && state.instrument_id != instrument_id_) {
         return {};
     }
 
-    kama_->Update(state.bar_high, state.bar_low, state.bar_close, state.bar_volume);
+    kama_->Update(analysis_high, analysis_low, analysis_close, state.bar_volume);
     if (!kama_->IsReady()) {
         return {};
     }
@@ -64,9 +67,9 @@ std::vector<SignalIntent> TrendOpening::OnState(const StateSnapshot7D& state,
     }
 
     Side side = Side::kBuy;
-    if (state.bar_close > *kama_value) {
+    if (analysis_close > *kama_value) {
         side = Side::kBuy;
-    } else if (state.bar_close < *kama_value) {
+    } else if (analysis_close < *kama_value) {
         side = Side::kSell;
     } else {
         return {};

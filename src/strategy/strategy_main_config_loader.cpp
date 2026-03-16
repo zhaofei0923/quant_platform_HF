@@ -161,6 +161,10 @@ bool ParseBacktestYamlKey(StrategyMainBacktestConfig* backtest, const std::strin
         }
         return false;
     }
+    if (key == "product_series_mode") {
+        backtest->product_series_mode = ToLower(Trim(value));
+        return true;
+    }
     if (key == "symbols") {
         if (!ParseStringList(value, &backtest->symbols)) {
             if (error != nullptr) {
@@ -381,6 +385,16 @@ bool LoadMainJson(const std::filesystem::path& path, StrategyMainConfig* out, st
                     }
                     return false;
                 }
+                if (backtest_key == "product_series_mode") {
+                    if (!backtest_value.IsString()) {
+                        if (error != nullptr) {
+                            *error = "backtest.product_series_mode must be string";
+                        }
+                        return false;
+                    }
+                    config.backtest.product_series_mode = ToLower(backtest_value.string_value);
+                    continue;
+                }
                 if (backtest_key == "symbols") {
                     if (!backtest_value.IsArray()) {
                         if (error != nullptr) {
@@ -494,6 +508,13 @@ bool LoadStrategyMainConfig(const std::string& path, StrategyMainConfig* out, st
     if (!(config.backtest.initial_equity > 0.0)) {
         if (error != nullptr) {
             *error = "backtest.initial_equity must be > 0";
+        }
+        return false;
+    }
+    if (config.backtest.product_series_mode != "raw" &&
+        config.backtest.product_series_mode != "continuous_adjusted") {
+        if (error != nullptr) {
+            *error = "backtest.product_series_mode must be raw or continuous_adjusted";
         }
         return false;
     }

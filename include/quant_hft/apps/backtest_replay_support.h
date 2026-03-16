@@ -1111,6 +1111,7 @@ struct BacktestCliSpec {
     std::string detector_config_path;
     std::string engine_mode{"csv"};
     std::string rollover_mode{"strict"};
+    std::string product_series_mode{"raw"};
     std::string rollover_price_mode{"bbo"};
     double rollover_slippage_bps{0.0};
     std::vector<std::string> symbols;
@@ -1373,6 +1374,12 @@ class ReplayTimeframeFanout {
             bucket.bar.high = std::max(bucket.bar.high, one_minute_bar.high);
             bucket.bar.low = std::min(bucket.bar.low, one_minute_bar.low);
             bucket.bar.close = one_minute_bar.close;
+            bucket.bar.analysis_high =
+                std::max(bucket.bar.analysis_high, one_minute_bar.analysis_high);
+            bucket.bar.analysis_low =
+                std::min(bucket.bar.analysis_low, one_minute_bar.analysis_low);
+            bucket.bar.analysis_close = one_minute_bar.analysis_close;
+            bucket.bar.analysis_price_offset = one_minute_bar.analysis_price_offset;
             bucket.bar.volume += one_minute_bar.volume;
             bucket.bar.ts_ns = one_minute_bar.ts_ns;
             if (!one_minute_bar.action_day.empty()) {
@@ -1399,20 +1406,34 @@ class ReplayTimeframeFanout {
             out.push_back(output);
         }
         buckets_.clear();
-        std::sort(out.begin(),
-                  out.end(),
-                  [](const ReplayAggregatedBar& left, const ReplayAggregatedBar& right) {
-                      if (left.bar.ts_ns != right.bar.ts_ns) {
-                          return left.bar.ts_ns < right.bar.ts_ns;
-                      }
-                      if (left.timeframe_minutes != right.timeframe_minutes) {
-                          return left.timeframe_minutes < right.timeframe_minutes;
-                      }
-                      if (left.bar.instrument_id != right.bar.instrument_id) {
-                          return left.bar.instrument_id < right.bar.instrument_id;
-                      }
-                      return left.bar.minute < right.bar.minute;
-                  });
+        SortAggregatedBars(&out);
+        return out;
+    }
+
+    std::vector<ReplayAggregatedBar> FlushFinished(
+        const std::unordered_map<std::string, EpochNanos>& instrument_last_tick_ts_ns,
+        EpochNanos cutoff_ts_ns) {
+        std::vector<ReplayAggregatedBar> out;
+        for (auto it = buckets_.begin(); it != buckets_.end();) {
+            const BucketState& bucket = it->second;
+            if (!bucket.initialized || !bucket.context.initialized) {
+                it = buckets_.erase(it);
+                continue;
+            }
+            const auto last_tick_it = instrument_last_tick_ts_ns.find(bucket.bar.instrument_id);
+            if (last_tick_it == instrument_last_tick_ts_ns.end() ||
+                last_tick_it->second > cutoff_ts_ns) {
+                ++it;
+                continue;
+            }
+            ReplayAggregatedBar output;
+            output.bar = bucket.bar;
+            output.context = bucket.context;
+            output.timeframe_minutes = bucket.timeframe_minutes;
+            out.push_back(output);
+            it = buckets_.erase(it);
+        }
+        SortAggregatedBars(&out);
         return out;
     }
 
@@ -1437,6 +1458,26 @@ class ReplayTimeframeFanout {
         bucket->bar = one_minute_bar;
         bucket->bar.minute = bucket_minute;
         bucket->context = context;
+    }
+
+    static void SortAggregatedBars(std::vector<ReplayAggregatedBar>* out) {
+        if (out == nullptr) {
+            return;
+        }
+        std::sort(out->begin(),
+                  out->end(),
+                  [](const ReplayAggregatedBar& left, const ReplayAggregatedBar& right) {
+                      if (left.bar.ts_ns != right.bar.ts_ns) {
+                          return left.bar.ts_ns < right.bar.ts_ns;
+                      }
+                      if (left.timeframe_minutes != right.timeframe_minutes) {
+                          return left.timeframe_minutes < right.timeframe_minutes;
+                      }
+                      if (left.bar.instrument_id != right.bar.instrument_id) {
+                          return left.bar.instrument_id < right.bar.instrument_id;
+                      }
+                      return left.bar.minute < right.bar.minute;
+                  });
     }
 
     std::vector<std::int32_t> timeframes_;
@@ -1691,6 +1732,8 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
     const bool has_strategy_composite_config =
         detail::HasArgAny(args, {"strategy_composite_config", "strategy-composite-config"});
     const bool has_initial_equity = detail::HasArgAny(args, {"initial_equity", "initial-equity"});
+    const bool has_product_series_mode =
+        detail::HasArgAny(args, {"product_series_mode", "product-series-mode"});
     const bool has_product_config_path =
         detail::HasArgAny(args, {"product_config_path", "product-config-path"});
     const bool has_max_loss_percent =
@@ -1714,6 +1757,8 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
         detail::ToLower(detail::GetArgAny(args, {"engine_mode", "engine-mode"}, "csv"));
     spec.rollover_mode =
         detail::ToLower(detail::GetArgAny(args, {"rollover_mode", "rollover-mode"}, "strict"));
+    spec.product_series_mode = detail::ToLower(
+        detail::GetArgAny(args, {"product_series_mode", "product-series-mode"}, "raw"));
     spec.rollover_price_mode = detail::ToLower(
         detail::GetArgAny(args, {"rollover_price_mode", "rollover-price-mode"}, "bbo"));
     spec.start_date =
@@ -1919,6 +1964,9 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
         if (!has_initial_equity) {
             spec.initial_equity = main_config.backtest.initial_equity;
         }
+        if (!has_product_series_mode && main_config.backtest.product_series_mode != "raw") {
+            spec.product_series_mode = main_config.backtest.product_series_mode;
+        }
         if (!has_symbols && !main_config.backtest.symbols.empty()) {
             spec.symbols = main_config.backtest.symbols;
         }
@@ -1949,6 +1997,12 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
     if (spec.rollover_mode != "strict" && spec.rollover_mode != "carry") {
         if (error != nullptr) {
             *error = "unsupported rollover_mode: " + spec.rollover_mode;
+        }
+        return false;
+    }
+    if (spec.product_series_mode != "raw" && spec.product_series_mode != "continuous_adjusted") {
+        if (error != nullptr) {
+            *error = "unsupported product_series_mode: " + spec.product_series_mode;
         }
         return false;
     }
@@ -2077,6 +2131,7 @@ inline std::string BuildInputSignature(const BacktestCliSpec& spec) {
         << ';' << "detector_config.min_bars_for_flat=" << spec.detector_config.min_bars_for_flat
         << ';' << "engine_mode=" << spec.engine_mode << ';'
         << "rollover_mode=" << spec.rollover_mode << ';'
+        << "product_series_mode=" << spec.product_series_mode << ';'
         << "rollover_price_mode=" << spec.rollover_price_mode << ';'
         << "rollover_slippage_bps=" << detail::FormatDouble(spec.rollover_slippage_bps) << ';'
         << "symbols=" << symbols_stream.str() << ';'
@@ -2526,6 +2581,59 @@ inline ParquetSymbolSelection BuildParquetSymbolSelection(const std::vector<std:
     return selection;
 }
 
+inline bool IsParquetProductChainSelection(const std::vector<std::string>& symbols) {
+    const ParquetSymbolSelection selection = BuildParquetSymbolSelection(symbols);
+    return selection.instrument_ids.empty() && !selection.product_symbols.empty();
+}
+
+class ProductSeriesAdjuster {
+   public:
+    explicit ProductSeriesAdjuster(bool enabled) : enabled_(enabled) {}
+
+    BarSnapshot Apply(const BarSnapshot& raw_bar) {
+        BarSnapshot adjusted = raw_bar;
+        if (!enabled_) {
+            SetAnalysisFields(&adjusted, raw_bar, 0.0);
+            return adjusted;
+        }
+
+        double offset = 0.0;
+        const auto offset_it = instrument_offsets_.find(raw_bar.instrument_id);
+        if (offset_it != instrument_offsets_.end()) {
+            offset = offset_it->second;
+        } else if (has_last_bar_ && raw_bar.instrument_id != last_instrument_id_) {
+            offset = last_analysis_close_ - raw_bar.open;
+            instrument_offsets_.emplace(raw_bar.instrument_id, offset);
+        } else {
+            instrument_offsets_.emplace(raw_bar.instrument_id, 0.0);
+        }
+
+        SetAnalysisFields(&adjusted, raw_bar, offset);
+        has_last_bar_ = true;
+        last_instrument_id_ = raw_bar.instrument_id;
+        last_analysis_close_ = adjusted.analysis_close;
+        return adjusted;
+    }
+
+   private:
+    static void SetAnalysisFields(BarSnapshot* out, const BarSnapshot& raw_bar, double offset) {
+        if (out == nullptr) {
+            return;
+        }
+        out->analysis_open = raw_bar.open + offset;
+        out->analysis_high = raw_bar.high + offset;
+        out->analysis_low = raw_bar.low + offset;
+        out->analysis_close = raw_bar.close + offset;
+        out->analysis_price_offset = offset;
+    }
+
+    bool enabled_{false};
+    bool has_last_bar_{false};
+    std::string last_instrument_id_;
+    double last_analysis_close_{0.0};
+    std::unordered_map<std::string, double> instrument_offsets_;
+};
+
 inline std::vector<ParquetPartitionMeta> SelectParquetPartitionsForSymbols(
     ParquetDataFeed* feed, EpochNanos start_ts_ns, EpochNanos end_ts_ns,
     const std::vector<std::string>& symbols) {
@@ -2843,23 +2951,28 @@ inline bool LoadTicksForSpec(const BacktestCliSpec& spec, std::vector<ReplayTick
     return ok;
 }
 
-inline StateSnapshot7D BuildStateSnapshotFromBar(const ReplayTick& first, const ReplayTick& last,
-                                                 double high, double low, std::int64_t volume_delta,
-                                                 EpochNanos ts_ns,
+inline StateSnapshot7D BuildStateSnapshotFromBar(const ReplayTick& /*first*/,
+                                                 const ReplayTick& last,
+                                                 const BarSnapshot& bar, EpochNanos ts_ns,
                                                  std::int32_t timeframe_minutes = 1,
                                                  MarketStateDetector* detector = nullptr) {
-    const double open_price = first.last_price;
-    const double close_price = last.last_price;
+    const double analysis_open = std::isfinite(bar.analysis_open) ? bar.analysis_open : bar.open;
+    const double analysis_high = std::isfinite(bar.analysis_high) ? bar.analysis_high : bar.high;
+    const double analysis_low = std::isfinite(bar.analysis_low) ? bar.analysis_low : bar.low;
+    const double analysis_close =
+        std::isfinite(bar.analysis_close) ? bar.analysis_close : bar.close;
 
     double trend_score = 0.0;
-    if (std::fabs(open_price) > 1e-9) {
-        trend_score = (close_price - open_price) / std::fabs(open_price);
+    if (std::fabs(analysis_open) > 1e-9) {
+        trend_score = (analysis_close - analysis_open) / std::fabs(analysis_open);
     }
 
     const double volatility_score =
-        (std::fabs(close_price) > 1e-9) ? ((high - low) / std::fabs(close_price)) : 0.0;
+        (std::fabs(analysis_close) > 1e-9)
+            ? ((analysis_high - analysis_low) / std::fabs(analysis_close))
+            : 0.0;
     const double liquidity_depth =
-        std::max(0.0, static_cast<double>(last.bid_volume_1 + last.ask_volume_1 + volume_delta));
+        std::max(0.0, static_cast<double>(last.bid_volume_1 + last.ask_volume_1 + bar.volume));
     const double liquidity_balance =
         static_cast<double>(std::min<std::int64_t>(last.bid_volume_1, last.ask_volume_1));
 
@@ -2872,21 +2985,48 @@ inline StateSnapshot7D BuildStateSnapshotFromBar(const ReplayTick& first, const 
                        detail::Clamp01(liquidity_balance / 500.0)};
     state.sentiment = {0.0, 0.1};
     state.seasonality = {0.0, 0.1};
-    state.pattern = {close_price > open_price ? 1.0 : (close_price < open_price ? -1.0 : 0.0),
-                     close_price == open_price ? 0.2 : 0.7};
+    state.pattern = {analysis_close > analysis_open ? 1.0
+                                                    : (analysis_close < analysis_open ? -1.0 : 0.0),
+                     analysis_close == analysis_open ? 0.2 : 0.7};
     state.event_drive = {0.0, 0.1};
-    state.bar_open = open_price;
-    state.bar_high = high;
-    state.bar_low = low;
-    state.bar_close = close_price;
-    state.bar_volume = static_cast<double>(volume_delta);
+    state.bar_open = bar.open;
+    state.bar_high = bar.high;
+    state.bar_low = bar.low;
+    state.bar_close = bar.close;
+    state.analysis_bar_open = analysis_open;
+    state.analysis_bar_high = analysis_high;
+    state.analysis_bar_low = analysis_low;
+    state.analysis_bar_close = analysis_close;
+    state.analysis_price_offset = bar.analysis_price_offset;
+    state.bar_volume = static_cast<double>(bar.volume);
     state.has_bar = true;
     if (detector != nullptr) {
-        detector->Update(high, low, close_price);
+        detector->Update(analysis_high, analysis_low, analysis_close);
         state.market_regime = detector->GetRegime();
     }
     state.ts_ns = ts_ns;
     return state;
+}
+
+inline StateSnapshot7D BuildStateSnapshotFromBar(const ReplayTick& first, const ReplayTick& last,
+                                                 double high, double low, std::int64_t volume_delta,
+                                                 EpochNanos ts_ns,
+                                                 std::int32_t timeframe_minutes = 1,
+                                                 MarketStateDetector* detector = nullptr) {
+    BarSnapshot bar;
+    bar.instrument_id = last.instrument_id;
+    bar.open = first.last_price;
+    bar.high = high;
+    bar.low = low;
+    bar.close = last.last_price;
+    bar.analysis_open = bar.open;
+    bar.analysis_high = bar.high;
+    bar.analysis_low = bar.low;
+    bar.analysis_close = bar.close;
+    bar.analysis_price_offset = 0.0;
+    bar.volume = volume_delta;
+    bar.ts_ns = ts_ns;
+    return BuildStateSnapshotFromBar(first, last, bar, ts_ns, timeframe_minutes, detector);
 }
 
 struct PositionState {
@@ -3437,7 +3577,13 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         return false;
     }
 
-    const bool enable_rollover = spec.deterministic_fills && spec.engine_mode == "core_sim";
+    const bool enable_rollover =
+        spec.deterministic_fills &&
+        (spec.engine_mode == "core_sim" ||
+         (spec.engine_mode == "parquet" && IsParquetProductChainSelection(spec.symbols)));
+    const bool enable_product_series_adjustment =
+        spec.product_series_mode == "continuous_adjusted" && data_source == "parquet" &&
+        IsParquetProductChainSelection(spec.symbols);
     const bool use_bar_aggregator = data_source == "csv" || data_source == "parquet";
     std::unique_ptr<BarAggregator> replay_bar_aggregator;
     if (use_bar_aggregator) {
@@ -3455,6 +3601,15 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         replay_bar_aggregator = std::make_unique<BarAggregator>(aggregator_config);
     }
     detail::ReplayTimeframeFanout timeframe_fanout(subscribed_timeframes);
+    ProductSeriesAdjuster product_series_adjuster(enable_product_series_adjustment);
+    std::unordered_map<std::string, EpochNanos> instrument_last_tick_ts_ns;
+    instrument_last_tick_ts_ns.reserve(ticks.size());
+    for (const ReplayTick& tick : ticks) {
+        auto [it, inserted] = instrument_last_tick_ts_ns.try_emplace(tick.instrument_id, tick.ts_ns);
+        if (!inserted && tick.ts_ns > it->second) {
+            it->second = tick.ts_ns;
+        }
+    }
 
     auto compute_position_value = [&]() {
         double total = 0.0;
@@ -3501,6 +3656,17 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         if (symbol.empty()) {
             return;
         }
+        const std::string rollover_trading_day = [&]() {
+            const std::string normalized = detail::NormalizeTradingDay(tick.trading_day);
+            if (!normalized.empty()) {
+                return normalized;
+            }
+            return detail::TradingDayFromEpochNs(tick.ts_ns);
+        }();
+        const std::string rollover_action_day =
+            detail::ResolveActionDay(rollover_trading_day, "", tick.update_time);
+        const std::string rollover_local_dt = detail::LocalDateTimeFromTradingDayAndUpdateTime(
+            rollover_trading_day, rollover_action_day, tick.update_time, tick.ts_ns);
 
         const auto current_it = symbol_active_contract.find(symbol);
         if (current_it == symbol_active_contract.end()) {
@@ -3578,6 +3744,11 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 close_order.created_at_dt_utc = detail::DateTimeFromEpochNs(tick.ts_ns);
                 close_order.last_update_ns = tick.ts_ns;
                 close_order.last_update_dt_utc = detail::DateTimeFromEpochNs(tick.ts_ns);
+                close_order.trading_day = rollover_trading_day;
+                close_order.action_day = rollover_action_day;
+                close_order.update_time = tick.update_time;
+                close_order.created_at_dt_local = rollover_local_dt;
+                close_order.last_update_dt_local = rollover_local_dt;
                 close_order.strategy_id = "rollover";
                 orders.push_back(std::move(close_order));
 
@@ -3598,6 +3769,11 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 close_order_filled.created_at_dt_utc = detail::DateTimeFromEpochNs(tick.ts_ns);
                 close_order_filled.last_update_ns = tick.ts_ns;
                 close_order_filled.last_update_dt_utc = detail::DateTimeFromEpochNs(tick.ts_ns);
+                close_order_filled.trading_day = rollover_trading_day;
+                close_order_filled.action_day = rollover_action_day;
+                close_order_filled.update_time = tick.update_time;
+                close_order_filled.created_at_dt_local = rollover_local_dt;
+                close_order_filled.last_update_dt_local = rollover_local_dt;
                 close_order_filled.strategy_id = "rollover";
                 orders.push_back(std::move(close_order_filled));
 
@@ -3618,6 +3794,11 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 open_order.created_at_dt_utc = detail::DateTimeFromEpochNs(tick.ts_ns);
                 open_order.last_update_ns = tick.ts_ns;
                 open_order.last_update_dt_utc = detail::DateTimeFromEpochNs(tick.ts_ns);
+                open_order.trading_day = rollover_trading_day;
+                open_order.action_day = rollover_action_day;
+                open_order.update_time = tick.update_time;
+                open_order.created_at_dt_local = rollover_local_dt;
+                open_order.last_update_dt_local = rollover_local_dt;
                 open_order.strategy_id = "rollover";
                 orders.push_back(std::move(open_order));
 
@@ -3638,6 +3819,11 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 open_order_filled.created_at_dt_utc = detail::DateTimeFromEpochNs(tick.ts_ns);
                 open_order_filled.last_update_ns = tick.ts_ns;
                 open_order_filled.last_update_dt_utc = detail::DateTimeFromEpochNs(tick.ts_ns);
+                open_order_filled.trading_day = rollover_trading_day;
+                open_order_filled.action_day = rollover_action_day;
+                open_order_filled.update_time = tick.update_time;
+                open_order_filled.created_at_dt_local = rollover_local_dt;
+                open_order_filled.last_update_dt_local = rollover_local_dt;
                 open_order_filled.strategy_id = "rollover";
                 orders.push_back(std::move(open_order_filled));
             }
@@ -3655,6 +3841,12 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 close_trade.price = close_price;
                 close_trade.timestamp_ns = tick.ts_ns;
                 close_trade.timestamp_dt_utc = detail::DateTimeFromEpochNs(tick.ts_ns);
+                close_trade.signal_ts_ns = tick.ts_ns;
+                close_trade.trading_day = rollover_trading_day;
+                close_trade.action_day = rollover_action_day;
+                close_trade.update_time = tick.update_time;
+                close_trade.timestamp_dt_local = rollover_local_dt;
+                close_trade.signal_dt_local = rollover_local_dt;
                 close_trade.commission = 0.0;
                 close_trade.slippage = close_slip;
                 close_trade.realized_pnl = close_realized_pnl;
@@ -3675,6 +3867,12 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 open_trade.price = open_price;
                 open_trade.timestamp_ns = tick.ts_ns;
                 open_trade.timestamp_dt_utc = detail::DateTimeFromEpochNs(tick.ts_ns);
+                open_trade.signal_ts_ns = tick.ts_ns;
+                open_trade.trading_day = rollover_trading_day;
+                open_trade.action_day = rollover_action_day;
+                open_trade.update_time = tick.update_time;
+                open_trade.timestamp_dt_local = rollover_local_dt;
+                open_trade.signal_dt_local = rollover_local_dt;
                 open_trade.commission = 0.0;
                 open_trade.slippage = open_slip;
                 open_trade.realized_pnl = open_realized_pnl;
@@ -3745,6 +3943,9 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             previous_state.net_position = 0;
             previous_state.avg_open_price = 0.0;
             previous_state.realized_pnl = 0.0;
+
+            record_position_snapshot(previous_contract, tick.ts_ns);
+            record_position_snapshot(current_contract, tick.ts_ns);
 
             RolloverAction action;
             action.symbol = symbol;
@@ -4173,13 +4374,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             regime_detectors.try_emplace(last.instrument_id, spec.detector_config);
         (void)inserted;
         const StateSnapshot7D state =
-            BuildStateSnapshotFromBar(first,
-                                      last,
-                                      bar.high,
-                                      bar.low,
-                                      bar.volume,
-                                      last.ts_ns,
-                                      timeframe_minutes,
+            BuildStateSnapshotFromBar(first, last, bar, last.ts_ns, timeframe_minutes,
                                       &detector_it->second);
 
         if (spec.emit_indicator_trace) {
@@ -4199,6 +4394,11 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             row.bar_low = state.bar_low;
             row.bar_close = state.bar_close;
             row.bar_volume = state.bar_volume;
+            row.analysis_bar_open = state.analysis_bar_open;
+            row.analysis_bar_high = state.analysis_bar_high;
+            row.analysis_bar_low = state.analysis_bar_low;
+            row.analysis_bar_close = state.analysis_bar_close;
+            row.analysis_price_offset = state.analysis_price_offset;
             row.kama = detector_it->second.GetKAMA();
             row.atr = detector_it->second.GetATR();
             row.adx = detector_it->second.GetADX();
@@ -4262,6 +4462,11 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 row.bar_low = state.bar_low;
                 row.bar_close = state.bar_close;
                 row.bar_volume = state.bar_volume;
+                row.analysis_bar_open = state.analysis_bar_open;
+                row.analysis_bar_high = state.analysis_bar_high;
+                row.analysis_bar_low = state.analysis_bar_low;
+                row.analysis_bar_close = state.analysis_bar_close;
+                row.analysis_price_offset = state.analysis_price_offset;
                 row.kama = atomic_trace.kama;
                 row.atr = atomic_trace.atr;
                 row.adx = atomic_trace.adx;
@@ -4310,9 +4515,20 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             return false;
         }
 
+        const BarSnapshot adjusted_bar = product_series_adjuster.Apply(bar);
         const std::vector<detail::ReplayAggregatedBar> aggregated_bars =
-            timeframe_fanout.OnOneMinuteBar(bar, context);
+            timeframe_fanout.OnOneMinuteBar(adjusted_bar, context);
         for (const detail::ReplayAggregatedBar& aggregated : aggregated_bars) {
+            if (!process_closed_bar(aggregated.context.first_tick,
+                                    aggregated.context.last_tick,
+                                    aggregated.bar,
+                                    aggregated.timeframe_minutes)) {
+                return false;
+            }
+        }
+        const std::vector<detail::ReplayAggregatedBar> finished_bars =
+            timeframe_fanout.FlushFinished(instrument_last_tick_ts_ns, adjusted_bar.ts_ns);
+        for (const detail::ReplayAggregatedBar& aggregated : finished_bars) {
             if (!process_closed_bar(aggregated.context.first_tick,
                                     aggregated.context.last_tick,
                                     aggregated.bar,
@@ -4340,10 +4556,6 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         ++replay.ticks_read;
         instrument_universe.insert(tick.instrument_id);
 
-        if (enable_rollover) {
-            handle_rollover(tick);
-        }
-
         MarketSnapshot snapshot;
         snapshot.instrument_id = tick.instrument_id;
         snapshot.exchange_id = !tick.exchange_id.empty()
@@ -4368,6 +4580,10 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
 
         if (!replay_bar_aggregator->ShouldProcessSnapshot(snapshot)) {
             continue;
+        }
+
+        if (enable_rollover) {
+            handle_rollover(tick);
         }
 
         mark_price[tick.instrument_id] = tick.last_price;
@@ -4410,6 +4626,13 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
 
         const std::vector<BarSnapshot> emitted_bars = replay_bar_aggregator->OnMarketSnapshot(snapshot);
         for (const BarSnapshot& bar : emitted_bars) {
+            if (!process_one_minute_bar(bar)) {
+                return false;
+            }
+        }
+        const std::vector<BarSnapshot> finished_one_minute_bars =
+            replay_bar_aggregator->FlushFinished(instrument_last_tick_ts_ns, tick.ts_ns);
+        for (const BarSnapshot& bar : finished_one_minute_bars) {
             if (!process_one_minute_bar(bar)) {
                 return false;
             }
@@ -4515,6 +4738,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     result.parameters.initial_capital = spec.initial_equity;
     result.parameters.engine_mode = spec.engine_mode;
     result.parameters.rollover_mode = spec.rollover_mode;
+    result.parameters.product_series_mode = spec.product_series_mode;
     result.parameters.strategy_factory = spec.strategy_factory;
     if (spec.emit_trades) {
         result.trades = trades;
@@ -4682,6 +4906,7 @@ inline std::string RenderBacktestMarkdown(const BacktestCliResult& result) {
        << "- Emit Orders: `" << (result.spec.emit_orders ? "true" : "false") << "`\n"
        << "- Emit Position History: `" << (result.spec.emit_position_history ? "true" : "false")
        << "`\n"
+       << "- Product Series Mode: `" << result.spec.product_series_mode << "`\n"
        << "- VaR95 (%): `" << detail::FormatDouble(result.risk_metrics.var_95) << "`\n"
        << "- ES95 (%): `" << detail::FormatDouble(result.risk_metrics.expected_shortfall_95)
        << "`\n"
@@ -4700,6 +4925,8 @@ inline std::string RenderBacktestJson(const BacktestCliResult& result) {
          << "  \"data_source\": \"" << JsonEscape(result.data_source) << "\",\n"
          << "  \"engine_mode\": \"" << JsonEscape(result.engine_mode) << "\",\n"
          << "  \"rollover_mode\": \"" << JsonEscape(result.rollover_mode) << "\",\n"
+         << "  \"product_series_mode\": \"" << JsonEscape(result.spec.product_series_mode)
+         << "\",\n"
          << "  \"initial_equity\": " << detail::FormatDouble(result.initial_equity) << ",\n"
          << "  \"final_equity\": " << detail::FormatDouble(result.final_equity) << ",\n"
          << "  \"metric_keys\": [\"total_pnl\", \"max_drawdown\", \"win_rate\", \"fill_rate\", "
@@ -4711,6 +4938,8 @@ inline std::string RenderBacktestJson(const BacktestCliResult& result) {
          << "    \"detector_config\": \"" << JsonEscape(result.spec.detector_config_path) << "\",\n"
          << "    \"engine_mode\": \"" << JsonEscape(result.spec.engine_mode) << "\",\n"
          << "    \"rollover_mode\": \"" << JsonEscape(result.spec.rollover_mode) << "\",\n"
+         << "    \"product_series_mode\": \"" << JsonEscape(result.spec.product_series_mode)
+         << "\",\n"
          << "    \"rollover_price_mode\": \"" << JsonEscape(result.spec.rollover_price_mode)
          << "\",\n"
          << "    \"rollover_slippage_bps\": "
@@ -4990,6 +5219,8 @@ inline std::string RenderBacktestJson(const BacktestCliResult& result) {
          << detail::FormatDouble(result.parameters.initial_capital) << ",\n"
          << "      \"engine_mode\": \"" << JsonEscape(result.parameters.engine_mode) << "\",\n"
          << "      \"rollover_mode\": \"" << JsonEscape(result.parameters.rollover_mode) << "\",\n"
+         << "      \"product_series_mode\": \""
+         << JsonEscape(result.parameters.product_series_mode) << "\",\n"
          << "      \"strategy_factory\": \""
          << JsonEscape(result.parameters.strategy_factory) << "\"\n"
          << "    },\n"

@@ -113,6 +113,11 @@ TEST(SubStrategyIndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicator
     row0.bar_low = 99.0;
     row0.bar_close = 100.5;
     row0.bar_volume = 10.0;
+    row0.analysis_bar_open = 100.0;
+    row0.analysis_bar_high = 101.0;
+    row0.analysis_bar_low = 99.0;
+    row0.analysis_bar_close = 100.5;
+    row0.analysis_price_offset = 0.0;
     row0.market_regime = MarketRegime::kUnknown;
     row0.dt_utc = "2023-11-14 22:13:20";
     ASSERT_TRUE(writer.Append(row0, &error)) << error;
@@ -141,17 +146,18 @@ TEST(SubStrategyIndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicator
     ASSERT_TRUE(parquet_reader->ReadTable(&table).ok());
     ASSERT_NE(table, nullptr);
     EXPECT_EQ(table->num_rows(), 2);
-    ASSERT_EQ(table->num_columns(), 16);
+    ASSERT_EQ(table->num_columns(), 21);
 
     const std::shared_ptr<arrow::Schema> schema = table->schema();
     ASSERT_NE(schema, nullptr);
-    ASSERT_EQ(schema->num_fields(), 16);
+    ASSERT_EQ(schema->num_fields(), 21);
     EXPECT_EQ(schema->field(2)->name(), "dt_utc");
     EXPECT_EQ(schema->field(3)->name(), "timeframe_minutes");
     EXPECT_EQ(schema->field(4)->name(), "strategy_id");
     EXPECT_EQ(schema->field(5)->name(), "strategy_type");
-    EXPECT_EQ(schema->field(12)->name(), "atr");
-    EXPECT_EQ(schema->field(15)->name(), "market_regime");
+    EXPECT_EQ(schema->field(16)->name(), "kama");
+    EXPECT_EQ(schema->field(17)->name(), "atr");
+    EXPECT_EQ(schema->field(20)->name(), "market_regime");
 
     const auto dt_utc_column = table->GetColumnByName("dt_utc");
     ASSERT_NE(dt_utc_column, nullptr);
@@ -164,6 +170,7 @@ TEST(SubStrategyIndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicator
 
     const auto timeframe_column = table->GetColumnByName("timeframe_minutes");
     const auto strategy_id_column = table->GetColumnByName("strategy_id");
+    const auto analysis_offset_column = table->GetColumnByName("analysis_price_offset");
     const auto kama_column = table->GetColumnByName("kama");
     const auto atr_column = table->GetColumnByName("atr");
     const auto stop_loss_price_column = table->GetColumnByName("stop_loss_price");
@@ -171,6 +178,7 @@ TEST(SubStrategyIndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicator
     const auto regime_column = table->GetColumnByName("market_regime");
     ASSERT_NE(timeframe_column, nullptr);
     ASSERT_NE(strategy_id_column, nullptr);
+    ASSERT_NE(analysis_offset_column, nullptr);
     ASSERT_NE(kama_column, nullptr);
     ASSERT_NE(atr_column, nullptr);
     ASSERT_EQ(stop_loss_price_column, nullptr);
@@ -180,6 +188,8 @@ TEST(SubStrategyIndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicator
         std::static_pointer_cast<arrow::Int32Array>(timeframe_column->chunk(0));
     const auto strategy_id =
         std::static_pointer_cast<arrow::StringArray>(strategy_id_column->chunk(0));
+    const auto analysis_offset =
+        std::static_pointer_cast<arrow::DoubleArray>(analysis_offset_column->chunk(0));
     const auto kama = std::static_pointer_cast<arrow::DoubleArray>(kama_column->chunk(0));
     const auto atr = std::static_pointer_cast<arrow::DoubleArray>(atr_column->chunk(0));
     const auto regime = std::static_pointer_cast<arrow::StringArray>(regime_column->chunk(0));
@@ -187,6 +197,7 @@ TEST(SubStrategyIndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicator
     EXPECT_EQ(timeframe->Value(0), 1);
     EXPECT_EQ(timeframe->Value(1), 1);
     EXPECT_EQ(strategy_id->GetString(0), "open_1");
+    EXPECT_DOUBLE_EQ(analysis_offset->Value(0), 0.0);
     EXPECT_TRUE(kama->IsNull(0));
     EXPECT_TRUE(atr->IsNull(0));
     EXPECT_DOUBLE_EQ(kama->Value(1), 100.8);

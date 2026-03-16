@@ -44,6 +44,13 @@ NUMERIC_COLUMNS = [
     "er",
     "adx",
 ]
+ANALYSIS_COLUMNS = [
+    "analysis_bar_open",
+    "analysis_bar_high",
+    "analysis_bar_low",
+    "analysis_bar_close",
+    "analysis_price_offset",
+]
 TRADE_EVENT_COLUMNS = [
     "fill_seq",
     "trade_id",
@@ -67,8 +74,10 @@ MARKER_STYLE_MAP = {
     "Close": {"symbol": "diamond", "color": "#5f6b7a", "size": 11},
     "StopLoss": {"symbol": "x", "color": "#d62728", "size": 12},
     "TakeProfit": {"symbol": "star", "color": "#d4a017", "size": 13},
+    "RolloverOpen": {"symbol": "triangle-right", "color": "#1f77b4", "size": 12},
+    "RolloverClose": {"symbol": "triangle-left", "color": "#9467bd", "size": 12},
 }
-MARKER_TRACE_ORDER = ["Open", "Close", "StopLoss", "TakeProfit"]
+MARKER_TRACE_ORDER = ["Open", "Close", "StopLoss", "TakeProfit", "RolloverOpen", "RolloverClose"]
 MARKER_OFFSET_SCALE = 0.6
 
 
@@ -105,7 +114,9 @@ def normalize_trade_events(frame: pd.DataFrame) -> pd.DataFrame:
     return normalized[TRADE_EVENT_COLUMNS].copy()
 
 
-def load_trade_events(run: dict[str, Any], strategy_id: str, instrument_id: str) -> pd.DataFrame:
+def load_trade_events(
+    run: dict[str, Any], strategy_id: str, instrument_ids: Sequence[str]
+) -> pd.DataFrame:
     trade_csv = trades_csv_path(run)
     if trade_csv.exists():
         frame = pd.read_csv(trade_csv)
@@ -123,8 +134,10 @@ def load_trade_events(run: dict[str, Any], strategy_id: str, instrument_id: str)
     filtered = normalized.copy()
     filtered["strategy_id"] = filtered["strategy_id"].astype(str)
     filtered["symbol"] = filtered["symbol"].astype(str)
+    allowed_symbols = {str(symbol) for symbol in instrument_ids if str(symbol).strip()}
+    allowed_strategies = {str(strategy_id), "rollover"}
     filtered = filtered[
-        (filtered["strategy_id"] == str(strategy_id)) & (filtered["symbol"] == str(instrument_id))
+        filtered["strategy_id"].isin(allowed_strategies) & filtered["symbol"].isin(allowed_symbols)
     ].copy()
     if filtered.empty:
         return empty_trade_events_frame()
@@ -145,6 +158,10 @@ def normalize_clock_time(value: Any) -> str | None:
 def classify_marker_kind(signal_type: Any, offset: Any) -> str:
     signal_text = str(signal_type or "").casefold()
     offset_text = str(offset or "").casefold()
+    if signal_text == "rollover_close":
+        return "RolloverClose"
+    if signal_text == "rollover_open":
+        return "RolloverOpen"
     if "stop" in signal_text:
         return "StopLoss"
     if "takeprofit" in signal_text or "take_profit" in signal_text or "profit" in signal_text:
@@ -178,12 +195,34 @@ def build_marker_hover_html(group: pd.DataFrame, marker_kind: str) -> str:
     total_volume = group["volume"].fillna(0).sum()
     return (
         f"Time={first['event_bar_text']}<br>"
+        f"Instrument={first['symbol']}<br>"
         f"Type={marker_kind}<br>"
         f"Side={first['side']}<br>"
         f"Offset={first['offset']}<br>"
         f"Count={len(group)}<br>"
         f"TotalVolume={total_volume:g}<br>"
         + "<br>".join(details)
+    )
+
+
+def build_instrument_label(instrument_ids: Sequence[str]) -> str:
+    ordered = [str(instrument_id) for instrument_id in instrument_ids if str(instrument_id).strip()]
+    if not ordered:
+        return ""
+    if len(ordered) == 1:
+        return ordered[0]
+    if len(ordered) <= 4:
+        return "->".join(ordered)
+    return f"{ordered[0]}->{ordered[-1]} ({len(ordered)} instruments)"
+
+
+def emit_trade_marker_skip_warning(reason: str, rows: pd.DataFrame) -> None:
+    if rows.empty:
+        return
+    examples = ", ".join(rows["trade_id"].astype(str).head(5).tolist())
+    print(
+        f"trade markers skipped ({reason}): {len(rows)} rows; examples: {examples}",
+        file=sys.stderr,
     )
 
 
@@ -425,6 +464,28 @@ def prepare_plot_frame(
     working["ts_ns"] = pd.to_numeric(working["ts_ns"], errors="raise")
     for column in NUMERIC_COLUMNS:
         working[column] = pd.to_numeric(working[column], errors="coerce")
+    analysis_available = all(column in working.columns for column in ANALYSIS_COLUMNS)
+    if analysis_available:
+        for column in ANALYSIS_COLUMNS:
+            working[column] = pd.to_numeric(working[column], errors="coerce")
+
+    working["plot_bar_open"] = working["bar_open"]
+    working["plot_bar_high"] = working["bar_high"]
+    working["plot_bar_low"] = working["bar_low"]
+    working["plot_bar_close"] = working["bar_close"]
+    if analysis_available:
+        working["plot_bar_open"] = working["analysis_bar_open"].where(
+            working["analysis_bar_open"].notna(), working["bar_open"]
+        )
+        working["plot_bar_high"] = working["analysis_bar_high"].where(
+            working["analysis_bar_high"].notna(), working["bar_high"]
+        )
+        working["plot_bar_low"] = working["analysis_bar_low"].where(
+            working["analysis_bar_low"].notna(), working["bar_low"]
+        )
+        working["plot_bar_close"] = working["analysis_bar_close"].where(
+            working["analysis_bar_close"].notna(), working["bar_close"]
+        )
 
     working, selected_strategy = filter_unique_value(working, "strategy_id", strategy_id)
     working, selected_timeframe = filter_unique_value(
@@ -446,11 +507,15 @@ def prepare_plot_frame(
     working = working.sort_values("ts_ns", kind="stable").reset_index(drop=True)
     working["plot_index"] = list(range(len(working)))
     tickvals, ticktext = build_axis_ticks(working, timeframe_minutes=selected_timeframe)
+    instrument_ids = list(dict.fromkeys(working["instrument_id"].astype(str).tolist()))
 
     metadata = {
-        "instrument_id": str(working.get("instrument_id", pd.Series([""])).iloc[0]),
+        "instrument_id": instrument_ids[0] if instrument_ids else "",
+        "instrument_ids": instrument_ids,
+        "instrument_label": build_instrument_label(instrument_ids),
         "strategy_id": selected_strategy,
         "timeframe_minutes": selected_timeframe,
+        "uses_analysis_bars": analysis_available,
         "start_label": str(working["display_dt_text"].iloc[0]),
         "end_label": str(working["display_dt_text"].iloc[-1]),
         "tickvals": tickvals,
@@ -500,52 +565,87 @@ def prepare_trade_markers(
     for column in ("fill_seq", "volume", "price", "realized_pnl"):
         if column in working.columns:
             working[column] = pd.to_numeric(working[column], errors="coerce")
-    signal_local_dt = pd.to_datetime(working["signal_dt_local"], errors="coerce")
     trading_day_dt = pd.to_datetime(working["trading_day"], format="%Y%m%d", errors="coerce")
-    signal_time_text = signal_local_dt.dt.strftime("%H:%M:%S")
-    signal_time_text = signal_time_text.where(signal_local_dt.notna())
     fallback_time = working["update_time"].map(normalize_clock_time)
-    working["event_time_text"] = signal_time_text.fillna(fallback_time)
+    working["event_time_text"] = fallback_time
     working["event_display_dt"] = pd.to_datetime(
         trading_day_dt.dt.strftime("%Y-%m-%d") + " " + working["event_time_text"],
         format="%Y-%m-%d %H:%M:%S",
         errors="coerce",
     )
+    invalid_time_rows = working[working["event_display_dt"].isna()].copy()
+    emit_trade_marker_skip_warning("invalid trading_day/update_time", invalid_time_rows)
     working = working[working["event_display_dt"].notna()].copy()
     if working.empty:
         return pd.DataFrame()
 
     timeframe_minutes = int(metadata["timeframe_minutes"])
+    bar_lookup = frame[
+        [
+            "display_dt",
+            "display_dt_text",
+            "instrument_id",
+            "plot_index",
+            "plot_bar_low",
+            "plot_bar_high",
+            "plot_bar_close",
+            "atr",
+        ]
+    ].copy()
+    bar_lookup["bar_key"] = (
+        bar_lookup["instrument_id"].astype(str) + "|" + bar_lookup["display_dt_text"].astype(str)
+    )
+    available_bar_keys = set(bar_lookup["bar_key"].tolist())
+
     working["event_bar_dt"] = working["event_display_dt"].dt.floor(f"{timeframe_minutes}min")
     working["event_bar_text"] = working["event_bar_dt"].dt.strftime(DISPLAY_DT_FORMAT)
+    working["bar_key"] = working["symbol"].astype(str) + "|" + working["event_bar_text"].astype(str)
+    unmatched_mask = ~working["bar_key"].isin(available_bar_keys)
+    if unmatched_mask.any():
+        for row_index in working.index[unmatched_mask]:
+            row = working.loc[row_index]
+            signal_type = str(row.get("signal_type", ""))
+            if signal_type != "rollover_close":
+                continue
+            symbol = str(row["symbol"])
+            event_bar_dt = row["event_bar_dt"]
+            if pd.isna(event_bar_dt):
+                continue
+            candidates = bar_lookup[
+                (bar_lookup["instrument_id"].astype(str) == symbol)
+                & (bar_lookup["display_dt"] <= event_bar_dt)
+            ]
+            if candidates.empty:
+                continue
+            fallback = candidates.sort_values(["display_dt", "plot_index"], kind="stable").iloc[-1]
+            working.at[row_index, "event_bar_text"] = str(fallback["display_dt_text"])
+            working.at[row_index, "bar_key"] = (
+                f"{symbol}|{str(fallback['display_dt_text'])}"
+            )
+
+    unmatched_rows = working[~working["bar_key"].isin(available_bar_keys)].copy()
+    emit_trade_marker_skip_warning("no matching trace bar", unmatched_rows)
+    working = working[working["bar_key"].isin(available_bar_keys)].copy()
+    if working.empty:
+        return pd.DataFrame()
+
     working["marker_kind"] = [
         classify_marker_kind(signal_type, offset)
         for signal_type, offset in zip(working["signal_type"], working["offset"])
     ]
-
-    bar_lookup = frame[
-        [
-            "display_dt_text",
-            "plot_index",
-            "bar_low",
-            "bar_high",
-            "bar_close",
-            "atr",
-        ]
-    ].copy()
     working = working.merge(
         bar_lookup,
-        left_on="event_bar_text",
-        right_on="display_dt_text",
+        left_on=["symbol", "event_bar_text"],
+        right_on=["instrument_id", "display_dt_text"],
         how="inner",
     )
     if working.empty:
         return pd.DataFrame()
 
-    bar_low = pd.to_numeric(working["bar_low"], errors="coerce")
-    bar_high = pd.to_numeric(working["bar_high"], errors="coerce")
+    bar_low = pd.to_numeric(working["plot_bar_low"], errors="coerce")
+    bar_high = pd.to_numeric(working["plot_bar_high"], errors="coerce")
     atr = pd.to_numeric(working["atr"], errors="coerce").abs()
-    close = pd.to_numeric(working["bar_close"], errors="coerce").abs()
+    close = pd.to_numeric(working["plot_bar_close"], errors="coerce").abs()
     bar_range = (bar_high - bar_low).abs()
     y_offset = pd.concat([bar_range, atr, close * 0.001], axis=1).max(axis=1).fillna(1.0)
     y_offset = y_offset.where(y_offset > 0, 1.0) * MARKER_OFFSET_SCALE
@@ -631,6 +731,43 @@ def build_figure(
         ) from exc
 
     x_values = frame["plot_index"].tolist()
+    analysis_columns_present = all(column in frame.columns for column in ANALYSIS_COLUMNS)
+    uses_analysis_bars = bool(metadata.get("uses_analysis_bars")) or analysis_columns_present
+    plot_open = (
+        frame["plot_bar_open"]
+        if "plot_bar_open" in frame.columns
+        else frame["analysis_bar_open"].where(frame["analysis_bar_open"].notna(), frame["bar_open"])
+        if analysis_columns_present
+        else frame["bar_open"]
+    )
+    plot_high = (
+        frame["plot_bar_high"]
+        if "plot_bar_high" in frame.columns
+        else frame["analysis_bar_high"].where(frame["analysis_bar_high"].notna(), frame["bar_high"])
+        if analysis_columns_present
+        else frame["bar_high"]
+    )
+    plot_low = (
+        frame["plot_bar_low"]
+        if "plot_bar_low" in frame.columns
+        else frame["analysis_bar_low"].where(frame["analysis_bar_low"].notna(), frame["bar_low"])
+        if analysis_columns_present
+        else frame["bar_low"]
+    )
+    plot_close = (
+        frame["plot_bar_close"]
+        if "plot_bar_close" in frame.columns
+        else frame["analysis_bar_close"].where(
+            frame["analysis_bar_close"].notna(), frame["bar_close"]
+        )
+        if analysis_columns_present
+        else frame["bar_close"]
+    )
+    analysis_offset = (
+        frame["analysis_price_offset"]
+        if "analysis_price_offset" in frame.columns
+        else pd.Series([0.0] * len(frame))
+    )
     customdata = frame[
         [
             "instrument_id",
@@ -639,8 +776,14 @@ def build_figure(
             "market_regime",
             "bar_volume",
             "display_dt_text",
+            "bar_open",
+            "bar_high",
+            "bar_low",
+            "bar_close",
         ]
-    ].fillna("")
+    ].copy()
+    customdata["analysis_price_offset"] = analysis_offset
+    customdata = customdata.fillna("")
     customdata = customdata.to_numpy()
 
     fig = make_subplots(
@@ -659,23 +802,41 @@ def build_figure(
 
     hover_template = (
         "Time=%{customdata[5]}<br>"
-        "Open=%{open}<br>"
-        "High=%{high}<br>"
-        "Low=%{low}<br>"
-        "Close=%{close}<br>"
+        "Analysis Open=%{open}<br>"
+        "Analysis High=%{high}<br>"
+        "Analysis Low=%{low}<br>"
+        "Analysis Close=%{close}<br>"
+        "Raw Open=%{customdata[6]}<br>"
+        "Raw High=%{customdata[7]}<br>"
+        "Raw Low=%{customdata[8]}<br>"
+        "Raw Close=%{customdata[9]}<br>"
+        "Offset=%{customdata[10]}<br>"
         "Volume=%{customdata[4]}<br>"
         "Instrument=%{customdata[0]}<br>"
         "Strategy=%{customdata[1]}<br>"
         "Timeframe=%{customdata[2]}m<br>"
         "Regime=%{customdata[3]}<extra></extra>"
     )
+    if not uses_analysis_bars:
+        hover_template = (
+            "Time=%{customdata[5]}<br>"
+            "Open=%{open}<br>"
+            "High=%{high}<br>"
+            "Low=%{low}<br>"
+            "Close=%{close}<br>"
+            "Volume=%{customdata[4]}<br>"
+            "Instrument=%{customdata[0]}<br>"
+            "Strategy=%{customdata[1]}<br>"
+            "Timeframe=%{customdata[2]}m<br>"
+            "Regime=%{customdata[3]}<extra></extra>"
+        )
     fig.add_trace(
         go.Candlestick(
             x=x_values,
-            open=frame["bar_open"],
-            high=frame["bar_high"],
-            low=frame["bar_low"],
-            close=frame["bar_close"],
+            open=plot_open,
+            high=plot_high,
+            low=plot_low,
+            close=plot_close,
             name="OHLC",
             customdata=customdata,
             hovertemplate=hover_template,
@@ -726,7 +887,8 @@ def build_figure(
     start_label = metadata["start_label"]
     end_label = metadata["end_label"]
     title_text = (
-        f"Sub Strategy Trace: {metadata['instrument_id']} / {metadata['strategy_id']} / "
+        f"Sub Strategy Trace: {metadata.get('instrument_label', metadata['instrument_id'])} / "
+        f"{metadata['strategy_id']} / "
         f"{metadata['timeframe_minutes']}m / {run_id}<br>"
         f"<sup>{start_label} to {end_label}</sup>"
     )
@@ -798,7 +960,7 @@ def generate_chart(
     trade_events = load_trade_events(
         run,
         strategy_id=str(metadata["strategy_id"]),
-        instrument_id=str(metadata["instrument_id"]),
+        instrument_ids=metadata.get("instrument_ids", [str(metadata["instrument_id"])]),
     )
     if trade_events.empty and not has_trade_event_source(run):
         print("trade markers unavailable: no trades data found for selected run")

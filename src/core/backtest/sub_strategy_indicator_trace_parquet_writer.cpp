@@ -156,6 +156,8 @@ bool SubStrategyIndicatorTraceParquetWriter::Close(std::string* error) {
     arrow::StringBuilder instrument_id_builder;
     arrow::Int64Builder ts_ns_builder;
     arrow::StringBuilder dt_utc_builder;
+    arrow::StringBuilder trading_day_builder;
+    arrow::StringBuilder action_day_builder;
     arrow::Int32Builder timeframe_minutes_builder;
     arrow::StringBuilder strategy_id_builder;
     arrow::StringBuilder strategy_type_builder;
@@ -192,6 +194,10 @@ bool SubStrategyIndicatorTraceParquetWriter::Close(std::string* error) {
                 dt_utc_builder.Append(row.dt_utc.empty() ? FormatDateTimeFromEpochNs(row.ts_ns)
                                                          : row.dt_utc),
                                "failed appending dt_utc", error) ||
+            !ExpectArrowStatus(trading_day_builder.Append(row.trading_day),
+                               "failed appending trading_day", error) ||
+            !ExpectArrowStatus(action_day_builder.Append(row.action_day),
+                               "failed appending action_day", error) ||
             !ExpectArrowStatus(timeframe_minutes_builder.Append(
                                    row.timeframe_minutes > 0 ? row.timeframe_minutes : 1),
                                "failed appending timeframe_minutes", error) ||
@@ -233,6 +239,8 @@ bool SubStrategyIndicatorTraceParquetWriter::Close(std::string* error) {
     std::shared_ptr<arrow::Array> instrument_id_array;
     std::shared_ptr<arrow::Array> ts_ns_array;
     std::shared_ptr<arrow::Array> dt_utc_array;
+    std::shared_ptr<arrow::Array> trading_day_array;
+    std::shared_ptr<arrow::Array> action_day_array;
     std::shared_ptr<arrow::Array> timeframe_minutes_array;
     std::shared_ptr<arrow::Array> strategy_id_array;
     std::shared_ptr<arrow::Array> strategy_type_array;
@@ -255,6 +263,8 @@ bool SubStrategyIndicatorTraceParquetWriter::Close(std::string* error) {
     if (!FinishArray(&instrument_id_builder, "instrument_id", &instrument_id_array, error) ||
         !FinishArray(&ts_ns_builder, "ts_ns", &ts_ns_array, error) ||
         !FinishArray(&dt_utc_builder, "dt_utc", &dt_utc_array, error) ||
+        !FinishArray(&trading_day_builder, "trading_day", &trading_day_array, error) ||
+        !FinishArray(&action_day_builder, "action_day", &action_day_array, error) ||
         !FinishArray(&timeframe_minutes_builder, "timeframe_minutes", &timeframe_minutes_array,
                      error) ||
         !FinishArray(&strategy_id_builder, "strategy_id", &strategy_id_array, error) ||
@@ -286,6 +296,8 @@ bool SubStrategyIndicatorTraceParquetWriter::Close(std::string* error) {
         arrow::field("instrument_id", arrow::utf8(), false),
         arrow::field("ts_ns", arrow::int64(), false),
         arrow::field("dt_utc", arrow::utf8(), false),
+        arrow::field("trading_day", arrow::utf8(), false),
+        arrow::field("action_day", arrow::utf8(), false),
         arrow::field("timeframe_minutes", arrow::int32(), false),
         arrow::field("strategy_id", arrow::utf8(), false),
         arrow::field("strategy_type", arrow::utf8(), false),
@@ -310,6 +322,8 @@ bool SubStrategyIndicatorTraceParquetWriter::Close(std::string* error) {
                                     {instrument_id_array,
                                      ts_ns_array,
                                      dt_utc_array,
+                                     trading_day_array,
+                                     action_day_array,
                                      timeframe_minutes_array,
                                      strategy_id_array,
                                      strategy_type_array,

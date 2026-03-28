@@ -22,6 +22,8 @@ TRACE_COLUMNS = [
     "instrument_id",
     "ts_ns",
     "dt_utc",
+    "trading_day",
+    "action_day",
     "timeframe_minutes",
     "strategy_id",
     "strategy_type",
@@ -108,11 +110,16 @@ def make_trace_row(
     adx: str = "25.6",
     er: str = "0.45",
     instrument_id: str = "c2405",
+    trading_day: str | None = None,
+    action_day: str | None = None,
 ) -> dict[str, str]:
+    normalized_day = dt_utc.split(" ", maxsplit=1)[0].replace("-", "")
     return {
         "instrument_id": instrument_id,
         "ts_ns": str(ts_ns),
         "dt_utc": dt_utc,
+        "trading_day": trading_day or normalized_day,
+        "action_day": action_day or normalized_day,
         "timeframe_minutes": str(timeframe_minutes),
         "strategy_id": strategy_id,
         "strategy_type": "KamaTrendStrategy",
@@ -220,14 +227,34 @@ def write_run(
 
 
 class PlotSubTracePlotlyTest(unittest.TestCase):
-    def test_prepare_plot_frame_orders_by_ts_ns_not_display_time(self) -> None:
+    def test_prepare_plot_frame_orders_by_action_day_and_display_time(self) -> None:
         module = load_script_module()
         frame = pd.DataFrame(
             [
-                make_trace_row("2024-01-03 22:55", 100),
-                make_trace_row("2024-01-03 23:00", 200),
-                make_trace_row("2024-01-03 09:00", 300),
-                make_trace_row("2024-01-03 09:05", 400),
+                make_trace_row(
+                    "2024-01-04 22:55",
+                    100,
+                    trading_day="20240105",
+                    action_day="20240104",
+                ),
+                make_trace_row(
+                    "2024-01-04 23:00",
+                    200,
+                    trading_day="20240105",
+                    action_day="20240104",
+                ),
+                make_trace_row(
+                    "2024-01-04 09:00",
+                    300,
+                    trading_day="20240105",
+                    action_day="20240105",
+                ),
+                make_trace_row(
+                    "2024-01-04 09:05",
+                    400,
+                    trading_day="20240105",
+                    action_day="20240105",
+                ),
             ]
         )
 
@@ -242,14 +269,49 @@ class PlotSubTracePlotlyTest(unittest.TestCase):
         self.assertEqual(
             prepared["display_dt_text"].tolist(),
             [
-                "2024-01-03 22:55",
-                "2024-01-03 23:00",
+                "2024-01-04 22:55",
+                "2024-01-04 23:00",
+                "2024-01-05 09:00",
+                "2024-01-05 09:05",
+            ],
+        )
+        self.assertEqual(prepared["plot_index"].tolist(), [0, 1, 2, 3])
+        self.assertEqual(metadata["start_label"], "2024-01-04 22:55")
+        self.assertEqual(metadata["end_label"], "2024-01-05 09:05")
+
+    def test_prepare_plot_frame_legacy_trace_falls_back_to_night_session_action_day(self) -> None:
+        module = load_script_module()
+        frame = (
+            pd.DataFrame(
+                [
+                    make_trace_row("2024-01-03 22:55", 100),
+                    make_trace_row("2024-01-03 23:00", 200),
+                    make_trace_row("2024-01-03 09:00", 300),
+                    make_trace_row("2024-01-03 09:05", 400),
+                ]
+            )
+            .drop(columns=["trading_day", "action_day"])
+            .copy()
+        )
+
+        prepared, metadata = module.prepare_plot_frame(
+            frame,
+            strategy_id=None,
+            timeframe_minutes=None,
+            start=None,
+            end=None,
+        )
+
+        self.assertEqual(
+            prepared["display_dt_text"].tolist(),
+            [
+                "2024-01-02 22:55",
+                "2024-01-02 23:00",
                 "2024-01-03 09:00",
                 "2024-01-03 09:05",
             ],
         )
-        self.assertEqual(prepared["plot_index"].tolist(), [0, 1, 2, 3])
-        self.assertEqual(metadata["start_label"], "2024-01-03 22:55")
+        self.assertEqual(metadata["start_label"], "2024-01-02 22:55")
         self.assertEqual(metadata["end_label"], "2024-01-03 09:05")
 
     def test_build_axis_ticks_marks_boundaries_and_thins_labels(self) -> None:
@@ -476,7 +538,13 @@ class PlotSubTracePlotlyTest(unittest.TestCase):
             pd.DataFrame(
                 [
                     make_trace_row("2024-03-29 14:55", 100, instrument_id="c2405"),
-                    make_trace_row("2024-04-01 21:00", 200, instrument_id="c2407"),
+                    make_trace_row(
+                        "2024-04-01 21:00",
+                        200,
+                        instrument_id="c2407",
+                        trading_day="20240401",
+                        action_day="20240331",
+                    ),
                 ]
             ),
             strategy_id=None,
@@ -522,7 +590,7 @@ class PlotSubTracePlotlyTest(unittest.TestCase):
 
         self.assertEqual(markers["plot_index"].tolist(), [0, 1])
         self.assertEqual(markers["marker_kind"].tolist(), ["RolloverClose", "RolloverOpen"])
-        self.assertEqual(markers["event_bar_text"].tolist(), ["2024-03-29 14:55", "2024-04-01 21:00"])
+        self.assertEqual(markers["event_bar_text"].tolist(), ["2024-03-29 14:55", "2024-03-31 21:00"])
 
     def test_prepare_trade_markers_classifies_rollover_markers(self) -> None:
         module = load_script_module()
@@ -616,14 +684,24 @@ class PlotSubTracePlotlyTest(unittest.TestCase):
         self.assertEqual(markers["plot_index"].tolist(), [2])
         self.assertEqual(markers["event_bar_text"].tolist(), ["2024-01-11 13:30"])
 
-    def test_prepare_trade_markers_maps_night_session_execution_to_trading_day_bar(self) -> None:
+    def test_prepare_trade_markers_maps_night_session_execution_to_action_day_bar(self) -> None:
         module = load_script_module()
         frame, metadata = module.prepare_plot_frame(
             pd.DataFrame(
                 [
                     make_trace_row("2024-01-31 15:00", 100),
-                    make_trace_row("2024-02-01 21:00", 200),
-                    make_trace_row("2024-02-01 21:05", 300),
+                    make_trace_row(
+                        "2024-02-01 21:00",
+                        200,
+                        trading_day="20240201",
+                        action_day="20240131",
+                    ),
+                    make_trace_row(
+                        "2024-02-01 21:05",
+                        300,
+                        trading_day="20240201",
+                        action_day="20240131",
+                    ),
                 ]
             ),
             strategy_id=None,
@@ -654,9 +732,9 @@ class PlotSubTracePlotlyTest(unittest.TestCase):
         )
 
         self.assertEqual(markers["plot_index"].tolist(), [1])
-        self.assertEqual(markers["event_bar_text"].tolist(), ["2024-02-01 21:00"])
+        self.assertEqual(markers["event_bar_text"].tolist(), ["2024-01-31 21:00"])
 
-    def test_prepare_trade_markers_falls_back_to_trading_day_when_fill_time_uses_action_day(self) -> None:
+    def test_prepare_trade_markers_legacy_trace_infers_action_day_for_night_session_bar(self) -> None:
         module = load_script_module()
         frame, metadata = module.prepare_plot_frame(
             pd.DataFrame(
@@ -664,7 +742,9 @@ class PlotSubTracePlotlyTest(unittest.TestCase):
                     make_trace_row("2024-05-13 21:55", 100, instrument_id="c2407"),
                     make_trace_row("2024-05-13 22:00", 200, instrument_id="c2407"),
                 ]
-            ),
+            )
+            .drop(columns=["trading_day", "action_day"])
+            .copy(),
             strategy_id=None,
             timeframe_minutes=None,
             start=None,
@@ -694,16 +774,28 @@ class PlotSubTracePlotlyTest(unittest.TestCase):
         )
 
         self.assertEqual(markers["plot_index"].tolist(), [0])
-        self.assertEqual(markers["event_bar_text"].tolist(), ["2024-05-13 21:55"])
+        self.assertEqual(markers["event_bar_text"].tolist(), ["2024-05-12 21:55"])
         self.assertEqual(markers["marker_kind"].tolist(), ["Open"])
 
-    def test_prepare_trade_markers_does_not_use_fill_date_when_action_day_bar_exists(self) -> None:
+    def test_prepare_trade_markers_prefers_explicit_action_day_bar_when_present(self) -> None:
         module = load_script_module()
         frame, metadata = module.prepare_plot_frame(
             pd.DataFrame(
                 [
-                    make_trace_row("2024-05-12 21:55", 100, instrument_id="c2407"),
-                    make_trace_row("2024-05-13 21:55", 200, instrument_id="c2407"),
+                    make_trace_row(
+                        "2024-05-12 21:55",
+                        100,
+                        instrument_id="c2407",
+                        trading_day="20240513",
+                        action_day="20240512",
+                    ),
+                    make_trace_row(
+                        "2024-05-13 21:55",
+                        200,
+                        instrument_id="c2407",
+                        trading_day="20240514",
+                        action_day="20240513",
+                    ),
                 ]
             ),
             strategy_id=None,
@@ -734,8 +826,8 @@ class PlotSubTracePlotlyTest(unittest.TestCase):
             metadata,
         )
 
-        self.assertEqual(markers["plot_index"].tolist(), [1])
-        self.assertEqual(markers["event_bar_text"].tolist(), ["2024-05-13 21:55"])
+        self.assertEqual(markers["plot_index"].tolist(), [0])
+        self.assertEqual(markers["event_bar_text"].tolist(), ["2024-05-12 21:55"])
 
     def test_prepare_trade_markers_skips_unmatched_bar_and_warns(self) -> None:
         module = load_script_module()

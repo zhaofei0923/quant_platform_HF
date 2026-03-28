@@ -1292,20 +1292,24 @@ inline EpochNanos ReplayMinuteStartEpochNs(const std::string& minute_key) {
     return ToEpochNs(trading_day, update_time.str(), 0);
 }
 
-inline std::string ReplayMinuteToDisplayDateTime(const std::string& minute_key) {
+inline std::string ReplayMinuteToDisplayDateTime(const std::string& minute_key,
+                                                 const std::string& action_day = "") {
     std::string trading_day;
     int minute_of_day = 0;
     if (!ParseReplayMinuteValue(minute_key, &trading_day, &minute_of_day)) {
         return "";
     }
-    if (trading_day.size() != 8) {
+    const std::string display_day = NormalizeTradingDay(action_day).empty()
+                                        ? trading_day
+                                        : NormalizeTradingDay(action_day);
+    if (display_day.size() != 8) {
         return "";
     }
     const int hour = minute_of_day / 60;
     const int minute = minute_of_day % 60;
     std::ostringstream oss;
-    oss << trading_day.substr(0, 4) << '-' << trading_day.substr(4, 2) << '-'
-        << trading_day.substr(6, 2) << ' ' << std::setw(2) << std::setfill('0') << hour << ':'
+    oss << display_day.substr(0, 4) << '-' << display_day.substr(4, 2) << '-'
+        << display_day.substr(6, 2) << ' ' << std::setw(2) << std::setfill('0') << hour << ':'
         << std::setw(2) << std::setfill('0') << minute;
     return oss.str();
 }
@@ -4447,12 +4451,21 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 SubStrategyIndicatorTraceRow row;
                 row.instrument_id = state.instrument_id;
                 row.ts_ns = state.ts_ns;
+                row.trading_day = detail::NormalizeTradingDay(bar.trading_day);
+                if (row.trading_day.empty()) {
+                    row.trading_day = detail::NormalizeTradingDay(last.trading_day);
+                }
+                if (row.trading_day.empty()) {
+                    row.trading_day = detail::TradingDayFromEpochNs(state.ts_ns);
+                }
+                row.action_day =
+                    detail::ResolveActionDay(row.trading_day, bar.action_day, last.update_time);
                 if (state.timeframe_minutes > 1) {
-                    row.dt_utc = detail::ReplayMinuteToDisplayDateTime(bar.minute);
+                    row.dt_utc = detail::ReplayMinuteToDisplayDateTime(bar.minute, row.action_day);
                 }
                 if (row.dt_utc.empty()) {
                     row.dt_utc = detail::TickDateTimeFromTickFields(
-                        last.trading_day, last.update_time, last.update_millisec, state.ts_ns);
+                        row.action_day, last.update_time, last.update_millisec, state.ts_ns);
                 }
                 row.timeframe_minutes = state.timeframe_minutes;
                 row.strategy_id = atomic_trace.strategy_id;

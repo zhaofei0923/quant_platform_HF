@@ -155,6 +155,43 @@ def normalize_clock_time(value: Any) -> str | None:
     return text if len(text) == 8 else None
 
 
+def normalize_day_text(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    digits = "".join(character for character in text if character.isdigit())
+    return digits if len(digits) == 8 else None
+
+
+def format_day_text(day_text: str) -> str:
+    return f"{day_text[:4]}-{day_text[4:6]}-{day_text[6:8]}"
+
+
+def infer_legacy_action_day(raw_dt: pd.Timestamp) -> str:
+    display_dt = raw_dt - pd.Timedelta(days=1) if raw_dt.hour >= 20 else raw_dt
+    return display_dt.strftime("%Y%m%d")
+
+
+def build_trace_display_dt_text(dt_value: Any, action_day: Any) -> str:
+    raw_dt = pd.to_datetime(str(dt_value), format=DISPLAY_DT_FORMAT, errors="raise")
+    normalized_action_day = normalize_day_text(action_day)
+    if normalized_action_day is None:
+        normalized_action_day = infer_legacy_action_day(raw_dt)
+    return f"{format_day_text(normalized_action_day)} {raw_dt.strftime('%H:%M')}"
+
+
+def build_trade_event_display_dt(day_value: Any, update_time: Any) -> pd.Timestamp | pd.NaT:
+    normalized_day = normalize_day_text(day_value)
+    normalized_time = normalize_clock_time(update_time)
+    if normalized_day is None or normalized_time is None:
+        return pd.NaT
+    return pd.to_datetime(
+        f"{format_day_text(normalized_day)} {normalized_time}",
+        format="%Y-%m-%d %H:%M:%S",
+        errors="coerce",
+    )
+
+
 def classify_marker_kind(signal_type: Any, offset: Any) -> str:
     signal_text = str(signal_type or "").casefold()
     offset_text = str(offset or "").casefold()
@@ -457,7 +494,13 @@ def prepare_plot_frame(
     working = frame.copy()
     require_columns(working, REQUIRED_COLUMNS)
 
-    working["display_dt_text"] = working["dt_utc"].astype(str)
+    action_day_series = (
+        working["action_day"] if "action_day" in working.columns else pd.Series([""] * len(working))
+    )
+    working["display_dt_text"] = [
+        build_trace_display_dt_text(dt_value, action_day)
+        for dt_value, action_day in zip(working["dt_utc"], action_day_series)
+    ]
     working["display_dt"] = pd.to_datetime(
         working["display_dt_text"], format=DISPLAY_DT_FORMAT, errors="raise"
     )
@@ -504,7 +547,9 @@ def prepare_plot_frame(
     if working.empty:
         raise ValueError("no trace rows remain after applying filters")
 
-    working = working.sort_values("ts_ns", kind="stable").reset_index(drop=True)
+    working = working.sort_values(["display_dt", "ts_ns", "instrument_id"], kind="stable").reset_index(
+        drop=True
+    )
     working["plot_index"] = list(range(len(working)))
     tickvals, ticktext = build_axis_ticks(working, timeframe_minutes=selected_timeframe)
     instrument_ids = list(dict.fromkeys(working["instrument_id"].astype(str).tolist()))
@@ -565,13 +610,18 @@ def prepare_trade_markers(
     for column in ("fill_seq", "volume", "price", "realized_pnl"):
         if column in working.columns:
             working[column] = pd.to_numeric(working[column], errors="coerce")
-    trading_day_dt = pd.to_datetime(working["trading_day"], format="%Y%m%d", errors="coerce")
     fallback_time = working["update_time"].map(normalize_clock_time)
     working["event_time_text"] = fallback_time
-    working["event_display_dt"] = pd.to_datetime(
-        trading_day_dt.dt.strftime("%Y-%m-%d") + " " + working["event_time_text"],
-        format="%Y-%m-%d %H:%M:%S",
-        errors="coerce",
+    working["action_event_display_dt"] = [
+        build_trade_event_display_dt(action_day, update_time)
+        for action_day, update_time in zip(working["action_day"], working["update_time"])
+    ]
+    working["trading_event_display_dt"] = [
+        build_trade_event_display_dt(trading_day, update_time)
+        for trading_day, update_time in zip(working["trading_day"], working["update_time"])
+    ]
+    working["event_display_dt"] = working["action_event_display_dt"].where(
+        working["action_event_display_dt"].notna(), working["trading_event_display_dt"]
     )
     invalid_time_rows = working[working["event_display_dt"].isna()].copy()
     emit_trade_marker_skip_warning("invalid trading_day/update_time", invalid_time_rows)
@@ -604,6 +654,17 @@ def prepare_trade_markers(
     if unmatched_mask.any():
         for row_index in working.index[unmatched_mask]:
             row = working.loc[row_index]
+            alternate_event_display_dt = row["trading_event_display_dt"]
+            if pd.notna(alternate_event_display_dt):
+                alternate_event_bar_dt = alternate_event_display_dt.floor(f"{timeframe_minutes}min")
+                alternate_event_bar_text = alternate_event_bar_dt.strftime(DISPLAY_DT_FORMAT)
+                alternate_bar_key = f"{str(row['symbol'])}|{alternate_event_bar_text}"
+                if alternate_bar_key in available_bar_keys:
+                    working.at[row_index, "event_display_dt"] = alternate_event_display_dt
+                    working.at[row_index, "event_bar_dt"] = alternate_event_bar_dt
+                    working.at[row_index, "event_bar_text"] = alternate_event_bar_text
+                    working.at[row_index, "bar_key"] = alternate_bar_key
+                    continue
             signal_type = str(row.get("signal_type", ""))
             if signal_type != "rollover_close":
                 continue

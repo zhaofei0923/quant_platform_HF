@@ -194,6 +194,21 @@ std::filesystem::path WriteInstrumentSwitchReplayCsv(const std::string& stem) {
     return path;
 }
 
+std::filesystem::path WriteNightSessionReplayCsv(const std::string& stem) {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto path =
+        std::filesystem::temp_directory_path() / (stem + "_" + std::to_string(stamp) + ".csv");
+    std::ofstream out(path);
+    out << "InstrumentID,TradingDay,UpdateTime,UpdateMillisec,LastPrice,Volume,BidPrice1,"
+           "BidVolume1,AskPrice1,AskVolume1\n";
+    out << "rb2405,20240103,21:00:00,0,100,100,99,20,101,18\n";
+    out << "rb2405,20240103,21:00:01,0,101,101,100,21,102,19\n";
+    out << "rb2405,20240103,21:01:00,0,102,102,101,22,103,20\n";
+    out << "rb2405,20240103,21:01:01,0,103,103,102,23,104,21\n";
+    out.close();
+    return path;
+}
+
 std::filesystem::path WriteFlatReplayCsv(const std::string& stem, double price = 100.0) {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto path =
@@ -1813,10 +1828,49 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecSubStrategyTraceWritesCsvWhenPath
     const std::vector<std::string> lines = ReadLines(trace_path);
     ASSERT_GE(lines.size(), 2U);
     EXPECT_EQ(lines.front(),
-              "instrument_id,ts_ns,dt_utc,timeframe_minutes,strategy_id,strategy_type,bar_open,"
-              "bar_high,bar_low,bar_close,bar_volume,analysis_bar_open,analysis_bar_high,"
-              "analysis_bar_low,analysis_bar_close,analysis_price_offset,kama,atr,adx,er,"
-              "stop_loss_price,take_profit_price,market_regime");
+              "instrument_id,ts_ns,dt_utc,trading_day,action_day,timeframe_minutes,strategy_id,"
+              "strategy_type,bar_open,bar_high,bar_low,bar_close,bar_volume,"
+              "analysis_bar_open,analysis_bar_high,analysis_bar_low,analysis_bar_close,"
+              "analysis_price_offset,kama,atr,adx,er,stop_loss_price,take_profit_price,"
+              "market_regime");
+
+    std::filesystem::remove(csv_path, ec);
+    std::filesystem::remove(composite_path, ec);
+    std::filesystem::remove(trace_path, ec);
+}
+
+TEST(BacktestReplaySupportTest,
+     RunBacktestSpecSubStrategyTraceUsesActionDayForNightSessionDisplayTime) {
+    const std::filesystem::path csv_path =
+        WriteNightSessionReplayCsv("quant_hft_sub_strategy_trace_night_session");
+    const std::filesystem::path composite_path = WriteTempCompositeConfig();
+    const std::filesystem::path trace_path =
+        std::filesystem::temp_directory_path() / "quant_hft_sub_strategy_trace_night_session.csv";
+    std::error_code ec;
+    std::filesystem::remove(trace_path, ec);
+
+    BacktestCliSpec spec;
+    spec.engine_mode = "csv";
+    spec.csv_path = csv_path.string();
+    spec.run_id = "sub-strategy-trace-night-session-test";
+    spec.strategy_factory = "composite";
+    spec.strategy_composite_config = composite_path.string();
+    spec.emit_sub_strategy_indicator_trace = true;
+    spec.sub_strategy_indicator_trace_path = trace_path.string();
+    spec.max_ticks = 4;
+
+    BacktestCliResult result;
+    std::string error;
+    ASSERT_TRUE(RunBacktestSpec(spec, &result, &error)) << error;
+    ASSERT_TRUE(std::filesystem::exists(trace_path));
+
+    const std::vector<std::string> lines = ReadLines(trace_path);
+    ASSERT_GE(lines.size(), 2U);
+    const std::vector<std::string> fields = SplitCsvLine(lines[1]);
+    ASSERT_GE(fields.size(), 6U);
+    EXPECT_EQ(fields[2], "2024-01-02 21:00");
+    EXPECT_EQ(fields[3], "20240103");
+    EXPECT_EQ(fields[4], "20240102");
 
     std::filesystem::remove(csv_path, ec);
     std::filesystem::remove(composite_path, ec);

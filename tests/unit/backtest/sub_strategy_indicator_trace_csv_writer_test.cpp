@@ -58,6 +58,8 @@ TEST(SubStrategyIndicatorTraceCsvWriterTest, WritesHeaderAndOptionalRiskColumns)
     row0.instrument_id = "rb2405";
     row0.ts_ns = 1700000000000000000LL;
     row0.dt_utc = "2023-11-14 22:13:20";
+    row0.trading_day = "20231115";
+    row0.action_day = "20231114";
     row0.strategy_id = "open_1";
     row0.strategy_type = "TrendStrategy";
     row0.bar_open = 100.0;
@@ -90,16 +92,18 @@ TEST(SubStrategyIndicatorTraceCsvWriterTest, WritesHeaderAndOptionalRiskColumns)
     const std::vector<std::string> lines = ReadLines(path);
     ASSERT_EQ(lines.size(), 3U);
     EXPECT_EQ(lines[0],
-              "instrument_id,ts_ns,dt_utc,timeframe_minutes,strategy_id,strategy_type,bar_open,"
-              "bar_high,bar_low,bar_close,bar_volume,analysis_bar_open,analysis_bar_high,"
-              "analysis_bar_low,analysis_bar_close,analysis_price_offset,kama,atr,adx,er,"
-              "stop_loss_price,take_profit_price,market_regime");
+              "instrument_id,ts_ns,dt_utc,trading_day,action_day,timeframe_minutes,strategy_id,"
+              "strategy_type,bar_open,bar_high,bar_low,bar_close,bar_volume,"
+              "analysis_bar_open,analysis_bar_high,analysis_bar_low,analysis_bar_close,"
+              "analysis_price_offset,kama,atr,adx,er,stop_loss_price,take_profit_price,"
+              "market_regime");
     EXPECT_EQ(lines[1],
-              "rb2405,1700000000000000000,2023-11-14 22:13:20,1,open_1,TrendStrategy,100,101,99,"
-              "100.5,10,100,101,99,100.5,0,,,,,,,kUnknown");
+              "rb2405,1700000000000000000,2023-11-14 22:13:20,20231115,20231114,1,open_1,"
+              "TrendStrategy,100,101,99,100.5,10,100,101,99,100.5,0,,,,,,,kUnknown");
     EXPECT_EQ(lines[2],
-              "rb2405,1700000060000000000,2023-11-14 22:14:20,1,open_1,TrendStrategy,100,101,99,"
-              "100.5,10,100,101,99,100.5,0,100.8,1.2,25.4,0.55,95,110,kWeakTrend");
+              "rb2405,1700000060000000000,2023-11-14 22:14:20,20231115,20231114,1,open_1,"
+              "TrendStrategy,100,101,99,100.5,10,100,101,99,100.5,0,100.8,1.2,25.4,0.55,95,"
+              "110,kWeakTrend");
 
     std::filesystem::remove(path, ec);
 }

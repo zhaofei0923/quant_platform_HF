@@ -1,0 +1,182 @@
+# Dataset replay calendar for parquet_v2 main-contract backtests.
+# `last_trading_day` is the final replayable trading day present in the dataset for each
+# canonical contract, not the exchange delivery expiry date.
+contracts:
+  c2303:
+    last_trading_day: 20230131
+  c2305:
+    last_trading_day: 20230331
+  c2307:
+    last_trading_day: 20230531
+  c2309:
+    last_trading_day: 20230731
+  c2311:
+    last_trading_day: 20230928
+  c2401:
+    last_trading_day: 20231130
+  c2405:
+    last_trading_day: 20240329
+  c2407:
+    last_trading_day: 20240531
+  c2409:
+    last_trading_day: 20240731
+  c2411:
+    last_trading_day: 20240930
+  c2501:
+    last_trading_day: 20241129
+  c2505:
+    last_trading_day: 20250331
+  c2507:
+    last_trading_day: 20250530
+  c2509:
+    last_trading_day: 20250731
+  c2511:
+    last_trading_day: 20250930
+  c2601:
+    last_trading_day: 20251114
+  eg2305:
+    last_trading_day: 20230331
+  eg2309:
+    last_trading_day: 20230731
+  eg2401:
+    last_trading_day: 20231130
+  eg2405:
+    last_trading_day: 20240329
+  eg2409:
+    last_trading_day: 20240731
+  eg2501:
+    last_trading_day: 20241129
+  eg2505:
+    last_trading_day: 20250331
+  eg2509:
+    last_trading_day: 20250731
+  eg2601:
+    last_trading_day: 20251114
+  hc2305:
+    last_trading_day: 20230331
+  hc2310:
+    last_trading_day: 20230831
+  hc2401:
+    last_trading_day: 20231130
+  hc2405:
+    last_trading_day: 20240329
+  hc2410:
+    last_trading_day: 20240830
+  hc2501:
+    last_trading_day: 20241129
+  hc2503:
+    last_trading_day: 20241231
+  hc2505:
+    last_trading_day: 20250213
+  m2305:
+    last_trading_day: 20230331
+  m2309:
+    last_trading_day: 20230731
+  m2401:
+    last_trading_day: 20231130
+  m2405:
+    last_trading_day: 20240329
+  m2409:
+    last_trading_day: 20240731
+  m2501:
+    last_trading_day: 20241031
+  m2505:
+    last_trading_day: 20250331
+  m2509:
+    last_trading_day: 20250731
+  m2601:
+    last_trading_day: 20251114
+  ma2509:
+    last_trading_day: 20250731
+  ma2601:
+    last_trading_day: 20251114
+  ma305:
+    last_trading_day: 20230331
+  ma309:
+    last_trading_day: 20230731
+  ma401:
+    last_trading_day: 20231130
+  ma405:
+    last_trading_day: 20240329
+  ma409:
+    last_trading_day: 20240731
+  ma501:
+    last_trading_day: 20241129
+  ma505:
+    last_trading_day: 20250331
+  ma509:
+    last_trading_day: 20250430
+  pp2305:
+    last_trading_day: 20230331
+  pp2309:
+    last_trading_day: 20230731
+  pp2401:
+    last_trading_day: 20231130
+  pp2405:
+    last_trading_day: 20240329
+  pp2409:
+    last_trading_day: 20240731
+  pp2501:
+    last_trading_day: 20241129
+  pp2505:
+    last_trading_day: 20250331
+  pp2509:
+    last_trading_day: 20250731
+  pp2601:
+    last_trading_day: 20251114
+  rb2305:
+    last_trading_day: 20230331
+  rb2310:
+    last_trading_day: 20230831
+  rb2401:
+    last_trading_day: 20231130
+  rb2405:
+    last_trading_day: 20240329
+  rb2410:
+    last_trading_day: 20240830
+  rb2501:
+    last_trading_day: 20241129
+  rb2505:
+    last_trading_day: 20250331
+  rb2510:
+    last_trading_day: 20250829
+  rb2601:
+    last_trading_day: 20251114
+  ta2509:
+    last_trading_day: 20250731
+  ta2601:
+    last_trading_day: 20251114
+  ta305:
+    last_trading_day: 20230331
+  ta309:
+    last_trading_day: 20230731
+  ta401:
+    last_trading_day: 20231130
+  ta405:
+    last_trading_day: 20240329
+  ta409:
+    last_trading_day: 20240731
+  ta501:
+    last_trading_day: 20241129
+  ta505:
+    last_trading_day: 20250331
+  ta509:
+    last_trading_day: 20250430
+  v2305:
+    last_trading_day: 20230331
+  v2309:
+    last_trading_day: 20230731
+  v2401:
+    last_trading_day: 20231130
+  v2405:
+    last_trading_day: 20240329
+  v2409:
+    last_trading_day: 20240830
+  v2501:
+    last_trading_day: 20241129
+  v2505:
+    last_trading_day: 20250331
+  v2509:
+    last_trading_day: 20250731
+  v2601:
+    last_trading_day: 20251114

@@ -418,29 +418,68 @@ def parse_optional_time(value: str | None, name: str) -> pd.Timestamp | None:
         raise ValueError(f"{name} must match YYYY-MM-DD HH:MM: {value}") from exc
 
 
+def build_natural_tick_positions(frame: pd.DataFrame) -> list[int]:
+    if frame.empty:
+        return []
+
+    positions = [0, len(frame) - 1]
+    display_dt = frame["display_dt"].reset_index(drop=True)
+    seen_month_starts: set[tuple[int, int]] = set()
+    seen_month_mids: set[tuple[int, int]] = set()
+
+    for index, dt_value in enumerate(display_dt):
+        month_key = (int(dt_value.year), int(dt_value.month))
+        if month_key not in seen_month_starts:
+            positions.append(index)
+            seen_month_starts.add(month_key)
+        if dt_value.day >= 15 and month_key not in seen_month_mids:
+            positions.append(index)
+            seen_month_mids.add(month_key)
+
+    if "instrument_id" in frame.columns:
+        instruments = frame["instrument_id"].astype(str).reset_index(drop=True)
+        for index in range(1, len(instruments)):
+            if instruments.iloc[index] != instruments.iloc[index - 1]:
+                positions.append(index)
+
+    return sorted(dict.fromkeys(int(position) for position in positions))
+
+
+def build_session_boundary_tick_positions(frame: pd.DataFrame, timeframe_minutes: int) -> list[int]:
+    if frame.empty:
+        return []
+
+    expected_gap = pd.Timedelta(minutes=timeframe_minutes)
+    positions = [0, len(frame) - 1]
+    display_dt = frame["display_dt"].reset_index(drop=True)
+    for index in range(1, len(frame)):
+        gap = display_dt.iloc[index] - display_dt.iloc[index - 1]
+        if gap <= pd.Timedelta(0) or gap != expected_gap:
+            positions.extend([index - 1, index])
+    return sorted(dict.fromkeys(int(position) for position in positions))
+
+
 def thin_tick_positions(positions: Sequence[int], max_ticks: int) -> list[int]:
     ordered = sorted(dict.fromkeys(int(position) for position in positions))
     if len(ordered) <= max_ticks:
         return ordered
-    if max_ticks <= 1:
-        return ordered[:1]
+    if max_ticks <= 0:
+        return []
+    if max_ticks == 1:
+        return [ordered[len(ordered) // 2]]
     if max_ticks == 2:
         return [ordered[0], ordered[-1]]
 
-    middle = ordered[1:-1]
-    slots = max_ticks - 2
-    if not middle or slots <= 0:
-        return [ordered[0], ordered[-1]]
-
-    selected = [ordered[0]]
-    if slots == 1:
-        selected.append(middle[len(middle) // 2])
-    else:
-        for slot in range(slots):
-            middle_index = round(slot * (len(middle) - 1) / (slots - 1))
-            selected.append(middle[middle_index])
-    selected.append(ordered[-1])
-    return sorted(dict.fromkeys(selected))
+    selected = []
+    last_value: int | None = None
+    for slot in range(max_ticks):
+        ordered_index = round(slot * (len(ordered) - 1) / (max_ticks - 1))
+        value = ordered[ordered_index]
+        if last_value == value:
+            continue
+        selected.append(value)
+        last_value = value
+    return selected
 
 
 def build_axis_ticks(
@@ -449,15 +488,24 @@ def build_axis_ticks(
     if frame.empty:
         return [], []
 
-    expected_gap = pd.Timedelta(minutes=timeframe_minutes)
-    candidate_positions: list[int] = [0, len(frame) - 1]
-    display_dt = frame["display_dt"].reset_index(drop=True)
-    for index in range(1, len(frame)):
-        gap = display_dt.iloc[index] - display_dt.iloc[index - 1]
-        if gap <= pd.Timedelta(0) or gap != expected_gap:
-            candidate_positions.extend([index - 1, index])
+    natural_positions = build_natural_tick_positions(frame)
+    chosen_positions = thin_tick_positions(natural_positions, max_ticks)
 
-    chosen_positions = thin_tick_positions(candidate_positions, max_ticks)
+    if len(chosen_positions) < max_ticks:
+        boundary_positions = build_session_boundary_tick_positions(frame, timeframe_minutes)
+        supplemental = [position for position in boundary_positions if position not in chosen_positions]
+        chosen_positions.extend(
+            thin_tick_positions(supplemental, max_ticks - len(chosen_positions))
+        )
+
+    if len(chosen_positions) < max_ticks:
+        uniform_positions = [int(position) for position in range(len(frame))]
+        supplemental = [position for position in uniform_positions if position not in chosen_positions]
+        chosen_positions.extend(
+            thin_tick_positions(supplemental, max_ticks - len(chosen_positions))
+        )
+
+    chosen_positions = sorted(dict.fromkeys(chosen_positions))
     tickvals = [int(frame.iloc[position]["plot_index"]) for position in chosen_positions]
     ticktext = [str(frame.iloc[position]["display_dt_text"]) for position in chosen_positions]
     return tickvals, ticktext
@@ -792,6 +840,9 @@ def build_figure(
         ) from exc
 
     x_values = frame["plot_index"].tolist()
+    sequence_axis_range = None
+    if x_values:
+        sequence_axis_range = [x_values[0] - 0.5, x_values[-1] + 0.5]
     analysis_columns_present = all(column in frame.columns for column in ANALYSIS_COLUMNS)
     uses_analysis_bars = bool(metadata.get("uses_analysis_bars")) or analysis_columns_present
     plot_open = (
@@ -977,6 +1028,7 @@ def build_figure(
             "tickvals": metadata["tickvals"],
             "ticktext": metadata["ticktext"],
             "rangeslider": {"visible": False},
+            "range": sequence_axis_range,
         },
         margin={"l": 60, "r": 20, "t": 150, "b": 60},
         template="plotly_white",
@@ -991,6 +1043,7 @@ def build_figure(
         tickmode="array",
         tickvals=metadata["tickvals"],
         ticktext=metadata["ticktext"],
+        range=sequence_axis_range,
         showspikes=True,
         spikemode="across",
         spikesnap="cursor",

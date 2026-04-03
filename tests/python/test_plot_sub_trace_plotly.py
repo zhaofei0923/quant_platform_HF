@@ -353,6 +353,87 @@ class PlotSubTracePlotlyTest(unittest.TestCase):
         self.assertEqual(ticktext[-1], "2024-01-02 10:35")
         self.assertLessEqual(len(tickvals), 4)
 
+    def test_thin_tick_positions_avoids_selecting_boundary_too_close_to_start(self) -> None:
+        module = load_script_module()
+
+        positions = [
+            0,
+            15,
+            16,
+            28,
+            29,
+            47,
+            48,
+            72,
+            73,
+            88,
+            89,
+            101,
+            102,
+            120,
+            121,
+            145,
+            146,
+            161,
+            162,
+            174,
+        ]
+
+        selected = module.thin_tick_positions(positions, max_ticks=4)
+
+        self.assertEqual(selected[0], 0)
+        self.assertEqual(selected[-1], 174)
+        self.assertGreater(selected[1], 15)
+
+    def test_build_axis_ticks_prefers_natural_calendar_anchors(self) -> None:
+        module = load_script_module()
+        frame = pd.DataFrame(
+            {
+                "instrument_id": [
+                    "c2405",
+                    "c2405",
+                    "c2405",
+                    "c2405",
+                    "c2405",
+                    "c2405",
+                    "c2407",
+                    "c2407",
+                ],
+                "display_dt_text": [
+                    "2024-01-02 09:00",
+                    "2024-01-02 10:15",
+                    "2024-01-02 10:30",
+                    "2024-01-15 09:00",
+                    "2024-02-01 09:00",
+                    "2024-02-15 09:00",
+                    "2024-03-01 09:00",
+                    "2024-03-15 09:00",
+                ],
+                "display_dt": pd.to_datetime(
+                    [
+                        "2024-01-02 09:00",
+                        "2024-01-02 10:15",
+                        "2024-01-02 10:30",
+                        "2024-01-15 09:00",
+                        "2024-02-01 09:00",
+                        "2024-02-15 09:00",
+                        "2024-03-01 09:00",
+                        "2024-03-15 09:00",
+                    ],
+                    format="%Y-%m-%d %H:%M",
+                ),
+                "plot_index": list(range(8)),
+            }
+        )
+
+        tickvals, ticktext = module.build_axis_ticks(frame, timeframe_minutes=5, max_ticks=4)
+
+        self.assertEqual(tickvals[0], 0)
+        self.assertEqual(ticktext[0], "2024-01-02 09:00")
+        self.assertEqual(ticktext[-1], "2024-03-15 09:00")
+        self.assertIn("2024-02-01 09:00", ticktext)
+        self.assertNotIn("2024-01-02 10:15", ticktext)
+
     def test_load_trade_events_prefers_csv_over_backtest_json(self) -> None:
         module = load_script_module()
 
@@ -1117,6 +1198,7 @@ class PlotSubTracePlotlyTest(unittest.TestCase):
             figure.layout["xaxis"]["ticktext"],
             ["2024-01-03 22:55", "2024-01-03 23:00"],
         )
+        self.assertEqual(figure.layout["xaxis"]["range"], [-0.5, 1.5])
         self.assertFalse(figure.layout["xaxis"]["rangeslider"]["visible"])
         self.assertEqual(figure.layout["title"]["x"], 0.02)
         self.assertEqual(figure.layout["title"]["xanchor"], "left")
@@ -1125,6 +1207,7 @@ class PlotSubTracePlotlyTest(unittest.TestCase):
         self.assertGreaterEqual(figure.layout["legend"]["y"], 1.03)
         self.assertGreaterEqual(figure.layout["margin"]["t"], 130)
         self.assertNotIn("rangeselector", figure.layout["xaxis"])
+        self.assertEqual(figure.xaxis_updates[-1]["range"], [-0.5, 1.5])
 
     def test_build_figure_uses_instrument_chain_label_for_multi_instrument_trace(self) -> None:
         module = load_script_module()

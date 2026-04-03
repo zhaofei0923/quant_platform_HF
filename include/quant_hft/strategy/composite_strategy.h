@@ -71,8 +71,12 @@ class CompositeStrategy : public ILiveStrategy {
     std::vector<CompositeAtomicTraceRow> CollectAtomicIndicatorTrace() const;
     void SetBacktestAccountSnapshot(double equity, double pnl_after_cost);
     void SetBacktestContractMultiplier(const std::string& instrument_id, double multiplier);
+    std::string GetBacktestPositionOwner(const std::string& instrument_id) const;
     std::vector<SignalIntent> OnBacktestTick(const std::string& instrument_id, EpochNanos now_ns,
                                              double last_price);
+    void ApplyBacktestRollover(const std::string& previous_instrument_id,
+                               const std::string& current_instrument_id, double close_price,
+                               double open_price, EpochNanos ts_ns);
 
    private:
     struct TimeWindow {

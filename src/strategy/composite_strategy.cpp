@@ -35,6 +35,14 @@ constexpr std::int64_t kSecondsPerHour = 60LL * kSecondsPerMinute;
 constexpr std::int64_t kMinutesPerDay = 24LL * 60LL;
 constexpr std::int64_t kSecondsPerDay = kMinutesPerDay * kSecondsPerMinute;
 
+std::string BuildBacktestRolloverOrderId(const std::string& action,
+                                         const std::string& previous_instrument_id,
+                                         const std::string& current_instrument_id,
+                                         EpochNanos ts_ns) {
+    return "backtest-rollover-" + action + "-" + previous_instrument_id + "-" +
+           current_instrument_id + "-" + std::to_string(ts_ns);
+}
+
 std::string Trim(std::string text) {
     const auto is_space = [](unsigned char ch) { return std::isspace(ch) != 0; };
     while (!text.empty() && is_space(static_cast<unsigned char>(text.front()))) {
@@ -47,9 +55,8 @@ std::string Trim(std::string text) {
 }
 
 std::string ToLower(std::string text) {
-    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     return text;
 }
 
@@ -115,10 +122,10 @@ bool ParseHourMinute(const std::string& text, std::int32_t* out_minutes) {
         !std::isdigit(static_cast<unsigned char>(normalized[4]))) {
         return false;
     }
-    const std::int32_t hour = static_cast<std::int32_t>((normalized[0] - '0') * 10 +
-                                                        (normalized[1] - '0'));
-    const std::int32_t minute = static_cast<std::int32_t>((normalized[3] - '0') * 10 +
-                                                          (normalized[4] - '0'));
+    const std::int32_t hour =
+        static_cast<std::int32_t>((normalized[0] - '0') * 10 + (normalized[1] - '0'));
+    const std::int32_t minute =
+        static_cast<std::int32_t>((normalized[3] - '0') * 10 + (normalized[4] - '0'));
     if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
         return false;
     }
@@ -126,9 +133,9 @@ bool ParseHourMinute(const std::string& text, std::int32_t* out_minutes) {
     return true;
 }
 
-bool ParseTimeWindowList(
-    const std::string& text, std::vector<std::pair<std::int32_t, std::int32_t>>* out,
-    std::string* error) {
+bool ParseTimeWindowList(const std::string& text,
+                         std::vector<std::pair<std::int32_t, std::int32_t>>* out,
+                         std::string* error) {
     if (out == nullptr) {
         if (error != nullptr) {
             *error = "time window output is null";
@@ -144,9 +151,9 @@ bool ParseTimeWindowList(
     std::size_t start = 0;
     while (start <= normalized.size()) {
         const std::size_t comma = normalized.find(',', start);
-        const std::string token = Trim(
-            comma == std::string::npos ? normalized.substr(start)
-                                       : normalized.substr(start, comma - start));
+        const std::string token =
+            Trim(comma == std::string::npos ? normalized.substr(start)
+                                            : normalized.substr(start, comma - start));
         if (token.empty()) {
             if (error != nullptr) {
                 *error = "time window list contains an empty item";
@@ -424,14 +431,14 @@ std::vector<SignalIntent> CompositeStrategy::OnTimer(EpochNanos now_ns) {
 }
 
 std::vector<SignalIntent> CompositeStrategy::OnBacktestTick(const std::string& instrument_id,
-                                                            EpochNanos now_ns,
-                                                            double last_price) {
+                                                            EpochNanos now_ns, double last_price) {
     if (instrument_id.empty()) {
         return {};
     }
 
     const auto pos_it = atomic_context_.net_positions.find(instrument_id);
-    const std::int32_t position = pos_it == atomic_context_.net_positions.end() ? 0 : pos_it->second;
+    const std::int32_t position =
+        pos_it == atomic_context_.net_positions.end() ? 0 : pos_it->second;
     if (position == 0) {
         active_force_close_window_by_instrument_.erase(instrument_id);
         return {};
@@ -466,7 +473,8 @@ std::vector<SignalIntent> CompositeStrategy::OnBacktestTick(const std::string& i
     }
 
     const auto active_it = active_force_close_window_by_instrument_.find(instrument_id);
-    if (active_it != active_force_close_window_by_instrument_.end() && active_it->second == window_key) {
+    if (active_it != active_force_close_window_by_instrument_.end() &&
+        active_it->second == window_key) {
         return MergeSignals(ApplyNonOpenSignalGate(tick_signals));
     }
 
@@ -499,11 +507,14 @@ std::vector<StrategyMetric> CompositeStrategy::CollectMetrics() const {
         StrategyMetric{"strategy.composite.net_position_instruments",
                        static_cast<double>(atomic_context_.net_positions.size()),
                        {{"strategy_id", strategy_context_.strategy_id}}},
-        StrategyMetric{"strategy.composite.account_equity", atomic_context_.account_equity,
+        StrategyMetric{"strategy.composite.account_equity",
+                       atomic_context_.account_equity,
                        {{"strategy_id", strategy_context_.strategy_id}}},
-        StrategyMetric{"strategy.composite.margin_used", atomic_context_.margin_used,
+        StrategyMetric{"strategy.composite.margin_used",
+                       atomic_context_.margin_used,
                        {{"strategy_id", strategy_context_.strategy_id}}},
-        StrategyMetric{"strategy.composite.available", atomic_context_.available,
+        StrategyMetric{"strategy.composite.available",
+                       atomic_context_.available,
                        {{"strategy_id", strategy_context_.strategy_id}}},
     };
 }
@@ -545,8 +556,8 @@ bool CompositeStrategy::SaveState(StrategyState* out, std::string* error) const 
         std::string atomic_error;
         if (!serializable->SaveState(&atomic_state, &atomic_error)) {
             if (error != nullptr) {
-                *error = "save atomic state failed for strategy `" + strategy->GetId() + "`: " +
-                         atomic_error;
+                *error = "save atomic state failed for strategy `" + strategy->GetId() +
+                         "`: " + atomic_error;
             }
             return false;
         }
@@ -644,8 +655,9 @@ bool CompositeStrategy::LoadState(const StrategyState& state, std::string* error
                 }
                 return false;
             }
-            atomic_context_.contract_multipliers
-                [key.substr(std::string(kStateMultiplierPrefix).size())] = parsed;
+            atomic_context_
+                .contract_multipliers[key.substr(std::string(kStateMultiplierPrefix).size())] =
+                parsed;
             continue;
         }
         if (key.rfind(kStateOwnerPrefix, 0) == 0) {
@@ -681,8 +693,8 @@ bool CompositeStrategy::LoadState(const StrategyState& state, std::string* error
         std::string atomic_error;
         if (!serializable->LoadState(it->second, &atomic_error)) {
             if (error != nullptr) {
-                *error = "load atomic state failed for strategy `" + strategy->GetId() + "`: " +
-                         atomic_error;
+                *error = "load atomic state failed for strategy `" + strategy->GetId() +
+                         "`: " + atomic_error;
             }
             return false;
         }
@@ -725,6 +737,74 @@ void CompositeStrategy::SetBacktestContractMultiplier(const std::string& instrum
         return;
     }
     atomic_context_.contract_multipliers[instrument_id] = multiplier;
+}
+
+std::string CompositeStrategy::GetBacktestPositionOwner(const std::string& instrument_id) const {
+    const auto it = position_owner_by_instrument_.find(instrument_id);
+    return it == position_owner_by_instrument_.end() ? "" : it->second;
+}
+
+void CompositeStrategy::ApplyBacktestRollover(const std::string& previous_instrument_id,
+                                              const std::string& current_instrument_id,
+                                              double close_price, double open_price,
+                                              EpochNanos ts_ns) {
+    if (previous_instrument_id.empty() || current_instrument_id.empty() ||
+        previous_instrument_id == current_instrument_id) {
+        return;
+    }
+
+    const auto pos_it = atomic_context_.net_positions.find(previous_instrument_id);
+    if (pos_it == atomic_context_.net_positions.end() || pos_it->second == 0) {
+        return;
+    }
+
+    const auto owner_it = position_owner_by_instrument_.find(previous_instrument_id);
+    if (owner_it == position_owner_by_instrument_.end() || owner_it->second.empty()) {
+        return;
+    }
+
+    const std::string owner = owner_it->second;
+    const std::int32_t rollover_volume = std::abs(pos_it->second);
+    const Side close_side = pos_it->second > 0 ? Side::kSell : Side::kBuy;
+    const Side open_side = pos_it->second > 0 ? Side::kBuy : Side::kSell;
+
+    OrderEvent close_event;
+    close_event.strategy_id = owner;
+    close_event.client_order_id =
+        BuildBacktestRolloverOrderId("close", previous_instrument_id, current_instrument_id, ts_ns);
+    close_event.exchange_order_id = close_event.client_order_id;
+    close_event.instrument_id = previous_instrument_id;
+    close_event.side = close_side;
+    close_event.offset = OffsetFlag::kClose;
+    close_event.status = OrderStatus::kFilled;
+    close_event.total_volume = rollover_volume;
+    close_event.filled_volume = rollover_volume;
+    close_event.avg_fill_price = close_price;
+    close_event.trade_id = close_event.client_order_id;
+    close_event.event_source = "backtest_rollover";
+    close_event.exchange_ts_ns = ts_ns;
+    close_event.recv_ts_ns = ts_ns;
+    close_event.ts_ns = ts_ns;
+    OnOrderEvent(close_event);
+
+    OrderEvent open_event;
+    open_event.strategy_id = owner;
+    open_event.client_order_id =
+        BuildBacktestRolloverOrderId("open", previous_instrument_id, current_instrument_id, ts_ns);
+    open_event.exchange_order_id = open_event.client_order_id;
+    open_event.instrument_id = current_instrument_id;
+    open_event.side = open_side;
+    open_event.offset = OffsetFlag::kOpen;
+    open_event.status = OrderStatus::kFilled;
+    open_event.total_volume = rollover_volume;
+    open_event.filled_volume = rollover_volume;
+    open_event.avg_fill_price = open_price;
+    open_event.trade_id = open_event.client_order_id;
+    open_event.event_source = "backtest_rollover";
+    open_event.exchange_ts_ns = ts_ns;
+    open_event.recv_ts_ns = ts_ns;
+    open_event.ts_ns = ts_ns;
+    OnOrderEvent(open_event);
 }
 
 void CompositeStrategy::Shutdown() {
@@ -778,8 +858,8 @@ bool CompositeStrategy::IsOpenSignalBlockedByStrategyWindows(const SubStrategySl
     return FindMatchingWindow(slot.force_close_windows, now_ns, slot.timezone_offset_hours);
 }
 
-bool CompositeStrategy::FindMatchingWindow(const std::vector<TimeWindow>& windows, EpochNanos now_ns,
-                                           std::int32_t timezone_offset_hours,
+bool CompositeStrategy::FindMatchingWindow(const std::vector<TimeWindow>& windows,
+                                           EpochNanos now_ns, std::int32_t timezone_offset_hours,
                                            std::string* window_key) const {
     const std::int32_t minute_of_day = MinuteOfDayFromEpochNs(now_ns, timezone_offset_hours);
     for (const TimeWindow& window : windows) {
@@ -793,8 +873,8 @@ bool CompositeStrategy::FindMatchingWindow(const std::vector<TimeWindow>& window
             continue;
         }
         if (window_key != nullptr) {
-            *window_key = std::to_string(window.start_minute) + "-" +
-                          std::to_string(window.end_minute);
+            *window_key =
+                std::to_string(window.start_minute) + "-" + std::to_string(window.end_minute);
         }
         return true;
     }
@@ -988,33 +1068,32 @@ void CompositeStrategy::BuildAtomicStrategies() {
             allow_it != merged_params.end() && !Trim(allow_it->second).empty()) {
             if (!ParseBoolText(allow_it->second, &allow_reverse_open)) {
                 throw std::runtime_error("sub-strategy `" + definition.id +
-                                         "` has invalid allow_reverse_open: " +
-                                         allow_it->second);
+                                         "` has invalid allow_reverse_open: " + allow_it->second);
             }
         }
 
         std::int32_t timezone_offset_hours = 8;
-        const std::string window_timezone =
-            merged_params.count("window_timezone") == 0 ? "Asia/Shanghai"
-                                                        : merged_params["window_timezone"];
+        const std::string window_timezone = merged_params.count("window_timezone") == 0
+                                                ? "Asia/Shanghai"
+                                                : merged_params["window_timezone"];
         if (!ResolveTimezoneOffsetHours(window_timezone, &timezone_offset_hours, &error)) {
             throw std::runtime_error("sub-strategy `" + definition.id + "`: " + error);
         }
 
         std::vector<std::pair<std::int32_t, std::int32_t>> parsed_forbid_windows;
-        if (!ParseTimeWindowList(
-                merged_params.count("forbid_open_windows") == 0 ? ""
-                                                                 : merged_params["forbid_open_windows"],
-                &parsed_forbid_windows, &error)) {
+        if (!ParseTimeWindowList(merged_params.count("forbid_open_windows") == 0
+                                     ? ""
+                                     : merged_params["forbid_open_windows"],
+                                 &parsed_forbid_windows, &error)) {
             throw std::runtime_error("sub-strategy `" + definition.id +
                                      "` has invalid forbid_open_windows: " + error);
         }
 
         std::vector<std::pair<std::int32_t, std::int32_t>> parsed_force_close_windows;
-        if (!ParseTimeWindowList(
-                merged_params.count("force_close_windows") == 0 ? ""
-                                                                 : merged_params["force_close_windows"],
-                &parsed_force_close_windows, &error)) {
+        if (!ParseTimeWindowList(merged_params.count("force_close_windows") == 0
+                                     ? ""
+                                     : merged_params["force_close_windows"],
+                                 &parsed_force_close_windows, &error)) {
             throw std::runtime_error("sub-strategy `" + definition.id +
                                      "` has invalid force_close_windows: " + error);
         }
@@ -1028,18 +1107,16 @@ void CompositeStrategy::BuildAtomicStrategies() {
             slot.strategy_id = definition.id;
             slot.strategy = sub_strategy;
             slot.backtest_tick_aware = dynamic_cast<IAtomicBacktestTickAware*>(strategy.get());
-            slot.timeframe_minutes = definition.timeframe_minutes > 0 ? definition.timeframe_minutes
-                                                                      : 1;
+            slot.timeframe_minutes =
+                definition.timeframe_minutes > 0 ? definition.timeframe_minutes : 1;
             slot.entry_market_regimes = definition.entry_market_regimes;
             slot.allow_reverse_open = allow_reverse_open;
             slot.timezone_offset_hours = timezone_offset_hours;
             for (const auto& window : parsed_forbid_windows) {
-                slot.forbid_open_windows.push_back(
-                    TimeWindow{window.first, window.second});
+                slot.forbid_open_windows.push_back(TimeWindow{window.first, window.second});
             }
             for (const auto& window : parsed_force_close_windows) {
-                slot.force_close_windows.push_back(
-                    TimeWindow{window.first, window.second});
+                slot.force_close_windows.push_back(TimeWindow{window.first, window.second});
             }
             sub_strategy_slot_index_by_id_[slot.strategy_id] = sub_strategies_.size();
             sub_strategies_.push_back(std::move(slot));
@@ -1049,8 +1126,8 @@ void CompositeStrategy::BuildAtomicStrategies() {
             time_filter != nullptr) {
             TimeFilterSlot slot;
             slot.strategy = time_filter;
-            slot.timeframe_minutes = definition.timeframe_minutes > 0 ? definition.timeframe_minutes
-                                                                      : 1;
+            slot.timeframe_minutes =
+                definition.timeframe_minutes > 0 ? definition.timeframe_minutes : 1;
             time_filters_.push_back(std::move(slot));
             bound_to_supported_interface = true;
         }
@@ -1058,8 +1135,8 @@ void CompositeStrategy::BuildAtomicStrategies() {
             risk_control != nullptr) {
             RiskControlSlot slot;
             slot.strategy = risk_control;
-            slot.timeframe_minutes = definition.timeframe_minutes > 0 ? definition.timeframe_minutes
-                                                                      : 1;
+            slot.timeframe_minutes =
+                definition.timeframe_minutes > 0 ? definition.timeframe_minutes : 1;
             risk_control_strategies_.push_back(std::move(slot));
             bound_to_supported_interface = true;
         }

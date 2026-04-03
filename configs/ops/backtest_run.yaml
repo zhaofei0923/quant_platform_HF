@@ -66,9 +66,9 @@ deterministic_fills: true
 # strict_parquet：是否开启 parquet 严格模式；示例值：true
 # strict_parquet：配置项说明；示例值：true
 strict_parquet: true
-# rollover_mode：换月模式；示例值：strict（可选 strict/carry）
+# rollover_mode：换月模式；示例值：expiry_close（可选 strict/carry/expiry_close）
 # rollover_mode：配置项说明；示例值：strict
-rollover_mode: strict
+rollover_mode: expiry_close
 # rollover_price_mode：换月定价模式；示例值：bbo（可选 bbo/mid/last）
 # rollover_price_mode：配置项说明；示例值：bbo
 rollover_price_mode: bbo

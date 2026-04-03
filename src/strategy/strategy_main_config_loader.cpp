@@ -165,6 +165,10 @@ bool ParseBacktestYamlKey(StrategyMainBacktestConfig* backtest, const std::strin
         backtest->product_series_mode = ToLower(Trim(value));
         return true;
     }
+    if (key == "contract_expiry_calendar_path") {
+        backtest->contract_expiry_calendar_path = value;
+        return true;
+    }
     if (key == "symbols") {
         if (!ParseStringList(value, &backtest->symbols)) {
             if (error != nullptr) {
@@ -395,6 +399,16 @@ bool LoadMainJson(const std::filesystem::path& path, StrategyMainConfig* out, st
                     config.backtest.product_series_mode = ToLower(backtest_value.string_value);
                     continue;
                 }
+                if (backtest_key == "contract_expiry_calendar_path") {
+                    if (!backtest_value.IsString()) {
+                        if (error != nullptr) {
+                            *error = "backtest.contract_expiry_calendar_path must be string";
+                        }
+                        return false;
+                    }
+                    config.backtest.contract_expiry_calendar_path = backtest_value.string_value;
+                    continue;
+                }
                 if (backtest_key == "symbols") {
                     if (!backtest_value.IsArray()) {
                         if (error != nullptr) {
@@ -524,6 +538,13 @@ bool LoadStrategyMainConfig(const std::string& path, StrategyMainConfig* out, st
             resolved = config_path.parent_path() / resolved;
         }
         config.backtest.product_config_path = resolved.lexically_normal().string();
+    }
+    if (!config.backtest.contract_expiry_calendar_path.empty()) {
+        std::filesystem::path resolved(config.backtest.contract_expiry_calendar_path);
+        if (resolved.is_relative()) {
+            resolved = config_path.parent_path() / resolved;
+        }
+        config.backtest.contract_expiry_calendar_path = resolved.lexically_normal().string();
     }
 
     *out = std::move(config);

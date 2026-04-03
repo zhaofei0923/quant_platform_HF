@@ -78,6 +78,7 @@ add_library(quant_hft_core STATIC
     src/strategy/atomic/register_builtin_atomic_strategies.cpp
     src/core/backtest/indicator_trace_csv_writer.cpp
     src/core/backtest/indicator_trace_parquet_writer.cpp
+    src/core/backtest/contract_expiry_calendar.cpp
     src/core/backtest/product_fee_config_loader.cpp
     src/core/backtest/sub_strategy_indicator_trace_csv_writer.cpp
     src/core/backtest/sub_strategy_indicator_trace_parquet_writer.cpp
@@ -462,6 +463,10 @@ if(QUANT_HFT_BUILD_TESTS)
                    tests/unit/backtest/product_fee_config_loader_test.cpp)
     target_link_libraries(product_fee_config_loader_test PRIVATE quant_hft_core GTest::gtest_main)
 
+    add_executable(contract_expiry_calendar_test
+                   tests/unit/backtest/contract_expiry_calendar_test.cpp)
+    target_link_libraries(contract_expiry_calendar_test PRIVATE quant_hft_core GTest::gtest_main)
+
     add_executable(backtest_data_feed_test tests/unit/backtest/backtest_data_feed_test.cpp)
     target_link_libraries(backtest_data_feed_test PRIVATE quant_hft_core GTest::gtest_main)
 
@@ -653,6 +658,7 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(sub_strategy_indicator_trace_parquet_writer_test)
     gtest_discover_tests(sub_strategy_indicator_trace_csv_writer_test)
     gtest_discover_tests(product_fee_config_loader_test)
+    gtest_discover_tests(contract_expiry_calendar_test)
     gtest_discover_tests(backtest_data_feed_test)
     gtest_discover_tests(live_data_feed_test)
     gtest_discover_tests(broker_test)

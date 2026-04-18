@@ -521,6 +521,26 @@ bool SetParameterDraftField(ParameterDraft* draft,
     return false;
 }
 
+std::filesystem::path ResolveConfigPath(const std::filesystem::path& base_dir,
+                                        const std::string& raw_path) {
+    if (raw_path.empty()) {
+        return {};
+    }
+
+    std::filesystem::path path(raw_path);
+    if (path.is_absolute()) {
+        return std::filesystem::absolute(path).lexically_normal();
+    }
+
+    std::error_code ec;
+    if (std::filesystem::exists(path, ec) ||
+        (!path.parent_path().empty() && std::filesystem::exists(path.parent_path(), ec))) {
+        return std::filesystem::absolute(path).lexically_normal();
+    }
+
+    return std::filesystem::absolute(base_dir / path).lexically_normal();
+}
+
 }  // namespace
 
 bool LoadParameterSpace(const std::string& yaml_path, ParameterSpace* out, std::string* error) {
@@ -744,6 +764,20 @@ bool LoadParameterSpace(const std::string& yaml_path, ParameterSpace* out, std::
         }
         return false;
     }
+
+    const std::filesystem::path config_path = std::filesystem::absolute(yaml_path).lexically_normal();
+    const std::filesystem::path config_dir = config_path.parent_path();
+    const std::filesystem::path composite_path =
+        ResolveConfigPath(config_dir, space.composite_config_path);
+    space.composite_config_path = composite_path.string();
+
+    const std::filesystem::path raw_target_path(space.target_sub_config_path);
+    const std::filesystem::path target_sub_path =
+        raw_target_path.is_absolute()
+            ? std::filesystem::absolute(raw_target_path).lexically_normal()
+            : std::filesystem::absolute(composite_path.parent_path() / raw_target_path)
+                  .lexically_normal();
+    space.target_sub_config_path = target_sub_path.string();
 
     space.optimization.algorithm = ToLower(Trim(space.optimization.algorithm));
     if (space.optimization.algorithm.empty()) {

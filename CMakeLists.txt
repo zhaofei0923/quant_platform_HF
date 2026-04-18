@@ -543,6 +543,9 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(backtest_replay_support_test tests/unit/apps/backtest_replay_support_test.cpp)
     target_link_libraries(backtest_replay_support_test PRIVATE quant_hft_core GTest::gtest_main)
 
+    add_executable(cli_support_test tests/unit/apps/cli_support_test.cpp)
+    target_link_libraries(cli_support_test PRIVATE quant_hft_core GTest::gtest_main)
+
     add_executable(rolling_config_test tests/unit/apps/rolling_config_test.cpp)
     target_link_libraries(rolling_config_test PRIVATE quant_hft_core GTest::gtest_main)
 
@@ -683,6 +686,7 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(kama_test)
     gtest_discover_tests(adx_test)
     gtest_discover_tests(backtest_replay_support_test)
+    gtest_discover_tests(cli_support_test)
     gtest_discover_tests(backtest_result_export_test)
     gtest_discover_tests(rolling_config_test)
     gtest_discover_tests(window_generator_test)

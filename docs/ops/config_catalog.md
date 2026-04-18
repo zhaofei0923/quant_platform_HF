@@ -692,6 +692,12 @@ composite:
 | `backtest_base.symbols` | list[string] | 否 | 空 | 合约或品种列表 | 回放标的过滤 | `[rb]` |
 | `backtest_base.strategy_factory` | string | 否 | `composite` | 已注册策略工厂名 | 策略工厂 | `composite` |
 | `backtest_base.strategy_composite_config` | string | `strategy_factory=composite` 时必填 | 空 | 文件路径 | 组合策略配置 | `configs/strategies/main_backtest_strategy.yaml` |
+| `backtest_base.product_config_path` | string | 否 | 空 | 文件路径 | 产品费率/乘数配置 | `configs/strategies/instrument_info.json` |
+| `backtest_base.contract_expiry_calendar_path` | string | `rollover_mode=expiry_close` 时必填 | 空 | 文件路径 | 主连换月日历 | `configs/strategies/contract_expiry_calendar.yaml` |
+| `backtest_base.rollover_mode` | string | 否 | `strict` | `strict/carry/expiry_close` | 换月模式 | `expiry_close` |
+| `backtest_base.rollover_price_mode` | string | 否 | `bbo` | `bbo/mid/last` | 换月价格模式 | `bbo` |
+| `backtest_base.rollover_slippage_bps` | double | 否 | `0` | `>=0` | 换月滑点（bps） | `0` |
+| `backtest_base.initial_equity` | double | 否 | `1000000` | `>0` | 初始权益 | `200000` |
 | `backtest_base.emit_trades` | bool | 否 | `false` | `true/false` | 是否输出 trades | `false` |
 | `backtest_base.emit_orders` | bool | 否 | `false` | `true/false` | 是否输出 orders | `false` |
 | `backtest_base.emit_position_history` | bool | 否 | `false` | `true/false` | 是否输出持仓快照 | `false` |

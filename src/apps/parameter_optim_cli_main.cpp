@@ -22,6 +22,7 @@
 namespace {
 
 using quant_hft::apps::ArgMap;
+using quant_hft::apps::DetectDefaultBacktestCliPath;
 using quant_hft::apps::GetArg;
 using quant_hft::apps::HasArg;
 using quant_hft::apps::ParseArgs;
@@ -95,7 +96,8 @@ class TempArtifactManager {
     std::vector<std::filesystem::path> keep_paths_;
 };
 
-std::string DetectBacktestCliPath(const ArgMap& args, const ParameterSpace& space) {
+std::string DetectBacktestCliPath(const ArgMap& args, const ParameterSpace& space,
+                                  const std::string& argv0) {
     const std::string cli_arg = GetArg(args, "backtest-cli-path", "");
     if (!cli_arg.empty()) {
         return cli_arg;
@@ -105,17 +107,7 @@ std::string DetectBacktestCliPath(const ArgMap& args, const ParameterSpace& spac
         return space.backtest_cli_path;
     }
 
-    const std::vector<std::filesystem::path> candidates = {
-        std::filesystem::path("build") / "backtest_cli",
-        std::filesystem::path("build-gcc") / "backtest_cli",
-    };
-    for (const auto& candidate : candidates) {
-        std::error_code ec;
-        if (std::filesystem::exists(candidate, ec)) {
-            return candidate.string();
-        }
-    }
-    return "backtest_cli";
+    return DetectDefaultBacktestCliPath(argv0);
 }
 
 int SafeMaxConcurrent(int requested) {
@@ -194,7 +186,7 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    const std::string backtest_cli_path = DetectBacktestCliPath(args, space);
+    const std::string backtest_cli_path = DetectBacktestCliPath(args, space, argv[0]);
     const int max_concurrent = SafeMaxConcurrent(space.optimization.batch_size);
     TaskScheduler scheduler(max_concurrent);
 

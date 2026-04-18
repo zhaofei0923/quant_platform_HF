@@ -39,6 +39,10 @@ TEST(RollingConfigTest, LoadsValidConfigAndResolvesPaths) {
     const auto dataset_root = dir / "data";
     const auto manifest = dataset_root / "_manifest" / "partitions.jsonl";
     WriteFile(manifest, ManifestLine("20230103"));
+    const auto config_dir = dir / "rolling_assets";
+    const auto composite = WriteFile(config_dir / "main_backtest_strategy.yaml", "run_type: backtest\n");
+    const auto products = WriteFile(config_dir / "products_info.yaml", "products:\n");
+    const auto calendar = WriteFile(config_dir / "contract_expiry_calendar.yaml", "contracts:\n");
 
     const auto report_dir = dir / "report";
     std::filesystem::create_directories(report_dir);
@@ -51,7 +55,10 @@ TEST(RollingConfigTest, LoadsValidConfigAndResolvesPaths) {
               "  dataset_root: " +
                   dataset_root.string() +
                   "\n"
-                  "  strategy_factory: demo\n"
+                  "  strategy_factory: composite\n"
+                  "  strategy_composite_config: ./rolling_assets/main_backtest_strategy.yaml\n"
+                  "  product_config_path: ./rolling_assets/products_info.yaml\n"
+                  "  contract_expiry_calendar_path: ./rolling_assets/contract_expiry_calendar.yaml\n"
                   "window:\n"
                   "  type: rolling\n"
                   "  train_length_days: 2\n"
@@ -75,6 +82,9 @@ TEST(RollingConfigTest, LoadsValidConfigAndResolvesPaths) {
     EXPECT_EQ(config.mode, "fixed_params");
     EXPECT_EQ(config.backtest_base.engine_mode, "parquet");
     EXPECT_EQ(config.backtest_base.dataset_manifest, manifest.string());
+    EXPECT_EQ(config.backtest_base.strategy_composite_config, composite.string());
+    EXPECT_EQ(config.backtest_base.product_config_path, products.string());
+    EXPECT_EQ(config.backtest_base.contract_expiry_calendar_path, calendar.string());
     EXPECT_EQ(config.output.report_json, (report_dir / "r.json").string());
     EXPECT_EQ(config.output.report_md, (report_dir / "r.md").string());
 
@@ -163,4 +173,3 @@ TEST(RollingConfigTest, RejectsMissingManifest) {
 
 }  // namespace
 }  // namespace quant_hft::rolling
-

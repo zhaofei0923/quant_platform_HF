@@ -342,6 +342,10 @@ bool LoadRollingConfig(const std::string& yaml_path, RollingConfig* out, std::st
         ToLower(GetStringOr(values, "backtest_base.strategy_factory", config.backtest_base.strategy_factory));
     config.backtest_base.strategy_composite_config =
         GetStringOr(values, "backtest_base.strategy_composite_config", "");
+    config.backtest_base.product_config_path =
+        GetStringOr(values, "backtest_base.product_config_path", "");
+    config.backtest_base.contract_expiry_calendar_path =
+        GetStringOr(values, "backtest_base.contract_expiry_calendar_path", "");
 
     config.backtest_base.rollover_mode =
         ToLower(GetStringOr(values, "backtest_base.rollover_mode", config.backtest_base.rollover_mode));
@@ -571,6 +575,35 @@ bool LoadRollingConfig(const std::string& yaml_path, RollingConfig* out, std::st
         }
     }
 
+    if (!config.backtest_base.product_config_path.empty()) {
+        config.backtest_base.product_config_path =
+            ResolvePath(config_dir, config.backtest_base.product_config_path).string();
+        if (!std::filesystem::exists(config.backtest_base.product_config_path)) {
+            if (error != nullptr) {
+                *error = "product_config_path does not exist: " +
+                         config.backtest_base.product_config_path;
+            }
+            return false;
+        }
+    }
+
+    if (!config.backtest_base.contract_expiry_calendar_path.empty()) {
+        config.backtest_base.contract_expiry_calendar_path =
+            ResolvePath(config_dir, config.backtest_base.contract_expiry_calendar_path).string();
+        if (!std::filesystem::exists(config.backtest_base.contract_expiry_calendar_path)) {
+            if (error != nullptr) {
+                *error = "contract_expiry_calendar_path does not exist: " +
+                         config.backtest_base.contract_expiry_calendar_path;
+            }
+            return false;
+        }
+    } else if (config.backtest_base.rollover_mode == "expiry_close") {
+        if (error != nullptr) {
+            *error = "backtest_base.contract_expiry_calendar_path is required when rollover_mode=expiry_close";
+        }
+        return false;
+    }
+
     if (config.window.type != "rolling" && config.window.type != "expanding") {
         if (error != nullptr) {
             *error = "window.type must be rolling or expanding";
@@ -656,4 +689,3 @@ bool LoadRollingConfig(const std::string& yaml_path, RollingConfig* out, std::st
 }
 
 }  // namespace quant_hft::rolling
-

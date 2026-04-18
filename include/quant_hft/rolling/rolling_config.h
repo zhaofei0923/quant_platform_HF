@@ -15,6 +15,8 @@ struct RollingBacktestBase {
     std::vector<std::string> symbols;
     std::string strategy_factory{"composite"};
     std::string strategy_composite_config;
+    std::string product_config_path;
+    std::string contract_expiry_calendar_path;
     std::optional<std::int64_t> max_ticks;
     bool deterministic_fills{true};
     bool strict_parquet{true};
@@ -68,4 +70,3 @@ struct RollingConfig {
 bool LoadRollingConfig(const std::string& yaml_path, RollingConfig* out, std::string* error);
 
 }  // namespace quant_hft::rolling
-

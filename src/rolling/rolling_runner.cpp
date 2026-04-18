@@ -132,7 +132,10 @@ BacktestCliSpec BuildSpec(const RollingConfig& config,
     spec.emit_orders = config.backtest_base.emit_orders;
     spec.emit_position_history = config.backtest_base.emit_position_history;
     spec.strategy_factory = config.backtest_base.strategy_factory;
+    spec.strategy_main_config_path = config.backtest_base.strategy_composite_config;
     spec.strategy_composite_config = config.backtest_base.strategy_composite_config;
+    spec.product_config_path = config.backtest_base.product_config_path;
+    spec.contract_expiry_calendar_path = config.backtest_base.contract_expiry_calendar_path;
     spec.run_id = run_id;
 
     if (!strategy_composite_config_override.empty()) {

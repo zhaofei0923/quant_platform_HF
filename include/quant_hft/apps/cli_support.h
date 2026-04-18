@@ -7,6 +7,7 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace quant_hft::apps {
 
@@ -111,6 +112,45 @@ inline std::string StableHexDigest(const std::string& text) {
 inline std::int64_t UnixEpochMillisNow() {
     const auto now = std::chrono::system_clock::now();
     return std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+}
+
+inline std::string DefaultParameterOptimConfigPath() {
+    return (std::filesystem::path("runtime") / "optim" / "c_kama_param_space.yaml").string();
+}
+
+inline std::string DefaultRollingBacktestConfigPath() {
+    return (std::filesystem::path("runtime") / "optim" / "c_kama_rolling_optimize.yaml")
+        .string();
+}
+
+inline std::string DetectDefaultBacktestCliPath(
+    const std::string& argv0,
+    const std::filesystem::path& repo_root = std::filesystem::current_path()) {
+    std::error_code ec;
+
+    if (!argv0.empty()) {
+        const std::filesystem::path app_path(argv0);
+        if (!app_path.parent_path().empty()) {
+            const std::filesystem::path sibling = app_path.parent_path() / "backtest_cli";
+            if (std::filesystem::exists(sibling, ec)) {
+                return sibling.string();
+            }
+        }
+    }
+
+    const std::vector<std::filesystem::path> candidates = {
+        repo_root / "build-gcc" / "backtest_cli",
+        repo_root / "build" / "backtest_cli",
+        std::filesystem::path("build-gcc") / "backtest_cli",
+        std::filesystem::path("build") / "backtest_cli",
+    };
+    for (const auto& candidate : candidates) {
+        if (std::filesystem::exists(candidate, ec)) {
+            return candidate.string();
+        }
+    }
+
+    return "backtest_cli";
 }
 
 }  // namespace quant_hft::apps

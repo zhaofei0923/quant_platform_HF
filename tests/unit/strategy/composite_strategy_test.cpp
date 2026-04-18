@@ -265,11 +265,17 @@ StateSnapshot7D MakeBarState(const std::string& instrument, double close, EpochN
     return state;
 }
 
-StrategyContext MakeStrategyContext() {
+EpochNanos PseudoLocalEpochNs(int hour, int minute, int second = 0) {
+    return (static_cast<EpochNanos>(hour) * 60LL * 60LL +
+            static_cast<EpochNanos>(minute) * 60LL + static_cast<EpochNanos>(second)) *
+           1'000'000'000LL;
+}
+
+StrategyContext MakeStrategyContext(const std::string& run_type = "backtest") {
     StrategyContext ctx;
     ctx.strategy_id = "composite";
     ctx.account_id = "acct";
-    ctx.metadata["run_type"] = "backtest";
+    ctx.metadata["run_type"] = run_type;
     return ctx;
 }
 
@@ -725,7 +731,8 @@ TEST(CompositeStrategyTest, SubStrategyForbidOpenWindowsBlockOnlyMatchingStrateg
     RegisterScriptedType(allowed_type);
 
     CompositeStrategyDefinition definition;
-    definition.run_type = "backtest";
+    definition.run_type = "live";
+    definition.enable_non_backtest = true;
     definition.sub_strategies = {
         MakeSubStrategy("blocked", blocked_type,
                         {{"id", "blocked"},
@@ -738,7 +745,7 @@ TEST(CompositeStrategyTest, SubStrategyForbidOpenWindowsBlockOnlyMatchingStrateg
     };
 
     CompositeStrategy strategy(definition, &AtomicFactory::Instance());
-    strategy.Initialize(MakeStrategyContext());
+    strategy.Initialize(MakeStrategyContext("live"));
 
     const EpochNanos blocked_ts_ns = 30LL * 60LL * 1'000'000'000LL;
     const std::vector<SignalIntent> signals = strategy.OnState(MakeState("rb2405", blocked_ts_ns));
@@ -752,7 +759,8 @@ TEST(CompositeStrategyTest, ForceCloseWindowsAlsoBlockOpeningSignals) {
     RegisterScriptedType(open_type);
 
     CompositeStrategyDefinition definition;
-    definition.run_type = "backtest";
+    definition.run_type = "live";
+    definition.enable_non_backtest = true;
     definition.sub_strategies = {MakeSubStrategy("open", open_type,
                                                  {{"id", "open"},
                                                   {"emit_open", "1"},
@@ -760,7 +768,7 @@ TEST(CompositeStrategyTest, ForceCloseWindowsAlsoBlockOpeningSignals) {
                                                   {"window_timezone", "UTC"}})};
 
     CompositeStrategy strategy(definition, &AtomicFactory::Instance());
-    strategy.Initialize(MakeStrategyContext());
+    strategy.Initialize(MakeStrategyContext("live"));
 
     const EpochNanos inside_window_ts_ns = 30LL * 60LL * 1'000'000'000LL;
     const std::vector<SignalIntent> blocked =
@@ -791,6 +799,66 @@ TEST(CompositeStrategyTest, RejectsInvalidSubStrategyTimeWindows) {
 
     CompositeStrategy strategy(definition, &AtomicFactory::Instance());
     EXPECT_THROW(strategy.Initialize(MakeStrategyContext()), std::runtime_error);
+}
+
+TEST(CompositeStrategyTest, BacktestForbidOpenWindowsUsePseudoLocalAsiaShanghaiTime) {
+    const std::string open_type = UniqueType("backtest_asia_shanghai_window");
+    RegisterScriptedType(open_type);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {MakeSubStrategy("open", open_type,
+                                                 {{"id", "open"},
+                                                  {"emit_open", "1"},
+                                                  {"forbid_open_windows", "09:00-09:30"},
+                                                  {"window_timezone", "Asia/Shanghai"}})};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+
+    const std::vector<SignalIntent> blocked =
+        strategy.OnState(MakeState("rb2405", PseudoLocalEpochNs(9, 10)));
+    EXPECT_TRUE(blocked.empty());
+}
+
+TEST(CompositeStrategyTest, BacktestForbidOpenWindowsMapPseudoLocalTimeIntoUtcWindow) {
+    const std::string open_type = UniqueType("backtest_utc_window");
+    RegisterScriptedType(open_type);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {MakeSubStrategy("open", open_type,
+                                                 {{"id", "open"},
+                                                  {"emit_open", "1"},
+                                                  {"forbid_open_windows", "01:00-01:30"},
+                                                  {"window_timezone", "UTC"}})};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+
+    const std::vector<SignalIntent> blocked =
+        strategy.OnState(MakeState("rb2405", PseudoLocalEpochNs(9, 10)));
+    EXPECT_TRUE(blocked.empty());
+}
+
+TEST(CompositeStrategyTest, BacktestForceCloseWindowsRespectCrossNightAsiaShanghaiWindow) {
+    const std::string open_type = UniqueType("backtest_cross_night_window");
+    RegisterScriptedType(open_type);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {MakeSubStrategy("open", open_type,
+                                                 {{"id", "open"},
+                                                  {"emit_open", "1"},
+                                                  {"force_close_windows", "23:00-01:00"},
+                                                  {"window_timezone", "Asia/Shanghai"}})};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+
+    const std::vector<SignalIntent> blocked =
+        strategy.OnState(MakeState("rb2405", PseudoLocalEpochNs(23, 30)));
+    EXPECT_TRUE(blocked.empty());
 }
 
 TEST(CompositeStrategyTest, TimeFilterAppliesOnlyToMatchingTimeframe) {

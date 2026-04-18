@@ -13,7 +13,7 @@ params:
   risk_per_trade_pct: 0.005
   default_volume: 1
   allow_reverse_open: false
-  forbid_open_windows: ""
+  forbid_open_windows: "21:00-23:00,09:00-09:30"
   force_close_windows: ""
   window_timezone: Asia/Shanghai
   stop_loss_mode: trailing_atr
@@ -21,4 +21,4 @@ params:
   stop_loss_atr_multiplier: 4.0
   take_profit_mode: atr_target
   take_profit_atr_period: 14
-  take_profit_atr_multiplier: 20.0
+  take_profit_atr_multiplier: 30.0

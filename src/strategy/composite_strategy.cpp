@@ -34,6 +34,7 @@ constexpr std::int64_t kSecondsPerMinute = 60LL;
 constexpr std::int64_t kSecondsPerHour = 60LL * kSecondsPerMinute;
 constexpr std::int64_t kMinutesPerDay = 24LL * 60LL;
 constexpr std::int64_t kSecondsPerDay = kMinutesPerDay * kSecondsPerMinute;
+constexpr std::int32_t kAsiaShanghaiUtcOffsetHours = 8;
 
 std::string BuildBacktestRolloverOrderId(const std::string& action,
                                          const std::string& previous_instrument_id,
@@ -214,10 +215,18 @@ bool ResolveTimezoneOffsetHours(const std::string& timezone, std::int32_t* out,
     return false;
 }
 
-std::int32_t MinuteOfDayFromEpochNs(EpochNanos now_ns, std::int32_t timezone_offset_hours) {
+std::int32_t MinuteOfDayFromEpochNs(EpochNanos now_ns, std::int32_t timezone_offset_hours,
+                                    RunMode run_mode) {
     const std::int64_t utc_seconds = now_ns / kNanosPerSecond;
+    std::int32_t effective_timezone_offset_hours = timezone_offset_hours;
+    if (run_mode == RunMode::kBacktest) {
+        // Backtest replay encodes exchange-local (Asia/Shanghai) wall clock time directly into
+        // EpochNanos. Normalize requested window timezone against that baseline instead of adding
+        // another +8 hour shift on top of an already-local timestamp.
+        effective_timezone_offset_hours -= kAsiaShanghaiUtcOffsetHours;
+    }
     const std::int64_t local_seconds =
-        utc_seconds + static_cast<std::int64_t>(timezone_offset_hours) * kSecondsPerHour;
+        utc_seconds + static_cast<std::int64_t>(effective_timezone_offset_hours) * kSecondsPerHour;
     const std::int64_t seconds_into_day =
         (local_seconds % kSecondsPerDay + kSecondsPerDay) % kSecondsPerDay;
     return static_cast<std::int32_t>(seconds_into_day / kSecondsPerMinute);
@@ -861,7 +870,8 @@ bool CompositeStrategy::IsOpenSignalBlockedByStrategyWindows(const SubStrategySl
 bool CompositeStrategy::FindMatchingWindow(const std::vector<TimeWindow>& windows,
                                            EpochNanos now_ns, std::int32_t timezone_offset_hours,
                                            std::string* window_key) const {
-    const std::int32_t minute_of_day = MinuteOfDayFromEpochNs(now_ns, timezone_offset_hours);
+    const std::int32_t minute_of_day =
+        MinuteOfDayFromEpochNs(now_ns, timezone_offset_hours, atomic_context_.run_mode);
     for (const TimeWindow& window : windows) {
         bool contains = false;
         if (window.start_minute < window.end_minute) {

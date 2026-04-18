@@ -3547,6 +3547,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     std::map<std::string, std::int64_t> order_status_counts;
     std::vector<double> equity_points;
     std::vector<EquitySample> equity_history;
+    std::map<std::string, EquitySample> latest_daily_equity_samples;
     std::vector<TradeRecord> trades;
     std::vector<OrderRecord> orders;
     std::vector<PositionSnapshot> position_history;
@@ -3555,6 +3556,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     std::int64_t fill_record_seq = 0;
     std::int64_t order_record_seq = 0;
     double total_commission = 0.0;
+    double latest_equity = spec.initial_equity;
     double used_margin_total = 0.0;
     double max_margin_used = 0.0;
     std::int64_t margin_clipped_orders = 0;
@@ -3572,6 +3574,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             seed.position_value = 0.0;
             seed.market_regime = "kUnknown";
             equity_history.push_back(std::move(seed));
+            latest_daily_equity_samples[equity_history.back().trading_day] = equity_history.back();
         }
     }
 
@@ -3780,6 +3783,46 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                                                instrument_id);
         }
         return total;
+    };
+
+    auto compute_current_equity = [&]() {
+        latest_equity =
+            ComputeTotalEquity(spec.initial_equity, position_state, mark_price, total_commission,
+                               has_product_fee ? &product_fee_book : nullptr);
+        return latest_equity;
+    };
+
+    auto upsert_latest_daily_equity_sample = [&](EpochNanos ts_ns, const std::string& trading_day,
+                                                 double equity, double position_value,
+                                                 const std::string& market_regime) {
+        std::string normalized_day = detail::NormalizeTradingDay(trading_day);
+        if (normalized_day.empty()) {
+            normalized_day = detail::TradingDayFromEpochNs(ts_ns);
+        }
+        if (normalized_day.empty()) {
+            return;
+        }
+
+        EquitySample& latest_sample = latest_daily_equity_samples[normalized_day];
+        if (!latest_sample.trading_day.empty() && ts_ns < latest_sample.ts_ns) {
+            return;
+        }
+
+        latest_sample.ts_ns = ts_ns;
+        latest_sample.trading_day = normalized_day;
+        latest_sample.equity = equity;
+        latest_sample.position_value = position_value;
+        if (!market_regime.empty()) {
+            latest_sample.market_regime = market_regime;
+        } else if (latest_sample.market_regime.empty()) {
+            latest_sample.market_regime = "kUnknown";
+        }
+    };
+
+    auto record_latest_daily_equity_for_tick = [&](const ReplayTick& tick) {
+        const double current_equity = compute_current_equity();
+        upsert_latest_daily_equity_sample(tick.ts_ns, tick.trading_day, current_equity,
+                                          compute_position_value(), "");
     };
 
     auto record_position_snapshot = [&](const std::string& instrument_id, EpochNanos ts_ns) {
@@ -4764,9 +4807,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         if (spec.deterministic_fills) {
             enqueue_bar_intents(intents, last, state.market_regime);
 
-            const double current_equity =
-                ComputeTotalEquity(spec.initial_equity, position_state, mark_price,
-                                   total_commission, has_product_fee ? &product_fee_book : nullptr);
+            const double current_equity = compute_current_equity();
             equity_points.push_back(current_equity);
             EquitySample sample;
             sample.ts_ns = state.ts_ns;
@@ -4777,6 +4818,8 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             sample.equity = current_equity;
             sample.position_value = compute_position_value();
             sample.market_regime = MarketRegimeToString(state.market_regime);
+            upsert_latest_daily_equity_sample(sample.ts_ns, sample.trading_day, sample.equity,
+                                              sample.position_value, sample.market_regime);
             equity_history.push_back(std::move(sample));
         }
         return true;
@@ -4882,6 +4925,9 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 if (!process_expiry_close_tick(tick)) {
                     return false;
                 }
+                if (spec.deterministic_fills) {
+                    record_latest_daily_equity_for_tick(tick);
+                }
                 continue;
             }
         }
@@ -4941,6 +4987,10 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             if (!process_one_minute_bar(bar)) {
                 return false;
             }
+        }
+
+        if (spec.deterministic_fills) {
+            record_latest_daily_equity_for_tick(tick);
         }
     }
 
@@ -5051,7 +5101,15 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     if (spec.emit_position_history) {
         result.position_history = position_history;
     }
-    result.daily = ComputeDailyMetrics(equity_history, result.trades, spec.initial_equity);
+    std::vector<EquitySample> daily_equity_history;
+    if (!latest_daily_equity_samples.empty()) {
+        daily_equity_history.reserve(latest_daily_equity_samples.size());
+        for (const auto& [day, sample] : latest_daily_equity_samples) {
+            (void)day;
+            daily_equity_history.push_back(sample);
+        }
+    }
+    result.daily = ComputeDailyMetrics(daily_equity_history, result.trades, spec.initial_equity);
     result.risk_metrics = ComputeRiskMetrics(result.daily);
     result.execution_quality = ComputeExecutionQuality(result.orders, result.trades);
     result.rolling_metrics = ComputeRollingMetrics(result.daily, 63);
@@ -5119,8 +5177,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     deterministic.performance.total_unrealized_pnl = total_unrealized_pnl;
     deterministic.performance.total_pnl = total_realized_pnl + total_unrealized_pnl;
     deterministic.performance.initial_equity = spec.initial_equity;
-    deterministic.performance.final_equity =
-        equity_points.empty() ? spec.initial_equity : equity_points.back();
+    deterministic.performance.final_equity = latest_equity;
     deterministic.performance.total_commission = total_commission;
     deterministic.performance.total_pnl_after_cost =
         deterministic.performance.total_pnl - deterministic.performance.total_commission;

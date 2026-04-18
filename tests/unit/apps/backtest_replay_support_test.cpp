@@ -209,6 +209,42 @@ std::filesystem::path WriteNightSessionReplayCsv(const std::string& stem) {
     return path;
 }
 
+std::filesystem::path WriteCarryDailyReplayCsv(const std::string& stem) {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto path =
+        std::filesystem::temp_directory_path() / (stem + "_" + std::to_string(stamp) + ".csv");
+    std::ofstream out(path);
+    out << "InstrumentID,TradingDay,UpdateTime,UpdateMillisec,LastPrice,Volume,BidPrice1,"
+           "BidVolume1,AskPrice1,AskVolume1\n";
+    out << "c2405,20240102,09:00:00,0,100,100,99,20,101,18\n";
+    out << "c2405,20240102,09:00:30,0,101,101,100,21,102,19\n";
+    out << "c2405,20240102,09:01:00,0,102,102,101,22,103,20\n";
+    out << "c2405,20240102,09:01:30,0,103,103,102,23,104,21\n";
+    out << "c2405,20240102,14:59:00,0,110,104,109,24,111,22\n";
+    out << "c2405,20240102,14:59:30,0,111,105,110,25,112,23\n";
+    out << "c2405,20240103,09:00:00,0,112,106,111,26,113,24\n";
+    out << "c2405,20240103,09:00:30,0,113,107,112,27,114,25\n";
+    out << "c2405,20240103,14:59:00,0,114,108,113,28,115,26\n";
+    out << "c2405,20240103,14:59:30,0,115,109,114,29,116,27\n";
+    out.close();
+    return path;
+}
+
+std::filesystem::path WriteLateOpenReplayCsv(const std::string& stem) {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto path =
+        std::filesystem::temp_directory_path() / (stem + "_" + std::to_string(stamp) + ".csv");
+    std::ofstream out(path);
+    out << "InstrumentID,TradingDay,UpdateTime,UpdateMillisec,LastPrice,Volume,BidPrice1,"
+           "BidVolume1,AskPrice1,AskVolume1\n";
+    out << "c2405,20240102,14:58:00,0,100,100,99,20,101,18\n";
+    out << "c2405,20240102,14:58:30,0,101,101,100,21,102,19\n";
+    out << "c2405,20240102,14:59:00,0,102,102,101,22,103,20\n";
+    out << "c2405,20240102,14:59:30,0,103,103,102,23,104,21\n";
+    out.close();
+    return path;
+}
+
 std::filesystem::path WriteFlatReplayCsv(const std::string& stem, double price = 100.0) {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto path =
@@ -311,6 +347,56 @@ class AlwaysOpenReplayStrategy final : public ISubStrategy {
     Side side_{Side::kBuy};
 };
 
+class OpenOnceReplayStrategy final : public ISubStrategy {
+   public:
+    void Init(const AtomicParams& params) override {
+        const auto id_it = params.find("id");
+        if (id_it != params.end() && !id_it->second.empty()) {
+            id_ = id_it->second;
+        }
+        const auto volume_it = params.find("volume");
+        if (volume_it != params.end() && !volume_it->second.empty()) {
+            volume_ = std::stoi(volume_it->second);
+        }
+        const auto side_it = params.find("open_side");
+        if (side_it != params.end() && side_it->second == "sell") {
+            side_ = Side::kSell;
+        }
+    }
+
+    std::string GetId() const override { return id_; }
+
+    void Reset() override {}
+
+    std::vector<SignalIntent> OnState(const StateSnapshot7D& state,
+                                      const AtomicStrategyContext& ctx) override {
+        const auto pos_it = ctx.net_positions.find(state.instrument_id);
+        const std::int32_t position = pos_it == ctx.net_positions.end() ? 0 : pos_it->second;
+        if (opened_ || position != 0) {
+            return {};
+        }
+
+        opened_ = true;
+        SignalIntent signal;
+        signal.strategy_id = id_;
+        signal.instrument_id = state.instrument_id;
+        signal.signal_type = SignalType::kOpen;
+        signal.side = side_;
+        signal.offset = OffsetFlag::kOpen;
+        signal.volume = volume_;
+        signal.limit_price = state.bar_close;
+        signal.ts_ns = state.ts_ns;
+        signal.trace_id = id_ + "-open-once";
+        return {signal};
+    }
+
+   private:
+    std::string id_{"open_once"};
+    std::int32_t volume_{1};
+    Side side_{Side::kBuy};
+    bool opened_{false};
+};
+
 class OpenOnFirstContractThenCloseOnRolloverStrategy final : public ISubStrategy {
    public:
     void Init(const AtomicParams& params) override {
@@ -394,6 +480,17 @@ void RegisterAlwaysOpenReplayType(const std::string& type) {
         << error;
 }
 
+void RegisterOpenOnceReplayType(const std::string& type) {
+    AtomicFactory& factory = AtomicFactory::Instance();
+    if (factory.Has(type)) {
+        return;
+    }
+    std::string error;
+    ASSERT_TRUE(factory.Register(
+        type, []() { return std::make_unique<OpenOnceReplayStrategy>(); }, &error))
+        << error;
+}
+
 void RegisterOpenThenCloseReplayType(const std::string& type) {
     AtomicFactory& factory = AtomicFactory::Instance();
     if (factory.Has(type)) {
@@ -406,8 +503,9 @@ void RegisterOpenThenCloseReplayType(const std::string& type) {
         << error;
 }
 
-std::filesystem::path WriteForceCloseWindowCompositeConfig(const std::string& strategy_type,
-                                                           const std::string& force_close_windows) {
+std::filesystem::path WriteForceCloseWindowCompositeConfig(
+    const std::string& strategy_type, const std::string& force_close_windows,
+    const std::string& window_timezone = "UTC") {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto path = std::filesystem::temp_directory_path() /
                       ("quant_hft_force_close_composite_test_" + std::to_string(stamp) + ".yaml");
@@ -423,7 +521,7 @@ std::filesystem::path WriteForceCloseWindowCompositeConfig(const std::string& st
     out << "        id: always_open\n";
     out << "        volume: 1\n";
     out << "        force_close_windows: \"" << force_close_windows << "\"\n";
-    out << "        window_timezone: UTC\n";
+    out << "        window_timezone: " << window_timezone << "\n";
     out.close();
     return path;
 }
@@ -1260,6 +1358,171 @@ TEST(BacktestReplaySupportTest,
 
     EXPECT_EQ(LastNetPosition(result.position_history, "c2405"), 0);
     EXPECT_EQ(LastNetPosition(result.position_history, "c2407"), 1);
+
+    std::error_code ec;
+    std::filesystem::remove(calendar_path, ec);
+    std::filesystem::remove(composite_path, ec);
+    std::filesystem::remove_all(dataset_root, ec);
+}
+
+TEST(BacktestReplaySupportTest, RunBacktestSpecDailyRowsKeepPositionValueAcrossCarryDay) {
+    const std::string strategy_type = UniqueAtomicType("open_once_daily_carry");
+    RegisterOpenOnceReplayType(strategy_type);
+    const std::filesystem::path csv_path = WriteCarryDailyReplayCsv("quant_hft_daily_carry");
+    const std::filesystem::path composite_path =
+        WriteAlwaysOpenCompositeConfig(strategy_type, /*timeframe_minutes=*/1);
+
+    BacktestCliSpec spec;
+    spec.engine_mode = "csv";
+    spec.csv_path = csv_path.string();
+    spec.run_id = "daily-carry-test";
+    spec.strategy_factory = "composite";
+    spec.strategy_composite_config = composite_path.string();
+    spec.emit_trades = true;
+
+    BacktestCliResult result;
+    std::string error;
+    ASSERT_TRUE(RunBacktestSpec(spec, &result, &error)) << error;
+    ASSERT_EQ(result.trades.size(), 1U);
+
+    const DailyPerformance* first_day = nullptr;
+    const DailyPerformance* second_day = nullptr;
+    for (const DailyPerformance& row : result.daily) {
+        if (row.date == "20240102") {
+            first_day = &row;
+        }
+        if (row.date == "20240103") {
+            second_day = &row;
+        }
+    }
+
+    ASSERT_NE(first_day, nullptr);
+    ASSERT_NE(second_day, nullptr);
+    EXPECT_GT(first_day->position_value, 0.0);
+    EXPECT_GT(second_day->position_value, 0.0);
+
+    std::error_code ec;
+    std::filesystem::remove(csv_path, ec);
+    std::filesystem::remove(composite_path, ec);
+}
+
+TEST(BacktestReplaySupportTest, RunBacktestSpecDailyRowsCaptureLateOpenAfterFinalBar) {
+    const std::string strategy_type = UniqueAtomicType("open_once_late_daily");
+    RegisterOpenOnceReplayType(strategy_type);
+    const std::filesystem::path csv_path = WriteLateOpenReplayCsv("quant_hft_daily_late_open");
+    const std::filesystem::path composite_path =
+        WriteAlwaysOpenCompositeConfig(strategy_type, /*timeframe_minutes=*/1);
+
+    BacktestCliSpec spec;
+    spec.engine_mode = "csv";
+    spec.csv_path = csv_path.string();
+    spec.run_id = "daily-late-open-test";
+    spec.strategy_factory = "composite";
+    spec.strategy_composite_config = composite_path.string();
+    spec.emit_trades = true;
+
+    BacktestCliResult result;
+    std::string error;
+    ASSERT_TRUE(RunBacktestSpec(spec, &result, &error)) << error;
+    ASSERT_EQ(result.trades.size(), 1U);
+
+    const DailyPerformance* day = nullptr;
+    for (const DailyPerformance& row : result.daily) {
+        if (row.date == "20240102") {
+            day = &row;
+            break;
+        }
+    }
+
+    ASSERT_NE(day, nullptr);
+    EXPECT_GT(day->position_value, 0.0);
+
+    std::error_code ec;
+    std::filesystem::remove(csv_path, ec);
+    std::filesystem::remove(composite_path, ec);
+}
+
+TEST(BacktestReplaySupportTest, RunBacktestSpecDailyRowsClearPositionValueAfterExpiryClose) {
+    const std::string strategy_type = UniqueAtomicType("open_once_expiry_close_daily");
+    RegisterOpenOnceReplayType(strategy_type);
+
+    const auto dataset_root = MakeTempDir("quant_hft_expiry_close_daily_row");
+    const auto composite_path =
+        WriteAlwaysOpenCompositeConfig(strategy_type, /*timeframe_minutes=*/1);
+    const auto calendar_path = WriteTempContractExpiryCalendarConfig(
+        "contracts:\n"
+        "  c2405:\n"
+        "    last_trading_day: 20240103\n");
+
+    std::string error;
+    const auto manifest =
+        WriteParquetManifest(dataset_root,
+                             {
+                                 {"c",
+                                  "20240102",
+                                  "c2405",
+                                  {
+                                      MakeParquetTick("c2405", "20240102", "09:00:00", 100.0,
+                                                      10),
+                                      MakeParquetTick("c2405", "20240102", "09:00:30", 101.0,
+                                                      11),
+                                      MakeParquetTick("c2405", "20240102", "09:01:00", 102.0,
+                                                      12),
+                                      MakeParquetTick("c2405", "20240102", "09:01:30", 103.0,
+                                                      13),
+                                  }},
+                                 {"c",
+                                  "20240103",
+                                  "c2405",
+                                  {
+                                      MakeParquetTick("c2405", "20240103", "21:00:00", 109.0,
+                                                      14),
+                                      MakeParquetTick("c2405", "20240103", "21:00:30", 110.0,
+                                                      15),
+                                      MakeParquetTick("c2405", "20240103", "09:00:00", 111.0,
+                                                      16),
+                                      MakeParquetTick("c2405", "20240103", "09:00:30", 112.0,
+                                                      17),
+                                  }},
+                             },
+                             &error);
+    ASSERT_FALSE(manifest.empty()) << error;
+
+    BacktestCliSpec spec;
+    spec.engine_mode = "parquet";
+    spec.dataset_root = dataset_root.string();
+    spec.dataset_manifest = manifest.string();
+    spec.run_id = UniqueRunId("expiry-close-daily-row");
+    spec.strategy_factory = "composite";
+    spec.strategy_composite_config = composite_path.string();
+    spec.symbols = {"c"};
+    spec.rollover_mode = "expiry_close";
+    spec.product_series_mode = "raw";
+    spec.contract_expiry_calendar_path = calendar_path.string();
+    spec.emit_trades = true;
+
+    BacktestCliResult result;
+    ASSERT_TRUE(RunBacktestSpec(spec, &result, &error)) << error;
+
+    const DailyPerformance* expiry_day = nullptr;
+    for (const DailyPerformance& row : result.daily) {
+        if (row.date == "20240103") {
+            expiry_day = &row;
+            break;
+        }
+    }
+
+    ASSERT_NE(expiry_day, nullptr);
+    EXPECT_DOUBLE_EQ(expiry_day->position_value, 0.0);
+
+    bool saw_expiry_close = false;
+    for (const TradeRecord& trade : result.trades) {
+        if (trade.signal_type == "expiry_close") {
+            saw_expiry_close = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(saw_expiry_close);
 
     std::error_code ec;
     std::filesystem::remove(calendar_path, ec);
@@ -2342,8 +2605,8 @@ TEST(BacktestReplaySupportTest,
     RegisterAlwaysOpenReplayType(strategy_type);
     const std::filesystem::path csv_path =
         WriteForceCloseWindowReplayCsv("quant_hft_force_close_window");
-    const std::filesystem::path composite_path =
-        WriteForceCloseWindowCompositeConfig(strategy_type, "09:01-09:04");
+    const std::filesystem::path composite_path = WriteForceCloseWindowCompositeConfig(
+        strategy_type, "09:01-09:04", "Asia/Shanghai");
 
     BacktestCliSpec spec;
     spec.engine_mode = "csv";
@@ -2389,13 +2652,40 @@ TEST(BacktestReplaySupportTest,
     std::filesystem::remove(composite_path, ec);
 }
 
+TEST(BacktestReplaySupportTest,
+     RunBacktestSpecForceCloseWindowBlocksNightSessionOpensInAsiaShanghai) {
+    const std::string strategy_type = UniqueAtomicType("always_open_force_close_night");
+    RegisterAlwaysOpenReplayType(strategy_type);
+    const std::filesystem::path csv_path =
+        WriteNightSessionReplayCsv("quant_hft_force_close_window_night");
+    const std::filesystem::path composite_path = WriteForceCloseWindowCompositeConfig(
+        strategy_type, "21:00-21:02", "Asia/Shanghai");
+
+    BacktestCliSpec spec;
+    spec.engine_mode = "csv";
+    spec.csv_path = csv_path.string();
+    spec.run_id = "force-close-window-night-test";
+    spec.strategy_factory = "composite";
+    spec.strategy_composite_config = composite_path.string();
+
+    BacktestCliResult result;
+    std::string error;
+    ASSERT_TRUE(RunBacktestSpec(spec, &result, &error)) << error;
+    ASSERT_TRUE(result.has_deterministic);
+    EXPECT_TRUE(result.trades.empty());
+
+    std::error_code ec;
+    std::filesystem::remove(csv_path, ec);
+    std::filesystem::remove(composite_path, ec);
+}
+
 TEST(BacktestReplaySupportTest, RunBacktestSpecAssignsMonotonicFillAndOrderSequences) {
     const std::string strategy_type = UniqueAtomicType("always_open_fill_seq");
     RegisterAlwaysOpenReplayType(strategy_type);
     const std::filesystem::path csv_path =
         WriteForceCloseWindowReplayCsv("quant_hft_fill_order_sequence");
-    const std::filesystem::path composite_path =
-        WriteForceCloseWindowCompositeConfig(strategy_type, "09:01-09:04");
+    const std::filesystem::path composite_path = WriteForceCloseWindowCompositeConfig(
+        strategy_type, "09:01-09:04", "Asia/Shanghai");
 
     BacktestCliSpec spec;
     spec.engine_mode = "csv";

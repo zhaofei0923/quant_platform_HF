@@ -31,6 +31,25 @@ TEST(CliSupportTest, UsesRuntimeOptimDefaultConfigPaths) {
     EXPECT_EQ(DefaultRollingBacktestConfigPath(), "runtime/optim/c_kama_rolling_optimize.yaml");
 }
 
+TEST(CliSupportTest, ResolveConfigPathWithDefaultUsesExplicitConfigWhenProvided) {
+    ArgMap args;
+    args["config"] = "/tmp/custom.yaml";
+
+    const ResolvedConfigPath resolved =
+        ResolveConfigPathWithDefault(args, "config", DefaultParameterOptimConfigPath());
+
+    EXPECT_EQ(resolved.path, "/tmp/custom.yaml");
+    EXPECT_FALSE(resolved.used_default);
+}
+
+TEST(CliSupportTest, ResolveConfigPathWithDefaultFallsBackToDefaultWhenMissing) {
+    const ResolvedConfigPath resolved =
+        ResolveConfigPathWithDefault(ArgMap{}, "config", DefaultRollingBacktestConfigPath());
+
+    EXPECT_EQ(resolved.path, DefaultRollingBacktestConfigPath());
+    EXPECT_TRUE(resolved.used_default);
+}
+
 TEST(CliSupportTest, BacktestCliFallbackPrefersSiblingBinary) {
     const auto dir = MakeTempDir("cli_support_sibling");
     const auto app_dir = dir / "build-gcc";

@@ -23,9 +23,11 @@ namespace {
 
 using quant_hft::apps::ArgMap;
 using quant_hft::apps::DetectDefaultBacktestCliPath;
+using quant_hft::apps::DefaultParameterOptimConfigPath;
 using quant_hft::apps::GetArg;
 using quant_hft::apps::HasArg;
 using quant_hft::apps::ParseArgs;
+using quant_hft::apps::ResolveConfigPathWithDefault;
 using quant_hft::optim::IOptimizationAlgorithm;
 using quant_hft::optim::LoadParameterSpace;
 using quant_hft::optim::OptimizationConfig;
@@ -143,7 +145,9 @@ std::string BuildBacktestCommand(const std::string& backtest_cli_path,
 }
 
 void PrintUsage(const char* argv0) {
-    std::cout << "Usage: " << argv0 << " --config <optim_config.yaml> [--backtest-cli-path <path>]\n";
+    std::cout << "Usage: " << argv0
+              << " [--config <optim_config.yaml>] [--backtest-cli-path <path>]\n"
+              << "Default config: " << DefaultParameterOptimConfigPath() << '\n';
 }
 
 }  // namespace
@@ -155,11 +159,17 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    const std::string config_path = GetArg(args, "config", "");
-    if (config_path.empty()) {
+    const quant_hft::apps::ResolvedConfigPath resolved_config =
+        ResolveConfigPathWithDefault(args, "config", DefaultParameterOptimConfigPath());
+    if (resolved_config.path.empty()) {
         PrintUsage(argv[0]);
         return 2;
     }
+    if (resolved_config.used_default) {
+        std::cout << "parameter_optim_cli: using default config: " << resolved_config.path
+                  << '\n';
+    }
+    const std::string config_path = resolved_config.path;
 
     ParameterSpace space;
     std::string error;

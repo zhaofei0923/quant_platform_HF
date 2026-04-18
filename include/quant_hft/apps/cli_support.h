@@ -13,6 +13,11 @@ namespace quant_hft::apps {
 
 using ArgMap = std::unordered_map<std::string, std::string>;
 
+struct ResolvedConfigPath {
+    std::string path;
+    bool used_default{false};
+};
+
 inline ArgMap ParseArgs(int argc, char** argv) {
     ArgMap args;
     for (int i = 1; i < argc; ++i) {
@@ -121,6 +126,16 @@ inline std::string DefaultParameterOptimConfigPath() {
 inline std::string DefaultRollingBacktestConfigPath() {
     return (std::filesystem::path("runtime") / "optim" / "c_kama_rolling_optimize.yaml")
         .string();
+}
+
+inline ResolvedConfigPath ResolveConfigPathWithDefault(const ArgMap& args,
+                                                       const std::string& key,
+                                                       const std::string& default_path) {
+    const auto it = args.find(key);
+    if (it != args.end() && !it->second.empty()) {
+        return {it->second, false};
+    }
+    return {default_path, true};
 }
 
 inline std::string DetectDefaultBacktestCliPath(

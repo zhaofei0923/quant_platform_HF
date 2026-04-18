@@ -10,9 +10,11 @@
 namespace {
 
 using quant_hft::apps::ArgMap;
+using quant_hft::apps::DefaultRollingBacktestConfigPath;
 using quant_hft::apps::GetArg;
 using quant_hft::apps::HasArg;
 using quant_hft::apps::ParseArgs;
+using quant_hft::apps::ResolveConfigPathWithDefault;
 using quant_hft::rolling::LoadRollingConfig;
 using quant_hft::rolling::RollingConfig;
 using quant_hft::rolling::RollingReport;
@@ -21,7 +23,8 @@ using quant_hft::rolling::WriteRollingReportJson;
 using quant_hft::rolling::WriteRollingReportMarkdown;
 
 void PrintUsage(const char* argv0) {
-    std::cout << "Usage: " << argv0 << " --config <rolling_config.yaml>\n";
+    std::cout << "Usage: " << argv0 << " [--config <rolling_config.yaml>]\n"
+              << "Default config: " << DefaultRollingBacktestConfigPath() << '\n';
 }
 
 bool EnsureParentDir(const std::string& output_path, std::string* error) {
@@ -50,11 +53,17 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    const std::string config_path = GetArg(args, "config", "");
-    if (config_path.empty()) {
+    const quant_hft::apps::ResolvedConfigPath resolved_config =
+        ResolveConfigPathWithDefault(args, "config", DefaultRollingBacktestConfigPath());
+    if (resolved_config.path.empty()) {
         PrintUsage(argv[0]);
         return 2;
     }
+    if (resolved_config.used_default) {
+        std::cout << "rolling_backtest_cli: using default config: " << resolved_config.path
+                  << '\n';
+    }
+    const std::string config_path = resolved_config.path;
 
     RollingConfig config;
     std::string error;

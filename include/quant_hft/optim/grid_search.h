@@ -18,13 +18,17 @@ class GridSearch : public IOptimizationAlgorithm {
     Trial GetBestTrial() const override;
 
    private:
-    static void GenerateCombinations(const std::vector<ParameterDef>& params,
-                                     std::size_t index,
-                                     ParamValueMap current,
-                                     std::vector<ParamValueMap>* out);
+    static std::size_t CountPlannedTrials(const std::vector<std::vector<ParamValue>>& values_by_param,
+                                          const OptimizationConfig& config);
 
-    std::vector<ParamValueMap> all_combinations_;
-    std::size_t next_index_{0};
+    ParamValueMap BuildCurrentCombination() const;
+    void AdvanceIndices();
+
+    std::vector<std::string> parameter_names_;
+    std::vector<std::vector<ParamValue>> values_by_param_;
+    std::vector<std::size_t> current_indices_;
+    std::size_t total_trials_{0};
+    std::size_t emitted_trials_{0};
     std::vector<Trial> results_;
     OptimizationConfig config_;
 };

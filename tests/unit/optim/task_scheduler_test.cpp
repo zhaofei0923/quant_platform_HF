@@ -43,6 +43,42 @@ TEST(TaskSchedulerTest, RespectsMaxConcurrency) {
     EXPECT_LE(peak.load(), 2);
 }
 
+TEST(TaskSchedulerTest, RunsSequentiallyWhenConcurrencyIsOne) {
+    TaskScheduler scheduler(1);
+
+    std::vector<ParamValueMap> batch;
+    for (int i = 0; i < 3; ++i) {
+        ParamValueMap params;
+        params.values["id"] = i;
+        batch.push_back(params);
+    }
+
+    std::atomic<int> active{0};
+    std::atomic<int> peak{0};
+
+    const auto task = [&](const ParamValueMap& params) {
+        Trial trial;
+        trial.status = "completed";
+        trial.trial_id = "t" + std::to_string(std::get<int>(params.values.at("id")));
+
+        const int now = active.fetch_add(1) + 1;
+        int expected = peak.load();
+        while (now > expected && !peak.compare_exchange_weak(expected, now)) {
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        active.fetch_sub(1);
+        return trial;
+    };
+
+    const std::vector<Trial> results = scheduler.RunBatch(batch, task);
+    ASSERT_EQ(results.size(), batch.size());
+    EXPECT_LE(peak.load(), 1);
+    EXPECT_EQ(results[0].trial_id, "t0");
+    EXPECT_EQ(results[1].trial_id, "t1");
+    EXPECT_EQ(results[2].trial_id, "t2");
+}
+
 TEST(TaskSchedulerTest, CapturesTaskExceptionsAsFailedTrials) {
     TaskScheduler scheduler(2);
 

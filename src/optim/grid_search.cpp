@@ -72,33 +72,52 @@ std::vector<ParamValue> BuildValuesForParam(const ParameterDef& param) {
 
 void GridSearch::Initialize(const ParameterSpace& space, const OptimizationConfig& config) {
     config_ = config;
-    all_combinations_.clear();
     results_.clear();
-    next_index_ = 0;
+    parameter_names_.clear();
+    values_by_param_.clear();
+    current_indices_.clear();
+    total_trials_ = 0;
+    emitted_trials_ = 0;
 
-    ParamValueMap current;
-    GenerateCombinations(space.parameters, 0, std::move(current), &all_combinations_);
-
-    if (config_.max_trials > 0 && static_cast<int>(all_combinations_.size()) > config_.max_trials) {
-        all_combinations_.resize(static_cast<std::size_t>(config_.max_trials));
+    parameter_names_.reserve(space.parameters.size());
+    values_by_param_.reserve(space.parameters.size());
+    for (const ParameterDef& param : space.parameters) {
+        std::vector<ParamValue> values = BuildValuesForParam(param);
+        if (values.empty()) {
+            return;
+        }
+        parameter_names_.push_back(param.name);
+        values_by_param_.push_back(std::move(values));
     }
+
+    current_indices_.assign(values_by_param_.size(), 0);
+    total_trials_ = CountPlannedTrials(values_by_param_, config_);
 }
 
 std::vector<ParamValueMap> GridSearch::GetNextBatch(int batch_size) {
     if (batch_size <= 0) {
         batch_size = 1;
     }
-    const std::size_t begin = next_index_;
-    const std::size_t end =
-        std::min(next_index_ + static_cast<std::size_t>(batch_size), all_combinations_.size());
-    next_index_ = end;
-    return std::vector<ParamValueMap>(all_combinations_.begin() + static_cast<std::ptrdiff_t>(begin),
-                                      all_combinations_.begin() + static_cast<std::ptrdiff_t>(end));
+
+    const std::size_t remaining = total_trials_ > emitted_trials_ ? total_trials_ - emitted_trials_ : 0;
+    const std::size_t count =
+        std::min<std::size_t>(static_cast<std::size_t>(batch_size), remaining);
+
+    std::vector<ParamValueMap> batch;
+    batch.reserve(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        batch.push_back(BuildCurrentCombination());
+        ++emitted_trials_;
+        if (emitted_trials_ < total_trials_) {
+            AdvanceIndices();
+        }
+    }
+    return batch;
 }
 
 void GridSearch::AddTrialResult(const Trial& trial) { results_.push_back(trial); }
 
-bool GridSearch::IsFinished() const { return next_index_ >= all_combinations_.size(); }
+bool GridSearch::IsFinished() const { return emitted_trials_ >= total_trials_; }
 
 std::vector<Trial> GridSearch::GetAllTrials() const { return results_; }
 
@@ -127,24 +146,57 @@ Trial GridSearch::GetBestTrial() const {
     return best;
 }
 
-void GridSearch::GenerateCombinations(const std::vector<ParameterDef>& params,
-                                      std::size_t index,
-                                      ParamValueMap current,
-                                      std::vector<ParamValueMap>* out) {
-    if (out == nullptr) {
-        return;
+std::size_t GridSearch::CountPlannedTrials(const std::vector<std::vector<ParamValue>>& values_by_param,
+                                           const OptimizationConfig& config) {
+    const bool has_limit = config.max_trials > 0;
+    const std::size_t limit = has_limit ? static_cast<std::size_t>(config.max_trials) : 0U;
+
+    std::size_t total = 1;
+    for (const auto& values : values_by_param) {
+        if (values.empty()) {
+            return 0;
+        }
+
+        const std::size_t count = values.size();
+        if (has_limit && total > limit / count) {
+            return limit;
+        }
+        if (!has_limit && total > std::numeric_limits<std::size_t>::max() / count) {
+            throw std::runtime_error(
+                "grid search parameter space overflow; set max_trials to cap the search space");
+        }
+        total *= count;
     }
-    if (index >= params.size()) {
-        out->push_back(std::move(current));
+
+    if (has_limit) {
+        total = std::min(total, limit);
+    }
+    return total;
+}
+
+ParamValueMap GridSearch::BuildCurrentCombination() const {
+    ParamValueMap combination;
+    combination.values.reserve(parameter_names_.size());
+
+    for (std::size_t i = 0; i < parameter_names_.size(); ++i) {
+        combination.values.emplace(parameter_names_[i], values_by_param_[i][current_indices_[i]]);
+    }
+    return combination;
+}
+
+void GridSearch::AdvanceIndices() {
+    if (current_indices_.empty()) {
         return;
     }
 
-    const ParameterDef& param = params[index];
-    const std::vector<ParamValue> values = BuildValuesForParam(param);
-    for (const ParamValue& value : values) {
-        ParamValueMap next = current;
-        next.values[param.name] = value;
-        GenerateCombinations(params, index + 1, std::move(next), out);
+    for (std::size_t index = current_indices_.size(); index-- > 0;) {
+        if (current_indices_[index] + 1 < values_by_param_[index].size()) {
+            ++current_indices_[index];
+            for (std::size_t reset = index + 1; reset < current_indices_.size(); ++reset) {
+                current_indices_[reset] = 0;
+            }
+            return;
+        }
     }
 }
 

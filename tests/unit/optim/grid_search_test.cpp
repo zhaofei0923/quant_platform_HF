@@ -41,6 +41,28 @@ TEST(GridSearchTest, GeneratesCartesianProductWithMaxTrialsCutoff) {
     EXPECT_TRUE(search.IsFinished());
 }
 
+TEST(GridSearchTest, EnumeratesLargeSearchSpaceLazilyWhenTrialsAreCapped) {
+    ParameterSpace space;
+    space.parameters.push_back(MakeIntRange("fast", 1, 10000, 1));
+    space.parameters.push_back(MakeIntRange("slow", 1, 10000, 1));
+
+    OptimizationConfig config;
+    config.max_trials = 3;
+
+    GridSearch search;
+    search.Initialize(space, config);
+
+    const auto batch = search.GetNextBatch(3);
+    ASSERT_EQ(batch.size(), 3U);
+    EXPECT_EQ(std::get<int>(batch[0].values.at("fast")), 1);
+    EXPECT_EQ(std::get<int>(batch[0].values.at("slow")), 1);
+    EXPECT_EQ(std::get<int>(batch[1].values.at("fast")), 1);
+    EXPECT_EQ(std::get<int>(batch[1].values.at("slow")), 2);
+    EXPECT_EQ(std::get<int>(batch[2].values.at("fast")), 1);
+    EXPECT_EQ(std::get<int>(batch[2].values.at("slow")), 3);
+    EXPECT_TRUE(search.IsFinished());
+}
+
 TEST(GridSearchTest, SelectsBestTrialByDirection) {
     ParameterSpace space;
     space.parameters.push_back(MakeIntRange("a", 1, 2, 1));

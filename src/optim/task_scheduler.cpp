@@ -1,6 +1,7 @@
 #include "quant_hft/optim/task_scheduler.h"
 
 #include <algorithm>
+#include <deque>
 #include <future>
 #include <utility>
 #include <vector>
@@ -12,6 +13,23 @@ struct ActiveTask {
     std::size_t index{0};
     std::future<Trial> future;
 };
+
+Trial ExecuteTaskSafely(const TaskScheduler::TaskFunc& task,
+                        const ParamValueMap& params,
+                        std::size_t index) {
+    Trial trial;
+    trial.trial_id = "trial_" + std::to_string(index);
+    try {
+        trial = task(params);
+    } catch (const std::exception& ex) {
+        trial.status = "failed";
+        trial.error_msg = ex.what();
+    } catch (...) {
+        trial.status = "failed";
+        trial.error_msg = "unknown task failure";
+    }
+    return trial;
+}
 
 Trial GetFutureResult(std::future<Trial>* future, std::size_t index) {
     Trial trial;
@@ -38,8 +56,16 @@ std::vector<Trial> TaskScheduler::RunBatch(const std::vector<ParamValueMap>& par
                                            const TaskFunc& task) const {
     const std::size_t limit = static_cast<std::size_t>(std::max(1, max_concurrent_));
 
-    std::vector<ActiveTask> active;
-    active.reserve(limit);
+    if (limit == 1) {
+        std::vector<Trial> results;
+        results.reserve(params_batch.size());
+        for (std::size_t index = 0; index < params_batch.size(); ++index) {
+            results.push_back(ExecuteTaskSafely(task, params_batch[index], index));
+        }
+        return results;
+    }
+
+    std::deque<ActiveTask> active;
 
     std::vector<std::pair<std::size_t, Trial>> ordered_results;
     ordered_results.reserve(params_batch.size());
@@ -48,7 +74,7 @@ std::vector<Trial> TaskScheduler::RunBatch(const std::vector<ParamValueMap>& par
         if (active.size() >= limit) {
             Trial completed = GetFutureResult(&active.front().future, active.front().index);
             ordered_results.emplace_back(active.front().index, std::move(completed));
-            active.erase(active.begin());
+            active.pop_front();
         }
 
         ActiveTask launched;

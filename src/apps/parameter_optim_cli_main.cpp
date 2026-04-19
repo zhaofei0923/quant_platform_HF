@@ -4,7 +4,9 @@
 #include <csignal>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -113,9 +115,36 @@ std::string DetectBacktestCliPath(const ArgMap& args, const ParameterSpace& spac
 }
 
 int SafeMaxConcurrent(int requested) {
+    const int normalized_requested = requested <= 0 ? 1 : requested;
+
     const unsigned int hw = std::thread::hardware_concurrency();
-    const int hw_cap = hw == 0 ? 1 : static_cast<int>(hw);
-    return std::max(1, std::min(requested, hw_cap));
+    const unsigned int half_hw = hw == 0 ? 1U : std::max(1U, hw / 2U);
+    const int hw_cap = static_cast<int>(std::min(4U, half_hw));
+
+    int memory_cap = std::numeric_limits<int>::max();
+    std::ifstream meminfo("/proc/meminfo");
+    if (meminfo.is_open()) {
+        std::string key;
+        long long value_kb = 0;
+        std::string unit;
+        while (meminfo >> key >> value_kb >> unit) {
+            if (key == "MemAvailable:") {
+                constexpr long long kReserveKb = 1024LL * 1024LL;
+                constexpr long long kPerTrialKb = 1536LL * 1024LL;
+                if (value_kb <= kReserveKb) {
+                    memory_cap = 1;
+                } else {
+                    const long long usable_kb = value_kb - kReserveKb;
+                    const long long cap = usable_kb / kPerTrialKb;
+                    memory_cap = static_cast<int>(std::max(1LL, cap));
+                }
+                break;
+            }
+            meminfo.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        }
+    }
+
+    return std::max(1, std::min({normalized_requested, hw_cap, memory_cap}));
 }
 
 std::string BuildBacktestCommand(const std::string& backtest_cli_path,
@@ -197,7 +226,13 @@ int main(int argc, char** argv) {
     }
 
     const std::string backtest_cli_path = DetectBacktestCliPath(args, space, argv[0]);
-    const int max_concurrent = SafeMaxConcurrent(space.optimization.batch_size);
+    const int requested_concurrent = std::max(1, space.optimization.batch_size);
+    const int max_concurrent = SafeMaxConcurrent(requested_concurrent);
+    if (max_concurrent < requested_concurrent) {
+        std::cout << "parameter_optim_cli: limiting concurrency from " << requested_concurrent
+                  << " to " << max_concurrent
+                  << " to reduce CPU and memory pressure\n";
+    }
     TaskScheduler scheduler(max_concurrent);
 
     std::signal(SIGINT, HandleSignal);

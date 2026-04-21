@@ -1,3 +1,4 @@
+#include "quant_hft/rolling/rolling_config.h"
 #include "quant_hft/rolling/window_generator.h"
 
 #include <gtest/gtest.h>
@@ -132,6 +133,46 @@ TEST(WindowGeneratorTest, GeneratesExpandingWindows) {
 
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
+}
+
+TEST(WindowGeneratorTest, GeneratesMultipleWindowsForRepoRollingOptimizeConfig) {
+    const auto repo_root = std::filesystem::path(__FILE__)
+                               .parent_path()
+                               .parent_path()
+                               .parent_path()
+                               .parent_path();
+    const auto path = repo_root / "configs" / "ops" / "rolling_optimize_kama.yaml";
+
+    RollingConfig config;
+    std::string error;
+    ASSERT_TRUE(LoadRollingConfig(path.string(), &config, &error)) << error;
+
+    std::vector<std::string> trading_days;
+    ASSERT_TRUE(BuildTradingDayCalendar(config, &trading_days, &error)) << error;
+
+    std::vector<Window> windows;
+    ASSERT_TRUE(GenerateWindows(config, trading_days, &windows, &error)) << error;
+    ASSERT_EQ(windows.size(), 4U);
+
+    EXPECT_EQ(windows[0].train_start, "20240102");
+    EXPECT_EQ(windows[0].train_end, "20240703");
+    EXPECT_EQ(windows[0].test_start, "20240704");
+    EXPECT_EQ(windows[0].test_end, "20240814");
+
+    EXPECT_EQ(windows[1].train_start, "20240221");
+    EXPECT_EQ(windows[1].train_end, "20240814");
+    EXPECT_EQ(windows[1].test_start, "20240815");
+    EXPECT_EQ(windows[1].test_end, "20240927");
+
+    EXPECT_EQ(windows[2].train_start, "20240403");
+    EXPECT_EQ(windows[2].train_end, "20240927");
+    EXPECT_EQ(windows[2].test_start, "20240930");
+    EXPECT_EQ(windows[2].test_end, "20241115");
+
+    EXPECT_EQ(windows[3].train_start, "20240522");
+    EXPECT_EQ(windows[3].train_end, "20241115");
+    EXPECT_EQ(windows[3].test_start, "20241118");
+    EXPECT_EQ(windows[3].test_end, "20241227");
 }
 
 }  // namespace

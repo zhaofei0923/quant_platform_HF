@@ -1,0 +1,47 @@
+# Acceptance parameter space for Step 3.3 random search.
+# Uses 45 total combinations so max_trials=20 exercises truncation-to-limit,
+# random sampling across range discretization, and enum/value selection.
+
+composite_config_path: configs/strategies/main_backtest_strategy.yaml
+target_sub_config_path: ./sub/kama_trend_1.yaml
+
+backtest_args:
+  engine_mode: parquet
+  dataset_root: backtest_data/parquet_v2
+  detector_config: configs/sim/ctp.yaml
+  product_config_path: configs/strategies/instrument_info.json
+  contract_expiry_calendar_path: configs/strategies/contract_expiry_calendar.yaml
+  symbols: c
+  start_date: 20240827
+  end_date: 20250228
+  max_ticks: 200000
+  deterministic_fills: true
+  strict_parquet: true
+  rollover_mode: expiry_close
+  rollover_price_mode: bbo
+  rollover_slippage_bps: 0
+  emit_trades: true
+  emit_orders: false
+  emit_position_history: false
+
+optimization:
+  algorithm: random
+  maximize: true
+  metric_path: profit_factor
+  max_trials: 20
+  random_seed: 20260420
+  batch_size: 2
+  preserve_top_k_trials: 10
+
+parameters:
+  - name: kama_filter
+    type: double
+    range: [0.2, 0.6]
+    step: 0.1
+  - name: stop_loss_atr_multiplier
+    type: double
+    range: [3.0, 4.0]
+    step: 0.5
+  - name: risk_per_trade_pct
+    type: double
+    values: [0.002, 0.003, 0.004]

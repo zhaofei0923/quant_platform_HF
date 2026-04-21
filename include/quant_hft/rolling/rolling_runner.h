@@ -19,8 +19,15 @@ struct WindowResult {
     std::string test_end;
     bool success{false};
     double objective{0.0};
+    int train_trial_count{0};
+    int completed_train_trial_count{0};
+    std::string train_task_id;
+    std::string train_report_json;
+    std::string train_report_md;
     std::unordered_map<std::string, double> metrics;
     std::string best_params_yaml;
+    std::string test_result_json;
+    std::string top_trials_dir;
     std::string error_msg;
 };
 

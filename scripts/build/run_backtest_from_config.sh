@@ -146,6 +146,11 @@ normalize_trace_output_format() {
   esac
 }
 
+find_formal_analysis_report() {
+  local search_dir="$1"
+  find "${search_dir}" -maxdepth 1 -type f -name '*_回测分析报告_*.md' | sort | tail -n 1
+}
+
 trace_primary_extension() {
   case "$1" in
     parquet) printf 'parquet' ;;
@@ -427,6 +432,10 @@ sub_strategy_indicator_trace_path_raw="$(cfg_get "sub_strategy_indicator_trace_p
 quiet_backtest_stdout="$(cfg_get "quiet_backtest_stdout" "true")"
 progress_only="$(cfg_get "progress_only" "true")"
 show_steps="$(cfg_get "show_steps" "true")"
+emit_formal_analysis_report="$(cfg_get "emit_formal_analysis_report" "false")"
+formal_analysis_report_path_raw="$(cfg_get "formal_analysis_report_path" "")"
+formal_analysis_report_date="$(cfg_get "formal_analysis_report_date" "")"
+formal_analysis_sample_trades="$(cfg_get "formal_analysis_sample_trades" "10")"
 
 if [[ -z "${engine_mode}" || -z "${dataset_root_raw}" || -z "${strategy_main_config_path_raw}" ||
       -z "${output_json_raw}" || -z "${output_md_raw}" ]]; then
@@ -437,6 +446,18 @@ fi
 if [[ "${engine_mode}" != "parquet" ]]; then
   echo "error: parquet-only policy: engine_mode must be parquet" >&2
   exit 2
+fi
+
+if is_true "${emit_formal_analysis_report}"; then
+  if [[ -n "${formal_analysis_report_date}" && ! "${formal_analysis_report_date}" =~ ^[0-9]{8}$ ]]; then
+    echo "error: formal_analysis_report_date must be YYYYMMDD (got: ${formal_analysis_report_date})" >&2
+    exit 2
+  fi
+
+  if [[ ! "${formal_analysis_sample_trades}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "error: formal_analysis_sample_trades must be a positive integer (got: ${formal_analysis_sample_trades})" >&2
+    exit 2
+  fi
 fi
 
 dataset_root="$(to_abs_path "${dataset_root_raw}")"
@@ -473,6 +494,12 @@ if is_true "${emit_sub_strategy_indicator_trace}"; then
   sub_strategy_indicator_trace_path="$(resolve_trace_output_path "${sub_strategy_indicator_trace_path_raw}" "sub_strategy_indicator_trace" "${trace_output_format}")"
 else
   sub_strategy_indicator_trace_path=""
+fi
+
+if is_true "${emit_formal_analysis_report}" && [[ -n "${formal_analysis_report_path_raw}" ]]; then
+  formal_analysis_report_path="${run_dir}/$(basename "${formal_analysis_report_path_raw}")"
+else
+  formal_analysis_report_path=""
 fi
 
 if [[ ! -f "${strategy_main_config_path}" ]]; then
@@ -656,8 +683,44 @@ if [[ "${dry_run}" == true ]] || ! is_true "${progress_only}"; then
   fi
   echo "dry_run=${dry_run}, skip_build=${skip_build}"
   echo "quiet_backtest_stdout=${quiet_backtest_stdout}, progress_only=${progress_only}"
+  echo "emit_formal_analysis_report=${emit_formal_analysis_report}"
+  if [[ -n "${formal_analysis_report_path}" ]]; then
+    echo "formal_analysis_report_path=${formal_analysis_report_path}"
+  fi
+  if [[ -n "${formal_analysis_report_date}" ]]; then
+    echo "formal_analysis_report_date=${formal_analysis_report_date}"
+  fi
+  echo "formal_analysis_sample_trades=${formal_analysis_sample_trades}"
 fi
 
 emit_step "启动回测主程序"
 run_backtest_cmd "${backtest_cmd[@]}"
 emit_step "回测完成，结果文件: ${output_json} / ${output_md}"
+
+if is_true "${emit_formal_analysis_report}"; then
+  report_cmd=(
+    python3
+    "${repo_root}/scripts/analysis/backtest_analysis_report.py"
+    --run-dir "${run_dir}"
+    --sample-trades "${formal_analysis_sample_trades}"
+  )
+  if [[ -n "${formal_analysis_report_path}" ]]; then
+    report_cmd+=(--output "${formal_analysis_report_path}")
+  fi
+  if [[ -n "${formal_analysis_report_date}" ]]; then
+    report_cmd+=(--report-date "${formal_analysis_report_date}")
+  fi
+
+  emit_step "生成正式分析报告"
+  run_cmd "${report_cmd[@]}"
+
+  if [[ -z "${formal_analysis_report_path}" && "${dry_run}" != true ]]; then
+    formal_analysis_report_path="$(find_formal_analysis_report "${run_dir}" || true)"
+  fi
+
+  if [[ -n "${formal_analysis_report_path}" ]]; then
+    emit_step "正式分析报告已生成: ${formal_analysis_report_path}"
+  else
+    emit_step "正式分析报告已生成"
+  fi
+fi

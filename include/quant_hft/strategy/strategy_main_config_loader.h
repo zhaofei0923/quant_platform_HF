@@ -17,10 +17,17 @@ struct StrategyMainBacktestConfig {
     std::string product_config_path;
 };
 
+struct RiskManagementConfig {
+    bool enabled{false};
+    double risk_per_trade_pct{0.005};
+    double max_risk_per_trade{2000.0};
+};
+
 struct StrategyMainConfig {
     std::string run_type{"backtest"};
     bool market_state_mode{true};
     StrategyMainBacktestConfig backtest;
+    RiskManagementConfig risk_management;
     CompositeStrategyDefinition composite;
 };
 

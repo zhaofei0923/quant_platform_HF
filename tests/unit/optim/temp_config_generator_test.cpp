@@ -6,9 +6,11 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <sstream>
 #include <string>
 
 #include "quant_hft/apps/backtest_replay_support.h"
+#include "quant_hft/strategy/composite_config_loader.h"
 
 namespace quant_hft::optim {
 namespace {
@@ -51,15 +53,28 @@ TEST(TempConfigGeneratorTest, RewritesTargetSubConfigAndAbsolutizesOtherPaths) {
               "  id: trend\n"
               "  default_volume: 1\n");
     WriteFile(composite,
+              "run_type: backtest\n"
+              "market_state_mode: false\n"
+              "backtest:\n"
+              "  initial_equity: 200000\n"
+              "  product_series_mode: raw\n"
+              "  symbols: [c]\n"
+              "  start_date: 20240101\n"
+              "  end_date: 20240331\n"
+              "  product_config_path: ./instrument_info.json\n"
+              "  contract_expiry_calendar_path: ./contract_expiry_calendar.yaml\n"
               "composite:\n"
               "  merge_rule: kPriority\n"
+              "  enable_non_backtest: false\n"
               "  sub_strategies:\n"
               "    - id: kama\n"
               "      enabled: true\n"
+              "      timeframe_minutes: 5\n"
               "      type: KamaTrendStrategy\n"
               "      config_path: ./sub/kama.yaml\n"
               "    - id: trend\n"
               "      enabled: true\n"
+              "      timeframe_minutes: 15\n"
               "      type: TrendStrategy\n"
               "      config_path: ./sub/trend.yaml\n");
 
@@ -82,10 +97,24 @@ TEST(TempConfigGeneratorTest, RewritesTargetSubConfigAndAbsolutizesOtherPaths) {
         << error;
     EXPECT_EQ(params["params.take_profit_atr_multiplier"], "20.0");
 
+    CompositeStrategyDefinition generated;
+    ASSERT_TRUE(
+        LoadCompositeStrategyDefinition(artifacts.composite_config_path.string(), &generated, &error))
+        << error;
+    EXPECT_EQ(generated.run_type, "backtest");
+    EXPECT_FALSE(generated.market_state_mode);
+    ASSERT_EQ(generated.sub_strategies.size(), 2U);
+    EXPECT_EQ(generated.sub_strategies[0].timeframe_minutes, 5);
+    EXPECT_EQ(generated.sub_strategies[1].timeframe_minutes, 15);
+
     const std::string composite_text = ReadFile(artifacts.composite_config_path);
     const std::string other_abs = std::filesystem::absolute(other_sub).lexically_normal().string();
+    EXPECT_EQ(composite_text.rfind("composite:\n", 0), 0U);
     EXPECT_NE(composite_text.find(other_abs), std::string::npos);
     EXPECT_NE(composite_text.find(artifacts.sub_config_path.string()), std::string::npos);
+    EXPECT_NE(composite_text.find("market_state_mode: false"), std::string::npos);
+    EXPECT_NE(composite_text.find("timeframe_minutes: 5"), std::string::npos);
+    EXPECT_EQ(composite_text.find("\nbacktest:\n"), std::string::npos);
 
     std::error_code ec;
     std::filesystem::remove_all(base_dir, ec);

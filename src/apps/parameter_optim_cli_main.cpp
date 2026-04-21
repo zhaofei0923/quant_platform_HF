@@ -3,13 +3,17 @@
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <memory>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -33,6 +37,7 @@ using quant_hft::apps::ResolveConfigPathWithDefault;
 using quant_hft::optim::IOptimizationAlgorithm;
 using quant_hft::optim::LoadParameterSpace;
 using quant_hft::optim::OptimizationConfig;
+using quant_hft::optim::OptimizationReport;
 using quant_hft::optim::ParameterSpace;
 using quant_hft::optim::ParamValueMap;
 using quant_hft::optim::ResultAnalyzer;
@@ -59,6 +64,17 @@ std::string ShellQuote(const std::string& value) {
     }
     out.push_back('\'');
     return out;
+}
+
+std::string JoinMessages(const std::vector<std::string>& messages) {
+    std::ostringstream oss;
+    for (std::size_t index = 0; index < messages.size(); ++index) {
+        if (index > 0) {
+            oss << "; ";
+        }
+        oss << messages[index];
+    }
+    return oss.str();
 }
 
 class TempArtifactManager {
@@ -145,6 +161,156 @@ int SafeMaxConcurrent(int requested) {
     }
 
     return std::max(1, std::min({normalized_requested, hw_cap, memory_cap}));
+}
+
+std::string FormatUtcTimestamp(std::chrono::system_clock::time_point time_point) {
+    const std::time_t raw_time = std::chrono::system_clock::to_time_t(time_point);
+    std::tm utc_tm{};
+    gmtime_r(&raw_time, &utc_tm);
+
+    std::ostringstream oss;
+    oss << std::put_time(&utc_tm, "%Y-%m-%dT%H:%M:%SZ");
+    return oss.str();
+}
+
+std::string MakeTaskId(std::chrono::system_clock::time_point time_point) {
+    const auto millis =
+        std::chrono::duration_cast<std::chrono::milliseconds>(time_point.time_since_epoch())
+            .count();
+    return "optim_" + std::to_string(millis);
+}
+
+std::filesystem::path ArchiveRootForTask(const OptimizationConfig& config) {
+    std::filesystem::path base_dir = std::filesystem::path(config.output_json).parent_path();
+    if (base_dir.empty()) {
+        base_dir = std::filesystem::path("runtime/optim");
+    }
+    return base_dir / "top_trials";
+}
+
+std::string RankedTrialDirectoryName(std::size_t rank, const std::string& trial_id) {
+    std::ostringstream oss;
+    oss << std::setw(2) << std::setfill('0') << (rank + 1) << '_' << trial_id;
+    return oss.str();
+}
+
+bool CopyDirectoryRecursive(const std::filesystem::path& source,
+                            const std::filesystem::path& destination,
+                            std::string* error) {
+    std::error_code ec;
+    if (!std::filesystem::exists(source, ec) || !std::filesystem::is_directory(source, ec)) {
+        if (error != nullptr) {
+            *error = "archive source is not a directory: " + source.string();
+        }
+        return false;
+    }
+
+    std::filesystem::create_directories(destination.parent_path(), ec);
+    if (ec) {
+        if (error != nullptr) {
+            *error = "failed to create archive parent directory: " + destination.parent_path().string() +
+                     ", error=" + ec.message();
+        }
+        return false;
+    }
+
+    std::filesystem::remove_all(destination, ec);
+    ec.clear();
+
+    std::filesystem::copy(source, destination,
+                          std::filesystem::copy_options::recursive |
+                              std::filesystem::copy_options::overwrite_existing,
+                          ec);
+    if (ec) {
+        if (error != nullptr) {
+            *error = "failed to archive trial artifacts from " + source.string() + " to " +
+                     destination.string() + ", error=" + ec.message();
+        }
+        return false;
+    }
+    return true;
+}
+
+bool PreserveTopKTrials(const OptimizationConfig& config,
+                        OptimizationReport* report,
+                        std::string* error) {
+    if (report == nullptr) {
+        if (error != nullptr) {
+            *error = "optimization report is null";
+        }
+        return false;
+    }
+    if (config.preserve_top_k_trials <= 0) {
+        return true;
+    }
+
+    std::vector<std::size_t> completed_indices;
+    completed_indices.reserve(report->trials.size());
+    for (std::size_t index = 0; index < report->trials.size(); ++index) {
+        if (report->trials[index].status == "completed") {
+            completed_indices.push_back(index);
+        }
+    }
+    if (completed_indices.empty()) {
+        return true;
+    }
+
+    std::stable_sort(completed_indices.begin(), completed_indices.end(), [&](std::size_t left,
+                                                                             std::size_t right) {
+        return report->maximize ? (report->trials[left].objective > report->trials[right].objective)
+                                : (report->trials[left].objective < report->trials[right].objective);
+    });
+
+    const std::filesystem::path archive_root = ArchiveRootForTask(config);
+    std::error_code ec;
+    std::filesystem::remove_all(archive_root, ec);
+    if (ec) {
+        if (error != nullptr) {
+            *error = "failed to reset archive root: " + archive_root.string() + ", error=" +
+                     ec.message();
+        }
+        return false;
+    }
+
+    std::filesystem::create_directories(archive_root, ec);
+    if (ec) {
+        if (error != nullptr) {
+            *error = "failed to create archive root: " + archive_root.string() + ", error=" +
+                     ec.message();
+        }
+        return false;
+    }
+
+    const std::size_t top_n =
+        std::min<std::size_t>(static_cast<std::size_t>(config.preserve_top_k_trials),
+                              completed_indices.size());
+    for (std::size_t rank = 0; rank < top_n; ++rank) {
+        Trial& trial = report->trials[completed_indices[rank]];
+        if (trial.working_dir.empty()) {
+            if (error != nullptr) {
+                *error = "completed trial missing working_dir: " + trial.trial_id;
+            }
+            return false;
+        }
+
+        const std::filesystem::path source_dir = trial.working_dir;
+        const std::filesystem::path destination_dir =
+            archive_root / RankedTrialDirectoryName(rank, trial.trial_id);
+        // Archive before temp cleanup and use copy instead of move so top_trials keeps a
+        // byte-for-byte snapshot of the original trial outputs at copy time. If a future
+        // acceptance flow needs stronger post-run evidence, record per-file checksums here
+        // and write them into report.json before artifact_manager.Cleanup() runs.
+        if (!CopyDirectoryRecursive(source_dir, destination_dir, error)) {
+            return false;
+        }
+
+        trial.archived_artifact_dir = destination_dir.string();
+        if (report->best_trial.trial_id == trial.trial_id) {
+            report->best_trial.archived_artifact_dir = trial.archived_artifact_dir;
+        }
+    }
+
+    return true;
 }
 
 std::string BuildBacktestCommand(const std::string& backtest_cli_path,
@@ -240,6 +406,9 @@ int main(int argc, char** argv) {
 
     std::atomic<int> trial_counter{0};
     TempArtifactManager artifact_manager;
+    const auto task_started_system = std::chrono::system_clock::now();
+    const auto task_started_steady = std::chrono::steady_clock::now();
+    const std::string task_id = MakeTaskId(task_started_system);
 
     auto task = [&](const ParamValueMap& params) -> Trial {
         Trial trial;
@@ -265,6 +434,9 @@ int main(int argc, char** argv) {
         const std::filesystem::path result_json = artifacts.working_dir / "result.json";
         const std::filesystem::path stdout_log = artifacts.working_dir / "stdout.log";
         const std::filesystem::path stderr_log = artifacts.working_dir / "stderr.log";
+        trial.result_json_path = result_json.string();
+        trial.stdout_log_path = stdout_log.string();
+        trial.stderr_log_path = stderr_log.string();
 
         const std::string command =
             BuildBacktestCommand(backtest_cli_path, space.backtest_args, trial.trial_id, artifacts,
@@ -282,11 +454,10 @@ int main(int argc, char** argv) {
             return trial;
         }
 
-        trial.result_json_path = result_json.string();
         std::string metric_error;
         const double objective =
-            ResultAnalyzer::ExtractMetricFromJson(trial.result_json_path, space.optimization.metric_path,
-                                                  &metric_error);
+            ResultAnalyzer::ComputeObjectiveFromJson(trial.result_json_path, space.optimization,
+                                                     &metric_error);
         if (!metric_error.empty()) {
             trial.status = "failed";
             trial.error_msg = metric_error;
@@ -295,6 +466,28 @@ int main(int argc, char** argv) {
 
         trial.status = "completed";
         trial.objective = objective;
+
+        std::string metrics_error;
+        if (!ResultAnalyzer::ExtractTrialMetricsFromJson(trial.result_json_path, &trial.metrics,
+                                                         &metrics_error)) {
+            trial.metrics_error = metrics_error;
+        } else {
+            trial.metrics_error = metrics_error;
+        }
+
+        std::vector<std::string> constraint_violations;
+        std::string constraint_error;
+        if (!ResultAnalyzer::EvaluateConstraintsFromJson(trial.result_json_path, space.optimization,
+                                                         &constraint_violations,
+                                                         &constraint_error)) {
+            trial.status = "failed";
+            trial.error_msg = constraint_error;
+            return trial;
+        }
+        if (!constraint_violations.empty()) {
+            trial.status = "constraint_violated";
+            trial.error_msg = "constraints violated: " + JoinMessages(constraint_violations);
+        }
         return trial;
     };
 
@@ -329,11 +522,34 @@ int main(int argc, char** argv) {
 
     const std::vector<Trial> trials = algorithm->GetAllTrials();
     const OptimizationConfig& config = space.optimization;
-    const auto report = ResultAnalyzer::Analyze(trials, config, g_interrupted.load());
+    auto report = ResultAnalyzer::Analyze(trials, config, g_interrupted.load());
+    report.task_id = task_id;
+    report.started_at = FormatUtcTimestamp(task_started_system);
+    const auto task_finished_system = std::chrono::system_clock::now();
+    report.finished_at = FormatUtcTimestamp(task_finished_system);
+    report.wall_clock_sec =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - task_started_steady)
+            .count();
+
+    if (!PreserveTopKTrials(config, &report, &error)) {
+        std::cerr << "parameter_optim_cli: failed to archive top trials: " << error << '\n';
+        return 1;
+    }
 
     if (!ResultAnalyzer::WriteReport(report, config.output_json, config.output_md, &error)) {
         std::cerr << "parameter_optim_cli: failed to write report: " << error << '\n';
         return 1;
+    }
+
+    if (config.export_heatmap) {
+        std::filesystem::path heatmap_dir = std::filesystem::path(config.output_json).parent_path();
+        if (heatmap_dir.empty()) {
+            heatmap_dir = std::filesystem::current_path();
+        }
+        if (!ResultAnalyzer::WriteHeatmaps(report, space, heatmap_dir.string(), &error)) {
+            std::cerr << "parameter_optim_cli: failed to write heatmap data: " << error << '\n';
+            return 1;
+        }
     }
 
     if (report.best_trial.status == "completed") {
@@ -344,10 +560,13 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Successful trial working directories are cleaned only after archiving/report writing.
+    // This keeps runtime disk usage bounded while preserving copied artifacts under top_trials.
     artifact_manager.Cleanup();
 
     std::cout << "optimization finished total=" << report.total_trials
               << " completed=" << report.completed_trials << " failed=" << report.failed_trials
+              << " constraint_violated=" << report.constraint_stats.total_violations
               << " interrupted=" << (report.interrupted ? "true" : "false") << '\n';
 
     if (report.interrupted) {

@@ -5,6 +5,7 @@
 #include <chrono>
 #include <csignal>
 #include <cmath>
+#include <ctime>
 #include <filesystem>
 #include <future>
 #include <iomanip>
@@ -20,6 +21,7 @@
 
 #include "quant_hft/apps/cli_support.h"
 #include "quant_hft/optim/grid_search.h"
+#include "quant_hft/optim/random_search.h"
 #include "quant_hft/optim/parameter_space.h"
 #include "quant_hft/optim/result_analyzer.h"
 #include "quant_hft/optim/task_scheduler.h"
@@ -31,17 +33,22 @@ namespace {
 
 using quant_hft::apps::BacktestCliResult;
 using quant_hft::apps::BacktestCliSpec;
+using quant_hft::apps::RenderBacktestJson;
 using quant_hft::apps::RunBacktestSpec;
 using quant_hft::apps::SummarizeBacktest;
 using quant_hft::apps::UnixEpochMillisNow;
+using quant_hft::apps::WriteTextFile;
 using quant_hft::optim::GridSearch;
+using quant_hft::optim::IOptimizationAlgorithm;
 using quant_hft::optim::LoadParameterSpace;
 using quant_hft::optim::OptimizationConfig;
 using quant_hft::optim::ParameterSpace;
 using quant_hft::optim::ParamValueMap;
+using quant_hft::optim::RandomSearch;
 using quant_hft::optim::ResultAnalyzer;
 using quant_hft::optim::TaskScheduler;
 using quant_hft::optim::Trial;
+using quant_hft::optim::TrialMetricsSnapshot;
 using quant_hft::optim::TrialConfigArtifacts;
 using quant_hft::optim::TrialConfigRequest;
 using quant_hft::optim::GenerateTrialConfig;
@@ -93,6 +100,34 @@ int SafeMaxConcurrent(int requested) {
     const unsigned int hw = std::thread::hardware_concurrency();
     const int hw_cap = hw == 0 ? 1 : static_cast<int>(hw);
     return std::max(1, std::min(requested, hw_cap));
+}
+
+std::string FormatUtcTimestamp(std::chrono::system_clock::time_point time_point) {
+    const std::time_t raw_time = std::chrono::system_clock::to_time_t(time_point);
+    std::tm utc_tm{};
+    gmtime_r(&raw_time, &utc_tm);
+
+    std::ostringstream oss;
+    oss << std::put_time(&utc_tm, "%Y-%m-%dT%H:%M:%SZ");
+    return oss.str();
+}
+
+std::string MakeTaskId(std::chrono::system_clock::time_point time_point) {
+    const auto millis =
+        std::chrono::duration_cast<std::chrono::milliseconds>(time_point.time_since_epoch())
+            .count();
+    return "optim_" + std::to_string(millis);
+}
+
+std::string JoinMessages(const std::vector<std::string>& messages) {
+    std::ostringstream oss;
+    for (std::size_t index = 0; index < messages.size(); ++index) {
+        if (index > 0) {
+            oss << "; ";
+        }
+        oss << messages[index];
+    }
+    return oss.str();
 }
 
 std::filesystem::path ResolvePath(const std::filesystem::path& base_dir,
@@ -156,6 +191,185 @@ std::string BuildRunId(const std::string& mode,
     return oss.str();
 }
 
+std::string WindowDirectoryName(int window_index) {
+    std::ostringstream oss;
+    oss << "window_" << std::setw(4) << std::setfill('0') << window_index;
+    return oss.str();
+}
+
+std::string RankedTrialDirectoryName(std::size_t rank, const std::string& trial_id) {
+    std::ostringstream oss;
+    oss << std::setw(2) << std::setfill('0') << (rank + 1) << '_' << trial_id;
+    return oss.str();
+}
+
+std::filesystem::path OutputRoot(const RollingConfig& config) {
+    if (!config.output.root_dir.empty()) {
+        return config.output.root_dir;
+    }
+    std::filesystem::path base_dir = std::filesystem::path(config.output.report_json).parent_path();
+    if (base_dir.empty()) {
+        base_dir = std::filesystem::path("runtime/rolling");
+    }
+    return base_dir;
+}
+
+std::filesystem::path WindowTopTrialsDir(const RollingConfig& config, int window_index) {
+    return OutputRoot(config) / "top_trials" / WindowDirectoryName(window_index);
+}
+
+std::filesystem::path WindowTestResultPath(const RollingConfig& config, int window_index) {
+    return OutputRoot(config) / "test_results" / WindowDirectoryName(window_index) / "result.json";
+}
+
+std::filesystem::path WindowTrainReportDir(const RollingConfig& config, int window_index) {
+    return OutputRoot(config) / "train_reports" / WindowDirectoryName(window_index);
+}
+
+std::filesystem::path WindowTrainReportJsonPath(const RollingConfig& config, int window_index) {
+    return WindowTrainReportDir(config, window_index) / "parameter_optim_report.json";
+}
+
+std::filesystem::path WindowTrainReportMdPath(const RollingConfig& config, int window_index) {
+    return WindowTrainReportDir(config, window_index) / "parameter_optim_report.md";
+}
+
+bool CopyDirectoryRecursive(const std::filesystem::path& source,
+                           const std::filesystem::path& destination,
+                           std::string* error) {
+    std::error_code ec;
+    if (!std::filesystem::exists(source, ec) || !std::filesystem::is_directory(source, ec)) {
+        if (error != nullptr) {
+            *error = "archive source is not a directory: " + source.string();
+        }
+        return false;
+    }
+
+    std::filesystem::create_directories(destination.parent_path(), ec);
+    if (ec) {
+        if (error != nullptr) {
+            *error = "failed to create archive parent directory: " + destination.parent_path().string() +
+                     ", error=" + ec.message();
+        }
+        return false;
+    }
+
+    std::filesystem::remove_all(destination, ec);
+    ec.clear();
+
+    std::filesystem::copy(source, destination,
+                          std::filesystem::copy_options::recursive |
+                              std::filesystem::copy_options::overwrite_existing,
+                          ec);
+    if (ec) {
+        if (error != nullptr) {
+            *error = "failed to archive trial artifacts from " + source.string() + " to " +
+                     destination.string() + ", error=" + ec.message();
+        }
+        return false;
+    }
+    return true;
+}
+
+bool PersistBacktestResultJson(const BacktestCliResult& result,
+                               const std::filesystem::path& output_path,
+                               std::string* error) {
+    return WriteTextFile(output_path.string(), RenderBacktestJson(result), error);
+}
+
+void AppendDerivedMetrics(const BacktestCliResult& result,
+                         std::unordered_map<std::string, double>* metrics) {
+    if (metrics == nullptr) {
+        return;
+    }
+    TrialMetricsSnapshot derived;
+    std::string error;
+    if (!ResultAnalyzer::ExtractTrialMetricsFromJsonText(RenderBacktestJson(result), &derived, &error)) {
+        return;
+    }
+    if (derived.max_drawdown_pct.has_value()) {
+        (*metrics)["hf_standard.risk_metrics.max_drawdown_pct"] = *derived.max_drawdown_pct;
+    }
+    if (derived.annualized_return_pct.has_value()) {
+        (*metrics)["hf_standard.risk_metrics.annualized_return_pct"] =
+            *derived.annualized_return_pct;
+    }
+    if (derived.sharpe_ratio.has_value()) {
+        (*metrics)["hf_standard.risk_metrics.sharpe_ratio"] = *derived.sharpe_ratio;
+    }
+    if (derived.calmar_ratio.has_value()) {
+        (*metrics)["hf_standard.risk_metrics.calmar_ratio"] = *derived.calmar_ratio;
+    }
+}
+
+bool ArchiveTopKTrials(const RollingConfig& config,
+                       const std::vector<Trial>& trials,
+                       bool maximize,
+                       int window_index,
+                       int top_k,
+                       std::string* archived_dir,
+                       std::string* error) {
+    if (top_k <= 0) {
+        return true;
+    }
+
+    std::vector<const Trial*> completed;
+    completed.reserve(trials.size());
+    for (const Trial& trial : trials) {
+        if (trial.status == "completed") {
+            completed.push_back(&trial);
+        }
+    }
+    if (completed.empty()) {
+        return true;
+    }
+
+    std::stable_sort(completed.begin(), completed.end(), [&](const Trial* left, const Trial* right) {
+        return maximize ? (left->objective > right->objective) : (left->objective < right->objective);
+    });
+
+    const std::filesystem::path archive_root = WindowTopTrialsDir(config, window_index);
+    std::error_code ec;
+    std::filesystem::remove_all(archive_root, ec);
+    if (ec) {
+        if (error != nullptr) {
+            *error = "failed to reset top_trials directory: " + archive_root.string() + ", error=" +
+                     ec.message();
+        }
+        return false;
+    }
+    std::filesystem::create_directories(archive_root, ec);
+    if (ec) {
+        if (error != nullptr) {
+            *error = "failed to create top_trials directory: " + archive_root.string() + ", error=" +
+                     ec.message();
+        }
+        return false;
+    }
+
+    const std::size_t limit =
+        std::min<std::size_t>(static_cast<std::size_t>(top_k), completed.size());
+    for (std::size_t rank = 0; rank < limit; ++rank) {
+        const Trial& trial = *completed[rank];
+        if (trial.working_dir.empty()) {
+            if (error != nullptr) {
+                *error = "completed trial missing working_dir: " + trial.trial_id;
+            }
+            return false;
+        }
+        const std::filesystem::path destination =
+            archive_root / RankedTrialDirectoryName(rank, trial.trial_id);
+        if (!CopyDirectoryRecursive(trial.working_dir, destination, error)) {
+            return false;
+        }
+    }
+
+    if (archived_dir != nullptr) {
+        *archived_dir = archive_root.string();
+    }
+    return true;
+}
+
 std::unordered_map<std::string, double> BuildCoreMetrics(const BacktestCliResult& result) {
     std::unordered_map<std::string, double> metrics;
     const auto summary = SummarizeBacktest(result);
@@ -164,6 +378,7 @@ std::unordered_map<std::string, double> BuildCoreMetrics(const BacktestCliResult
     metrics["hf_standard.advanced_summary.profit_factor"] = result.advanced_summary.profit_factor;
     metrics["hf_standard.risk_metrics.var_95"] = result.risk_metrics.var_95;
     metrics["final_equity"] = result.final_equity;
+    AppendDerivedMetrics(result, &metrics);
     return metrics;
 }
 
@@ -258,7 +473,13 @@ bool LoadAndValidateParamSpace(const RollingConfig& config,
     out->optimization.metric_path = config.optimization.metric;
     out->optimization.maximize = config.optimization.maximize;
     out->optimization.max_trials = config.optimization.max_trials;
+    if (config.optimization.random_seed.has_value()) {
+        out->optimization.random_seed = config.optimization.random_seed;
+    }
     out->optimization.batch_size = config.optimization.parallel;
+    if (config.optimization.preserve_top_k_trials.has_value()) {
+        out->optimization.preserve_top_k_trials = *config.optimization.preserve_top_k_trials;
+    }
     return true;
 }
 
@@ -312,12 +533,27 @@ WindowResult RunOptimizedWindow(const RollingConfig& config,
     out.test_start = window.test_start;
     out.test_end = window.test_end;
 
+    const auto task_started_system = std::chrono::system_clock::now();
+    const auto task_started_steady = std::chrono::steady_clock::now();
+    out.train_task_id = MakeTaskId(task_started_system);
+    out.train_report_json = WindowTrainReportJsonPath(config, window.index).string();
+    out.train_report_md = WindowTrainReportMdPath(config, window.index).string();
+
     ParameterSpace space = base_space;
     OptimizationConfig opt_config = space.optimization;
 
-    GridSearch algorithm;
+    std::unique_ptr<IOptimizationAlgorithm> algorithm;
+    if (opt_config.algorithm == "grid") {
+        algorithm = std::make_unique<GridSearch>();
+    } else if (opt_config.algorithm == "random") {
+        algorithm = std::make_unique<RandomSearch>();
+    } else {
+        out.success = false;
+        out.error_msg = "unsupported optimization.algorithm: " + opt_config.algorithm;
+        return out;
+    }
     try {
-        algorithm.Initialize(space, opt_config);
+        algorithm->Initialize(space, opt_config);
     } catch (const std::exception& ex) {
         out.success = false;
         out.error_msg = std::string("optimization initialize failed: ") + ex.what();
@@ -369,16 +605,46 @@ WindowResult RunOptimizedWindow(const RollingConfig& config,
             return trial;
         }
 
+        const std::filesystem::path result_json_path = artifacts.working_dir / "result.json";
+        if (!PersistBacktestResultJson(train_result, result_json_path, &local_error)) {
+            trial.status = "failed";
+            trial.error_msg = "failed to persist train result json: " + local_error;
+            return trial;
+        }
+
         trial.status = "completed";
         trial.objective = objective;
+        trial.result_json_path = result_json_path.string();
+
+        std::string metrics_error;
+        if (!ResultAnalyzer::ExtractTrialMetricsFromJson(trial.result_json_path, &trial.metrics,
+                                                         &metrics_error)) {
+            trial.metrics_error = metrics_error;
+        } else {
+            trial.metrics_error = metrics_error;
+        }
+
+        std::vector<std::string> constraint_violations;
+        std::string constraint_error;
+        if (!ResultAnalyzer::EvaluateConstraintsFromJson(trial.result_json_path, opt_config,
+                                                         &constraint_violations,
+                                                         &constraint_error)) {
+            trial.status = "failed";
+            trial.error_msg = constraint_error;
+            return trial;
+        }
+        if (!constraint_violations.empty()) {
+            trial.status = "constraint_violated";
+            trial.error_msg = "constraints violated: " + JoinMessages(constraint_violations);
+        }
         return trial;
     };
 
-    while (!algorithm.IsFinished()) {
+    while (!algorithm->IsFinished()) {
         if (g_interrupted.load()) {
             break;
         }
-        std::vector<ParamValueMap> batch = algorithm.GetNextBatch(scheduler.max_concurrent());
+        std::vector<ParamValueMap> batch = algorithm->GetNextBatch(scheduler.max_concurrent());
         if (batch.empty()) {
             break;
         }
@@ -392,14 +658,86 @@ WindowResult RunOptimizedWindow(const RollingConfig& config,
                     artifact_manager.MarkForCleanup(trial.working_dir);
                 }
             }
-            algorithm.AddTrialResult(trial);
+            algorithm->AddTrialResult(trial);
         }
     }
 
-    const Trial best = algorithm.GetBestTrial();
+    const std::vector<Trial> trials = algorithm->GetAllTrials();
+    out.train_trial_count = static_cast<int>(trials.size());
+    out.completed_train_trial_count = static_cast<int>(std::count_if(
+        trials.begin(), trials.end(), [](const Trial& trial) { return trial.status == "completed"; }));
+
+    const auto task_finished_system = std::chrono::system_clock::now();
+    auto train_report = ResultAnalyzer::Analyze(trials, opt_config, g_interrupted.load());
+    train_report.task_id = out.train_task_id;
+    train_report.started_at = FormatUtcTimestamp(task_started_system);
+    train_report.finished_at = FormatUtcTimestamp(task_finished_system);
+    train_report.wall_clock_sec =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - task_started_steady)
+            .count();
+
+    std::error_code report_ec;
+    const std::filesystem::path train_report_json_path(out.train_report_json);
+    std::filesystem::create_directories(train_report_json_path.parent_path(), report_ec);
+    if (report_ec) {
+        out.success = false;
+        out.error_msg = "failed to create train report directory: " + report_ec.message();
+        artifact_manager.Cleanup();
+        return out;
+    }
+
+    std::string report_error;
+    if (!ResultAnalyzer::WriteReport(train_report, out.train_report_json, out.train_report_md,
+                                     &report_error)) {
+        out.success = false;
+        out.error_msg = "failed to write train optimization report: " + report_error;
+        artifact_manager.Cleanup();
+        return out;
+    }
+
+    if (opt_config.export_heatmap) {
+        std::filesystem::path heatmap_dir = std::filesystem::path(out.train_report_json).parent_path();
+        if (heatmap_dir.empty()) {
+            heatmap_dir = std::filesystem::current_path();
+        }
+        if (!ResultAnalyzer::WriteHeatmaps(train_report, space, heatmap_dir.string(), &report_error)) {
+            out.success = false;
+            out.error_msg = "failed to write train heatmap data: " + report_error;
+            artifact_manager.Cleanup();
+            return out;
+        }
+    }
+
+    if (!ArchiveTopKTrials(config, trials, opt_config.maximize, window.index,
+                           opt_config.preserve_top_k_trials, &out.top_trials_dir, error)) {
+        out.success = false;
+        out.error_msg = error != nullptr ? *error : "failed to archive top trials";
+        artifact_manager.Cleanup();
+        return out;
+    }
+
+    const Trial best = algorithm->GetBestTrial();
     if (best.status != "completed") {
         out.success = false;
         out.error_msg = best.error_msg.empty() ? "no successful trial in optimization" : best.error_msg;
+        if (out.error_msg == "no completed trial") {
+            const auto failed_it = std::find_if(trials.begin(), trials.end(), [](const Trial& trial) {
+                return trial.status == "failed" && !trial.error_msg.empty();
+            });
+            if (failed_it != trials.end()) {
+                out.error_msg = "no completed trial; first failed trial " + failed_it->trial_id +
+                                ": " + failed_it->error_msg;
+            } else {
+                const auto violated_it =
+                    std::find_if(trials.begin(), trials.end(), [](const Trial& trial) {
+                        return trial.status == "constraint_violated" && !trial.error_msg.empty();
+                    });
+                if (violated_it != trials.end()) {
+                    out.error_msg = "no completed trial; first constraint_violated trial " +
+                                    violated_it->trial_id + ": " + violated_it->error_msg;
+                }
+            }
+        }
         artifact_manager.Cleanup();
         return out;
     }
@@ -476,6 +814,15 @@ WindowResult RunOptimizedWindow(const RollingConfig& config,
     out.success = true;
     out.objective = objective;
     out.metrics = BuildCoreMetrics(test_result);
+    const std::filesystem::path test_result_json = WindowTestResultPath(config, window.index);
+    if (!PersistBacktestResultJson(test_result, test_result_json, &eval_error)) {
+        out.success = false;
+        out.error_msg = "failed to persist test result json: " + eval_error;
+        artifact_manager.MarkKeep(best_artifacts.working_dir);
+        artifact_manager.Cleanup();
+        return out;
+    }
+    out.test_result_json = test_result_json.string();
     artifact_manager.Cleanup();
     if (error != nullptr) {
         error->clear();

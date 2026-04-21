@@ -22,6 +22,7 @@ struct TradeRecord {
     double commission{0.0};
     double slippage{0.0};
     double realized_pnl{0.0};
+    double risk_budget_r{0.0};
     std::string strategy_id;
     std::string signal_type;
     std::string regime_at_entry;

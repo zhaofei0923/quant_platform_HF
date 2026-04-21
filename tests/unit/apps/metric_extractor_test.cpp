@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
+
 namespace quant_hft::rolling {
 namespace {
 
@@ -26,6 +28,8 @@ quant_hft::apps::BacktestCliResult BuildResult() {
     result.advanced_summary.profit_factor = 1.8;
     result.risk_metrics.var_95 = -2.3;
     result.execution_quality.limit_order_fill_rate = 0.75;
+    result.daily.push_back({"20240102", 1000001.0, 0.10, 0.10, 0.05, 0.0, 0, 0.0, "kUnknown"});
+    result.daily.push_back({"20240103", 1000000.8, -0.02, 0.08, 0.20, 0.0, 0, 0.0, "kUnknown"});
     return result;
 }
 
@@ -53,6 +57,19 @@ TEST(MetricExtractorTest, FallsBackToJsonPathForUnknownDirectMapping) {
     std::string error;
     ASSERT_TRUE(ExtractMetricFromResult(result, "spec.initial_equity", &value, &error)) << error;
     EXPECT_DOUBLE_EQ(value, 1000000.0);
+}
+
+TEST(MetricExtractorTest, SupportsDerivedCalmarMetric) {
+    const auto result = BuildResult();
+
+    double value = 0.0;
+    std::string error;
+    ASSERT_TRUE(ExtractMetricFromResult(result, "hf_standard.risk_metrics.calmar_ratio", &value,
+                                        &error))
+        << error;
+
+    const double expected_annualized = (std::pow(1.0008, 126.0) - 1.0) * 100.0;
+    EXPECT_NEAR(value, expected_annualized / 0.20, 1e-9);
 }
 
 TEST(MetricExtractorTest, ReportsErrorForMissingMetricPath) {

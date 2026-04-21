@@ -1,0 +1,49 @@
+# Acceptance config for Step 3.2 explicit constraint DSL.
+# Uses a reduced 4-trial grid so the CLI run stays practical while still
+# exercising completed vs constraint_violated trial filtering.
+
+composite_config_path: configs/strategies/main_backtest_strategy.yaml
+target_sub_config_path: ./sub/kama_trend_1.yaml
+
+backtest_args:
+  engine_mode: parquet
+  dataset_root: backtest_data/parquet_v2
+  detector_config: configs/sim/ctp.yaml
+  product_config_path: configs/strategies/instrument_info.json
+  contract_expiry_calendar_path: configs/strategies/contract_expiry_calendar.yaml
+  symbols: c
+  start_date: 20230103
+  end_date: 20231229
+  max_ticks: 30000
+  deterministic_fills: true
+  strict_parquet: true
+  rollover_mode: expiry_close
+  rollover_price_mode: bbo
+  rollover_slippage_bps: 0
+  emit_trades: true
+  emit_orders: false
+  emit_position_history: false
+
+optimization:
+  algorithm: grid
+  maximize: true
+  metric_path: profit_factor
+  max_trials: 4
+  batch_size: 2
+  preserve_top_k_trials: 4
+  output_json: runtime/step3_2_constraints_acceptance/parameter_optim_report.json
+  output_md: runtime/step3_2_constraints_acceptance/parameter_optim_report.md
+  best_params_yaml: runtime/step3_2_constraints_acceptance/parameter_optim_best_params.yaml
+  constraints:
+    - "profit_factor > 1.3"
+
+parameters:
+  - name: kama_filter
+    type: double
+    values: [0.3, 0.5]
+  - name: stop_loss_atr_multiplier
+    type: double
+    values: [3.0, 5.0]
+  - name: risk_per_trade_pct
+    type: double
+    values: [0.003]

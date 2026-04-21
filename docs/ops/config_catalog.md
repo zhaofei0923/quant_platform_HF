@@ -37,6 +37,10 @@
 - `configs/ops/ctp_cutover.template.env`
 - `configs/ops/ctp_rollback_drill.template.env`
 - `configs/ops/backtest_run.yaml`
+- `configs/ops/parameter_optim.yaml`
+- `configs/ops/docs/results/rolling/kama_best_fixed_report.json`
+- `configs/ops/docs/results/rolling/kama_best_fixed_report.md`
+- `configs/strategies/contract_expiry_calendar.yaml`
 
 ---
 
@@ -282,6 +286,9 @@
 | `backtest.start_date` | string | 是 | 无 | `YYYYMMDD` | 回测起始日期 | `20240101` |
 | `backtest.end_date` | string | 是 | 无 | `YYYYMMDD` | 回测结束日期 | `20240131` |
 | `backtest.product_config_path` | string | 是 | 无 | 路径 | 产品费率/保证金配置 | `./instrument_info.json` |
+| `risk_management.enabled` | bool | 否 | `false` | `true/false` | 是否在导出交易明细时计算 `risk_budget_r` | `true` |
+| `risk_management.risk_per_trade_pct` | double | 否 | `0.005` | `[0,1]` | 按成交前权益计算单笔风险预算的比例 | `0.005` |
+| `risk_management.max_risk_per_trade` | double | 否 | `2000.0` | `>=0` | 单笔风险预算上限 | `2000.0` |
 | `composite.merge_rule` | string | 否 | `kPriority` | `kPriority` | 信号合并规则 | `kPriority` |
 | `composite.enable_non_backtest` | bool | 否 | `false` | `true/false` | 是否允许 `sim/live` 模式运行 Composite | `false` |
 | `composite.sub_strategies[]` | list | 是 | 空 | 数组 | 完整子策略列表 | 见示例 |
@@ -299,6 +306,9 @@
 
 - 旧字段 `opening_strategies/stop_loss_strategies/take_profit_strategies/time_filters/risk_control_strategies` 在 V2 直接报错。
 - `backtest.max_loss_percent` 已移除，风险预算下沉到子策略参数 `risk_per_trade_pct`。
+- `risk_management` 仅影响回测导出字段 `risk_budget_r`，不改变下单、缩量或风控引擎行为。
+- `risk_budget_r = min(max(0, 成交前权益) * risk_per_trade_pct, max_risk_per_trade)`；仅对策略原生 `kOpen` 成交生效。
+- 系统合成开仓（如 `rollover_open` 与 `expiry_close` 触发的首次 reopen）保持 `0.0`。
 - 当 `run_type != backtest` 且 `composite.enable_non_backtest=false` 时，初始化会 fail-fast。
 - `overrides` 仅允许键 `backtest|sim|live`，且 `params` 仅允许标量值；非法键会 fail-fast。
 - 参数合并顺序：`base params + overrides[run_mode].params`（后者覆盖前者）。
@@ -321,6 +331,10 @@ backtest:
   start_date: 20240101
   end_date: 20240131
   product_config_path: ./instrument_info.json
+risk_management:
+  enabled: true
+  risk_per_trade_pct: 0.005
+  max_risk_per_trade: 2000.0
 composite:
   merge_rule: kPriority
   enable_non_backtest: false
@@ -364,6 +378,19 @@ composite:
           params:
             risk_per_trade_pct: 0.005
 ```
+
+## `configs/strategies/contract_expiry_calendar.yaml`
+
+- Purpose: 主连回测的合约最后可回放交易日日历。
+- Consumer: `contract_expiry_calendar` / `backtest_replay_support` 在 `rollover_mode=expiry_close` 下使用。
+- 说明: `last_trading_day` 表示数据集内最后可回放交易日，不等同于交易所交割日。
+
+字段表：
+
+| 字段 | 类型 | 必填 | 默认值 | 取值 | 含义 | 示例 |
+|---|---|---|---|---|---|---|
+| `contracts` | map | 是 | 无 | 合约字典 | 合约到日历条目的映射 | `contracts: {c2405: ...}` |
+| `contracts.<instrument_id>.last_trading_day` | string | 是 | 无 | `YYYYMMDD` | 该合约在数据集中最后可回放交易日 | `20240329` |
 
 ## `configs/strategies/products_info.yaml`
 
@@ -674,6 +701,44 @@ composite:
 
 - `detector_config` 是路径字段，不支持在 `backtest_run.yaml` 内联 `market_state_detector` 配置块。
 - `run_backtest_with_validation.sh` 直接转调 `run_backtest_from_config.sh`，因此会自动继承该字段。
+
+## `configs/ops/parameter_optim.yaml`
+
+- Purpose: 单次参数优化运行配置。
+- Consumer: `parameter_optim_cli` / `scripts/build/run_parameter_optim.sh`。
+- 说明: `backtest_args` 透传回测基础参数，`parameters[]` 定义目标子策略的搜索空间。
+- 归档说明: `optimization.preserve_top_k_trials` 会把 TopK 成功 trial 复制到输出目录同级的 `top_trials/`。复制发生在临时目录清理之前，因此按设计认可归档内容与原始输出一致；当前实现不做运行时逐文件比对。
+- 后续增强: 如需更强的追溯证据，可在复制后立即计算 `stdout.log`、`stderr.log`、`result.json` 等文件的 SHA256 并写入 `report.json`，作为后续迭代的可选增强。
+
+字段表：
+
+| 字段 | 类型 | 必填 | 默认值 | 取值 | 含义 | 示例 |
+|---|---|---|---|---|---|---|
+| `composite_config_path` | string | 是 | 无 | 文件路径 | 主策略配置路径 | `configs/strategies/main_backtest_strategy.yaml` |
+| `target_sub_config_path` | string | 是 | 无 | 文件路径 | 待优化子策略配置 | `./sub/kama_trend_1.yaml` |
+| `backtest_args` | map | 是 | 无 | `backtest_cli` 参数集 | 单次 trial 的基础回测参数 | 见文件示例 |
+| `optimization.algorithm` | string | 否 | `grid` | `grid` | 优化算法 | `grid` |
+| `optimization.maximize` | bool | 否 | `true` | `true/false` | 是否最大化目标值 | `true` |
+| `optimization.metric_path` | string | 是 | 无 | 指标路径/别名 | 目标指标 | `profit_factor` |
+| `optimization.max_trials` | int | 否 | `100` | `>0` | trial 上限 | `48` |
+| `optimization.batch_size` | int | 否 | `1` | `>0` | 并行批大小 | `2` |
+| `optimization.preserve_top_k_trials` | int | 否 | `0` | `>=0` | 保留 TopK 成功 trial 的归档副本到 `top_trials/` | `10` |
+| `optimization.output_json` | string | 是 | 无 | 文件路径 | JSON 报告输出 | `docs/results/opts/parameter_optim_report.json` |
+| `optimization.output_md` | string | 是 | 无 | 文件路径 | Markdown 报告输出 | `docs/results/opts/parameter_optim_report.md` |
+| `optimization.best_params_yaml` | string | 是 | 无 | 文件路径 | 最优参数输出 | `docs/results/opts/parameter_optim_best_params.yaml` |
+| `parameters[]` | list | 是 | 空 | 参数定义数组 | 待搜索参数空间 | 见文件示例 |
+
+## `configs/ops/docs/results/rolling/kama_best_fixed_report.json`
+
+- Purpose: 固定参数滚动回测样例 JSON 报告。
+- Consumer: 文档示例、结果分析对照。
+- 说明: 保存窗口级 objective、成功率与关键指标快照，用于说明 `rolling_backtest_cli` 的输出结构。
+
+## `configs/ops/docs/results/rolling/kama_best_fixed_report.md`
+
+- Purpose: 固定参数滚动回测样例 Markdown 报告。
+- Consumer: 文档示例、人工审阅。
+- 说明: 与同名 JSON 报告配套，按窗口列出 train/test 区间和 objective 摘要。
 
 ## `configs/ops/rolling_backtest.yaml`
 

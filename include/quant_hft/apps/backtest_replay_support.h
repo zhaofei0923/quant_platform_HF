@@ -3607,6 +3607,29 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     };
     apply_known_contract_multipliers();
 
+    RiskManagementConfig risk_management_config;
+    if (!spec.strategy_main_config_path.empty()) {
+        StrategyMainConfig main_config;
+        if (!LoadStrategyMainConfig(spec.strategy_main_config_path, &main_config, error)) {
+            return false;
+        }
+        risk_management_config = main_config.risk_management;
+    }
+
+    auto calculate_risk_budget_r = [&](const SignalIntent& intent, double equity_before_fill) {
+        if (!risk_management_config.enabled || intent.offset != OffsetFlag::kOpen) {
+            return 0.0;
+        }
+        if (!std::isfinite(equity_before_fill) || equity_before_fill <= 0.0) {
+            return 0.0;
+        }
+        const double pct_budget = equity_before_fill * risk_management_config.risk_per_trade_pct;
+        if (!std::isfinite(pct_budget) || pct_budget <= 0.0) {
+            return 0.0;
+        }
+        return std::min(pct_budget, risk_management_config.max_risk_per_trade);
+    };
+
     const bool expiry_close_mode = spec.rollover_mode == "expiry_close";
     ContractExpiryCalendar contract_expiry_calendar;
     std::string expiry_close_product_symbol;
@@ -4393,6 +4416,9 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             return true;
         }
 
+        const double equity_before_fill =
+            ComputeTotalEquity(spec.initial_equity, position_state, mark_price, total_commission,
+                               has_product_fee ? &product_fee_book : nullptr);
         PositionState& pnl_state = position_state[intent.instrument_id];
         const double realized_before = pnl_state.realized_pnl;
         ApplyTrade(&pnl_state, intent.side, exec_volume, fill_price,
@@ -4495,6 +4521,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             trade.commission = commission;
             trade.slippage = slippage;
             trade.realized_pnl = realized_delta;
+            trade.risk_budget_r = calculate_risk_budget_r(intent, equity_before_fill);
             trade.strategy_id = intent.strategy_id;
             trade.signal_type =
                 signal_type_label.empty() ? SignalTypeToString(intent.signal_type)
@@ -5699,6 +5726,7 @@ inline std::string RenderBacktestJson(const BacktestCliResult& result) {
              << ",\"commission\":" << detail::FormatDouble(row.commission)
              << ",\"slippage\":" << detail::FormatDouble(row.slippage)
              << ",\"realized_pnl\":" << detail::FormatDouble(row.realized_pnl)
+             << ",\"risk_budget_r\":" << detail::FormatDouble(row.risk_budget_r)
              << ",\"strategy_id\":\"" << JsonEscape(row.strategy_id) << "\",\"signal_type\":\""
              << JsonEscape(row.signal_type) << "\",\"regime_at_entry\":\""
              << JsonEscape(row.regime_at_entry) << "\"}";

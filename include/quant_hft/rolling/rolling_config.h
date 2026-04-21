@@ -44,12 +44,15 @@ struct RollingOptimizationSpec {
     std::string metric{"hf_standard.profit_factor"};
     bool maximize{true};
     int max_trials{100};
+    std::optional<std::uint64_t> random_seed;
     int parallel{1};
+    std::optional<int> preserve_top_k_trials;
     std::string param_space;
     std::string target_sub_config_path;
 };
 
 struct RollingOutputSpec {
+    std::string root_dir;
     std::string report_json;
     std::string report_md;
     std::string best_params_dir;

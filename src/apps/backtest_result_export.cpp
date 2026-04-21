@@ -39,9 +39,9 @@ std::string CsvEscape(const std::string& text) {
     return escaped;
 }
 
-std::string CsvDouble(double value) {
+std::string CsvDouble(double value, int precision = 8) {
     std::ostringstream oss;
-    oss << std::fixed << std::setprecision(8) << value;
+    oss << std::fixed << std::setprecision(precision) << value;
     return oss.str();
 }
 
@@ -78,7 +78,7 @@ bool WriteTradesCsv(const BacktestCliResult& result, const std::filesystem::path
     out << "fill_seq,trade_id,order_id,symbol,exchange,side,offset,volume,price,timestamp_ns,"
            "signal_ts_ns,trading_day,action_day,update_time,timestamp_dt_local,signal_dt_local,"
            "commission,timestamp_dt_utc,slippage,realized_pnl,strategy_id,signal_type,"
-           "regime_at_entry\n";
+            "regime_at_entry,risk_budget_r\n";
     const std::vector<TradeRecord> sorted_trades = SortTradesForOutput(result.trades);
     for (const TradeRecord& row : sorted_trades) {
         out << row.fill_seq << ',' << CsvEscape(row.trade_id) << ',' << CsvEscape(row.order_id)
@@ -91,7 +91,8 @@ bool WriteTradesCsv(const BacktestCliResult& result, const std::filesystem::path
             << CsvEscape(row.signal_dt_local) << ',' << CsvDouble(row.commission) << ','
             << CsvEscape(row.timestamp_dt_utc) << ',' << CsvDouble(row.slippage) << ','
             << CsvDouble(row.realized_pnl) << ',' << CsvEscape(row.strategy_id) << ','
-            << CsvEscape(row.signal_type) << ',' << CsvEscape(row.regime_at_entry) << '\n';
+            << CsvEscape(row.signal_type) << ',' << CsvEscape(row.regime_at_entry) << ','
+            << CsvDouble(row.risk_budget_r, 2) << '\n';
     }
     return true;
 }

@@ -13,7 +13,7 @@
 # run_type：配置项说明；示例值：backtest
 run_type: backtest
 # market_state_mode：配置项说明；示例值：true
-market_state_mode: false
+market_state_mode: true
 
 # backtest：配置项说明；示例值：<空>
 backtest:
@@ -31,6 +31,17 @@ backtest:
   product_config_path: ./instrument_info.json
   # backtest.contract_expiry_calendar_path：配置项说明；示例值：./contract_expiry_calendar.yaml
   contract_expiry_calendar_path: ./contract_expiry_calendar.yaml
+
+
+# risk_management：配置项说明；示例值：<空>
+risk_management:
+  # risk_management.enabled：配置项说明；示例值：true
+  enabled: true
+  # risk_management.risk_per_trade_pct：配置项说明；示例值：0.005
+  risk_per_trade_pct: 0.005
+  # risk_management.max_risk_per_trade：配置项说明；示例值：2000.0
+  max_risk_per_trade: 2000.0
+
 
 # composite：配置项说明；示例值：<空>
 composite:

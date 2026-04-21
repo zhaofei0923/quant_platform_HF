@@ -55,8 +55,21 @@ bool WriteRollingReportJson(const RollingReport& report,
              << "      \"test_end\": \"" << JsonEscape(window.test_end) << "\",\n"
              << "      \"success\": " << (window.success ? "true" : "false") << ",\n"
              << "      \"objective\": " << FormatDouble(window.objective) << ",\n"
+                         << "      \"train_trial_count\": " << window.train_trial_count << ",\n"
+                         << "      \"completed_train_trial_count\": "
+                         << window.completed_train_trial_count << ",\n"
+                         << "      \"train_task_id\": \"" << JsonEscape(window.train_task_id)
+                         << "\",\n"
+                         << "      \"train_report_json\": \"" << JsonEscape(window.train_report_json)
+                         << "\",\n"
+                         << "      \"train_report_md\": \"" << JsonEscape(window.train_report_md)
+                         << "\",\n"
              << "      \"best_params_yaml\": \"" << JsonEscape(window.best_params_yaml)
              << "\",\n"
+                         << "      \"test_result_json\": \"" << JsonEscape(window.test_result_json)
+                         << "\",\n"
+                         << "      \"top_trials_dir\": \"" << JsonEscape(window.top_trials_dir)
+                         << "\",\n"
              << "      \"error_msg\": \"" << JsonEscape(window.error_msg) << "\",\n"
              << "      \"metrics\": {";
 
@@ -97,14 +110,17 @@ bool WriteRollingReportMarkdown(const RollingReport& report,
        << "- Max Objective: `" << FormatDouble(report.max_objective) << "`\n"
        << "- Min Objective: `" << FormatDouble(report.min_objective) << "`\n\n"
        << "## Windows\n\n"
-       << "| index | train | test | success | objective | best_params_yaml |\n"
-       << "| --- | --- | --- | --- | --- | --- |\n";
+       << "| index | train | test | success | objective | train_trial_count | completed_train_trial_count | train_task_id | train_report_json | train_report_md | best_params_yaml | test_result_json | top_trials_dir |\n"
+       << "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n";
 
     for (const WindowResult& window : report.windows) {
         md << "| " << window.index << " | " << window.train_start << "~" << window.train_end
            << " | " << window.test_start << "~" << window.test_end << " | "
            << (window.success ? "true" : "false") << " | " << FormatDouble(window.objective)
-           << " | " << window.best_params_yaml << " |\n";
+           << " | " << window.train_trial_count << " | " << window.completed_train_trial_count
+           << " | " << window.train_task_id << " | " << window.train_report_json << " | "
+           << window.train_report_md << " | " << window.best_params_yaml << " | "
+           << window.test_result_json << " | " << window.top_trials_dir << " |\n";
     }
 
     md << "\n## Failed Windows\n\n";

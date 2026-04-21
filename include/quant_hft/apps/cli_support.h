@@ -120,12 +120,11 @@ inline std::int64_t UnixEpochMillisNow() {
 }
 
 inline std::string DefaultParameterOptimConfigPath() {
-    return (std::filesystem::path("runtime") / "optim" / "c_kama_param_space.yaml").string();
+    return (std::filesystem::path("configs") / "ops" / "parameter_optim.yaml").string();
 }
 
 inline std::string DefaultRollingBacktestConfigPath() {
-    return (std::filesystem::path("runtime") / "optim" / "c_kama_rolling_optimize.yaml")
-        .string();
+    return (std::filesystem::path("configs") / "ops" / "rolling_backtest.yaml").string();
 }
 
 inline ResolvedConfigPath ResolveConfigPathWithDefault(const ArgMap& args,

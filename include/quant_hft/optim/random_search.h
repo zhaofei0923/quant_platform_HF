@@ -1,5 +1,9 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+#include <vector>
+
 #include "quant_hft/optim/optimization_algorithm.h"
 #include "quant_hft/optim/parameter_space.h"
 
@@ -15,7 +19,11 @@ class RandomSearch : public IOptimizationAlgorithm {
     Trial GetBestTrial() const override;
 
    private:
+    std::vector<ParamValueMap> planned_combinations_;
+    std::size_t emitted_trials_{0};
     std::vector<Trial> results_;
+    OptimizationConfig config_;
+    std::uint64_t rng_seed_{0};
 };
 
 }  // namespace quant_hft::optim

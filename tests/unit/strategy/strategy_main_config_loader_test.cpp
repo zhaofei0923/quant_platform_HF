@@ -81,6 +81,9 @@ TEST(StrategyMainConfigLoaderTest, LoadsYamlMainConfigWithV2SubStrategies) {
     EXPECT_EQ(config.backtest.start_date, "20240101");
     EXPECT_EQ(config.backtest.end_date, "20240131");
     EXPECT_NE(config.backtest.product_config_path.find("instrument_info.json"), std::string::npos);
+    EXPECT_FALSE(config.risk_management.enabled);
+    EXPECT_DOUBLE_EQ(config.risk_management.risk_per_trade_pct, 0.005);
+    EXPECT_DOUBLE_EQ(config.risk_management.max_risk_per_trade, 2000.0);
 
     EXPECT_EQ(config.composite.run_type, "backtest");
     EXPECT_TRUE(config.composite.market_state_mode);
@@ -93,6 +96,46 @@ TEST(StrategyMainConfigLoaderTest, LoadsYamlMainConfigWithV2SubStrategies) {
     EXPECT_EQ(config.composite.sub_strategies[1].id, "trend_1");
     EXPECT_FALSE(config.composite.sub_strategies[1].enabled);
     EXPECT_EQ(config.composite.sub_strategies[1].type, "TrendStrategy");
+}
+
+TEST(StrategyMainConfigLoaderTest, LoadsYamlRiskManagementSection) {
+    const std::filesystem::path root = MakeTempDir("quant_hft_strategy_main_risk_yaml");
+    WriteFile(root / "sub" / "kama.yaml",
+              "params:\n"
+              "  id: kama_1\n"
+              "  er_period: 10\n"
+              "  fast_period: 2\n"
+              "  slow_period: 30\n");
+
+    const std::filesystem::path main_path =
+        WriteFile(root / "main_strategy.yaml",
+                  "run_type: backtest\n"
+                  "market_state_mode: true\n"
+                  "backtest:\n"
+                  "  initial_equity: 1000000\n"
+                  "  product_series_mode: raw\n"
+                  "  symbols: [rb2405]\n"
+                  "  start_date: 20240101\n"
+                  "  end_date: 20240131\n"
+                  "  product_config_path: ./instrument_info.json\n"
+                  "risk_management:\n"
+                  "  enabled: true\n"
+                  "  risk_per_trade_pct: 0.004\n"
+                  "  max_risk_per_trade: 1500\n"
+                  "composite:\n"
+                  "  merge_rule: kPriority\n"
+                  "  sub_strategies:\n"
+                  "    - id: kama_1\n"
+                  "      enabled: true\n"
+                  "      type: KamaTrendStrategy\n"
+                  "      config_path: ./sub/kama.yaml\n");
+
+    StrategyMainConfig config;
+    std::string error;
+    ASSERT_TRUE(LoadStrategyMainConfig(main_path.string(), &config, &error)) << error;
+    EXPECT_TRUE(config.risk_management.enabled);
+    EXPECT_DOUBLE_EQ(config.risk_management.risk_per_trade_pct, 0.004);
+    EXPECT_DOUBLE_EQ(config.risk_management.max_risk_per_trade, 1500.0);
 }
 
 TEST(StrategyMainConfigLoaderTest, RejectsBacktestMaxLossPercentField) {
@@ -159,6 +202,11 @@ TEST(StrategyMainConfigLoaderTest, LoadsJsonMainConfigWithV2SubStrategies) {
                   "    \"end_date\": \"20240110\",\n"
                   "    \"product_config_path\": \"./instrument_info.json\"\n"
                   "  },\n"
+                  "  \"risk_management\": {\n"
+                  "    \"enabled\": false,\n"
+                  "    \"risk_per_trade_pct\": 0.003,\n"
+                  "    \"max_risk_per_trade\": 1800\n"
+                  "  },\n"
                   "  \"composite\": {\n"
                   "    \"merge_rule\": \"kPriority\",\n"
                   "    \"sub_strategies\": [\n"
@@ -185,11 +233,144 @@ TEST(StrategyMainConfigLoaderTest, LoadsJsonMainConfigWithV2SubStrategies) {
               "contract_expiry_calendar.yaml");
     ASSERT_EQ(config.backtest.symbols.size(), 1U);
     EXPECT_EQ(config.backtest.symbols[0], "rb2405");
+    EXPECT_FALSE(config.risk_management.enabled);
+    EXPECT_DOUBLE_EQ(config.risk_management.risk_per_trade_pct, 0.003);
+    EXPECT_DOUBLE_EQ(config.risk_management.max_risk_per_trade, 1800.0);
     ASSERT_EQ(config.composite.sub_strategies.size(), 1U);
     EXPECT_EQ(config.composite.sub_strategies[0].id, "kama_1");
     EXPECT_TRUE(config.composite.sub_strategies[0].enabled);
     EXPECT_EQ(config.composite.sub_strategies[0].timeframe_minutes, 15);
     EXPECT_EQ(config.composite.sub_strategies[0].params.at("er_period"), "10");
+}
+
+TEST(StrategyMainConfigLoaderTest, RejectsInvalidRiskPerTradePct) {
+    const std::filesystem::path root = MakeTempDir("quant_hft_strategy_main_invalid_risk_pct");
+    WriteFile(root / "sub" / "kama.yaml",
+              "params:\n"
+              "  id: kama_1\n"
+              "  er_period: 10\n");
+
+    const std::filesystem::path main_path =
+        WriteFile(root / "main_strategy.yaml",
+                  "run_type: backtest\n"
+                  "market_state_mode: true\n"
+                  "backtest:\n"
+                  "  initial_equity: 100000\n"
+                  "  product_series_mode: raw\n"
+                  "risk_management:\n"
+                  "  enabled: true\n"
+                  "  risk_per_trade_pct: 1.5\n"
+                  "  max_risk_per_trade: 2000\n"
+                  "composite:\n"
+                  "  merge_rule: kPriority\n"
+                  "  sub_strategies:\n"
+                  "    - id: kama_1\n"
+                  "      enabled: true\n"
+                  "      type: KamaTrendStrategy\n"
+                  "      config_path: ./sub/kama.yaml\n");
+
+    StrategyMainConfig config;
+    std::string error;
+    EXPECT_FALSE(LoadStrategyMainConfig(main_path.string(), &config, &error));
+    EXPECT_NE(error.find("risk_management.risk_per_trade_pct"), std::string::npos);
+}
+
+TEST(StrategyMainConfigLoaderTest, RejectsInvalidMaxRiskPerTrade) {
+    const std::filesystem::path root = MakeTempDir("quant_hft_strategy_main_invalid_risk_cap");
+    WriteFile(root / "sub" / "kama.yaml",
+              "params:\n"
+              "  id: kama_1\n"
+              "  er_period: 10\n");
+
+    const std::filesystem::path main_path =
+        WriteFile(root / "main_strategy.yaml",
+                  "run_type: backtest\n"
+                  "market_state_mode: true\n"
+                  "backtest:\n"
+                  "  initial_equity: 100000\n"
+                  "  product_series_mode: raw\n"
+                  "risk_management:\n"
+                  "  enabled: true\n"
+                  "  risk_per_trade_pct: 0.005\n"
+                  "  max_risk_per_trade: -1\n"
+                  "composite:\n"
+                  "  merge_rule: kPriority\n"
+                  "  sub_strategies:\n"
+                  "    - id: kama_1\n"
+                  "      enabled: true\n"
+                  "      type: KamaTrendStrategy\n"
+                  "      config_path: ./sub/kama.yaml\n");
+
+    StrategyMainConfig config;
+    std::string error;
+    EXPECT_FALSE(LoadStrategyMainConfig(main_path.string(), &config, &error));
+    EXPECT_NE(error.find("risk_management.max_risk_per_trade"), std::string::npos);
+}
+
+TEST(StrategyMainConfigLoaderTest, RejectsZeroRiskPerTradePctWhenEnabled) {
+    const std::filesystem::path root = MakeTempDir("quant_hft_strategy_main_zero_risk_pct");
+    WriteFile(root / "sub" / "kama.yaml",
+              "params:\n"
+              "  id: kama_1\n"
+              "  er_period: 10\n");
+
+    const std::filesystem::path main_path =
+        WriteFile(root / "main_strategy.yaml",
+                  "run_type: backtest\n"
+                  "market_state_mode: true\n"
+                  "backtest:\n"
+                  "  initial_equity: 100000\n"
+                  "  product_series_mode: raw\n"
+                  "risk_management:\n"
+                  "  enabled: true\n"
+                  "  risk_per_trade_pct: 0\n"
+                  "  max_risk_per_trade: 2000\n"
+                  "composite:\n"
+                  "  merge_rule: kPriority\n"
+                  "  sub_strategies:\n"
+                  "    - id: kama_1\n"
+                  "      enabled: true\n"
+                  "      type: KamaTrendStrategy\n"
+                  "      config_path: ./sub/kama.yaml\n");
+
+    StrategyMainConfig config;
+    std::string error;
+    EXPECT_FALSE(LoadStrategyMainConfig(main_path.string(), &config, &error));
+    EXPECT_NE(error.find("risk_management.risk_per_trade_pct"), std::string::npos);
+    EXPECT_NE(error.find("> 0 when enabled"), std::string::npos);
+}
+
+TEST(StrategyMainConfigLoaderTest, RejectsZeroMaxRiskPerTradeWhenEnabled) {
+    const std::filesystem::path root = MakeTempDir("quant_hft_strategy_main_zero_risk_cap");
+    WriteFile(root / "sub" / "kama.yaml",
+              "params:\n"
+              "  id: kama_1\n"
+              "  er_period: 10\n");
+
+    const std::filesystem::path main_path =
+        WriteFile(root / "main_strategy.yaml",
+                  "run_type: backtest\n"
+                  "market_state_mode: true\n"
+                  "backtest:\n"
+                  "  initial_equity: 100000\n"
+                  "  product_series_mode: raw\n"
+                  "risk_management:\n"
+                  "  enabled: true\n"
+                  "  risk_per_trade_pct: 0.005\n"
+                  "  max_risk_per_trade: 0\n"
+                  "composite:\n"
+                  "  merge_rule: kPriority\n"
+                  "  sub_strategies:\n"
+                  "    - id: kama_1\n"
+                  "      enabled: true\n"
+                  "      type: KamaTrendStrategy\n"
+                  "      config_path: ./sub/kama.yaml\n");
+
+    StrategyMainConfig config;
+    std::string error;
+    EXPECT_FALSE(LoadStrategyMainConfig(main_path.string(), &config, &error));
+    EXPECT_NE(error.find("risk_management.max_risk_per_trade"), std::string::npos);
+    EXPECT_NE(error.find("> 0 when enabled"), std::string::npos);
 }
 
 }  // namespace

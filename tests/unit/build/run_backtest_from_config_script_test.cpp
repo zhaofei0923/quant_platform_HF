@@ -122,6 +122,55 @@ TEST(RunBacktestFromConfigScriptTest, DryRunSucceedsWithMinimalConfig) {
     EXPECT_NE(payload.find("timestamp_timezone=utc"), std::string::npos);
 }
 
+TEST(RunBacktestFromConfigScriptTest, DryRunPrintsFormalAnalysisCommandWhenEnabled) {
+    const auto root = MakeTempDir("dry_run_formal_report");
+    const auto dataset_root = root / "parquet_v2";
+    const auto strategy_main = root / "main_backtest_strategy.yaml";
+    const auto config_path = root / "backtest_run.yaml";
+    const auto output_root_dir = root / "backtest_runs";
+    const auto log_file = root / "dry_run.log";
+
+    std::filesystem::create_directories(dataset_root);
+    WriteFile(strategy_main,
+              "run_type: backtest\n"
+              "backtest:\n"
+              "  initial_equity: 100000\n"
+              "  symbols: [c]\n");
+    WriteFile(config_path,
+              "engine_mode: parquet\n"
+              "dataset_root: " +
+                  dataset_root.string() +
+                  "\n"
+                  "strategy_main_config_path: " +
+                  strategy_main.string() +
+                  "\n"
+                  "output_root_dir: " +
+                  output_root_dir.string() +
+                  "\n"
+                  "timestamp_timezone: utc\n"
+                  "output_json: result.json\n"
+                  "output_md: result.md\n"
+                  "emit_formal_analysis_report: true\n"
+                  "formal_analysis_report_path: formal_report.md\n"
+                  "formal_analysis_report_date: 20260420\n"
+                  "formal_analysis_sample_trades: 12\n");
+
+    const std::string command = "bash scripts/build/run_backtest_from_config.sh --config '" +
+                                EscapePathForShell(config_path) + "' --dry-run >'" +
+                                EscapePathForShell(log_file) + "' 2>&1";
+    const int rc = RunCommand(command);
+    EXPECT_EQ(rc, 0);
+
+    const std::string payload = ReadFile(log_file);
+    EXPECT_NE(payload.find("backtest_analysis_report.py"), std::string::npos);
+    EXPECT_NE(payload.find("--run-dir"), std::string::npos);
+    EXPECT_NE(payload.find("formal_report.md"), std::string::npos);
+    EXPECT_NE(payload.find("--report-date"), std::string::npos);
+    EXPECT_NE(payload.find("20260420"), std::string::npos);
+    EXPECT_NE(payload.find("--sample-trades"), std::string::npos);
+    EXPECT_NE(payload.find("12"), std::string::npos);
+}
+
 TEST(RunBacktestFromConfigScriptTest, MissingRequiredFieldFailsFast) {
     const auto root = MakeTempDir("missing_required");
     const auto strategy_main = root / "main_backtest_strategy.yaml";
@@ -674,6 +723,118 @@ TEST(RunBacktestFromConfigScriptTest, SkipBuildPassesTraceOutputFormatWhenConfig
     const std::vector<std::string> args = ReadLines(args_log);
     ASSERT_NE(FindArgValue(args, "--trace_output_format"), nullptr);
     EXPECT_EQ(*FindArgValue(args, "--trace_output_format"), "both");
+}
+
+TEST(RunBacktestFromConfigScriptTest, SkipBuildInvokesFormalAnalysisWhenEnabled) {
+    const auto root = MakeTempDir("formal_report_passthrough");
+    const auto build_dir = root / "build-gcc";
+    const auto fake_bin_dir = root / "fake_bin";
+    const auto dataset_root = root / "parquet_v2";
+    const auto strategy_main = root / "main_backtest_strategy.yaml";
+    const auto config_path = root / "backtest_run.yaml";
+    const auto backtest_args_log = root / "backtest_args.txt";
+    const auto python_args_log = root / "python_args.txt";
+    const auto output_root_dir = root / "backtest_runs";
+    const auto fake_cli = build_dir / "backtest_cli";
+    const auto fake_python = fake_bin_dir / "python3";
+
+    std::filesystem::create_directories(build_dir);
+    std::filesystem::create_directories(fake_bin_dir);
+    std::filesystem::create_directories(dataset_root);
+    WriteFile(strategy_main, "run_type: backtest\n");
+
+    WriteFile(fake_cli,
+              "#!/usr/bin/env bash\n"
+              "set -euo pipefail\n"
+              "args_file='" +
+                  backtest_args_log.string() +
+                  "'\n"
+                  ": >\"${args_file}\"\n"
+                  "for arg in \"$@\"; do\n"
+                  "  printf '%s\\n' \"${arg}\" >>\"${args_file}\"\n"
+                  "done\n");
+    std::filesystem::permissions(
+        fake_cli,
+        std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec |
+            std::filesystem::perms::others_exec | std::filesystem::perms::owner_read |
+            std::filesystem::perms::group_read | std::filesystem::perms::others_read |
+            std::filesystem::perms::owner_write,
+        std::filesystem::perm_options::replace);
+
+    WriteFile(fake_python,
+              "#!/usr/bin/env bash\n"
+              "set -euo pipefail\n"
+              "args_file='" +
+                  python_args_log.string() +
+                  "'\n"
+                  ": >\"${args_file}\"\n"
+                  "output_path=''\n"
+                  "previous=''\n"
+                  "for arg in \"$@\"; do\n"
+                  "  printf '%s\\n' \"${arg}\" >>\"${args_file}\"\n"
+                  "  if [[ \"${previous}\" == '--output' ]]; then\n"
+                  "    output_path=\"${arg}\"\n"
+                  "  fi\n"
+                  "  previous=\"${arg}\"\n"
+                  "done\n"
+                  "if [[ -n \"${output_path}\" ]]; then\n"
+                  "  mkdir -p \"$(dirname \"${output_path}\")\"\n"
+                  "  printf '# formal report\\n' >\"${output_path}\"\n"
+                  "fi\n");
+    std::filesystem::permissions(
+        fake_python,
+        std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec |
+            std::filesystem::perms::others_exec | std::filesystem::perms::owner_read |
+            std::filesystem::perms::group_read | std::filesystem::perms::others_read |
+            std::filesystem::perms::owner_write,
+        std::filesystem::perm_options::replace);
+
+    WriteFile(config_path,
+              "build_dir: " + build_dir.string() +
+                  "\n"
+                  "engine_mode: parquet\n"
+                  "dataset_root: " +
+                  dataset_root.string() +
+                  "\n"
+                  "strategy_main_config_path: " +
+                  strategy_main.string() +
+                  "\n"
+                  "output_root_dir: " +
+                  output_root_dir.string() +
+                  "\n"
+                  "timestamp_timezone: utc\n"
+                  "output_json: result.json\n"
+                  "output_md: result.md\n"
+                  "run_id: formal-report-run\n"
+                  "emit_formal_analysis_report: true\n"
+                  "formal_analysis_report_path: formal_report.md\n"
+                  "formal_analysis_report_date: 20260420\n"
+                  "formal_analysis_sample_trades: 12\n");
+
+    const std::string command =
+        "PATH='" + EscapePathForShell(fake_bin_dir) + "':\"$PATH\" bash "
+        "scripts/build/run_backtest_from_config.sh --config '" +
+        EscapePathForShell(config_path) + "' --skip-build";
+    const int rc = RunCommand(command);
+    EXPECT_EQ(rc, 0);
+
+    const std::vector<std::string> backtest_args = ReadLines(backtest_args_log);
+    ASSERT_NE(FindArgValue(backtest_args, "--output_json"), nullptr);
+    const std::filesystem::path run_dir =
+        std::filesystem::path(*FindArgValue(backtest_args, "--output_json")).parent_path();
+
+    const std::vector<std::string> python_args = ReadLines(python_args_log);
+    ASSERT_FALSE(python_args.empty());
+    EXPECT_EQ(std::filesystem::path(python_args.front()).filename(), "backtest_analysis_report.py");
+    ASSERT_NE(FindArgValue(python_args, "--run-dir"), nullptr);
+    EXPECT_EQ(*FindArgValue(python_args, "--run-dir"), run_dir.string());
+    ASSERT_NE(FindArgValue(python_args, "--output"), nullptr);
+    EXPECT_EQ(*FindArgValue(python_args, "--output"), (run_dir / "formal_report.md").string());
+    ASSERT_NE(FindArgValue(python_args, "--report-date"), nullptr);
+    EXPECT_EQ(*FindArgValue(python_args, "--report-date"), "20260420");
+    ASSERT_NE(FindArgValue(python_args, "--sample-trades"), nullptr);
+    EXPECT_EQ(*FindArgValue(python_args, "--sample-trades"), "12");
+    EXPECT_TRUE(std::filesystem::exists(run_dir / "formal_report.md"));
 }
 
 TEST(RunBacktestFromConfigScriptTest, ValidationReportReadsCsvTraceWithoutPyarrow) {

@@ -65,6 +65,7 @@ TRADE_COLUMNS = [
     "strategy_id",
     "signal_type",
     "regime_at_entry",
+    "risk_budget_r",
 ]
 
 
@@ -158,6 +159,7 @@ def make_trade_row(
     signal_ts_ns: str = "1704203999889000000",
     update_time: str | None = None,
     realized_pnl: str = "0.00000000",
+    risk_budget_r: str = "0.00",
 ) -> dict[str, str]:
     timestamp_dt_local = timestamp_dt_local or signal_dt_local
     timestamp_dt_utc = timestamp_dt_utc or timestamp_dt_local
@@ -186,6 +188,7 @@ def make_trade_row(
         "strategy_id": strategy_id,
         "signal_type": signal_type,
         "regime_at_entry": "kWeakTrend",
+        "risk_budget_r": risk_budget_r,
     }
 
 

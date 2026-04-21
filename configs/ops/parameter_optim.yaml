@@ -1,0 +1,52 @@
+# CONFIG DOC
+# Purpose: single-pass parameter optimization config for kama_trend_1.
+# Consumer: parameter_optim_cli / scripts/build/run_parameter_optim.sh
+# Notes:
+# 1) Paths are repo-root-relative because the wrapper runs from repo root.
+# 2) Current objective optimizes single-metric profit_factor.
+# 3) profit_factor is trade-derived, so keep emit_trades on while other heavy exports stay off.
+
+composite_config_path: configs/strategies/main_backtest_strategy.yaml
+target_sub_config_path: ./sub/kama_trend_1.yaml
+
+backtest_args:
+  engine_mode: parquet
+  dataset_root: backtest_data/parquet_v2
+  detector_config: configs/sim/ctp.yaml
+  product_config_path: configs/strategies/instrument_info.json
+  contract_expiry_calendar_path: configs/strategies/contract_expiry_calendar.yaml
+  symbols: c
+  start_date: 20230103
+  end_date: 20251101
+  max_ticks: 200000
+  deterministic_fills: true
+  strict_parquet: true
+  rollover_mode: expiry_close
+  rollover_price_mode: bbo
+  rollover_slippage_bps: 0
+  emit_trades: true
+  emit_orders: false
+  emit_position_history: false
+
+optimization:
+  algorithm: grid
+  maximize: true
+  metric_path: profit_factor
+  max_trials: 48
+  batch_size: 2
+  preserve_top_k_trials: 10
+  export_heatmap: true
+  output_json: docs/results/opts/parameter_optim_report.json
+  output_md: docs/results/opts/parameter_optim_report.md
+  best_params_yaml: docs/results/opts/parameter_optim_best_params.yaml
+
+parameters:
+  - name: kama_filter
+    type: double
+    values: [0.3, 0.5, 0.8, 1.2]
+  - name: stop_loss_atr_multiplier
+    type: double
+    values: [3.0, 4.0, 5.0]
+  - name: risk_per_trade_pct
+    type: double
+    values: [0.003, 0.005, 0.008, 0.01]

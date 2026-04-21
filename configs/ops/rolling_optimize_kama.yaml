@@ -1,0 +1,55 @@
+# CONFIG DOC
+# Purpose: multi-window rolling optimize + out-of-sample evaluation for kama_trend_1.
+# Consumer: rolling_backtest_cli
+# Notes:
+# 1) Reuses configs/ops/parameter_optim.yaml as the parameter space source so the active
+#    search space stays identical to the main parameter optimizer config.
+# 2) The 2024 research window is expanded into multiple rolling windows with 120 trading days
+#    of training, 30 trading days of testing, and a 30 trading day step. With the current
+#    manifest this yields 4 complete windows across 2024.
+
+mode: rolling_optimize
+
+backtest_base:
+  engine_mode: parquet
+  dataset_root: ../../backtest_data/parquet_v2
+  symbols: [c]
+  strategy_factory: composite
+  strategy_composite_config: ../strategies/main_backtest_strategy.yaml
+  product_config_path: ../strategies/instrument_info.json
+  contract_expiry_calendar_path: ../strategies/contract_expiry_calendar.yaml
+  max_ticks: 12000
+  deterministic_fills: true
+  strict_parquet: true
+  rollover_mode: expiry_close
+  rollover_price_mode: bbo
+  rollover_slippage_bps: 0
+  initial_equity: 200000
+  emit_trades: true
+  emit_orders: false
+  emit_position_history: false
+
+window:
+  type: rolling
+  train_length_days: 120
+  test_length_days: 30
+  step_days: 30
+  min_train_days: 120
+  start_date: 2024-01-02
+  end_date: 2024-12-31
+
+optimization:
+  algorithm: grid
+  objective:
+    path: hf_standard.risk_metrics.calmar_ratio
+    maximize: true
+  max_trials: 48
+  parallel: 2
+  preserve_top_k_trials: 10
+  param_space: ./parameter_optim.yaml
+  target_sub_config_path: ../strategies/sub/kama_trend_1.yaml
+
+output:
+  root_dir: ../../runtime/rolling_optimize_kama
+  keep_temp_files: false
+  window_parallel: 1

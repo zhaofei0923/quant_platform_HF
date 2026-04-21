@@ -47,6 +47,7 @@ TradeRecord MakeTrade(std::int64_t fill_seq, const std::string& trade_id, EpochN
     row.price = 100.0;
     row.timestamp_ns = timestamp_ns;
     row.timestamp_dt_utc = timestamp_dt_utc;
+    row.risk_budget_r = 123.45;
     row.strategy_id = "s1";
     row.signal_type = "kOpen";
     row.regime_at_entry = "kUnknown";
@@ -170,6 +171,31 @@ TEST(BacktestResultExportTest, TradesCsvSortsByTradingDaySessionAndTimestamp) {
     EXPECT_NE(csv_text.find("trading_day"), std::string::npos);
     EXPECT_NE(csv_text.find("action_day"), std::string::npos);
     EXPECT_NE(csv_text.find("timestamp_dt_local"), std::string::npos);
+    EXPECT_NE(csv_text.find("risk_budget_r"), std::string::npos);
+    EXPECT_NE(csv_text.find("123.45"), std::string::npos);
+
+    std::error_code ec;
+    std::filesystem::remove_all(out_dir, ec);
+}
+
+TEST(BacktestResultExportTest, TradesCsvAppendsRiskBudgetAsLastColumn) {
+    BacktestCliResult result;
+    result.spec.emit_trades = true;
+    result.trades = {
+        MakeTrade(1, "trade-1", 100, "2024-01-03 14:55:00"),
+    };
+
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const std::filesystem::path out_dir =
+        std::filesystem::temp_directory_path() /
+        ("quant_hft_backtest_export_risk_budget_test_" + std::to_string(stamp));
+
+    std::string error;
+    ASSERT_TRUE(ExportBacktestCsv(result, out_dir.string(), &error)) << error;
+
+    const std::string csv_text = ReadFileText(out_dir / "trades.csv");
+    EXPECT_NE(csv_text.find("regime_at_entry,risk_budget_r\n"), std::string::npos);
+    EXPECT_NE(csv_text.find(",kUnknown,123.45\n"), std::string::npos);
 
     std::error_code ec;
     std::filesystem::remove_all(out_dir, ec);
@@ -204,6 +230,7 @@ TEST(BacktestResultExportTest, RenderBacktestJsonSortsTradesAndOrdersChronologic
     EXPECT_LT(order_2_pos, order_1_pos);
     EXPECT_NE(json.find("\"signal_dt_local\":\"2024-01-03 14:54:00\""), std::string::npos);
     EXPECT_NE(json.find("\"timestamp_dt_local\":\"2024-01-03 14:55:00\""), std::string::npos);
+    EXPECT_NE(json.find("\"risk_budget_r\":123.45"), std::string::npos);
 }
 
 }  // namespace quant_hft::apps

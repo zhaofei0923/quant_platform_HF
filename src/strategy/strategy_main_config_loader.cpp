@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -196,6 +197,44 @@ bool ParseBacktestYamlKey(StrategyMainBacktestConfig* backtest, const std::strin
     return false;
 }
 
+bool ParseRiskManagementYamlKey(RiskManagementConfig* config, const std::string& key,
+                                const std::string& value, std::string* error) {
+    if (config == nullptr) {
+        return false;
+    }
+    if (key == "enabled") {
+        if (!ParseBoolText(value, &config->enabled)) {
+            if (error != nullptr) {
+                *error = "invalid risk_management.enabled bool";
+            }
+            return false;
+        }
+        return true;
+    }
+    if (key == "risk_per_trade_pct") {
+        if (!ParseDoubleText(value, &config->risk_per_trade_pct)) {
+            if (error != nullptr) {
+                *error = "invalid risk_management.risk_per_trade_pct";
+            }
+            return false;
+        }
+        return true;
+    }
+    if (key == "max_risk_per_trade") {
+        if (!ParseDoubleText(value, &config->max_risk_per_trade)) {
+            if (error != nullptr) {
+                *error = "invalid risk_management.max_risk_per_trade";
+            }
+            return false;
+        }
+        return true;
+    }
+    if (error != nullptr) {
+        *error = "unsupported risk_management field: " + key;
+    }
+    return false;
+}
+
 bool LoadMainYaml(const std::filesystem::path& path, StrategyMainConfig* out, std::string* error) {
     if (out == nullptr) {
         if (error != nullptr) {
@@ -280,6 +319,18 @@ bool LoadMainYaml(const std::filesystem::path& path, StrategyMainConfig* out, st
                 section_indent = indent;
                 continue;
             }
+            if (key == "risk_management") {
+                if (!value.empty()) {
+                    if (error != nullptr) {
+                        *error = "line " + std::to_string(line_no) +
+                                 ": risk_management must be YAML section";
+                    }
+                    return false;
+                }
+                section = "risk_management";
+                section_indent = indent;
+                continue;
+            }
             if (error != nullptr) {
                 *error =
                     "line " + std::to_string(line_no) + ": unsupported top-level field: " + key;
@@ -289,6 +340,15 @@ bool LoadMainYaml(const std::filesystem::path& path, StrategyMainConfig* out, st
 
         if (section == "backtest" && indent > section_indent) {
             if (!ParseBacktestYamlKey(&config.backtest, key, value, error)) {
+                if (error != nullptr && error->find("line ") != 0) {
+                    *error = "line " + std::to_string(line_no) + ": " + *error;
+                }
+                return false;
+            }
+            continue;
+        }
+        if (section == "risk_management" && indent > section_indent) {
+            if (!ParseRiskManagementYamlKey(&config.risk_management, key, value, error)) {
                 if (error != nullptr && error->find("line ") != 0) {
                     *error = "line " + std::to_string(line_no) + ": " + *error;
                 }
@@ -465,6 +525,51 @@ bool LoadMainJson(const std::filesystem::path& path, StrategyMainConfig* out, st
             }
             continue;
         }
+        if (key == "risk_management") {
+            if (!value.IsObject()) {
+                if (error != nullptr) {
+                    *error = "risk_management must be object";
+                }
+                return false;
+            }
+            for (const auto& [risk_key, risk_value] : value.object_value) {
+                if (risk_key == "enabled") {
+                    if (!risk_value.IsBool()) {
+                        if (error != nullptr) {
+                            *error = "risk_management.enabled must be bool";
+                        }
+                        return false;
+                    }
+                    config.risk_management.enabled = risk_value.bool_value;
+                    continue;
+                }
+                if (risk_key == "risk_per_trade_pct") {
+                    if (!risk_value.IsNumber()) {
+                        if (error != nullptr) {
+                            *error = "risk_management.risk_per_trade_pct must be number";
+                        }
+                        return false;
+                    }
+                    config.risk_management.risk_per_trade_pct = risk_value.number_value;
+                    continue;
+                }
+                if (risk_key == "max_risk_per_trade") {
+                    if (!risk_value.IsNumber()) {
+                        if (error != nullptr) {
+                            *error = "risk_management.max_risk_per_trade must be number";
+                        }
+                        return false;
+                    }
+                    config.risk_management.max_risk_per_trade = risk_value.number_value;
+                    continue;
+                }
+                if (error != nullptr) {
+                    *error = "unsupported risk_management field: " + risk_key;
+                }
+                return false;
+            }
+            continue;
+        }
         if (key == "composite") {
             continue;
         }
@@ -522,6 +627,33 @@ bool LoadStrategyMainConfig(const std::string& path, StrategyMainConfig* out, st
     if (!(config.backtest.initial_equity > 0.0)) {
         if (error != nullptr) {
             *error = "backtest.initial_equity must be > 0";
+        }
+        return false;
+    }
+    if (!std::isfinite(config.risk_management.risk_per_trade_pct) ||
+        config.risk_management.risk_per_trade_pct < 0.0 ||
+        config.risk_management.risk_per_trade_pct > 1.0) {
+        if (error != nullptr) {
+            *error = "risk_management.risk_per_trade_pct must be in [0, 1]";
+        }
+        return false;
+    }
+    if (config.risk_management.enabled && !(config.risk_management.risk_per_trade_pct > 0.0)) {
+        if (error != nullptr) {
+            *error = "risk_management.risk_per_trade_pct must be > 0 when enabled";
+        }
+        return false;
+    }
+    if (!std::isfinite(config.risk_management.max_risk_per_trade) ||
+        config.risk_management.max_risk_per_trade < 0.0) {
+        if (error != nullptr) {
+            *error = "risk_management.max_risk_per_trade must be >= 0";
+        }
+        return false;
+    }
+    if (config.risk_management.enabled && !(config.risk_management.max_risk_per_trade > 0.0)) {
+        if (error != nullptr) {
+            *error = "risk_management.max_risk_per_trade must be > 0 when enabled";
         }
         return false;
     }

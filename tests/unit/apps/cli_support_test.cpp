@@ -26,9 +26,9 @@ std::filesystem::path WriteFile(const std::filesystem::path& path, const std::st
     return path;
 }
 
-TEST(CliSupportTest, UsesRuntimeOptimDefaultConfigPaths) {
-    EXPECT_EQ(DefaultParameterOptimConfigPath(), "runtime/optim/c_kama_param_space.yaml");
-    EXPECT_EQ(DefaultRollingBacktestConfigPath(), "runtime/optim/c_kama_rolling_optimize.yaml");
+TEST(CliSupportTest, UsesOpsAndRuntimeDefaultConfigPaths) {
+    EXPECT_EQ(DefaultParameterOptimConfigPath(), "configs/ops/parameter_optim.yaml");
+    EXPECT_EQ(DefaultRollingBacktestConfigPath(), "configs/ops/rolling_backtest.yaml");
 }
 
 TEST(CliSupportTest, ResolveConfigPathWithDefaultUsesExplicitConfigWhenProvided) {

@@ -1,5 +1,7 @@
 #include "quant_hft/optim/parameter_space.h"
 
+#include "quant_hft/optim/result_analyzer.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -21,6 +23,14 @@ struct ParameterDraft {
     std::vector<std::string> values;
     std::vector<std::string> range;
     std::optional<double> step;
+    int line_no{0};
+};
+
+struct ObjectiveDraft {
+    std::string metric_path;
+    std::optional<double> weight;
+    std::optional<bool> maximize;
+    std::optional<bool> scale_by_initial_equity;
     int line_no{0};
 };
 
@@ -140,6 +150,27 @@ bool ParseInt(const std::string& text, int* out) {
             return false;
         }
         *out = static_cast<int>(value);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool ParseUInt64(const std::string& text, std::uint64_t* out) {
+    if (out == nullptr) {
+        return false;
+    }
+    const std::string trimmed = Trim(text);
+    if (trimmed.empty()) {
+        return false;
+    }
+    try {
+        std::size_t consumed = 0;
+        const unsigned long long value = std::stoull(trimmed, &consumed);
+        if (consumed != trimmed.size()) {
+            return false;
+        }
+        *out = static_cast<std::uint64_t>(value);
         return true;
     } catch (...) {
         return false;
@@ -386,8 +417,76 @@ bool FinalizeParameterDraft(const ParameterDraft& draft, ParameterDef* out, std:
     return true;
 }
 
+bool FinalizeObjectiveDraft(const ObjectiveDraft& draft,
+                           OptimizationObjective* out,
+                           std::string* error) {
+    if (out == nullptr) {
+        if (error != nullptr) {
+            *error = "line " + std::to_string(draft.line_no) + ": internal null objective output";
+        }
+        return false;
+    }
+    if (draft.metric_path.empty()) {
+        if (error != nullptr) {
+            *error = "line " + std::to_string(draft.line_no) + ": objective path is required";
+        }
+        return false;
+    }
+    if (!draft.weight.has_value()) {
+        if (error != nullptr) {
+            *error = "line " + std::to_string(draft.line_no) + ": objective weight is required";
+        }
+        return false;
+    }
+    if (!(*draft.weight > 0.0)) {
+        if (error != nullptr) {
+            *error = "line " + std::to_string(draft.line_no) + ": objective weight must be > 0";
+        }
+        return false;
+    }
+
+    OptimizationObjective result;
+    result.metric_path = draft.metric_path;
+    result.weight = *draft.weight;
+    result.maximize = draft.maximize.value_or(true);
+    result.scale_by_initial_equity = draft.scale_by_initial_equity.value_or(false);
+    *out = std::move(result);
+    return true;
+}
+
 std::string FormatLineError(int line_no, const std::string& message) {
     return "line " + std::to_string(line_no) + ": " + message;
+}
+
+bool AppendOptimizationConstraint(const std::string& expression,
+                                  OptimizationConfig* config,
+                                  std::string* error,
+                                  int line_no) {
+    if (config == nullptr) {
+        if (error != nullptr) {
+            *error = FormatLineError(line_no, "internal null optimization config");
+        }
+        return false;
+    }
+
+    const std::string unquoted = Unquote(expression);
+    if (unquoted.empty()) {
+        if (error != nullptr) {
+            *error = FormatLineError(line_no, "constraint expression must not be empty");
+        }
+        return false;
+    }
+
+    OptimizationConstraint constraint;
+    std::string parse_error;
+    if (!ResultAnalyzer::ParseOptimizationConstraint(unquoted, &constraint, &parse_error)) {
+        if (error != nullptr) {
+            *error = FormatLineError(line_no, parse_error);
+        }
+        return false;
+    }
+    config->constraints.push_back(std::move(constraint));
+    return true;
 }
 
 bool SetOptimizationField(const std::string& key,
@@ -431,6 +530,17 @@ bool SetOptimizationField(const std::string& key,
         config->max_trials = parsed;
         return true;
     }
+    if (key == "random_seed") {
+        std::uint64_t parsed = 0;
+        if (!ParseUInt64(Unquote(value), &parsed)) {
+            if (error != nullptr) {
+                *error = FormatLineError(line_no, "invalid random_seed uint64");
+            }
+            return false;
+        }
+        config->random_seed = parsed;
+        return true;
+    }
     if (key == "parallel" || key == "batch_size") {
         int parsed = 0;
         if (!ParseInt(value, &parsed)) {
@@ -440,6 +550,43 @@ bool SetOptimizationField(const std::string& key,
             return false;
         }
         config->batch_size = parsed;
+        return true;
+    }
+    if (key == "preserve_top_k_trials") {
+        int parsed = 0;
+        if (!ParseInt(value, &parsed)) {
+            if (error != nullptr) {
+                *error = FormatLineError(line_no, "invalid preserve_top_k_trials int");
+            }
+            return false;
+        }
+        config->preserve_top_k_trials = parsed;
+        return true;
+    }
+    if (key == "export_heatmap") {
+        bool parsed = false;
+        if (!ParseBool(value, &parsed)) {
+            if (error != nullptr) {
+                *error = FormatLineError(line_no, "invalid export_heatmap bool");
+            }
+            return false;
+        }
+        config->export_heatmap = parsed;
+        return true;
+    }
+    if (key == "constraints") {
+        std::vector<std::string> tokens;
+        if (!ParseBracketTokens(value, &tokens)) {
+            if (error != nullptr) {
+                *error = FormatLineError(line_no, "constraints must be a string list");
+            }
+            return false;
+        }
+        for (const std::string& token : tokens) {
+            if (!AppendOptimizationConstraint(token, config, error, line_no)) {
+                return false;
+            }
+        }
         return true;
     }
     if (key == "output_json") {
@@ -521,6 +668,62 @@ bool SetParameterDraftField(ParameterDraft* draft,
     return false;
 }
 
+bool SetObjectiveDraftField(ObjectiveDraft* draft,
+                            const std::string& key,
+                            const std::string& value,
+                            int line_no,
+                            std::string* error) {
+    if (draft == nullptr) {
+        if (error != nullptr) {
+            *error = FormatLineError(line_no, "internal null objective draft");
+        }
+        return false;
+    }
+
+    if (key == "path" || key == "metric_path") {
+        draft->metric_path = Unquote(value);
+        return true;
+    }
+    if (key == "weight") {
+        double parsed = 0.0;
+        if (!ParseDouble(value, &parsed)) {
+            if (error != nullptr) {
+                *error = FormatLineError(line_no, "invalid objective weight");
+            }
+            return false;
+        }
+        draft->weight = parsed;
+        return true;
+    }
+    if (key == "maximize") {
+        bool parsed = true;
+        if (!ParseBool(value, &parsed)) {
+            if (error != nullptr) {
+                *error = FormatLineError(line_no, "invalid objective maximize bool");
+            }
+            return false;
+        }
+        draft->maximize = parsed;
+        return true;
+    }
+    if (key == "scale_by_initial_equity" || key == "normalize_by_initial_equity") {
+        bool parsed = false;
+        if (!ParseBool(value, &parsed)) {
+            if (error != nullptr) {
+                *error = FormatLineError(line_no, "invalid scale_by_initial_equity bool");
+            }
+            return false;
+        }
+        draft->scale_by_initial_equity = parsed;
+        return true;
+    }
+
+    if (error != nullptr) {
+        *error = FormatLineError(line_no, "unsupported objective field: " + key);
+    }
+    return false;
+}
+
 std::filesystem::path ResolveConfigPath(const std::filesystem::path& base_dir,
                                         const std::string& raw_path) {
     if (raw_path.empty()) {
@@ -561,10 +764,14 @@ bool LoadParameterSpace(const std::string& yaml_path, ParameterSpace* out, std::
 
     ParameterSpace space;
     space.optimization.batch_size = DefaultParallel();
+    space.optimization.metric_path.clear();
 
     std::string section;
+    std::string optimization_subsection;
     ParameterDraft current_param;
     bool has_current_param = false;
+    ObjectiveDraft current_objective;
+    bool has_current_objective = false;
 
     auto finalize_param = [&](int line_no) -> bool {
         if (!has_current_param) {
@@ -578,6 +785,21 @@ bool LoadParameterSpace(const std::string& yaml_path, ParameterSpace* out, std::
         has_current_param = false;
         current_param = ParameterDraft{};
         current_param.line_no = line_no;
+        return true;
+    };
+
+    auto finalize_objective = [&](int line_no) -> bool {
+        if (!has_current_objective) {
+            return true;
+        }
+        OptimizationObjective objective;
+        if (!FinalizeObjectiveDraft(current_objective, &objective, error)) {
+            return false;
+        }
+        space.optimization.objectives.push_back(std::move(objective));
+        has_current_objective = false;
+        current_objective = ObjectiveDraft{};
+        current_objective.line_no = line_no;
         return true;
     };
 
@@ -597,6 +819,12 @@ bool LoadParameterSpace(const std::string& yaml_path, ParameterSpace* out, std::
         }
 
         if (indent == 0) {
+            if (section == "optimization") {
+                if (!finalize_objective(line_no)) {
+                    return false;
+                }
+                optimization_subsection.clear();
+            }
             if (section == "parameters") {
                 if (!finalize_param(line_no)) {
                     return false;
@@ -615,6 +843,7 @@ bool LoadParameterSpace(const std::string& yaml_path, ParameterSpace* out, std::
             if (value.empty()) {
                 if (key == "backtest_args" || key == "optimization" || key == "parameters") {
                     section = key;
+                    optimization_subsection.clear();
                     continue;
                 }
                 if (error != nullptr) {
@@ -663,24 +892,119 @@ bool LoadParameterSpace(const std::string& yaml_path, ParameterSpace* out, std::
         }
 
         if (section == "optimization") {
-            if (indent < 2) {
+            if (indent == 2) {
+                if (!finalize_objective(line_no)) {
+                    return false;
+                }
+                optimization_subsection.clear();
+
+                std::string key;
+                std::string value;
+                if (!ParseKeyValue(text, &key, &value)) {
+                    if (error != nullptr) {
+                        *error = FormatLineError(line_no, "invalid optimization entry");
+                    }
+                    return false;
+                }
+                if (value.empty()) {
+                    if (key == "objectives" || key == "constraints") {
+                        optimization_subsection = "objectives";
+                        if (key == "constraints") {
+                            optimization_subsection = "constraints";
+                        }
+                        continue;
+                    }
+                    if (error != nullptr) {
+                        *error = FormatLineError(line_no, "invalid optimization entry");
+                    }
+                    return false;
+                }
+                if (!SetOptimizationField(key, value, &space.optimization, error, line_no)) {
+                    return false;
+                }
+                continue;
+            }
+
+            if (optimization_subsection == "objectives") {
+                if (indent == 4 && text.rfind('-', 0) == 0) {
+                    if (!finalize_objective(line_no)) {
+                        return false;
+                    }
+                    has_current_objective = true;
+                    current_objective = ObjectiveDraft{};
+                    current_objective.line_no = line_no;
+
+                    const std::string remainder = Trim(text.substr(1));
+                    if (!remainder.empty()) {
+                        std::string key;
+                        std::string value;
+                        if (!ParseKeyValue(remainder, &key, &value) || value.empty()) {
+                            if (error != nullptr) {
+                                *error = FormatLineError(line_no, "invalid objective list item");
+                            }
+                            return false;
+                        }
+                        if (!SetObjectiveDraftField(&current_objective, key, value, line_no,
+                                                    error)) {
+                            return false;
+                        }
+                    }
+                    continue;
+                }
+
+                if (indent >= 6) {
+                    if (!has_current_objective) {
+                        if (error != nullptr) {
+                            *error = FormatLineError(line_no, "objective field without list item");
+                        }
+                        return false;
+                    }
+                    std::string key;
+                    std::string value;
+                    if (!ParseKeyValue(text, &key, &value) || value.empty()) {
+                        if (error != nullptr) {
+                            *error = FormatLineError(line_no, "invalid objective field");
+                        }
+                        return false;
+                    }
+                    if (!SetObjectiveDraftField(&current_objective, key, value, line_no, error)) {
+                        return false;
+                    }
+                    continue;
+                }
+
                 if (error != nullptr) {
-                    *error = FormatLineError(line_no, "invalid indentation for optimization");
+                    *error = FormatLineError(line_no, "invalid objectives indentation");
                 }
                 return false;
             }
-            std::string key;
-            std::string value;
-            if (!ParseKeyValue(text, &key, &value) || value.empty()) {
+
+            if (optimization_subsection == "constraints") {
+                if (indent == 4 && text.rfind('-', 0) == 0) {
+                    const std::string remainder = Trim(text.substr(1));
+                    if (remainder.empty()) {
+                        if (error != nullptr) {
+                            *error = FormatLineError(line_no, "invalid constraint list item");
+                        }
+                        return false;
+                    }
+                    if (!AppendOptimizationConstraint(remainder, &space.optimization, error,
+                                                     line_no)) {
+                        return false;
+                    }
+                    continue;
+                }
+
                 if (error != nullptr) {
-                    *error = FormatLineError(line_no, "invalid optimization entry");
+                    *error = FormatLineError(line_no, "invalid constraints indentation");
                 }
                 return false;
             }
-            if (!SetOptimizationField(key, value, &space.optimization, error, line_no)) {
-                return false;
+
+            if (error != nullptr) {
+                *error = FormatLineError(line_no, "invalid indentation for optimization");
             }
-            continue;
+            return false;
         }
 
         if (section == "parameters") {
@@ -745,6 +1069,9 @@ bool LoadParameterSpace(const std::string& yaml_path, ParameterSpace* out, std::
     if (section == "parameters" && !finalize_param(line_no + 1)) {
         return false;
     }
+    if (section == "optimization" && !finalize_objective(line_no + 1)) {
+        return false;
+    }
 
     if (space.composite_config_path.empty()) {
         if (error != nullptr) {
@@ -789,7 +1116,7 @@ bool LoadParameterSpace(const std::string& yaml_path, ParameterSpace* out, std::
         }
         return false;
     }
-    if (space.optimization.metric_path.empty()) {
+    if (space.optimization.objectives.empty() && space.optimization.metric_path.empty()) {
         space.optimization.metric_path = "hf_standard.profit_factor";
     }
     if (space.optimization.max_trials <= 0) {
@@ -801,6 +1128,12 @@ bool LoadParameterSpace(const std::string& yaml_path, ParameterSpace* out, std::
     if (space.optimization.batch_size <= 0) {
         if (error != nullptr) {
             *error = "optimization.parallel must be > 0";
+        }
+        return false;
+    }
+    if (space.optimization.preserve_top_k_trials < 0) {
+        if (error != nullptr) {
+            *error = "optimization.preserve_top_k_trials must be >= 0";
         }
         return false;
     }

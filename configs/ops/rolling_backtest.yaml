@@ -1,28 +1,46 @@
+# CONFIG DOC
+# Purpose: Rolling fixed-parameter evaluation config using the current main composite strategy.
+# Consumer: rolling_backtest_cli
+# Notes:
+# 1) Reuses configs/strategies/main_backtest_strategy.yaml and configs/strategies/sub/kama_trend_1.yaml directly.
+# 2) objective stays on profit_factor, so emit_trades must remain enabled.
+
 mode: fixed_params
 
 backtest_base:
   engine_mode: parquet
   dataset_root: backtest_data/parquet_v2
+  symbols: [c]
   strategy_factory: composite
   strategy_composite_config: configs/strategies/main_backtest_strategy.yaml
-  max_ticks: 5000
-  emit_trades: false
-  emit_orders: false
-  emit_position_history: false
+  product_config_path: configs/strategies/instrument_info.json
+  contract_expiry_calendar_path: configs/strategies/contract_expiry_calendar.yaml
+  max_ticks: 200000
   deterministic_fills: true
   strict_parquet: true
+  rollover_mode: expiry_close
+  rollover_price_mode: bbo
+  rollover_slippage_bps: 0
+  initial_equity: 200000
+  emit_trades: true
+  emit_orders: false
+  emit_position_history: false
 
 window:
   type: rolling
-  train_length_days: 5
-  test_length_days: 2
-  step_days: 5
-  min_train_days: 5
-  start_date: 20230101
-  end_date: 20230201
+  train_length_days: 120
+  test_length_days: 20
+  step_days: 20
+  min_train_days: 120
+  start_date: 20230103
+  end_date: 20251101
+
+optimization:
+  metric: profit_factor
+  maximize: true
 
 output:
-  report_json: docs/results/rolling_backtest_report.json
-  report_md: docs/results/rolling_backtest_report.md
+  report_json: docs/results/rolling/kama_best_fixed_report.json
+  report_md: docs/results/rolling/kama_best_fixed_report.md
   keep_temp_files: false
   window_parallel: 1

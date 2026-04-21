@@ -1,0 +1,49 @@
+# Replay config for Step 3.3 random search reproducibility validation.
+# Same search seed and search space as rolling_optimize_random_acceptance.yaml,
+# but writes to a separate output root so generated trial sequences can be compared.
+
+mode: rolling_optimize
+
+backtest_base:
+  engine_mode: parquet
+  dataset_root: ../../backtest_data/parquet_v2
+  symbols: [c]
+  strategy_factory: composite
+  strategy_composite_config: ../strategies/main_backtest_strategy.yaml
+  product_config_path: ../strategies/instrument_info.json
+  contract_expiry_calendar_path: ../strategies/contract_expiry_calendar.yaml
+  max_ticks: 200000
+  deterministic_fills: true
+  strict_parquet: true
+  rollover_mode: expiry_close
+  rollover_price_mode: bbo
+  rollover_slippage_bps: 0
+  initial_equity: 200000
+  emit_trades: true
+  emit_orders: false
+  emit_position_history: false
+
+window:
+  type: rolling
+  train_length_days: 120
+  test_length_days: 20
+  step_days: 20
+  min_train_days: 120
+  start_date: 20240827
+  end_date: 20250328
+
+optimization:
+  algorithm: random
+  metric: profit_factor
+  maximize: true
+  max_trials: 20
+  random_seed: 20260420
+  parallel: 2
+  preserve_top_k_trials: 10
+  param_space: ./parameter_optim_random_rolling_acceptance.yaml
+  target_sub_config_path: ../strategies/sub/kama_trend_1.yaml
+
+output:
+  root_dir: ../../runtime/step3_3_random_acceptance_replay
+  keep_temp_files: false
+  window_parallel: 1

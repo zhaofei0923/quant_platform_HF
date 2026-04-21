@@ -5,6 +5,45 @@
 #include "quant_hft/optim/result_analyzer.h"
 
 namespace quant_hft::rolling {
+namespace {
+
+bool ExtractDerivedTrialMetric(const quant_hft::apps::BacktestCliResult& result,
+                              const std::string& resolved_metric_path,
+                              double* out,
+                              std::string* error) {
+    if (resolved_metric_path != "hf_standard.risk_metrics.calmar_ratio" &&
+        resolved_metric_path != "calmar_ratio" &&
+        resolved_metric_path != "hf_standard.risk_metrics.sharpe_ratio" &&
+        resolved_metric_path != "sharpe_ratio") {
+        return false;
+    }
+
+    const std::string json = quant_hft::apps::RenderBacktestJson(result);
+    quant_hft::optim::TrialMetricsSnapshot metrics;
+    std::string local_error;
+    if (!quant_hft::optim::ResultAnalyzer::ExtractTrialMetricsFromJsonText(json, &metrics,
+                                                                            &local_error)) {
+        if (error != nullptr) {
+            *error = local_error;
+        }
+        return true;
+    }
+
+    const bool wants_calmar = resolved_metric_path == "hf_standard.risk_metrics.calmar_ratio" ||
+                              resolved_metric_path == "calmar_ratio";
+    const std::optional<double>& value = wants_calmar ? metrics.calmar_ratio : metrics.sharpe_ratio;
+    if (!value.has_value()) {
+        if (error != nullptr) {
+            *error = wants_calmar ? "calmar_ratio is not available" : "sharpe_ratio is not available";
+        }
+        return true;
+    }
+
+    *out = *value;
+    return true;
+}
+
+}  // namespace
 
 bool ExtractMetricFromResult(const quant_hft::apps::BacktestCliResult& result,
                              const std::string& metric_path,
@@ -19,6 +58,10 @@ bool ExtractMetricFromResult(const quant_hft::apps::BacktestCliResult& result,
 
     const std::string resolved = quant_hft::optim::ResultAnalyzer::ResolveMetricPathAlias(metric_path);
     const quant_hft::apps::BacktestSummary summary = quant_hft::apps::SummarizeBacktest(result);
+
+    if (ExtractDerivedTrialMetric(result, resolved, out, error)) {
+        return error == nullptr || error->empty();
+    }
 
     if (resolved == "summary.total_pnl") {
         *out = summary.total_pnl;

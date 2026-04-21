@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "quant_hft/strategy/composite_config_loader.h"
+#include "quant_hft/strategy/strategy_main_config_loader.h"
 
 namespace quant_hft::optim {
 namespace {
@@ -21,6 +22,7 @@ using quant_hft::AtomicParams;
 using quant_hft::CompositeStrategyDefinition;
 using quant_hft::MarketRegime;
 using quant_hft::SignalMergeRule;
+using quant_hft::StrategyMainConfig;
 using quant_hft::SubStrategyDefinition;
 
 std::string ToScalarString(const ParamValue& value) {
@@ -299,7 +301,7 @@ bool WriteSubStrategyYaml(const std::filesystem::path& path, const AtomicParams&
 }
 
 bool WriteCompositeYaml(const std::filesystem::path& path,
-                        const CompositeStrategyDefinition& definition,
+                        const StrategyMainConfig& main_config,
                         std::size_t target_index,
                         const std::filesystem::path& target_sub_yaml,
                         const std::filesystem::path& composite_base_dir,
@@ -312,16 +314,20 @@ bool WriteCompositeYaml(const std::filesystem::path& path,
         return false;
     }
 
+    const CompositeStrategyDefinition& definition = main_config.composite;
+
     out << "composite:\n";
+    out << "  run_type: " << YamlScalar(main_config.run_type) << "\n";
     out << "  merge_rule: " << MergeRuleToString(definition.merge_rule) << "\n";
     out << "  enable_non_backtest: " << (definition.enable_non_backtest ? "true" : "false") << "\n";
-    out << "  market_state_mode: " << (definition.market_state_mode ? "true" : "false") << "\n";
+    out << "  market_state_mode: " << (main_config.market_state_mode ? "true" : "false") << "\n";
     out << "  sub_strategies:\n";
 
     for (std::size_t i = 0; i < definition.sub_strategies.size(); ++i) {
         const SubStrategyDefinition& strategy = definition.sub_strategies[i];
         out << "    - id: " << YamlScalar(strategy.id) << "\n";
         out << "      enabled: " << (strategy.enabled ? "true" : "false") << "\n";
+        out << "      timeframe_minutes: " << strategy.timeframe_minutes << "\n";
         out << "      type: " << YamlScalar(strategy.type) << "\n";
 
         if (i == target_index) {
@@ -374,10 +380,11 @@ bool GenerateTrialConfig(const TrialConfigRequest& request,
         std::filesystem::absolute(request.composite_config_path).lexically_normal();
     const std::filesystem::path composite_base_dir = composite_path.parent_path();
 
-    CompositeStrategyDefinition definition;
-    if (!LoadCompositeStrategyDefinition(composite_path.string(), &definition, error)) {
+    StrategyMainConfig main_config;
+    if (!LoadStrategyMainConfig(composite_path.string(), &main_config, error)) {
         return false;
     }
+    const CompositeStrategyDefinition& definition = main_config.composite;
 
     const std::filesystem::path target_sub_abs =
         AbsolutePathFrom(composite_base_dir, request.target_sub_config_path).lexically_normal();
@@ -433,8 +440,8 @@ bool GenerateTrialConfig(const TrialConfigRequest& request,
     }
 
     const std::filesystem::path composite_yaml = work_dir / "composite.yaml";
-    if (!WriteCompositeYaml(composite_yaml, definition, target_index, sub_yaml, composite_base_dir,
-                            error)) {
+    if (!WriteCompositeYaml(composite_yaml, main_config, target_index, sub_yaml,
+                            composite_base_dir, error)) {
         return false;
     }
 

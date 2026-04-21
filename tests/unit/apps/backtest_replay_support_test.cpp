@@ -722,7 +722,10 @@ std::filesystem::path WriteCrossSessionPendingReplayCsv(const std::string& stem)
 std::filesystem::path WriteTempMainStrategyConfig(const std::filesystem::path& composite_path,
                                                   const std::string& run_type = "backtest",
                                                   const std::string& contract_expiry_calendar_path =
-                                                      "") {
+                                                      "",
+                                                  bool risk_management_enabled = false,
+                                                  double risk_per_trade_pct = 0.005,
+                                                  double max_risk_per_trade = 2000.0) {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto path = std::filesystem::temp_directory_path() /
                       ("quant_hft_main_strategy_config_test_" + std::to_string(stamp) + ".yaml");
@@ -738,6 +741,10 @@ std::filesystem::path WriteTempMainStrategyConfig(const std::filesystem::path& c
     if (!contract_expiry_calendar_path.empty()) {
         out << "  contract_expiry_calendar_path: " << contract_expiry_calendar_path << "\n";
     }
+    out << "risk_management:\n";
+    out << "  enabled: " << (risk_management_enabled ? "true" : "false") << "\n";
+    out << "  risk_per_trade_pct: " << risk_per_trade_pct << "\n";
+    out << "  max_risk_per_trade: " << max_risk_per_trade << "\n";
     out << "composite:\n";
     out << "  merge_rule: kPriority\n";
     out << "  sub_strategies:\n";
@@ -940,6 +947,13 @@ TEST(BacktestReplaySupportTest,
     const auto dataset_root = MakeTempDir("quant_hft_parquet_strict_rollover");
     const auto composite_path =
         WriteAlwaysOpenCompositeConfig(strategy_type, /*timeframe_minutes=*/1);
+    const auto atomic_cfg = WriteTempAtomicStrategyConfig();
+    const auto main_cfg = WriteTempMainStrategyConfig(atomic_cfg,
+                                                      "backtest",
+                                                      "",
+                                                      /*risk_management_enabled=*/true,
+                                                      /*risk_per_trade_pct=*/0.01,
+                                                      /*max_risk_per_trade=*/2000.0);
 
     std::string error;
     const auto manifest =
@@ -975,6 +989,7 @@ TEST(BacktestReplaySupportTest,
     spec.run_id = UniqueRunId("parquet-strict-rollover");
     spec.strategy_factory = "composite";
     spec.strategy_composite_config = composite_path.string();
+    spec.strategy_main_config_path = main_cfg.string();
     spec.symbols = {"c"};
     spec.rollover_mode = "strict";
     spec.emit_trades = true;
@@ -1015,6 +1030,8 @@ TEST(BacktestReplaySupportTest,
     EXPECT_EQ(rollover_open_trade->update_time, "09:00:00");
     EXPECT_EQ(rollover_open_trade->timestamp_dt_local, "2024-01-03 09:00:00");
     EXPECT_EQ(rollover_open_trade->signal_dt_local, "2024-01-03 09:00:00");
+    EXPECT_DOUBLE_EQ(rollover_close_trade->risk_budget_r, 0.0);
+    EXPECT_GT(rollover_open_trade->risk_budget_r, 0.0);
 
     int rollover_order_count = 0;
     for (const OrderRecord& order : result.orders) {
@@ -1042,8 +1059,50 @@ TEST(BacktestReplaySupportTest,
     EXPECT_EQ(non_rollover_open_count, 0);
 
     std::error_code ec;
+    std::filesystem::remove(atomic_cfg, ec);
+    std::filesystem::remove(main_cfg, ec);
     std::filesystem::remove(composite_path, ec);
     std::filesystem::remove_all(dataset_root, ec);
+}
+
+TEST(BacktestReplaySupportTest, RunBacktestSpecAppliesRiskBudgetToStrategyOpenTrades) {
+    const std::string strategy_type = UniqueAtomicType("open_once_risk_budget");
+    RegisterOpenOnceReplayType(strategy_type);
+
+    const std::filesystem::path csv_path = WriteFlatReplayCsv("quant_hft_risk_budget_open");
+    const std::filesystem::path composite_path =
+        WriteAlwaysOpenCompositeConfig(strategy_type, /*timeframe_minutes=*/1);
+    const std::filesystem::path atomic_cfg = WriteTempAtomicStrategyConfig();
+    const std::filesystem::path main_cfg = WriteTempMainStrategyConfig(atomic_cfg,
+                                                                       "backtest",
+                                                                       "",
+                                                                       /*risk_management_enabled=*/
+                                                                           true,
+                                                                       /*risk_per_trade_pct=*/0.01,
+                                                                       /*max_risk_per_trade=*/400.0);
+
+    BacktestCliSpec spec;
+    spec.engine_mode = "csv";
+    spec.csv_path = csv_path.string();
+    spec.run_id = "risk-budget-open-test";
+    spec.strategy_factory = "composite";
+    spec.strategy_composite_config = composite_path.string();
+    spec.strategy_main_config_path = main_cfg.string();
+    spec.initial_equity = 50000.0;
+    spec.emit_trades = true;
+
+    BacktestCliResult result;
+    std::string error;
+    ASSERT_TRUE(RunBacktestSpec(spec, &result, &error)) << error;
+    ASSERT_EQ(result.trades.size(), 1U);
+    EXPECT_EQ(result.trades.front().signal_type, "kOpen");
+    EXPECT_DOUBLE_EQ(result.trades.front().risk_budget_r, 400.0);
+
+    std::error_code ec;
+    std::filesystem::remove(atomic_cfg, ec);
+    std::filesystem::remove(main_cfg, ec);
+    std::filesystem::remove(composite_path, ec);
+    std::filesystem::remove(csv_path, ec);
 }
 
 TEST(BacktestReplaySupportTest, RunBacktestSpecStrictRolloverTransfersOwnerToNewContract) {
@@ -1272,6 +1331,13 @@ TEST(BacktestReplaySupportTest,
         "    last_trading_day: 20240103\n"
         "  c2407:\n"
         "    last_trading_day: 20240131\n");
+    const auto atomic_cfg = WriteTempAtomicStrategyConfig();
+    const auto main_cfg = WriteTempMainStrategyConfig(atomic_cfg,
+                                                      "backtest",
+                                                      calendar_path.string(),
+                                                      /*risk_management_enabled=*/true,
+                                                      /*risk_per_trade_pct=*/0.01,
+                                                      /*max_risk_per_trade=*/2000.0);
 
     std::string error;
     const auto manifest =
@@ -1315,6 +1381,7 @@ TEST(BacktestReplaySupportTest,
     spec.run_id = UniqueRunId("parquet-expiry-close");
     spec.strategy_factory = "composite";
     spec.strategy_composite_config = composite_path.string();
+    spec.strategy_main_config_path = main_cfg.string();
     spec.symbols = {"c"};
     spec.rollover_mode = "expiry_close";
     spec.product_series_mode = "raw";
@@ -1347,9 +1414,11 @@ TEST(BacktestReplaySupportTest,
     EXPECT_EQ(expiry_close_trade->update_time, "09:00:00");
     EXPECT_DOUBLE_EQ(expiry_close_trade->price, 109.0);
     EXPECT_DOUBLE_EQ(expiry_close_trade->commission, 2.0);
+    EXPECT_DOUBLE_EQ(expiry_close_trade->risk_budget_r, 0.0);
 
     ASSERT_NE(reopened_trade, nullptr);
     EXPECT_EQ(reopened_trade->timestamp_dt_local, "2024-01-03 09:02:30");
+    EXPECT_GT(reopened_trade->risk_budget_r, 0.0);
 
     for (const TradeRecord& trade : result.trades) {
         EXPECT_FALSE(trade.symbol == "c2407" && trade.strategy_id == "always_open" &&
@@ -1360,6 +1429,8 @@ TEST(BacktestReplaySupportTest,
     EXPECT_EQ(LastNetPosition(result.position_history, "c2407"), 1);
 
     std::error_code ec;
+    std::filesystem::remove(atomic_cfg, ec);
+    std::filesystem::remove(main_cfg, ec);
     std::filesystem::remove(calendar_path, ec);
     std::filesystem::remove(composite_path, ec);
     std::filesystem::remove_all(dataset_root, ec);

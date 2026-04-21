@@ -97,6 +97,7 @@ ctp:
 - `backtest.initial_equity`
 - `backtest.symbols/start_date/end_date`
 - `backtest.product_config_path`
+- `risk_management.enabled/risk_per_trade_pct/max_risk_per_trade`（控制导出 `risk_budget_r`）
 - `composite.enable_non_backtest`（默认 `false`，仅在 `sim/live` 时置 `true`）
 - `composite.sub_strategies[]`（完整子策略）
 - `composite.sub_strategies[].overrides.{backtest|sim|live}.params`（按运行模式覆盖参数）
@@ -124,6 +125,10 @@ backtest:
   start_date: 20240101
   end_date: 20240131
   product_config_path: ./instrument_info.json
+risk_management:
+  enabled: true
+  risk_per_trade_pct: 0.005
+  max_risk_per_trade: 2000.0
 composite:
   merge_rule: kPriority
   enable_non_backtest: true
@@ -179,6 +184,9 @@ JSON 形态支持两种写法：
 ## 回测资金与结果口径
 
 - 开仓风险资金：由各子策略 `risk_per_trade_pct` 自行计算
+- 交易导出风险预算：当主配置 `risk_management.enabled=true` 时，为每条策略原生 `kOpen` 成交写出 `risk_budget_r`
+- 导出公式：`risk_budget_r = min(max(0, equity_before_fill) * risk_per_trade_pct, max_risk_per_trade)`
+- 系统合成开仓（如 `rollover_open`、`expiry_close` 首次 reopen）固定写 `0.0`
 - 保证金约束：`available_margin = max(0, account_equity - used_margin_total)`
 - 开仓自动缩量：`max_openable = floor(available_margin / per_lot_margin)`，`volume=min(requested,max_openable)`
 - 手续费口径：按产品费率配置计入 `total_commission`

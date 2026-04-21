@@ -102,6 +102,18 @@ emit_sub_strategy_indicator_trace: true
 # sub_strategy_indicator_trace_path：可选，子策略指标追踪文件名模板（仅取 basename 并落到本次 run_dir）；示例值：my_sub_trace.csv（留空用 sub_strategy_indicator_trace.csv）
 # sub_strategy_indicator_trace_path：配置项说明；示例值：<空>
 sub_strategy_indicator_trace_path: my_sub_trace.csv
+# emit_formal_analysis_report：是否在回测成功后自动生成正式中文分析报告；示例值：true
+# emit_formal_analysis_report：配置项说明；示例值：false
+emit_formal_analysis_report: true
+# formal_analysis_report_path：可选，正式分析报告文件名模板（仅取 basename 并落到本次 run_dir）；留空时由分析脚本按策略名/run_id 自动命名
+# formal_analysis_report_path：配置项说明；示例值：<空>
+formal_analysis_report_path:
+# formal_analysis_report_date：可选，正式分析报告日期 YYYYMMDD；留空时取执行当天
+# formal_analysis_report_date：配置项说明；示例值：<空>
+formal_analysis_report_date:
+# formal_analysis_sample_trades：正式分析报告抽样展示成交笔数；示例值：10
+# formal_analysis_sample_trades：配置项说明；示例值：10
+formal_analysis_sample_trades: 10
 # quiet_backtest_stdout：是否抑制 backtest_cli 的 stdout JSON 输出（建议 true，结果看 output_json）；示例值：true
 quiet_backtest_stdout: true
 # progress_only：是否仅显示进度条和完成百分比（建议 true）；示例值：true

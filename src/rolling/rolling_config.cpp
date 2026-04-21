@@ -110,6 +110,27 @@ bool ParseInt64(const std::string& raw, std::int64_t* out) {
     }
 }
 
+bool ParseUInt64(const std::string& raw, std::uint64_t* out) {
+    if (out == nullptr) {
+        return false;
+    }
+    const std::string text = Trim(raw);
+    if (text.empty()) {
+        return false;
+    }
+    try {
+        std::size_t parsed = 0;
+        const unsigned long long value = std::stoull(text, &parsed);
+        if (parsed != text.size()) {
+            return false;
+        }
+        *out = static_cast<std::uint64_t>(value);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 bool ParseDouble(const std::string& raw, double* out) {
     if (out == nullptr) {
         return false;
@@ -291,9 +312,6 @@ std::filesystem::path ResolvePath(const std::filesystem::path& config_dir,
         if (std::filesystem::exists(path, ec)) {
             return std::filesystem::absolute(path).lexically_normal();
         }
-        if (!path.parent_path().empty() && std::filesystem::exists(path.parent_path(), ec)) {
-            return std::filesystem::absolute(path).lexically_normal();
-        }
     }
 
     return std::filesystem::absolute(config_dir / path).lexically_normal();
@@ -463,8 +481,9 @@ bool LoadRollingConfig(const std::string& yaml_path, RollingConfig* out, std::st
 
     config.optimization.algorithm =
         ToLower(GetStringOr(values, "optimization.algorithm", config.optimization.algorithm));
-    config.optimization.metric =
-        GetStringOr(values, "optimization.metric", config.optimization.metric);
+    config.optimization.metric = GetStringOr(
+        values, "optimization.metric",
+        GetStringOr(values, "optimization.objective.path", config.optimization.metric));
     config.optimization.param_space = GetStringOr(values, "optimization.param_space", "");
     config.optimization.target_sub_config_path =
         GetStringOr(values, "optimization.target_sub_config_path", "");
@@ -473,6 +492,14 @@ bool LoadRollingConfig(const std::string& yaml_path, RollingConfig* out, std::st
         if (!ParseBool(*raw, &config.optimization.maximize)) {
             if (error != nullptr) {
                 *error = "invalid optimization.maximize";
+            }
+            return false;
+        }
+    } else if (const auto raw = GetString(values, "optimization.objective.maximize");
+               raw.has_value()) {
+        if (!ParseBool(*raw, &config.optimization.maximize)) {
+            if (error != nullptr) {
+                *error = "invalid optimization.objective.maximize";
             }
             return false;
         }
@@ -485,6 +512,16 @@ bool LoadRollingConfig(const std::string& yaml_path, RollingConfig* out, std::st
             return false;
         }
     }
+    if (const auto raw = GetString(values, "optimization.random_seed"); raw.has_value()) {
+        std::uint64_t parsed = 0;
+        if (!ParseUInt64(*raw, &parsed)) {
+            if (error != nullptr) {
+                *error = "invalid optimization.random_seed";
+            }
+            return false;
+        }
+        config.optimization.random_seed = parsed;
+    }
     if (const auto raw = GetString(values, "optimization.parallel"); raw.has_value()) {
         if (!ParseInt(*raw, &config.optimization.parallel)) {
             if (error != nullptr) {
@@ -493,7 +530,19 @@ bool LoadRollingConfig(const std::string& yaml_path, RollingConfig* out, std::st
             return false;
         }
     }
+    if (const auto raw = GetString(values, "optimization.preserve_top_k_trials");
+        raw.has_value()) {
+        int parsed = 0;
+        if (!ParseInt(*raw, &parsed) || parsed < 0) {
+            if (error != nullptr) {
+                *error = "invalid optimization.preserve_top_k_trials";
+            }
+            return false;
+        }
+        config.optimization.preserve_top_k_trials = parsed;
+    }
 
+    config.output.root_dir = GetStringOr(values, "output.root_dir", "");
     config.output.report_json = GetStringOr(values, "output.report_json", "");
     config.output.report_md = GetStringOr(values, "output.report_md", "");
     config.output.best_params_dir = GetStringOr(values, "output.best_params_dir", "");
@@ -637,8 +686,33 @@ bool LoadRollingConfig(const std::string& yaml_path, RollingConfig* out, std::st
         return false;
     }
 
+    if (config.optimization.algorithm != "grid" && config.optimization.algorithm != "random") {
+        if (error != nullptr) {
+            *error = "optimization.algorithm must be grid or random";
+        }
+        return false;
+    }
+
     if (!RequirePositive("output.window_parallel", config.output.window_parallel, error)) {
         return false;
+    }
+
+    if (!config.output.root_dir.empty()) {
+        config.output.root_dir = ResolvePath(config_dir, config.output.root_dir).string();
+        if (config.output.report_json.empty()) {
+            config.output.report_json =
+                (std::filesystem::path(config.output.root_dir) / "rolling_optimize_report.json")
+                    .string();
+        }
+        if (config.output.report_md.empty()) {
+            config.output.report_md =
+                (std::filesystem::path(config.output.root_dir) / "rolling_optimize_report.md")
+                    .string();
+        }
+        if (config.output.best_params_dir.empty()) {
+            config.output.best_params_dir =
+                (std::filesystem::path(config.output.root_dir) / "best_params").string();
+        }
     }
 
     if (config.output.report_json.empty() || config.output.report_md.empty()) {
@@ -655,12 +729,6 @@ bool LoadRollingConfig(const std::string& yaml_path, RollingConfig* out, std::st
     }
 
     if (config.mode == "rolling_optimize") {
-        if (config.optimization.algorithm != "grid") {
-            if (error != nullptr) {
-                *error = "rolling_optimize currently supports optimization.algorithm=grid only";
-            }
-            return false;
-        }
         if (!RequirePositive("optimization.max_trials", config.optimization.max_trials, error) ||
             !RequirePositive("optimization.parallel", config.optimization.parallel, error)) {
             return false;

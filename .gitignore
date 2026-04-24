@@ -1,6 +1,7 @@
 # Build artifacts
 /build/
 /build-gcc/
+/build-gcc-real/
 /out/
 /cmake-build-*/
 /dist/
@@ -39,5 +40,6 @@ worktrees/
 logs/
 *.wal
 *.db
+ctp_flow*.con
 /docs/results/backtest_runs/
 /configs/ops/docs/results/

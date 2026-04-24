@@ -1,5 +1,5 @@
 # CONFIG DOC
-# Purpose: SimNow 7x24 联调/压测配置。
+# Purpose: SimNow 联调/压测配置（由环境变量选择交易时段或 7x24）。
 # Consumer: core_engine / simnow_compare_cli
 # Field dictionary: docs/ops/config_catalog.md (`configs/sim/ctp.yaml`)
 # Notes:
@@ -8,15 +8,17 @@
 
 ctp:
   # --- identity & runtime mode ---
-  profile: "simnow_7x24"
+  profile: "simnow_env_selected"
   environment: sim
   run_type: sim
-  is_production_mode: false
-  enable_real_api: false
+  is_production_mode: "${CTP_SIM_IS_PRODUCTION_MODE}"
+  enable_real_api: "${CTP_SIM_ENABLE_REAL_API}"
   enable_terminal_auth: true
 
   # --- connection & auth ---
-  # SimNow 7x24 environment
+  # Fronts are selected via environment variables.
+  # Trading-hours group1/2/3 are 30001/30011, 30002/30012, 30003/30013.
+  # 7x24 is 40001/40011.
   broker_id: "${CTP_SIM_BROKER_ID}"
   user_id: "${CTP_SIM_USER_ID}"
   investor_id: "${CTP_SIM_INVESTOR_ID}"
@@ -63,10 +65,18 @@ ctp:
   audit_cold_days: 180
 
   # --- strategy/runtime pipeline ---
-  instruments: "SHFE.ag2406,SHFE.rb2405"
-  strategy_ids: "demo"
-  strategy_factory: "demo"
-  # strategy_composite_config: "../strategies/composite_strategy.yaml"  # required when strategy_factory=composite
+  instruments: ""
+  product_ids: "c"
+  active_contract_mode: "dominant_open_interest"   # static | dominant_open_interest
+  dominant_contract_wait_ms: 5000
+  dominant_contract_recheck_interval_ms: 60000
+  dominant_contract_min_lead_ratio: 0.15
+  dominant_contract_min_lead_windows: 3
+  dominant_contract_min_hold_ms: 900000
+  dominant_contract_switch_mode: "flat_only"   # startup_only | dry_run | flat_only
+  strategy_ids: "kama_trend_production"
+  strategy_factory: "composite"
+  strategy_composite_config: "configs/strategies/main_backtest_production.yaml"
   strategy_queue_capacity: 8192
   account_id: "sim-account"
 
@@ -93,17 +103,8 @@ ctp:
   risk_default_decision_tags: "default-risk"
 
   # --- custom risk rule groups ---
-  risk_rule_groups: "ag_open"
-  risk_rule_ag_open_id: "risk.ag.open"
-  risk_rule_ag_open_policy_id: "policy.ag.open"
-  risk_rule_ag_open_policy_scope: "instrument"
-  risk_rule_ag_open_decision_tags: "ag,risk"
-  risk_rule_ag_open_instrument_id: "SHFE.ag2406"
-  risk_rule_ag_open_max_order_volume: 20
-  risk_rule_ag_open_max_order_notional: 120000
-  risk_rule_ag_open_max_active_orders: 2
-  risk_rule_ag_open_max_position_notional: 400000
-  risk_rule_ag_open_version: "2026.02"
+  # Dominant-contract mode should not bind risk rules to a fixed instrument id.
+  risk_rule_groups: ""
 
   # --- reconnect ---
   connect_timeout_ms: 10000

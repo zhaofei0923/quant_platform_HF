@@ -859,6 +859,111 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* confi
     }
 
     loaded.instruments = SplitCsvList(get_value("instruments"));
+    loaded.product_ids = SplitCsvList(get_value("product_ids"));
+    loaded.active_contract_mode = Lowercase(Trim(get_value("active_contract_mode")));
+    if (loaded.active_contract_mode.empty()) {
+        loaded.active_contract_mode = "static";
+    }
+    if (loaded.active_contract_mode != "static" &&
+        loaded.active_contract_mode != "dominant_open_interest") {
+        if (error != nullptr) {
+            *error = "active_contract_mode must be one of: static|dominant_open_interest";
+        }
+        return false;
+    }
+    loaded.dominant_contract_wait_ms = 5000;
+    SetOptionalInt(kv, "dominant_contract_wait_ms", &loaded.dominant_contract_wait_ms,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.dominant_contract_wait_ms <= 0) {
+        if (error != nullptr) {
+            *error = "dominant_contract_wait_ms must be > 0";
+        }
+        return false;
+    }
+    loaded.dominant_contract_recheck_interval_ms = 0;
+    SetOptionalInt(kv, "dominant_contract_recheck_interval_ms",
+                   &loaded.dominant_contract_recheck_interval_ms, &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.dominant_contract_recheck_interval_ms < 0) {
+        if (error != nullptr) {
+            *error = "dominant_contract_recheck_interval_ms must be >= 0";
+        }
+        return false;
+    }
+
+    loaded.dominant_contract_min_lead_ratio = 0.1;
+    SetOptionalDouble(kv, "dominant_contract_min_lead_ratio",
+                      &loaded.dominant_contract_min_lead_ratio, &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.dominant_contract_min_lead_ratio < 0.0) {
+        if (error != nullptr) {
+            *error = "dominant_contract_min_lead_ratio must be >= 0";
+        }
+        return false;
+    }
+
+    loaded.dominant_contract_min_lead_windows = 3;
+    SetOptionalInt(kv, "dominant_contract_min_lead_windows",
+                   &loaded.dominant_contract_min_lead_windows, &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.dominant_contract_min_lead_windows <= 0) {
+        if (error != nullptr) {
+            *error = "dominant_contract_min_lead_windows must be > 0";
+        }
+        return false;
+    }
+
+    loaded.dominant_contract_min_hold_ms = 0;
+    SetOptionalInt(kv, "dominant_contract_min_hold_ms", &loaded.dominant_contract_min_hold_ms,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.dominant_contract_min_hold_ms < 0) {
+        if (error != nullptr) {
+            *error = "dominant_contract_min_hold_ms must be >= 0";
+        }
+        return false;
+    }
+
+    loaded.dominant_contract_switch_mode =
+        Lowercase(Trim(get_value("dominant_contract_switch_mode")));
+    if (loaded.dominant_contract_switch_mode.empty()) {
+        loaded.dominant_contract_switch_mode = "startup_only";
+    }
+    if (loaded.dominant_contract_switch_mode != "startup_only" &&
+        loaded.dominant_contract_switch_mode != "dry_run" &&
+        loaded.dominant_contract_switch_mode != "flat_only") {
+        if (error != nullptr) {
+            *error =
+                "dominant_contract_switch_mode must be one of: startup_only|dry_run|flat_only";
+        }
+        return false;
+    }
     loaded.strategy_ids = SplitCsvList(get_value("strategy_ids"));
     loaded.run_type = loaded.runtime.environment == CtpEnvironment::kSimNow ? "sim" : "live";
     if (const auto run_type_it = kv.find("run_type"); run_type_it != kv.end()) {
@@ -886,8 +991,20 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* confi
     if (!loaded.strategy_composite_config.empty()) {
         std::filesystem::path composite_path(loaded.strategy_composite_config);
         if (composite_path.is_relative()) {
-            const std::filesystem::path config_dir = std::filesystem::path(path).parent_path();
-            composite_path = config_dir / composite_path;
+            if (!std::filesystem::exists(composite_path)) {
+                const auto quant_root = GetEnvOrDefault("QUANT_ROOT", "");
+                if (!quant_root.empty()) {
+                    const std::filesystem::path quant_root_candidate =
+                        std::filesystem::path(quant_root) / composite_path;
+                    if (std::filesystem::exists(quant_root_candidate)) {
+                        composite_path = quant_root_candidate;
+                    }
+                }
+            }
+            if (!std::filesystem::exists(composite_path)) {
+                const std::filesystem::path config_dir = std::filesystem::path(path).parent_path();
+                composite_path = config_dir / composite_path;
+            }
         }
         loaded.strategy_composite_config = composite_path.lexically_normal().string();
     }

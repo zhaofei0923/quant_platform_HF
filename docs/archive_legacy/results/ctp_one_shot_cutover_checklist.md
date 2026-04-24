@@ -42,10 +42,10 @@ bash scripts/infra/init_debezium_connectors.sh --connect-url http://kafka-connec
 ./build/core_engine configs/prod/ctp.yaml
 ```
 
-- [ ] Start new strategy runner
+- [ ] Start YAML-driven KAMA strategy chain
 
 ```bash
-python3 scripts/strategy/run_ctp_strategy.py --config configs/prod/ctp.yaml
+RISK_RULE_FILE_PATH=configs/risk_rules.yaml ./build/core_engine configs/prod/ctp.yaml
 ```
 
 - [ ] Warmup query and settlement verification

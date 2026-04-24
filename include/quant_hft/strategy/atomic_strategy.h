@@ -49,6 +49,8 @@ struct AtomicStrategyContext {
     double account_equity{0.0};
     double total_pnl_after_cost{0.0};
     std::string run_type{"live"};
+    std::string log_level{"info"};
+    std::string log_sink{"stderr"};
     double margin_used{0.0};
     double available{0.0};
     MarketRegime market_regime{MarketRegime::kUnknown};

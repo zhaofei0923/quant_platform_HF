@@ -11,6 +11,7 @@
 #include <string_view>
 #include <thread>
 #include <ctime>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -24,6 +25,10 @@
 #include "ThostFtdcUserApiStruct.h"
 #else
 #define QUANT_HFT_HAS_REAL_CTP 0
+#endif
+
+#if QUANT_HFT_HAS_REAL_CTP
+struct CThostFtdcOffsetSettingField;
 #endif
 
 namespace quant_hft {
@@ -46,6 +51,104 @@ std::string SafeCtpString(const char* raw) {
         return "";
     }
     return std::string(raw);
+}
+
+template <typename Api, typename = void>
+struct HasMdApiCreateWithProductionFlag : std::false_type {};
+
+template <typename Api>
+struct HasMdApiCreateWithProductionFlag<
+    Api,
+    std::void_t<decltype(Api::CreateFtdcMdApi(static_cast<const char*>(nullptr),
+                                              false,
+                                              false,
+                                              false))>> : std::true_type {};
+
+template <typename Api, typename = void>
+struct HasTraderApiCreateWithProductionFlag : std::false_type {};
+
+template <typename Api>
+struct HasTraderApiCreateWithProductionFlag<
+    Api,
+    std::void_t<decltype(Api::CreateFtdcTraderApi(static_cast<const char*>(nullptr),
+                                                  false))>> : std::true_type {};
+
+template <typename Api, typename = void>
+struct HasReqQryUserSession : std::false_type {};
+
+template <typename Api>
+struct HasReqQryUserSession<
+    Api,
+    std::void_t<decltype(std::declval<Api*>()->ReqQryUserSession(
+        std::declval<CThostFtdcQryUserSessionField*>(), 0))>> : std::true_type {};
+
+template <typename Response, typename = void>
+struct HasLastLoginTimeField : std::false_type {};
+
+template <typename Response>
+struct HasLastLoginTimeField<
+    Response,
+    std::void_t<decltype(std::declval<Response&>().LastLoginTime)>> : std::true_type {};
+
+template <typename Response, typename = void>
+struct HasReserveInfoField : std::false_type {};
+
+template <typename Response>
+struct HasReserveInfoField<Response,
+                           std::void_t<decltype(std::declval<Response&>().ReserveInfo)>>
+    : std::true_type {};
+
+template <typename Api>
+CThostFtdcMdApi* CreateMdApiCompatImpl(const std::string& flow_path, bool is_production_mode) {
+    if constexpr (HasMdApiCreateWithProductionFlag<Api>::value) {
+        return Api::CreateFtdcMdApi(flow_path.c_str(), false, false, is_production_mode);
+    }
+    (void)is_production_mode;
+    return Api::CreateFtdcMdApi(flow_path.c_str(), false, false);
+}
+
+inline CThostFtdcMdApi* CreateMdApiCompat(const std::string& flow_path,
+                                          bool is_production_mode) {
+    return CreateMdApiCompatImpl<CThostFtdcMdApi>(flow_path, is_production_mode);
+}
+
+template <typename Api>
+CThostFtdcTraderApi* CreateTraderApiCompatImpl(const std::string& flow_path,
+                                               bool is_production_mode) {
+    if constexpr (HasTraderApiCreateWithProductionFlag<Api>::value) {
+        return Api::CreateFtdcTraderApi(flow_path.c_str(), is_production_mode);
+    }
+    (void)is_production_mode;
+    return Api::CreateFtdcTraderApi(flow_path.c_str());
+}
+
+inline CThostFtdcTraderApi* CreateTraderApiCompat(const std::string& flow_path,
+                                                  bool is_production_mode) {
+    return CreateTraderApiCompatImpl<CThostFtdcTraderApi>(flow_path, is_production_mode);
+}
+
+template <typename Response>
+std::string ResolveLastLoginTimeImpl(const Response& response) {
+    if constexpr (HasLastLoginTimeField<Response>::value) {
+        return SafeCtpString(response.LastLoginTime);
+    }
+    return SafeCtpString(response.LoginTime);
+}
+
+inline std::string ResolveLastLoginTime(const CThostFtdcRspUserLoginField& response) {
+    return ResolveLastLoginTimeImpl(response);
+}
+
+template <typename Response>
+std::string ResolveReserveInfoImpl(const Response& response) {
+    if constexpr (HasReserveInfoField<Response>::value) {
+        return SafeCtpString(response.ReserveInfo);
+    }
+    return "";
+}
+
+inline std::string ResolveReserveInfo(const CThostFtdcRspUserLoginField& response) {
+    return ResolveReserveInfoImpl(response);
 }
 #endif
 
@@ -355,6 +458,7 @@ public:
         snapshot.bid_volume_1 = p_depth_market_data->BidVolume1;
         snapshot.ask_volume_1 = p_depth_market_data->AskVolume1;
         snapshot.volume = p_depth_market_data->Volume;
+        snapshot.open_interest = static_cast<std::int64_t>(p_depth_market_data->OpenInterest);
         snapshot.settlement_price = p_depth_market_data->SettlementPrice;
         snapshot.average_price_raw = p_depth_market_data->AveragePrice;
         snapshot.recv_ts_ns = NowEpochNanos();
@@ -469,8 +573,8 @@ public:
             std::lock_guard<std::mutex> lock(owner_->mutex_);
             owner_->front_id_ = p_rsp_user_login->FrontID;
             owner_->session_id_ = p_rsp_user_login->SessionID;
-            owner_->runtime_config_.last_login_time = SafeCtpString(p_rsp_user_login->LastLoginTime);
-            owner_->runtime_config_.reserve_info = SafeCtpString(p_rsp_user_login->ReserveInfo);
+            owner_->runtime_config_.last_login_time = ResolveLastLoginTime(*p_rsp_user_login);
+            owner_->runtime_config_.reserve_info = ResolveReserveInfo(*p_rsp_user_login);
             owner_->user_session_.investor_id = owner_->runtime_config_.investor_id;
             owner_->user_session_.login_time = SafeCtpString(p_rsp_user_login->LoginTime);
             owner_->user_session_.last_login_time = owner_->runtime_config_.last_login_time;
@@ -496,7 +600,7 @@ public:
     void OnRspQryUserSession(CThostFtdcUserSessionField* p_user_session,
                              CThostFtdcRspInfoField* p_rsp_info,
                              int,
-                             bool b_is_last) override {
+                             bool b_is_last) {
         if (!b_is_last) {
             return;
         }
@@ -528,23 +632,16 @@ public:
         }
     }
 
-    void OnRtnOffsetSetting(CThostFtdcOffsetSettingField* p_offset_setting) override {
-        if (p_offset_setting == nullptr) {
-            return;
-        }
-        std::lock_guard<std::mutex> lock(owner_->mutex_);
-        owner_->offset_apply_src_ = p_offset_setting->ApplySrc;
+    void OnRtnOffsetSetting(CThostFtdcOffsetSettingField*) {
     }
 
     void OnRspQryOffsetSetting(CThostFtdcOffsetSettingField* p_offset_setting,
                                CThostFtdcRspInfoField* p_rsp_info,
                                int,
-                               bool b_is_last) override {
-        if (!b_is_last || !IsRspSuccess(p_rsp_info) || p_offset_setting == nullptr) {
-            return;
-        }
-        std::lock_guard<std::mutex> lock(owner_->mutex_);
-        owner_->offset_apply_src_ = p_offset_setting->ApplySrc;
+                               bool b_is_last) {
+        (void)p_offset_setting;
+        (void)p_rsp_info;
+        (void)b_is_last;
     }
 
     void OnRspQryTradingAccount(CThostFtdcTradingAccountField* p_trading_account,
@@ -1324,10 +1421,8 @@ bool CtpGatewayAdapter::ConnectRealApiWithFrontPair(const CtpRuntimeConfig& runt
     auto state = std::make_unique<RealApiState>();
     const std::string flow_path = runtime.flow_path.empty() ? "ctp_flow" : runtime.flow_path;
 
-    state->md_api = CThostFtdcMdApi::CreateFtdcMdApi(
-        flow_path.c_str(), false, false, runtime.is_production_mode);
-    state->td_api = CThostFtdcTraderApi::CreateFtdcTraderApi(
-        flow_path.c_str(), runtime.is_production_mode);
+    state->md_api = CreateMdApiCompat(flow_path, runtime.is_production_mode);
+    state->td_api = CreateTraderApiCompat(flow_path, runtime.is_production_mode);
 
     if (state->md_api == nullptr || state->td_api == nullptr) {
         return false;
@@ -2132,8 +2227,17 @@ bool CtpGatewayAdapter::EnqueueUserSessionQuery(int request_id) {
         CopyCtpField(req.UserID, runtime.user_id);
         req.FrontID = front_id;
         req.SessionID = session_id;
-        query_ok = ExecuteTdQueryWithRetry(
-            [&]() { return td_api->ReqQryUserSession(&req, request_id); });
+        auto query_user_session = [&](auto* api) {
+            using Api = std::remove_pointer_t<decltype(api)>;
+            if constexpr (HasReqQryUserSession<Api>::value) {
+                return ExecuteTdQueryWithRetry(
+                    [&]() { return api->ReqQryUserSession(&req, request_id); });
+            }
+            std::lock_guard<std::mutex> lock(mutex_);
+            user_session_.investor_id = runtime.investor_id;
+            return true;
+        };
+        query_ok = query_user_session(td_api);
 #endif
     };
 

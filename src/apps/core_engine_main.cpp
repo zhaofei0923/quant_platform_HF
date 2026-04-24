@@ -1,12 +1,18 @@
+#include <array>
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <csignal>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -46,6 +52,7 @@
 #include "quant_hft/services/order_state_machine.h"
 #include "quant_hft/services/position_manager.h"
 #include "quant_hft/services/rule_market_state_engine.h"
+#include "quant_hft/strategy/composite_config_loader.h"
 #include "quant_hft/strategy/composite_strategy.h"
 #include "quant_hft/strategy/demo_live_strategy.h"
 #include "quant_hft/strategy/strategy_engine.h"
@@ -69,6 +76,120 @@ bool ParseIntArg(const std::string& raw, int* out) {
     }
 }
 
+std::string FormatDouble(double value) {
+    if (!std::isfinite(value)) {
+        return "nan";
+    }
+    std::ostringstream out;
+    out << value;
+    return out.str();
+}
+
+std::string SideToString(quant_hft::Side side) {
+    return side == quant_hft::Side::kBuy ? "buy" : "sell";
+}
+
+std::string OffsetToString(quant_hft::OffsetFlag offset) {
+    switch (offset) {
+        case quant_hft::OffsetFlag::kOpen:
+            return "open";
+        case quant_hft::OffsetFlag::kClose:
+            return "close";
+        case quant_hft::OffsetFlag::kCloseToday:
+            return "close_today";
+        case quant_hft::OffsetFlag::kCloseYesterday:
+            return "close_yesterday";
+    }
+    return "unknown";
+}
+
+std::string MarketRegimeToString(quant_hft::MarketRegime regime) {
+    switch (regime) {
+        case quant_hft::MarketRegime::kStrongTrend:
+            return "kStrongTrend";
+        case quant_hft::MarketRegime::kWeakTrend:
+            return "kWeakTrend";
+        case quant_hft::MarketRegime::kRanging:
+            return "kRanging";
+        case quant_hft::MarketRegime::kFlat:
+            return "kFlat";
+        case quant_hft::MarketRegime::kUnknown:
+        default:
+            return "kUnknown";
+    }
+}
+
+std::string JoinMarketRegimes(const std::vector<quant_hft::MarketRegime>& regimes) {
+    std::ostringstream out;
+    for (std::size_t i = 0; i < regimes.size(); ++i) {
+        if (i > 0) {
+            out << ',';
+        }
+        out << MarketRegimeToString(regimes[i]);
+    }
+    return out.str();
+}
+
+quant_hft::AtomicParams MergeParamsForRunType(const quant_hft::SubStrategyDefinition& definition,
+                                              const std::string& run_type) {
+    quant_hft::AtomicParams merged = definition.params;
+    const quant_hft::AtomicParams* override_params = nullptr;
+    if (run_type == "backtest") {
+        override_params = &definition.overrides.backtest_params;
+    } else if (run_type == "sim") {
+        override_params = &definition.overrides.sim_params;
+    } else {
+        override_params = &definition.overrides.live_params;
+    }
+    for (const auto& [key, value] : *override_params) {
+        merged[key] = value;
+    }
+    return merged;
+}
+
+void EmitCompositeStrategyInitLogs(const quant_hft::CtpRuntimeConfig& config,
+                                   const std::string& composite_config_path,
+                                   const std::string& run_type) {
+    quant_hft::CompositeStrategyDefinition definition;
+    std::string error;
+    if (!quant_hft::LoadCompositeStrategyDefinition(composite_config_path, &definition, &error)) {
+        quant_hft::EmitStructuredLog(&config, "core_engine", "warn",
+                                     "strategy_init_log_config_load_failed",
+                                     {{"composite_config_path", composite_config_path},
+                                      {"error", error}});
+        return;
+    }
+
+    for (const auto& sub_strategy : definition.sub_strategies) {
+        if (!sub_strategy.enabled) {
+            continue;
+        }
+        auto merged_params = MergeParamsForRunType(sub_strategy, run_type);
+        std::vector<std::pair<std::string, std::string>> sorted_params(merged_params.begin(),
+                                                                       merged_params.end());
+        std::sort(sorted_params.begin(), sorted_params.end(),
+                  [](const auto& lhs, const auto& rhs) { return lhs.first < rhs.first; });
+
+        quant_hft::LogFields fields{{"strategy_id", sub_strategy.id},
+                                    {"event_type", "strategy_initialized"},
+                                    {"strategy_type", sub_strategy.type},
+                                    {"run_type", run_type},
+                                    {"timeframe_minutes",
+                                     std::to_string(sub_strategy.timeframe_minutes)},
+                                    {"composite_config_path", composite_config_path},
+                                    {"entry_market_regimes",
+                                     JoinMarketRegimes(sub_strategy.entry_market_regimes)}};
+        if (!sub_strategy.config_path.empty()) {
+            fields.emplace_back("config_path", sub_strategy.config_path);
+        }
+        for (const auto& [key, value] : sorted_params) {
+            fields.emplace_back(key, value);
+        }
+        quant_hft::EmitStructuredLog(&config, "core_engine", "info", "strategy_initialized",
+                                     fields);
+    }
+}
+
 bool ParseArgs(int argc, char** argv, std::string* config_path, int* run_seconds,
                std::string* error) {
     if (config_path == nullptr || run_seconds == nullptr) {
@@ -86,6 +207,27 @@ bool ParseArgs(int argc, char** argv, std::string* config_path, int* run_seconds
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
+        if (arg == "--config") {
+            if (i + 1 >= argc) {
+                if (error != nullptr) {
+                    *error = "--config requires a value";
+                }
+                return false;
+            }
+            *config_path = argv[++i];
+            continue;
+        }
+        if (arg.rfind("--config=", 0) == 0) {
+            const auto value = arg.substr(std::string("--config=").size());
+            if (value.empty()) {
+                if (error != nullptr) {
+                    *error = "--config requires a value";
+                }
+                return false;
+            }
+            *config_path = value;
+            continue;
+        }
         if (arg == "--run-seconds") {
             if (i + 1 >= argc) {
                 if (error != nullptr) {
@@ -135,7 +277,145 @@ std::string InferExchangeId(const std::string& instrument_id) {
     return instrument_id.substr(0, dot_pos);
 }
 
+std::string ToLowerAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
+std::string JsonEscape(const std::string& value) {
+    std::string escaped;
+    escaped.reserve(value.size());
+    for (char ch : value) {
+        switch (ch) {
+            case '\\':
+                escaped += "\\\\";
+                break;
+            case '"':
+                escaped += "\\\"";
+                break;
+            case '\n':
+                escaped += "\\n";
+                break;
+            case '\r':
+                escaped += "\\r";
+                break;
+            case '\t':
+                escaped += "\\t";
+                break;
+            default:
+                escaped.push_back(ch);
+                break;
+        }
+    }
+    return escaped;
+}
+
+std::string ExtractProductId(const std::string& instrument) {
+    std::string symbol = instrument;
+    const auto dot = symbol.find('.');
+    if (dot != std::string::npos) {
+        symbol = symbol.substr(dot + 1);
+    }
+    std::string product_id;
+    for (unsigned char ch : symbol) {
+        if (std::isalpha(ch) == 0) {
+            break;
+        }
+        product_id.push_back(static_cast<char>(std::tolower(ch)));
+    }
+    return product_id;
+}
+
+std::string StripExchangePrefix(const std::string& instrument) {
+    const auto dot = instrument.find('.');
+    if (dot == std::string::npos) {
+        return instrument;
+    }
+    return instrument.substr(dot + 1);
+}
+
+bool IsPlainFuturesContractId(const std::string& instrument_id, const std::string& product_id) {
+    const std::string symbol = ToLowerAscii(StripExchangePrefix(instrument_id));
+    if (symbol.size() <= product_id.size() || symbol.rfind(product_id, 0) != 0) {
+        return false;
+    }
+    for (std::size_t index = product_id.size(); index < symbol.size(); ++index) {
+        if (std::isdigit(static_cast<unsigned char>(symbol[index])) == 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::vector<std::string> CollectConfiguredProductIds(const std::vector<std::string>& instruments) {
+    std::unordered_set<std::string> seen;
+    std::vector<std::string> product_ids;
+    for (const auto& instrument : instruments) {
+        const std::string product_id = ExtractProductId(instrument);
+        if (!product_id.empty() && seen.insert(product_id).second) {
+            product_ids.push_back(product_id);
+        }
+    }
+    return product_ids;
+}
+
+std::vector<std::string> ResolveConfiguredProductIds(const quant_hft::CtpFileConfig& config) {
+    if (!config.product_ids.empty()) {
+        std::vector<std::string> normalized = config.product_ids;
+        for (auto& product_id : normalized) {
+            product_id = ToLowerAscii(product_id);
+        }
+        return normalized;
+    }
+    return CollectConfiguredProductIds(config.instruments);
+}
+
+bool MatchesProductId(const quant_hft::InstrumentMetaSnapshot& snapshot,
+                      const std::string& product_id) {
+    return ToLowerAscii(snapshot.product_id) == product_id ||
+           ExtractProductId(snapshot.instrument_id) == product_id;
+}
+
+bool WriteDominantContractJson(const std::filesystem::path& output_path,
+                               const std::string& product_id,
+                               const quant_hft::MarketSnapshot& snapshot,
+                               const std::string& selection_metric,
+                               std::string* error) {
+    std::error_code ec;
+    std::filesystem::create_directories(output_path.parent_path(), ec);
+    if (ec) {
+        if (error != nullptr) {
+            *error = "failed to create directory: " + ec.message();
+        }
+        return false;
+    }
+
+    std::ofstream out(output_path);
+    if (!out.is_open()) {
+        if (error != nullptr) {
+            *error = "failed to open output file";
+        }
+        return false;
+    }
+
+    out << "{\n";
+    out << "  \"product_id\": \"" << JsonEscape(product_id) << "\",\n";
+    out << "  \"instrument_id\": \"" << JsonEscape(snapshot.instrument_id) << "\",\n";
+    out << "  \"exchange_id\": \"" << JsonEscape(snapshot.exchange_id) << "\",\n";
+    out << "  \"selection_metric\": \"" << JsonEscape(selection_metric) << "\",\n";
+    out << "  \"open_interest\": " << snapshot.open_interest << ",\n";
+    out << "  \"volume\": " << snapshot.volume << ",\n";
+    out << "  \"recv_ts_ns\": " << snapshot.recv_ts_ns << "\n";
+    out << "}\n";
+    return true;
+}
+
 std::vector<std::string> ResolveInstruments(const quant_hft::CtpFileConfig& config) {
+    if (config.active_contract_mode == "dominant_open_interest") {
+        return {};
+    }
     if (!config.instruments.empty()) {
         return config.instruments;
     }
@@ -170,6 +450,8 @@ quant_hft::OrderEvent BuildRejectedEvent(const quant_hft::OrderIntent& intent,
     event.client_order_id = intent.client_order_id;
     event.exchange_order_id = "internal-reject";
     event.instrument_id = intent.instrument_id;
+    event.side = intent.side;
+    event.offset = intent.offset;
     event.status = quant_hft::OrderStatus::kRejected;
     event.total_volume = intent.volume;
     event.filled_volume = 0;
@@ -187,7 +469,45 @@ quant_hft::OrderEvent BuildRejectedEvent(const quant_hft::OrderIntent& intent,
     event.route_id = metadata.route_id;
     event.slippage_bps = metadata.slippage_bps;
     event.impact_cost = metadata.impact_cost;
+    event.event_source = "internal";
     return event;
+}
+
+void EmitOrderRejectedIntentLog(const quant_hft::CtpRuntimeConfig& config,
+                                const quant_hft::OrderIntent& intent,
+                                const std::string& reason,
+                                const ExecutionMetadata& metadata) {
+    quant_hft::EmitStructuredLog(
+        &config, "core_engine", "error", "order_rejected",
+        {{"strategy_id", intent.strategy_id},
+         {"event_type", "order_rejected"},
+         {"event_ts_ns", std::to_string(intent.ts_ns)},
+         {"reason", reason},
+         {"instrument_id", intent.instrument_id},
+         {"side", SideToString(intent.side)},
+         {"offset", OffsetToString(intent.offset)},
+         {"volume", std::to_string(intent.volume)},
+         {"price", FormatDouble(intent.price)},
+         {"client_order_id", intent.client_order_id},
+         {"execution_algo_id", metadata.execution_algo_id},
+         {"route_id", metadata.route_id}});
+}
+
+void EmitOrderRejectedEventLog(const quant_hft::CtpRuntimeConfig& config,
+                               const quant_hft::OrderEvent& event) {
+    quant_hft::EmitStructuredLog(
+        &config, "core_engine", "error", "order_rejected",
+        {{"strategy_id", event.strategy_id},
+         {"event_type", "order_rejected"},
+         {"event_ts_ns", std::to_string(event.ts_ns)},
+         {"reason", event.reason},
+         {"instrument_id", event.instrument_id},
+         {"side", SideToString(event.side)},
+         {"offset", OffsetToString(event.offset)},
+         {"volume", std::to_string(event.total_volume)},
+         {"price", FormatDouble(event.avg_fill_price)},
+         {"client_order_id", event.client_order_id},
+         {"exchange_order_id", event.exchange_order_id}});
 }
 
 quant_hft::PositionDirection ResolveLedgerDirection(const quant_hft::OrderIntent& intent) {
@@ -243,7 +563,19 @@ int main(int argc, char** argv) {
         return 1;
     }
     const auto& config = file_config.runtime;
-    const auto instruments = ResolveInstruments(file_config);
+    const bool dominant_contract_mode =
+        file_config.active_contract_mode == "dominant_open_interest";
+    const auto dominant_product_ids =
+        dominant_contract_mode ? ResolveConfiguredProductIds(file_config)
+                               : std::vector<std::string>{};
+    const bool dominant_contract_runtime_recheck_enabled =
+        dominant_contract_mode &&
+        (file_config.dominant_contract_switch_mode == "dry_run" ||
+         file_config.dominant_contract_switch_mode == "flat_only") &&
+        file_config.dominant_contract_recheck_interval_ms > 0;
+    const bool dominant_contract_flat_only_enabled =
+        dominant_contract_mode && file_config.dominant_contract_switch_mode == "flat_only";
+    auto instruments = ResolveInstruments(file_config);
     const auto strategy_ids = ResolveStrategyIds(file_config);
     const std::string strategy_factory =
         file_config.strategy_factory.empty() ? std::string("demo") : file_config.strategy_factory;
@@ -273,6 +605,29 @@ int main(int argc, char** argv) {
         static_cast<std::size_t>(std::max(1, config.query_rate_per_sec)), 2);
     auto ctp_md = std::make_shared<CTPMdAdapter>(
         static_cast<std::size_t>(std::max(1, config.query_rate_per_sec)), 2);
+    std::mutex instrument_meta_mutex;
+    std::condition_variable instrument_meta_cv;
+    bool instrument_meta_ready = false;
+    std::vector<InstrumentMetaSnapshot> instrument_meta_snapshots;
+    std::mutex dominant_candidate_mutex;
+    std::condition_variable dominant_candidate_cv;
+    std::unordered_map<std::string, MarketSnapshot> dominant_candidate_snapshots;
+    std::unordered_set<std::string> dominant_candidate_ids;
+    std::atomic<bool> dominant_contract_selection_active{dominant_contract_mode};
+    std::mutex dominant_recheck_mutex;
+    std::condition_variable dominant_recheck_cv;
+    std::unordered_map<std::string, MarketSnapshot> dominant_recheck_candidate_snapshots;
+    std::unordered_set<std::string> dominant_recheck_candidate_ids;
+    std::atomic<bool> dominant_contract_recheck_active{false};
+    std::mutex active_instrument_state_mutex;
+    std::mutex latest_market_snapshot_mutex;
+    std::unordered_map<std::string, MarketSnapshot> latest_market_snapshots;
+    std::unordered_set<std::string> active_instrument_ids;
+    std::unordered_map<std::string, std::string> active_instrument_by_product;
+    std::unordered_map<std::string, std::chrono::steady_clock::time_point>
+        active_instrument_selected_at;
+    std::atomic<int> query_request_id{1};
+    auto next_query_request_id = [&query_request_id]() { return query_request_id.fetch_add(1); };
     auto flow_controller = std::make_shared<FlowController>();
     auto breaker_manager = std::make_shared<CircuitBreakerManager>();
     {
@@ -443,6 +798,9 @@ int main(int argc, char** argv) {
         if (event.ts_ns <= 0) {
             event.ts_ns = event.recv_ts_ns;
         }
+        if (event.status == OrderStatus::kRejected && event.event_source != "internal") {
+            EmitOrderRejectedEventLog(config, event);
+        }
         {
             std::lock_guard<std::mutex> lock(execution_metadata_mutex);
             const auto it = execution_metadata_by_order.find(event.client_order_id);
@@ -602,12 +960,16 @@ int main(int argc, char** argv) {
                 timeseries_store.AppendRiskDecision(intent, throttle_decision);
 
                 metadata.throttle_applied = true;
+                EmitOrderRejectedIntentLog(config, intent, "throttled:reject_ratio_exceeded",
+                                           metadata);
                 process_order_event(
                     BuildRejectedEvent(intent, "throttled:reject_ratio_exceeded", metadata));
                 continue;
             }
 
             if (!order_state_machine.OnOrderIntent(intent)) {
+                EmitOrderRejectedIntentLog(config, intent,
+                                           "order_state_reject:duplicate_or_invalid", metadata);
                 process_order_event(BuildRejectedEvent(
                     intent, "order_state_reject:duplicate_or_invalid", metadata));
             } else {
@@ -617,12 +979,17 @@ int main(int argc, char** argv) {
                     std::lock_guard<std::mutex> lock(ctp_ledger_mutex);
                     if (!ctp_position_ledger.RegisterOrderIntent(ledger_intent,
                                                                  &ctp_ledger_error)) {
+                        EmitOrderRejectedIntentLog(
+                            config, intent, "position_ledger_reject:" + ctp_ledger_error,
+                            metadata);
                         process_order_event(BuildRejectedEvent(
                             intent, "position_ledger_reject:" + ctp_ledger_error, metadata));
                         continue;
                     }
                 }
                 if (!execution_engine.PlaceOrderAsync(intent).get().success) {
+                    EmitOrderRejectedIntentLog(config, intent,
+                                               "gateway_reject:place_order_failed", metadata);
                     process_order_event(
                         BuildRejectedEvent(intent, "gateway_reject:place_order_failed", metadata));
                     continue;
@@ -655,6 +1022,10 @@ int main(int argc, char** argv) {
                 history.erase(history.begin());
             }
         }
+        {
+            std::lock_guard<std::mutex> lock(latest_market_snapshot_mutex);
+            latest_market_snapshots[snapshot.instrument_id] = snapshot;
+        }
         realtime_cache.UpsertMarketSnapshot(snapshot);
         timeseries_store.AppendMarketSnapshot(snapshot);
         market_state.OnMarketSnapshot(snapshot);
@@ -666,10 +1037,52 @@ int main(int argc, char** argv) {
         }
     };
 
+    auto get_active_instruments_snapshot = [&]() {
+        std::lock_guard<std::mutex> lock(active_instrument_state_mutex);
+        return instruments;
+    };
+
+    auto is_active_instrument = [&](const std::string& instrument_id) {
+        std::lock_guard<std::mutex> lock(active_instrument_state_mutex);
+        return active_instrument_ids.find(instrument_id) != active_instrument_ids.end();
+    };
+
     ctp_trader->RegisterOrderEventCallback(
         [&](const OrderEvent& event) { process_order_event(event); });
-    ctp_md->RegisterTickCallback(
-        [&](const MarketSnapshot& snapshot) { process_market_snapshot(snapshot); });
+    ctp_md->RegisterTickCallback([&](const MarketSnapshot& snapshot) {
+        if (dominant_contract_selection_active.load()) {
+            bool tracked = false;
+            {
+                std::lock_guard<std::mutex> lock(dominant_candidate_mutex);
+                if (dominant_candidate_ids.find(snapshot.instrument_id) !=
+                    dominant_candidate_ids.end()) {
+                    dominant_candidate_snapshots[snapshot.instrument_id] = snapshot;
+                    tracked = true;
+                }
+            }
+            if (tracked) {
+                dominant_candidate_cv.notify_all();
+            }
+            return;
+        }
+        bool tracked_runtime_candidate = false;
+        {
+            std::lock_guard<std::mutex> lock(dominant_recheck_mutex);
+            if (dominant_contract_recheck_active.load() &&
+                dominant_recheck_candidate_ids.find(snapshot.instrument_id) !=
+                    dominant_recheck_candidate_ids.end()) {
+                dominant_recheck_candidate_snapshots[snapshot.instrument_id] = snapshot;
+                tracked_runtime_candidate = true;
+            }
+        }
+        if (tracked_runtime_candidate) {
+            dominant_recheck_cv.notify_all();
+        }
+        if (!is_active_instrument(snapshot.instrument_id)) {
+            return;
+        }
+        process_market_snapshot(snapshot);
+    });
     ctp_trader->RegisterTradingAccountSnapshotCallback([&](const TradingAccountSnapshot& snapshot) {
         {
             std::lock_guard<std::mutex> lock(ctp_ledger_mutex);
@@ -721,6 +1134,12 @@ int main(int argc, char** argv) {
         });
     ctp_trader->RegisterInstrumentMetaSnapshotCallback(
         [&](const std::vector<InstrumentMetaSnapshot>& snapshots) {
+            {
+                std::lock_guard<std::mutex> lock(instrument_meta_mutex);
+                instrument_meta_snapshots = snapshots;
+                instrument_meta_ready = true;
+            }
+            instrument_meta_cv.notify_all();
             for (const auto& snapshot : snapshots) {
                 ctp_query_snapshot_store.AppendInstrumentMetaSnapshot(snapshot);
             }
@@ -755,6 +1174,8 @@ int main(int argc, char** argv) {
     strategy_context.account_id = account_id;
     strategy_context.metadata["run_type"] = run_type;
     strategy_context.metadata["strategy_factory"] = strategy_factory;
+    strategy_context.metadata["log_level"] = config.log_level;
+    strategy_context.metadata["log_sink"] = config.log_sink;
     if (strategy_factory == "composite") {
         strategy_context.metadata["composite_config_path"] = file_config.strategy_composite_config;
     }
@@ -765,6 +1186,9 @@ int main(int argc, char** argv) {
             &config, "core_engine", "error", "strategy_engine_start_failed",
             {{"strategy_factory", strategy_factory}, {"error", strategy_register_error}});
         return 7;
+    }
+    if (strategy_factory == "composite" && !file_config.strategy_composite_config.empty()) {
+        EmitCompositeStrategyInitLogs(config, file_config.strategy_composite_config, run_type);
     }
 
     MarketDataConnectConfig connect_cfg;
@@ -810,17 +1234,226 @@ int main(int argc, char** argv) {
         EmitStructuredLog(&config, "core_engine", "error", "ctp_settlement_confirm_failed");
         return 2;
     }
-    if (!ctp_md->Subscribe(instruments)) {
+
+    if (dominant_contract_mode) {
+        const auto& product_ids = dominant_product_ids;
+        if (product_ids.empty()) {
+            EmitStructuredLog(&config, "core_engine", "error",
+                              "dominant_contract_product_missing");
+            return 2;
+        }
+
+        const int instrument_query_request_id = next_query_request_id();
+        if (!ctp_trader->EnqueueInstrumentQuery(instrument_query_request_id)) {
+            EmitStructuredLog(&config, "core_engine", "error",
+                              "dominant_contract_instrument_query_submit_failed");
+            return 2;
+        }
+
+        std::vector<InstrumentMetaSnapshot> received_instrument_meta;
+        {
+            std::unique_lock<std::mutex> lock(instrument_meta_mutex);
+            if (!instrument_meta_cv.wait_for(lock, std::chrono::seconds(15),
+                                             [&]() { return instrument_meta_ready; })) {
+                EmitStructuredLog(&config, "core_engine", "error",
+                                  "dominant_contract_instrument_query_timeout",
+                                  {{"request_id", std::to_string(instrument_query_request_id)}});
+                return 2;
+            }
+            received_instrument_meta = instrument_meta_snapshots;
+        }
+
+        std::unordered_map<std::string, std::vector<std::string>> candidate_ids_by_product;
+        std::vector<std::string> all_candidate_ids;
+        for (const auto& product_id : product_ids) {
+            std::vector<std::string> candidate_ids;
+            candidate_ids.reserve(received_instrument_meta.size());
+            for (const auto& snapshot : received_instrument_meta) {
+                if (!MatchesProductId(snapshot, product_id) ||
+                    !IsPlainFuturesContractId(snapshot.instrument_id, product_id)) {
+                    continue;
+                }
+                candidate_ids.push_back(snapshot.instrument_id);
+            }
+            std::sort(candidate_ids.begin(), candidate_ids.end());
+            candidate_ids.erase(std::unique(candidate_ids.begin(), candidate_ids.end()),
+                                candidate_ids.end());
+            if (candidate_ids.empty()) {
+                EmitStructuredLog(&config, "core_engine", "error",
+                                  "dominant_contract_candidate_empty",
+                                  {{"product_id", product_id}});
+                return 2;
+            }
+            all_candidate_ids.insert(all_candidate_ids.end(), candidate_ids.begin(),
+                                     candidate_ids.end());
+            candidate_ids_by_product.emplace(product_id, std::move(candidate_ids));
+        }
+        std::sort(all_candidate_ids.begin(), all_candidate_ids.end());
+        all_candidate_ids.erase(std::unique(all_candidate_ids.begin(), all_candidate_ids.end()),
+                                all_candidate_ids.end());
+
+        {
+            std::lock_guard<std::mutex> lock(dominant_candidate_mutex);
+            dominant_candidate_ids.clear();
+            dominant_candidate_ids.insert(all_candidate_ids.begin(), all_candidate_ids.end());
+            dominant_candidate_snapshots.clear();
+        }
+
+        if (!ctp_md->Subscribe(all_candidate_ids)) {
+            EmitStructuredLog(&config, "core_engine", "error",
+                              "dominant_contract_candidate_subscribe_failed",
+                              {{"product_count", std::to_string(product_ids.size())},
+                               {"candidate_count", std::to_string(all_candidate_ids.size())}});
+            return 2;
+        }
+
+        const auto sample_deadline =
+            std::chrono::steady_clock::now() +
+            std::chrono::milliseconds(file_config.dominant_contract_wait_ms);
+        {
+            std::unique_lock<std::mutex> lock(dominant_candidate_mutex);
+            while (dominant_candidate_snapshots.size() < all_candidate_ids.size()) {
+                if (dominant_candidate_cv.wait_until(lock, sample_deadline) ==
+                    std::cv_status::timeout) {
+                    break;
+                }
+            }
+        }
+
+        auto better_by_open_interest = [](const MarketSnapshot& lhs, const MarketSnapshot& rhs) {
+            if (lhs.open_interest != rhs.open_interest) {
+                return lhs.open_interest < rhs.open_interest;
+            }
+            if (lhs.volume != rhs.volume) {
+                return lhs.volume < rhs.volume;
+            }
+            return lhs.instrument_id > rhs.instrument_id;
+        };
+        auto better_by_volume = [](const MarketSnapshot& lhs, const MarketSnapshot& rhs) {
+            if (lhs.volume != rhs.volume) {
+                return lhs.volume < rhs.volume;
+            }
+            if (lhs.open_interest != rhs.open_interest) {
+                return lhs.open_interest < rhs.open_interest;
+            }
+            return lhs.instrument_id > rhs.instrument_id;
+        };
+
+        instruments.clear();
+        instruments.reserve(product_ids.size());
+        std::vector<std::string> unsubscribe_ids;
+        unsubscribe_ids.reserve(all_candidate_ids.size());
+        std::vector<std::string> selected_instruments;
+        selected_instruments.reserve(product_ids.size());
+        for (const auto& product_id : product_ids) {
+            const auto& candidate_ids = candidate_ids_by_product.at(product_id);
+            std::vector<MarketSnapshot> observed_snapshots;
+            observed_snapshots.reserve(candidate_ids.size());
+            {
+                std::lock_guard<std::mutex> lock(dominant_candidate_mutex);
+                for (const auto& candidate_id : candidate_ids) {
+                    const auto snapshot_it = dominant_candidate_snapshots.find(candidate_id);
+                    if (snapshot_it != dominant_candidate_snapshots.end()) {
+                        observed_snapshots.push_back(snapshot_it->second);
+                    }
+                }
+            }
+            if (observed_snapshots.empty()) {
+                EmitStructuredLog(
+                    &config, "core_engine", "error", "dominant_contract_sample_timeout",
+                    {{"product_id", product_id},
+                     {"wait_ms", std::to_string(file_config.dominant_contract_wait_ms)}});
+                return 2;
+            }
+
+            const bool has_positive_open_interest =
+                std::any_of(observed_snapshots.begin(), observed_snapshots.end(),
+                            [](const MarketSnapshot& snapshot) {
+                                return snapshot.open_interest > 0;
+                            });
+            const std::string selection_metric =
+                has_positive_open_interest ? "open_interest" : "volume";
+            const auto best_it = std::max_element(
+                observed_snapshots.begin(), observed_snapshots.end(),
+                has_positive_open_interest ? better_by_open_interest : better_by_volume);
+            if (best_it == observed_snapshots.end()) {
+                EmitStructuredLog(&config, "core_engine", "error",
+                                  "dominant_contract_select_failed",
+                                  {{"product_id", product_id}});
+                return 2;
+            }
+
+            instruments.push_back(best_it->instrument_id);
+            selected_instruments.push_back(best_it->instrument_id);
+            active_instrument_by_product[product_id] = best_it->instrument_id;
+            active_instrument_selected_at[product_id] = std::chrono::steady_clock::now();
+            {
+                std::lock_guard<std::mutex> lock(latest_market_snapshot_mutex);
+                latest_market_snapshots[best_it->instrument_id] = *best_it;
+            }
+            for (const auto& candidate_id : candidate_ids) {
+                if (candidate_id != best_it->instrument_id) {
+                    unsubscribe_ids.push_back(candidate_id);
+                }
+            }
+
+            const std::filesystem::path dominant_output_path =
+                std::filesystem::path("runtime/ctp_instruments") /
+                (product_id + "_dominant_contract.json");
+            std::string write_error;
+            if (!WriteDominantContractJson(dominant_output_path, product_id, *best_it,
+                                           selection_metric, &write_error)) {
+                EmitStructuredLog(&config, "core_engine", "warn",
+                                  "dominant_contract_save_failed",
+                                  {{"product_id", product_id},
+                                   {"path", dominant_output_path.string()},
+                                   {"error", write_error}});
+            }
+
+            EmitStructuredLog(&config, "core_engine", "info", "dominant_contract_selected",
+                              {{"product_id", product_id},
+                               {"instrument_id", best_it->instrument_id},
+                               {"exchange_id", best_it->exchange_id},
+                               {"selection_metric", selection_metric},
+                               {"open_interest", std::to_string(best_it->open_interest)},
+                               {"volume", std::to_string(best_it->volume)},
+                               {"candidate_count", std::to_string(candidate_ids.size())},
+                               {"observed_count", std::to_string(observed_snapshots.size())},
+                               {"path", dominant_output_path.string()}});
+        }
+        std::sort(unsubscribe_ids.begin(), unsubscribe_ids.end());
+        unsubscribe_ids.erase(std::unique(unsubscribe_ids.begin(), unsubscribe_ids.end()),
+                              unsubscribe_ids.end());
+        if (!unsubscribe_ids.empty() && !ctp_md->Unsubscribe(unsubscribe_ids)) {
+            EmitStructuredLog(&config, "core_engine", "warn",
+                              "dominant_contract_unsubscribe_partial_failed",
+                              {{"product_count", std::to_string(product_ids.size())},
+                               {"unsubscribe_count", std::to_string(unsubscribe_ids.size())}});
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(dominant_candidate_mutex);
+            dominant_candidate_ids.clear();
+            dominant_candidate_ids.insert(selected_instruments.begin(),
+                                          selected_instruments.end());
+        }
+    } else if (!ctp_md->Subscribe(instruments)) {
         EmitStructuredLog(&config, "core_engine", "error", "ctp_subscribe_failed",
                           {{"instrument_count", std::to_string(instruments.size())}});
         return 2;
     }
+
+    {
+        std::lock_guard<std::mutex> lock(active_instrument_state_mutex);
+        active_instrument_ids.clear();
+        active_instrument_ids.insert(instruments.begin(), instruments.end());
+    }
+
     for (const auto& instrument_id : instruments) {
         bar_aggregator.ResetInstrument(instrument_id);
     }
+    dominant_contract_selection_active.store(false);
 
-    std::atomic<int> query_request_id{1};
-    auto next_query_request_id = [&query_request_id]() { return query_request_id.fetch_add(1); };
     if (!ctp_trader->EnqueueUserSessionQuery(next_query_request_id())) {
         EmitStructuredLog(&config, "core_engine", "warn", "initial_user_session_query_failed");
     }
@@ -860,6 +1493,7 @@ int main(int argc, char** argv) {
 
     std::atomic<bool> query_loop_stop{false};
     std::atomic<bool> execution_loop_stop{false};
+    std::atomic<bool> dominant_recheck_loop_stop{false};
     std::thread query_poll_thread([&]() {
         auto next_account_query = std::chrono::steady_clock::now();
         auto next_position_query = std::chrono::steady_clock::now();
@@ -885,7 +1519,8 @@ int main(int argc, char** argv) {
             if (now >= next_instrument_query) {
                 (void)ctp_trader->EnqueueInstrumentQuery(next_query_request_id());
                 (void)ctp_trader->EnqueueBrokerTradingParamsQuery(next_query_request_id());
-                for (const auto& instrument_id : instruments) {
+                const auto active_instruments = get_active_instruments_snapshot();
+                for (const auto& instrument_id : active_instruments) {
                     (void)ctp_trader->EnqueueInstrumentMarginRateQuery(next_query_request_id(),
                                                                        instrument_id);
                     (void)ctp_trader->EnqueueInstrumentCommissionRateQuery(next_query_request_id(),
@@ -897,6 +1532,475 @@ int main(int argc, char** argv) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
     });
+
+    std::thread dominant_recheck_thread;
+    if (dominant_contract_runtime_recheck_enabled) {
+        EmitStructuredLog(
+            &config, "core_engine", "info", "dominant_contract_recheck_started",
+            {{"product_count", std::to_string(dominant_product_ids.size())},
+             {"recheck_interval_ms",
+              std::to_string(file_config.dominant_contract_recheck_interval_ms)},
+             {"wait_ms", std::to_string(file_config.dominant_contract_wait_ms)},
+             {"switch_mode", file_config.dominant_contract_switch_mode}});
+        dominant_recheck_thread = std::thread([&]() {
+            auto next_recheck = std::chrono::steady_clock::now() +
+                                std::chrono::milliseconds(
+                                    file_config.dominant_contract_recheck_interval_ms);
+            std::unordered_map<std::string, std::string> lead_candidate_by_product;
+            std::unordered_map<std::string, int> lead_windows_by_product;
+
+            auto better_by_open_interest = [](const MarketSnapshot& lhs,
+                                              const MarketSnapshot& rhs) {
+                if (lhs.open_interest != rhs.open_interest) {
+                    return lhs.open_interest < rhs.open_interest;
+                }
+                if (lhs.volume != rhs.volume) {
+                    return lhs.volume < rhs.volume;
+                }
+                return lhs.instrument_id > rhs.instrument_id;
+            };
+            auto better_by_volume = [](const MarketSnapshot& lhs, const MarketSnapshot& rhs) {
+                if (lhs.volume != rhs.volume) {
+                    return lhs.volume < rhs.volume;
+                }
+                if (lhs.open_interest != rhs.open_interest) {
+                    return lhs.open_interest < rhs.open_interest;
+                }
+                return lhs.instrument_id > rhs.instrument_id;
+            };
+            auto metric_value = [](const MarketSnapshot& snapshot,
+                                   const std::string& selection_metric) {
+                return selection_metric == "open_interest"
+                           ? static_cast<double>(snapshot.open_interest)
+                           : static_cast<double>(snapshot.volume);
+            };
+
+            while (!dominant_recheck_loop_stop.load()) {
+                const auto now = std::chrono::steady_clock::now();
+                if (now < next_recheck) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                    continue;
+                }
+                next_recheck =
+                    now + std::chrono::milliseconds(file_config.dominant_contract_recheck_interval_ms);
+
+                {
+                    std::lock_guard<std::mutex> lock(instrument_meta_mutex);
+                    instrument_meta_ready = false;
+                }
+                const int instrument_query_request_id = next_query_request_id();
+                if (!ctp_trader->EnqueueInstrumentQuery(instrument_query_request_id)) {
+                    EmitStructuredLog(
+                        &config, "core_engine", "warn",
+                        "dominant_contract_recheck_instrument_query_submit_failed",
+                        {{"request_id", std::to_string(instrument_query_request_id)}});
+                    continue;
+                }
+
+                std::vector<InstrumentMetaSnapshot> received_instrument_meta;
+                {
+                    std::unique_lock<std::mutex> lock(instrument_meta_mutex);
+                    if (!instrument_meta_cv.wait_for(
+                            lock, std::chrono::seconds(15),
+                            [&]() {
+                                return instrument_meta_ready ||
+                                       dominant_recheck_loop_stop.load();
+                            })) {
+                        EmitStructuredLog(
+                            &config, "core_engine", "warn",
+                            "dominant_contract_recheck_instrument_query_timeout",
+                            {{"request_id", std::to_string(instrument_query_request_id)}});
+                        continue;
+                    }
+                    if (dominant_recheck_loop_stop.load()) {
+                        break;
+                    }
+                    received_instrument_meta = instrument_meta_snapshots;
+                }
+
+                std::unordered_map<std::string, std::vector<std::string>> candidate_ids_by_product;
+                std::vector<std::string> passive_candidate_ids;
+                bool candidate_set_valid = true;
+                std::unordered_set<std::string> active_instrument_ids_snapshot;
+                std::unordered_map<std::string, std::string> active_instrument_by_product_snapshot;
+                std::unordered_map<std::string, std::chrono::steady_clock::time_point>
+                    active_instrument_selected_at_snapshot;
+                {
+                    std::lock_guard<std::mutex> lock(active_instrument_state_mutex);
+                    active_instrument_ids_snapshot = active_instrument_ids;
+                    active_instrument_by_product_snapshot = active_instrument_by_product;
+                    active_instrument_selected_at_snapshot = active_instrument_selected_at;
+                }
+                for (const auto& product_id : dominant_product_ids) {
+                    std::vector<std::string> candidate_ids;
+                    candidate_ids.reserve(received_instrument_meta.size());
+                    for (const auto& snapshot : received_instrument_meta) {
+                        if (!MatchesProductId(snapshot, product_id) ||
+                            !IsPlainFuturesContractId(snapshot.instrument_id, product_id)) {
+                            continue;
+                        }
+                        candidate_ids.push_back(snapshot.instrument_id);
+                    }
+                    std::sort(candidate_ids.begin(), candidate_ids.end());
+                    candidate_ids.erase(
+                        std::unique(candidate_ids.begin(), candidate_ids.end()),
+                        candidate_ids.end());
+                    if (candidate_ids.empty()) {
+                        EmitStructuredLog(&config, "core_engine", "warn",
+                                          "dominant_contract_recheck_candidate_empty",
+                                          {{"product_id", product_id}});
+                        candidate_set_valid = false;
+                        break;
+                    }
+                    for (const auto& candidate_id : candidate_ids) {
+                        if (active_instrument_ids_snapshot.find(candidate_id) ==
+                            active_instrument_ids_snapshot.end()) {
+                            passive_candidate_ids.push_back(candidate_id);
+                        }
+                    }
+                    candidate_ids_by_product.emplace(product_id, std::move(candidate_ids));
+                }
+                if (!candidate_set_valid) {
+                    continue;
+                }
+
+                std::sort(passive_candidate_ids.begin(), passive_candidate_ids.end());
+                passive_candidate_ids.erase(
+                    std::unique(passive_candidate_ids.begin(), passive_candidate_ids.end()),
+                    passive_candidate_ids.end());
+
+                {
+                    std::lock_guard<std::mutex> lock(dominant_recheck_mutex);
+                    dominant_recheck_candidate_ids.clear();
+                    dominant_recheck_candidate_ids.insert(passive_candidate_ids.begin(),
+                                                          passive_candidate_ids.end());
+                    dominant_recheck_candidate_snapshots.clear();
+                }
+
+                dominant_contract_recheck_active.store(true);
+                if (!passive_candidate_ids.empty()) {
+                    if (!ctp_md->Subscribe(passive_candidate_ids)) {
+                        EmitStructuredLog(
+                            &config, "core_engine", "warn",
+                            "dominant_contract_recheck_candidate_subscribe_failed",
+                            {{"candidate_count", std::to_string(passive_candidate_ids.size())}});
+                        dominant_contract_recheck_active.store(false);
+                        {
+                            std::lock_guard<std::mutex> lock(dominant_recheck_mutex);
+                            dominant_recheck_candidate_ids.clear();
+                            dominant_recheck_candidate_snapshots.clear();
+                        }
+                        continue;
+                    }
+
+                    const auto sample_deadline =
+                        std::chrono::steady_clock::now() +
+                        std::chrono::milliseconds(file_config.dominant_contract_wait_ms);
+                    std::unique_lock<std::mutex> lock(dominant_recheck_mutex);
+                    while (dominant_recheck_candidate_snapshots.size() <
+                           passive_candidate_ids.size()) {
+                        if (dominant_recheck_cv.wait_until(lock, sample_deadline) ==
+                            std::cv_status::timeout) {
+                            break;
+                        }
+                        if (dominant_recheck_loop_stop.load()) {
+                            break;
+                        }
+                    }
+                }
+
+                std::vector<std::string> retained_candidate_ids;
+                std::vector<std::string> switched_out_instrument_ids;
+                for (const auto& product_id : dominant_product_ids) {
+                    const auto active_it = active_instrument_by_product_snapshot.find(product_id);
+                    if (active_it == active_instrument_by_product_snapshot.end()) {
+                        continue;
+                    }
+                    const std::string& current_instrument_id = active_it->second;
+                    const auto& candidate_ids = candidate_ids_by_product.at(product_id);
+                    std::vector<MarketSnapshot> observed_snapshots;
+                    observed_snapshots.reserve(candidate_ids.size());
+                    {
+                        std::lock_guard<std::mutex> active_lock(latest_market_snapshot_mutex);
+                        std::lock_guard<std::mutex> candidate_lock(dominant_recheck_mutex);
+                        for (const auto& candidate_id : candidate_ids) {
+                            if (const auto latest_it = latest_market_snapshots.find(candidate_id);
+                                latest_it != latest_market_snapshots.end()) {
+                                observed_snapshots.push_back(latest_it->second);
+                                continue;
+                            }
+                            if (const auto sample_it =
+                                    dominant_recheck_candidate_snapshots.find(candidate_id);
+                                sample_it != dominant_recheck_candidate_snapshots.end()) {
+                                observed_snapshots.push_back(sample_it->second);
+                            }
+                        }
+                    }
+                    if (observed_snapshots.empty()) {
+                        EmitStructuredLog(
+                            &config, "core_engine", "warn",
+                            "dominant_contract_recheck_sample_timeout",
+                            {{"product_id", product_id},
+                             {"wait_ms",
+                              std::to_string(file_config.dominant_contract_wait_ms)}});
+                        continue;
+                    }
+
+                    const bool has_positive_open_interest =
+                        std::any_of(observed_snapshots.begin(), observed_snapshots.end(),
+                                    [](const MarketSnapshot& snapshot) {
+                                        return snapshot.open_interest > 0;
+                                    });
+                    const std::string selection_metric =
+                        has_positive_open_interest ? "open_interest" : "volume";
+                    const auto best_it =
+                        std::max_element(observed_snapshots.begin(), observed_snapshots.end(),
+                                         has_positive_open_interest ? better_by_open_interest
+                                                                    : better_by_volume);
+                    if (best_it == observed_snapshots.end()) {
+                        continue;
+                    }
+
+                    const auto current_snapshot_it = std::find_if(
+                        observed_snapshots.begin(), observed_snapshots.end(),
+                        [&](const MarketSnapshot& snapshot) {
+                            return snapshot.instrument_id == current_instrument_id;
+                        });
+                    if (current_snapshot_it == observed_snapshots.end()) {
+                        EmitStructuredLog(&config, "core_engine", "warn",
+                                          "dominant_contract_recheck_current_snapshot_missing",
+                                          {{"product_id", product_id},
+                                           {"instrument_id", current_instrument_id}});
+                        continue;
+                    }
+
+                    if (best_it->instrument_id == current_instrument_id) {
+                        lead_candidate_by_product.erase(product_id);
+                        lead_windows_by_product.erase(product_id);
+                        continue;
+                    }
+
+                    const double current_metric_value =
+                        metric_value(*current_snapshot_it, selection_metric);
+                    const double candidate_metric_value =
+                        metric_value(*best_it, selection_metric);
+                    double observed_lead_ratio = 0.0;
+                    bool lead_ratio_satisfied = false;
+                    if (current_metric_value > 0.0) {
+                        observed_lead_ratio =
+                            (candidate_metric_value - current_metric_value) / current_metric_value;
+                        lead_ratio_satisfied =
+                            observed_lead_ratio >= file_config.dominant_contract_min_lead_ratio;
+                    } else if (candidate_metric_value > current_metric_value) {
+                        observed_lead_ratio = 1.0;
+                        lead_ratio_satisfied = true;
+                    }
+
+                    if (!lead_ratio_satisfied) {
+                        lead_candidate_by_product.erase(product_id);
+                        lead_windows_by_product.erase(product_id);
+                        continue;
+                    }
+
+                    if (lead_candidate_by_product[product_id] != best_it->instrument_id) {
+                        lead_candidate_by_product[product_id] = best_it->instrument_id;
+                        lead_windows_by_product[product_id] = 1;
+                    } else {
+                        ++lead_windows_by_product[product_id];
+                    }
+
+                    const int window_count = lead_windows_by_product[product_id];
+                    if (window_count < file_config.dominant_contract_min_lead_windows) {
+                        continue;
+                    }
+
+                    const auto selected_at_it =
+                        active_instrument_selected_at_snapshot.find(product_id);
+                    const auto held_for_ms =
+                        selected_at_it == active_instrument_selected_at_snapshot.end()
+                            ? 0LL
+                            : std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::steady_clock::now() - selected_at_it->second)
+                                  .count();
+                    if (held_for_ms < file_config.dominant_contract_min_hold_ms) {
+                        EmitStructuredLog(
+                            &config, "core_engine", "info",
+                            "dominant_contract_switch_suppressed",
+                            {{"product_id", product_id},
+                             {"current_instrument_id", current_instrument_id},
+                             {"candidate_instrument_id", best_it->instrument_id},
+                             {"reason", "min_hold"},
+                             {"selection_metric", selection_metric},
+                             {"current_metric", FormatDouble(current_metric_value)},
+                             {"candidate_metric", FormatDouble(candidate_metric_value)},
+                             {"lead_ratio", FormatDouble(observed_lead_ratio)},
+                             {"window_count", std::to_string(window_count)},
+                             {"held_for_ms", std::to_string(held_for_ms)}});
+                        continue;
+                    }
+
+                    if (!dominant_contract_flat_only_enabled) {
+                        EmitStructuredLog(
+                            &config, "core_engine", "info", "dominant_contract_switch_dry_run",
+                            {{"product_id", product_id},
+                             {"current_instrument_id", current_instrument_id},
+                             {"candidate_instrument_id", best_it->instrument_id},
+                             {"selection_metric", selection_metric},
+                             {"current_metric", FormatDouble(current_metric_value)},
+                             {"candidate_metric", FormatDouble(candidate_metric_value)},
+                             {"lead_ratio", FormatDouble(observed_lead_ratio)},
+                             {"window_count", std::to_string(window_count)},
+                             {"required_windows",
+                              std::to_string(file_config.dominant_contract_min_lead_windows)},
+                             {"observed_count", std::to_string(observed_snapshots.size())}});
+                        continue;
+                    }
+
+                    std::int32_t total_position = 0;
+                    std::int32_t total_frozen = 0;
+                    {
+                        std::lock_guard<std::mutex> lock(ctp_ledger_mutex);
+                        const std::array<PositionDirection, 2> directions = {
+                            PositionDirection::kLong, PositionDirection::kShort};
+                        const std::array<std::string, 2> position_dates = {"today", "yesterday"};
+                        for (const auto direction : directions) {
+                            for (const auto& position_date : position_dates) {
+                                const auto view = ctp_position_ledger.GetPosition(
+                                    account_id, current_instrument_id, direction, position_date);
+                                total_position += view.position;
+                                total_frozen += view.frozen;
+                            }
+                        }
+                    }
+                    if (total_position > 0 || total_frozen > 0) {
+                        EmitStructuredLog(
+                            &config, "core_engine", "info",
+                            "dominant_contract_switch_suppressed",
+                            {{"product_id", product_id},
+                             {"current_instrument_id", current_instrument_id},
+                             {"candidate_instrument_id", best_it->instrument_id},
+                             {"reason", "non_flat_position"},
+                             {"position", std::to_string(total_position)},
+                             {"frozen", std::to_string(total_frozen)},
+                             {"selection_metric", selection_metric},
+                             {"current_metric", FormatDouble(current_metric_value)},
+                             {"candidate_metric", FormatDouble(candidate_metric_value)},
+                             {"lead_ratio", FormatDouble(observed_lead_ratio)},
+                             {"window_count", std::to_string(window_count)}});
+                        continue;
+                    }
+
+                    std::size_t active_order_count = 0;
+                    for (const auto& order : execution_engine.GetActiveOrders()) {
+                        if (order.symbol == current_instrument_id) {
+                            ++active_order_count;
+                        }
+                    }
+                    if (active_order_count > 0U) {
+                        EmitStructuredLog(
+                            &config, "core_engine", "info",
+                            "dominant_contract_switch_suppressed",
+                            {{"product_id", product_id},
+                             {"current_instrument_id", current_instrument_id},
+                             {"candidate_instrument_id", best_it->instrument_id},
+                             {"reason", "active_orders"},
+                             {"active_order_count", std::to_string(active_order_count)},
+                             {"selection_metric", selection_metric},
+                             {"current_metric", FormatDouble(current_metric_value)},
+                             {"candidate_metric", FormatDouble(candidate_metric_value)},
+                             {"lead_ratio", FormatDouble(observed_lead_ratio)},
+                             {"window_count", std::to_string(window_count)}});
+                        continue;
+                    }
+
+                    {
+                        std::lock_guard<std::mutex> lock(active_instrument_state_mutex);
+                        auto current_binding_it = active_instrument_by_product.find(product_id);
+                        if (current_binding_it == active_instrument_by_product.end() ||
+                            current_binding_it->second != current_instrument_id) {
+                            continue;
+                        }
+                        current_binding_it->second = best_it->instrument_id;
+                        active_instrument_selected_at[product_id] =
+                            std::chrono::steady_clock::now();
+                        active_instrument_ids.erase(current_instrument_id);
+                        active_instrument_ids.insert(best_it->instrument_id);
+                        auto instrument_it =
+                            std::find(instruments.begin(), instruments.end(), current_instrument_id);
+                        if (instrument_it != instruments.end()) {
+                            *instrument_it = best_it->instrument_id;
+                        }
+                    }
+                    {
+                        std::lock_guard<std::mutex> lock(latest_market_snapshot_mutex);
+                        latest_market_snapshots[best_it->instrument_id] = *best_it;
+                    }
+                    bar_aggregator.ResetInstrument(best_it->instrument_id);
+                    retained_candidate_ids.push_back(best_it->instrument_id);
+                    switched_out_instrument_ids.push_back(current_instrument_id);
+                    lead_candidate_by_product.erase(product_id);
+                    lead_windows_by_product.erase(product_id);
+
+                    EmitStructuredLog(
+                        &config, "core_engine", "info", "dominant_contract_switched",
+                        {{"product_id", product_id},
+                         {"previous_instrument_id", current_instrument_id},
+                         {"instrument_id", best_it->instrument_id},
+                         {"selection_metric", selection_metric},
+                         {"current_metric", FormatDouble(current_metric_value)},
+                         {"candidate_metric", FormatDouble(candidate_metric_value)},
+                         {"lead_ratio", FormatDouble(observed_lead_ratio)},
+                         {"window_count", std::to_string(window_count)},
+                         {"required_windows",
+                          std::to_string(file_config.dominant_contract_min_lead_windows)},
+                         {"switch_mode", file_config.dominant_contract_switch_mode}});
+
+                    if (!ctp_trader->EnqueueInstrumentMarginRateQuery(next_query_request_id(),
+                                                                      best_it->instrument_id)) {
+                        EmitStructuredLog(
+                            &config, "core_engine", "warn",
+                            "dominant_contract_switch_margin_rate_query_failed",
+                            {{"product_id", product_id},
+                             {"instrument_id", best_it->instrument_id}});
+                    }
+                    if (!ctp_trader->EnqueueInstrumentCommissionRateQuery(next_query_request_id(),
+                                                                          best_it->instrument_id)) {
+                        EmitStructuredLog(
+                            &config, "core_engine", "warn",
+                            "dominant_contract_switch_commission_rate_query_failed",
+                            {{"product_id", product_id},
+                             {"instrument_id", best_it->instrument_id}});
+                    }
+                }
+
+                dominant_contract_recheck_active.store(false);
+                std::vector<std::string> unsubscribe_ids = passive_candidate_ids;
+                for (const auto& retained_candidate_id : retained_candidate_ids) {
+                    unsubscribe_ids.erase(
+                        std::remove(unsubscribe_ids.begin(), unsubscribe_ids.end(),
+                                    retained_candidate_id),
+                        unsubscribe_ids.end());
+                }
+                unsubscribe_ids.insert(unsubscribe_ids.end(), switched_out_instrument_ids.begin(),
+                                       switched_out_instrument_ids.end());
+                std::sort(unsubscribe_ids.begin(), unsubscribe_ids.end());
+                unsubscribe_ids.erase(
+                    std::unique(unsubscribe_ids.begin(), unsubscribe_ids.end()),
+                    unsubscribe_ids.end());
+                if (!unsubscribe_ids.empty() && !ctp_md->Unsubscribe(unsubscribe_ids)) {
+                    EmitStructuredLog(
+                        &config, "core_engine", "warn",
+                        "dominant_contract_recheck_candidate_unsubscribe_failed",
+                        {{"candidate_count", std::to_string(unsubscribe_ids.size())}});
+                }
+                {
+                    std::lock_guard<std::mutex> lock(dominant_recheck_mutex);
+                    dominant_recheck_candidate_ids.clear();
+                    dominant_recheck_candidate_snapshots.clear();
+                }
+            }
+        });
+    }
 
     std::thread execution_maintenance_thread([&]() {
         auto next_cancel_scan = std::chrono::steady_clock::now();
@@ -979,7 +2083,8 @@ int main(int argc, char** argv) {
         }
 
         if (!config.enable_real_api) {
-            for (const auto& instrument_id : instruments) {
+            const auto active_instruments = get_active_instruments_snapshot();
+            for (const auto& instrument_id : active_instruments) {
                 MarketSnapshot snapshot;
                 snapshot.instrument_id = instrument_id;
                 snapshot.last_price = 4500.0 + static_cast<double>(synthetic_tick % 20) * 0.5;
@@ -1006,6 +2111,13 @@ int main(int argc, char** argv) {
     execution_loop_stop.store(true);
     if (execution_maintenance_thread.joinable()) {
         execution_maintenance_thread.join();
+    }
+    dominant_recheck_loop_stop.store(true);
+    dominant_contract_recheck_active.store(false);
+    instrument_meta_cv.notify_all();
+    dominant_recheck_cv.notify_all();
+    if (dominant_recheck_thread.joinable()) {
+        dominant_recheck_thread.join();
     }
     query_loop_stop.store(true);
     if (query_poll_thread.joinable()) {

@@ -52,6 +52,7 @@ class KamaTrendStrategy final : public ISubStrategy,
     int std_period_{20};
     double kama_filter_{0.5};
     double risk_per_trade_pct_{0.01};
+    double fixed_r_{1000.0};
     int default_volume_{1};
     std::string stop_loss_mode_{"trailing_atr"};
     int stop_loss_atr_period_{14};

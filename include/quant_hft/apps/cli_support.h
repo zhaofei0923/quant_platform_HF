@@ -4,6 +4,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -16,6 +17,12 @@ using ArgMap = std::unordered_map<std::string, std::string>;
 struct ResolvedConfigPath {
     std::string path;
     bool used_default{false};
+};
+
+struct BacktestOutputPaths {
+    std::string output_json;
+    std::string output_md;
+    std::string export_csv_dir;
 };
 
 inline ArgMap ParseArgs(int argc, char** argv) {
@@ -52,6 +59,41 @@ inline std::string GetArg(const ArgMap& args,
 
 inline bool HasArg(const ArgMap& args, const std::string& key) {
     return args.find(key) != args.end();
+}
+
+inline std::string GetArgAny(const ArgMap& args,
+                             std::initializer_list<const char*> keys,
+                             const std::string& fallback = "") {
+    for (const char* key : keys) {
+        const auto it = args.find(key);
+        if (it != args.end()) {
+            return it->second;
+        }
+    }
+    return fallback;
+}
+
+inline BacktestOutputPaths ResolveBacktestOutputPaths(const ArgMap& args) {
+    BacktestOutputPaths paths;
+    paths.output_json = GetArgAny(args, {"output_json", "result_json", "report_json"});
+    paths.output_md = GetArgAny(args, {"output_md", "report_md"});
+    paths.export_csv_dir = GetArgAny(args, {"export_csv_dir", "export-csv-dir"});
+
+    const std::string output_root = GetArgAny(args, {"output", "output_dir", "output-dir"});
+    if (!output_root.empty()) {
+        const std::filesystem::path base(output_root);
+        if (paths.output_json.empty()) {
+            paths.output_json = (base / "result.json").string();
+        }
+        if (paths.output_md.empty()) {
+            paths.output_md = (base / "report.md").string();
+        }
+        if (paths.export_csv_dir.empty()) {
+            paths.export_csv_dir = (base / "csv").string();
+        }
+    }
+
+    return paths;
 }
 
 inline bool WriteTextFile(const std::string& path, const std::string& content, std::string* error) {

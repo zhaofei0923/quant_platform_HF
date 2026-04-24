@@ -257,6 +257,69 @@ TEST(CtpConfigLoaderTest, LoadsStrategyEngineKeysAndSplitsLists) {
     std::filesystem::remove(config_path);
 }
 
+TEST(CtpConfigLoaderTest, LoadsDominantRuntimeRecheckKeys) {
+    const auto config_path = WriteTempConfig(
+        "ctp:\n"
+        "  environment: sim\n"
+        "  is_production_mode: false\n"
+        "  broker_id: \"9999\"\n"
+        "  user_id: \"191202\"\n"
+        "  investor_id: \"191202\"\n"
+        "  market_front: \"tcp://127.0.0.1:40011\"\n"
+        "  trader_front: \"tcp://127.0.0.1:40001\"\n"
+        "  password: \"plain-secret\"\n"
+        "  product_ids: \"c,rb\"\n"
+        "  active_contract_mode: \"dominant_open_interest\"\n"
+        "  dominant_contract_wait_ms: 4000\n"
+        "  dominant_contract_recheck_interval_ms: 60000\n"
+        "  dominant_contract_min_lead_ratio: 0.15\n"
+        "  dominant_contract_min_lead_windows: 4\n"
+        "  dominant_contract_min_hold_ms: 900000\n"
+        "  dominant_contract_switch_mode: \"flat_only\"\n");
+
+    CtpFileConfig config;
+    std::string error;
+    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error)) << error;
+
+    EXPECT_EQ(config.product_ids.size(), 2U);
+    EXPECT_EQ(config.active_contract_mode, "dominant_open_interest");
+    EXPECT_EQ(config.dominant_contract_wait_ms, 4000);
+    EXPECT_EQ(config.dominant_contract_recheck_interval_ms, 60000);
+    EXPECT_DOUBLE_EQ(config.dominant_contract_min_lead_ratio, 0.15);
+    EXPECT_EQ(config.dominant_contract_min_lead_windows, 4);
+    EXPECT_EQ(config.dominant_contract_min_hold_ms, 900000);
+    EXPECT_EQ(config.dominant_contract_switch_mode, "flat_only");
+
+    std::filesystem::remove(config_path);
+}
+
+TEST(CtpConfigLoaderTest, LoadsDominantContractSelectionKeys) {
+    const auto config_path = WriteTempConfig(
+        "ctp:\n"
+        "  environment: sim\n"
+        "  is_production_mode: false\n"
+        "  broker_id: \"9999\"\n"
+        "  user_id: \"191202\"\n"
+        "  investor_id: \"191202\"\n"
+        "  market_front: \"tcp://127.0.0.1:40011\"\n"
+        "  trader_front: \"tcp://127.0.0.1:40001\"\n"
+        "  password: \"plain-secret\"\n"
+        "  product_ids: \"c\"\n"
+        "  active_contract_mode: \"dominant_open_interest\"\n"
+        "  dominant_contract_wait_ms: 3500\n");
+
+    CtpFileConfig config;
+    std::string error;
+    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error)) << error;
+
+    ASSERT_EQ(config.product_ids.size(), 1U);
+    EXPECT_EQ(config.product_ids[0], "c");
+    EXPECT_EQ(config.active_contract_mode, "dominant_open_interest");
+    EXPECT_EQ(config.dominant_contract_wait_ms, 3500);
+
+    std::filesystem::remove(config_path);
+}
+
 TEST(CtpConfigLoaderTest, LoadsStrategyStateAndMetricsConfigKeys) {
     const auto config_path = WriteTempConfig(
         "ctp:\n"

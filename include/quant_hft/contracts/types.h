@@ -212,6 +212,7 @@ struct MarketSnapshot {
     std::int64_t bid_volume_1{0};
     std::int64_t ask_volume_1{0};
     std::int64_t volume{0};
+    std::int64_t open_interest{0};
     double settlement_price{0.0};
     double average_price_raw{0.0};
     double average_price_norm{0.0};

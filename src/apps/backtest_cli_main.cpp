@@ -27,21 +27,17 @@ int main(int argc, char** argv) {
     const std::string json = RenderBacktestJson(result);
     const std::string markdown = RenderBacktestMarkdown(result);
 
-    const std::string output_json =
-        detail::GetArgAny(args, {"output_json", "result_json", "report_json"});
-    const std::string output_md = detail::GetArgAny(args, {"output_md", "report_md"});
-    const std::string export_csv_dir =
-        detail::GetArgAny(args, {"export_csv_dir", "export-csv-dir"});
+    const BacktestOutputPaths output_paths = ResolveBacktestOutputPaths(args);
 
-    if (!WriteTextFile(output_json, json, &error)) {
+    if (!WriteTextFile(output_paths.output_json, json, &error)) {
         std::cerr << "backtest_cli: " << error << '\n';
         return 1;
     }
-    if (!WriteTextFile(output_md, markdown, &error)) {
+    if (!WriteTextFile(output_paths.output_md, markdown, &error)) {
         std::cerr << "backtest_cli: " << error << '\n';
         return 1;
     }
-    if (!ExportBacktestCsv(result, export_csv_dir, &error)) {
+    if (!ExportBacktestCsv(result, output_paths.export_csv_dir, &error)) {
         std::cerr << "backtest_cli: " << error << '\n';
         return 1;
     }

@@ -73,8 +73,9 @@ ctp:
   audit_cold_days: 180
 
   # --- strategy factory ---
-  strategy_factory: "demo"
-  # strategy_composite_config: "../strategies/composite_strategy.yaml"  # required when strategy_factory=composite
+  strategy_ids: "kama_trend_production"
+  strategy_factory: "composite"
+  strategy_composite_config: "configs/strategies/main_backtest_production.yaml"
   connect_timeout_ms: 10000
   reconnect_max_attempts: 8
   reconnect_initial_backoff_ms: 500

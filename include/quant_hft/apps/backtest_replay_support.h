@@ -1763,8 +1763,8 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
 
     BacktestCliSpec spec;
     const bool has_symbols = detail::HasArgAny(args, {"symbols", "symbol"});
-    const bool has_start_date = detail::HasArgAny(args, {"start_date", "start-date"});
-    const bool has_end_date = detail::HasArgAny(args, {"end_date", "end-date"});
+    const bool has_start_date = detail::HasArgAny(args, {"start_date", "start-date", "start"});
+    const bool has_end_date = detail::HasArgAny(args, {"end_date", "end-date", "end"});
     const bool has_strategy_factory =
         detail::HasArgAny(args, {"strategy_factory", "strategy-factory"});
     const bool has_strategy_composite_config =
@@ -1775,8 +1775,7 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
     const bool has_product_config_path =
         detail::HasArgAny(args, {"product_config_path", "product-config-path"});
     const bool has_contract_expiry_calendar_path =
-        detail::HasArgAny(args, {"contract_expiry_calendar_path",
-                                 "contract-expiry-calendar-path"});
+        detail::HasArgAny(args, {"contract_expiry_calendar_path", "contract-expiry-calendar-path"});
     const bool has_max_loss_percent =
         detail::HasArgAny(args, {"max_loss_percent", "max-loss-percent"});
 
@@ -1803,9 +1802,10 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
         detail::GetArgAny(args, {"product_series_mode", "product-series-mode"}, "raw"));
     spec.rollover_price_mode = detail::ToLower(
         detail::GetArgAny(args, {"rollover_price_mode", "rollover-price-mode"}, "bbo"));
-    spec.start_date =
-        detail::NormalizeTradingDay(detail::GetArgAny(args, {"start_date", "start-date"}));
-    spec.end_date = detail::NormalizeTradingDay(detail::GetArgAny(args, {"end_date", "end-date"}));
+    spec.start_date = detail::NormalizeTradingDay(
+        detail::GetArgAny(args, {"start_date", "start-date", "start"}));
+    spec.end_date =
+        detail::NormalizeTradingDay(detail::GetArgAny(args, {"end_date", "end-date", "end"}));
     spec.wal_path = detail::GetArgAny(args, {"wal_path", "wal-path"});
     spec.account_id = detail::GetArgAny(args, {"account_id", "account-id"}, "sim-account");
     spec.run_id = detail::GetArgAny(args, {"run_id", "run-id"},
@@ -1813,10 +1813,12 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
     spec.initial_equity = 1'000'000.0;
     spec.product_config_path =
         detail::GetArgAny(args, {"product_config_path", "product-config-path"});
-    spec.contract_expiry_calendar_path = detail::GetArgAny(
-        args, {"contract_expiry_calendar_path", "contract-expiry-calendar-path"});
-    spec.strategy_main_config_path =
-        detail::GetArgAny(args, {"strategy_main_config_path", "strategy-main-config-path"});
+    spec.contract_expiry_calendar_path =
+        detail::GetArgAny(args, {"contract_expiry_calendar_path", "contract-expiry-calendar-path"});
+    spec.strategy_main_config_path = detail::GetArgAny(
+        args,
+        {"strategy_main_config_path", "strategy-main-config-path", "main_config",
+         "main-config", "composite_config", "composite-config"});
     spec.strategy_factory =
         detail::ToLower(detail::GetArgAny(args, {"strategy_factory", "strategy-factory"}, "demo"));
     spec.strategy_composite_config =
@@ -1971,8 +1973,8 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
         spec.emit_position_history = parsed;
     }
     {
-        const std::string raw_streaming =
-            detail::GetArgAny(args, {"streaming", "streaming_mode", "streaming-mode"}, "true");
+        const std::string raw_streaming = detail::GetArgAny(
+            args, {"streaming", "streaming_mode", "streaming-mode"}, "false");
         bool parsed = true;
         if (!detail::ParseBool(raw_streaming, &parsed)) {
             if (error != nullptr) {
@@ -2077,7 +2079,8 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
     if (spec.rollover_mode == "expiry_close") {
         if (spec.contract_expiry_calendar_path.empty()) {
             if (error != nullptr) {
-                *error = "contract_expiry_calendar_path is required when rollover_mode=expiry_close";
+                *error =
+                    "contract_expiry_calendar_path is required when rollover_mode=expiry_close";
             }
             return false;
         }
@@ -2102,8 +2105,7 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
         if (!IsParquetProductChainSelection(spec.symbols) ||
             ExtractSingleProductSymbol(spec.symbols).empty()) {
             if (error != nullptr) {
-                *error =
-                    "rollover_mode=expiry_close requires a single product symbol selection";
+                *error = "rollover_mode=expiry_close requires a single product symbol selection";
             }
             return false;
         }
@@ -3637,8 +3639,8 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     std::size_t expiry_active_contract_index = 0;
     std::unordered_set<std::string> expiry_retired_contracts;
     if (expiry_close_mode) {
-        if (!LoadContractExpiryCalendar(spec.contract_expiry_calendar_path, &contract_expiry_calendar,
-                                        error)) {
+        if (!LoadContractExpiryCalendar(spec.contract_expiry_calendar_path,
+                                        &contract_expiry_calendar, error)) {
             return false;
         }
         expiry_close_product_symbol = ExtractSingleProductSymbol(spec.symbols);
@@ -4224,6 +4226,8 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     std::unordered_map<std::string, detail::ReplayBarTickContext> replay_bar_contexts;
     std::unordered_map<std::string, std::vector<detail::PendingBarIntent>>
         pending_bar_intents_by_instrument;
+    std::unordered_map<std::string, std::vector<detail::PendingBarIntent>>
+        pending_tick_intents_by_instrument;
 
     auto trading_day_from_tick = [&](const ReplayTick& tick) {
         const std::string normalized = detail::NormalizeTradingDay(tick.trading_day);
@@ -4316,8 +4320,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             return false;
         } catch (...) {
             if (error != nullptr) {
-                *error =
-                    "strategy initialize failed during expiry_close reset: unknown exception";
+                *error = "strategy initialize failed during expiry_close reset: unknown exception";
             }
             return false;
         }
@@ -4334,11 +4337,10 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         return true;
     };
 
-    auto process_deterministic_intent = [&](const SignalIntent& intent,
-                                            const detail::ReplaySignalTiming& signal_timing,
-                                            const ReplayTick& execution_tick, double fill_price,
-                                            MarketRegime market_regime,
-                                            const std::string& signal_type_label) -> bool {
+    auto process_deterministic_intent =
+        [&](const SignalIntent& intent, const detail::ReplaySignalTiming& signal_timing,
+            const ReplayTick& execution_tick, double fill_price, MarketRegime market_regime,
+            const std::string& signal_type_label) -> bool {
         ++intents_processed;
         const EpochNanos signal_ts_ns =
             signal_timing.signal_ts_ns > 0 ? signal_timing.signal_ts_ns : execution_tick.ts_ns;
@@ -4523,9 +4525,8 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             trade.realized_pnl = realized_delta;
             trade.risk_budget_r = calculate_risk_budget_r(intent, equity_before_fill);
             trade.strategy_id = intent.strategy_id;
-            trade.signal_type =
-                signal_type_label.empty() ? SignalTypeToString(intent.signal_type)
-                                          : signal_type_label;
+            trade.signal_type = signal_type_label.empty() ? SignalTypeToString(intent.signal_type)
+                                                          : signal_type_label;
             trade.regime_at_entry = MarketRegimeToString(market_regime);
             trade.exchange = exchange_from_tick(execution_tick);
             populate_trade_timing(&trade, signal_timing, execution_tick);
@@ -4562,6 +4563,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     auto reset_expiry_close_session = [&]() -> bool {
         replay_bar_contexts.clear();
         pending_bar_intents_by_instrument.clear();
+        pending_tick_intents_by_instrument.clear();
         regime_detectors.clear();
         timeframe_fanout = detail::ReplayTimeframeFanout(subscribed_timeframes);
         product_series_adjuster = ProductSeriesAdjuster(enable_product_series_adjustment);
@@ -4582,7 +4584,8 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     auto process_expiry_close_tick = [&](const ReplayTick& execution_tick) -> bool {
         const std::string canonical_instrument =
             CanonicalContractInstrumentId(execution_tick.instrument_id);
-        const ContractExpiryEntry* expiry_entry = contract_expiry_calendar.Find(canonical_instrument);
+        const ContractExpiryEntry* expiry_entry =
+            contract_expiry_calendar.Find(canonical_instrument);
         if (expiry_entry == nullptr) {
             if (error != nullptr) {
                 *error = "missing contract expiry calendar entry for instrument_id: " +
@@ -4597,8 +4600,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             const Side close_side = state.net_position > 0 ? Side::kSell : Side::kBuy;
             const auto [close_price, close_slip] = ComputeRolloverPrice(
                 close_side, execution_tick.last_price, execution_tick.bid_price_1,
-                execution_tick.ask_price_1, spec.rollover_price_mode,
-                spec.rollover_slippage_bps);
+                execution_tick.ask_price_1, spec.rollover_price_mode, spec.rollover_slippage_bps);
 
             SignalIntent expiry_intent;
             expiry_intent.strategy_id =
@@ -4614,14 +4616,14 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             expiry_intent.offset = OffsetFlag::kClose;
             expiry_intent.volume = close_volume;
             expiry_intent.ts_ns = execution_tick.ts_ns;
-            expiry_intent.trace_id = "expiry-close-" + canonical_instrument + "-" +
-                                     std::to_string(execution_tick.ts_ns);
+            expiry_intent.trace_id =
+                "expiry-close-" + canonical_instrument + "-" + std::to_string(execution_tick.ts_ns);
 
             mark_price[execution_tick.instrument_id] = execution_tick.last_price;
             rollover_slippage_cost += close_slip * static_cast<double>(close_volume);
-            if (!process_deterministic_intent(expiry_intent, signal_timing_from_tick(execution_tick),
-                                              execution_tick, close_price, MarketRegime::kUnknown,
-                                              "expiry_close")) {
+            if (!process_deterministic_intent(
+                    expiry_intent, signal_timing_from_tick(execution_tick), execution_tick,
+                    close_price, MarketRegime::kUnknown, "expiry_close")) {
                 return false;
             }
         }
@@ -4639,10 +4641,63 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                                     MarketRegime market_regime) -> bool {
         const detail::ReplaySignalTiming timing = signal_timing_from_tick(execution_tick);
         for (const SignalIntent& intent : intents) {
+            if (intent.signal_type == SignalType::kStopLoss ||
+                intent.signal_type == SignalType::kTakeProfit) {
+                auto& pending_list = pending_tick_intents_by_instrument[intent.instrument_id];
+                const bool has_pending_close =
+                    std::any_of(pending_list.begin(), pending_list.end(),
+                                [](const detail::PendingBarIntent& pending) {
+                                    return pending.intent.offset == OffsetFlag::kClose;
+                                });
+                if (has_pending_close) {
+                    continue;
+                }
+                detail::PendingBarIntent pending;
+                pending.intent = intent;
+                pending.timing = timing;
+                pending.market_regime = market_regime;
+                pending_list.push_back(std::move(pending));
+                continue;
+            }
             if (!process_deterministic_intent(intent, timing, execution_tick, fill_price,
                                               market_regime, "")) {
                 return false;
             }
+        }
+        return true;
+    };
+
+    auto process_pending_tick_intents = [&](const ReplayTick& execution_tick) -> bool {
+        const auto pending_it =
+            pending_tick_intents_by_instrument.find(execution_tick.instrument_id);
+        if (pending_it == pending_tick_intents_by_instrument.end()) {
+            return true;
+        }
+
+        std::vector<detail::PendingBarIntent> remaining;
+        remaining.reserve(pending_it->second.size());
+        for (const detail::PendingBarIntent& pending : pending_it->second) {
+            if (execution_tick.ts_ns <= pending.timing.signal_ts_ns) {
+                remaining.push_back(pending);
+                continue;
+            }
+            if (pending.intent.offset == OffsetFlag::kClose) {
+                const auto pos_it = position_state.find(pending.intent.instrument_id);
+                if (pos_it == position_state.end() || pos_it->second.net_position == 0) {
+                    continue;
+                }
+            }
+            if (!process_deterministic_intent(pending.intent, pending.timing, execution_tick,
+                                              execution_tick.last_price, pending.market_regime,
+                                              "")) {
+                return false;
+            }
+        }
+
+        if (remaining.empty()) {
+            pending_tick_intents_by_instrument.erase(pending_it);
+        } else {
+            pending_it->second = std::move(remaining);
         }
         return true;
     };
@@ -4937,7 +4992,8 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 continue;
             }
 
-            const ContractExpiryEntry* expiry_entry = contract_expiry_calendar.Find(active_contract);
+            const ContractExpiryEntry* expiry_entry =
+                contract_expiry_calendar.Find(active_contract);
             if (expiry_entry == nullptr) {
                 if (error != nullptr) {
                     *error = "missing contract expiry calendar entry for instrument_id: " +
@@ -4966,6 +5022,9 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         mark_price[tick.instrument_id] = tick.last_price;
         if (spec.deterministic_fills) {
             if (!process_pending_bar_intents(tick)) {
+                return false;
+            }
+            if (!process_pending_tick_intents(tick)) {
                 return false;
             }
         }
@@ -5051,6 +5110,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         return false;
     }
     pending_bar_intents_by_instrument.clear();
+    pending_tick_intents_by_instrument.clear();
 
     if (emit_indicator_trace_csv && !indicator_trace_csv_writer.Close(error)) {
         return false;

@@ -25,7 +25,8 @@ StateSnapshot7D MakeBarState(const std::string& instrument, double high, double 
     return state;
 }
 
-AtomicTickSnapshot MakeTick(const std::string& instrument, double last_price, EpochNanos ts_ns = 0) {
+AtomicTickSnapshot MakeTick(const std::string& instrument, double last_price,
+                            EpochNanos ts_ns = 0) {
     AtomicTickSnapshot tick;
     tick.instrument_id = instrument;
     tick.last_price = last_price;
@@ -135,7 +136,7 @@ TEST(AtomicStrategiesTest, KamaTrendStrategyFallsBackToDefaultVolumeWhenMultipli
     EXPECT_EQ(signals.front().volume, 3);
 }
 
-TEST(AtomicStrategiesTest, KamaTrendStrategySkipsOpenWhenRiskBudgetTooSmall) {
+TEST(AtomicStrategiesTest, KamaTrendStrategyUsesMinimumVolumeWhenRiskBudgetTooSmall) {
     KamaTrendStrategy strategy;
     strategy.Init(MakeKamaParams());
 
@@ -145,7 +146,50 @@ TEST(AtomicStrategiesTest, KamaTrendStrategySkipsOpenWhenRiskBudgetTooSmall) {
 
     const std::vector<SignalIntent> signals =
         FeedCloses(&strategy, "IF2406", &ctx, {100, 101, 102, 103, 104, 105, 106, 107});
-    EXPECT_TRUE(signals.empty());
+    ASSERT_EQ(signals.size(), 1U);
+    EXPECT_EQ(signals.front().signal_type, SignalType::kOpen);
+    EXPECT_EQ(signals.front().volume, 1);
+}
+
+TEST(AtomicStrategiesTest, KamaTrendStrategyProductionParamsRequireKamaSideAndMinimumVolume) {
+    KamaTrendStrategy strategy;
+    strategy.Init({
+        {"id", "kama_trend_1"},
+        {"er_period", "10"},
+        {"fast_period", "2"},
+        {"slow_period", "30"},
+        {"std_period", "10"},
+        {"kama_filter", "1.0"},
+        {"risk_per_trade_pct", "0.005"},
+        {"default_volume", "1"},
+        {"stop_loss_mode", "trailing_atr"},
+        {"stop_loss_atr_period", "14"},
+        {"stop_loss_atr_multiplier", "3.5"},
+        {"take_profit_mode", "atr_target"},
+        {"take_profit_atr_period", "14"},
+        {"take_profit_atr_multiplier", "30.0"},
+        {"adx_period", "14"},
+    });
+
+    AtomicStrategyContext ctx = MakeContext("acct");
+    ctx.account_equity = 1000.0;
+    ctx.contract_multipliers["IF2406"] = 10.0;
+
+    const std::vector<double> closes = {100.0, 100.0, 100.0, 100.0, 100.0,  100.0,  100.0,
+                                        100.0, 100.0, 100.0, 100.0, 100.0,  100.0,  100.0,
+                                        100.0, 140.0, 196.0, 274.4, 384.16, 537.824};
+    const std::vector<SignalIntent> signals = FeedCloses(&strategy, "IF2406", &ctx, closes);
+    ASSERT_EQ(signals.size(), 1U);
+    EXPECT_EQ(signals.front().signal_type, SignalType::kOpen);
+    EXPECT_EQ(signals.front().side, Side::kBuy);
+    EXPECT_EQ(signals.front().volume, 1);
+
+    auto* provider = dynamic_cast<IAtomicIndicatorTraceProvider*>(&strategy);
+    ASSERT_NE(provider, nullptr);
+    const auto snapshot = provider->IndicatorSnapshot();
+    ASSERT_TRUE(snapshot.has_value());
+    ASSERT_TRUE(snapshot->kama.has_value());
+    EXPECT_GT(closes.back(), snapshot->kama.value());
 }
 
 TEST(AtomicStrategiesTest, KamaTrendStrategyTrailingStopTightensOnBarsAndTriggersOnTick) {
@@ -288,8 +332,8 @@ TEST(AtomicStrategiesTest, TrendStrategyUsesAnalysisBarForSignalButKeepsRawLimit
 
     for (std::size_t index = 0; index < 4; ++index) {
         const double close = 100.0 + static_cast<double>(index);
-        (void)strategy.OnState(
-            MakeBarState("rb2405", close + 1.0, close - 1.0, close, index + 1), ctx);
+        (void)strategy.OnState(MakeBarState("rb2405", close + 1.0, close - 1.0, close, index + 1),
+                               ctx);
     }
 
     StateSnapshot7D rollover_state;

@@ -10,6 +10,10 @@ params:
   kama_filter: 1.0
   allowed_regimes: [kStrongTrend, kWeakTrend]
   risk_per_trade_pct: 0.005
+  daily_max_loss_R: 3
+  R_fixed: 1000
+  max_consecutive_losses: 3
+  no_open_minutes_after_session_start: 30
   default_volume: 1
   allow_reverse_open: false
   forbid_open_windows: "21:00-23:00,09:00-09:30"

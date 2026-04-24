@@ -94,6 +94,19 @@ class CompositeStrategy : public ILiveStrategy {
         std::int32_t timezone_offset_hours{8};
         std::vector<TimeWindow> forbid_open_windows;
         std::vector<TimeWindow> force_close_windows;
+        std::vector<TimeWindow> session_start_no_open_windows;
+        double daily_max_loss_r{0.0};
+        double fixed_r{1000.0};
+        std::int32_t max_consecutive_losses{0};
+    };
+
+    struct StrategyRiskGuardState {
+        bool has_daily_day{false};
+        std::int64_t daily_day_index{0};
+        double daily_realized_pnl{0.0};
+        std::int32_t consecutive_losses{0};
+        bool has_loss_pause_day{false};
+        std::int64_t loss_pause_day_index{0};
     };
 
     struct TimeFilterSlot {
@@ -121,6 +134,9 @@ class CompositeStrategy : public ILiveStrategy {
     bool IsOpenSignalAllowedByRegime(const SubStrategySlot& slot, MarketRegime regime) const;
     bool AllowOpeningByTimeFilters(EpochNanos now_ns, std::int32_t timeframe_minutes);
     bool IsOpenSignalBlockedByStrategyWindows(const SubStrategySlot& slot, EpochNanos now_ns) const;
+    bool IsOpenSignalBlockedByRiskGuards(const SubStrategySlot& slot, EpochNanos now_ns);
+    void ApplyRiskGuardRealizedPnl(const std::string& strategy_id, EpochNanos ts_ns,
+                                   double realized_pnl);
     std::vector<SignalIntent> ApplyNonOpenSignalGate(const std::vector<SignalIntent>& signals);
     OpeningGateResult ApplyOpeningGate(const std::vector<SignalIntent>& opening_signals,
                                        const StateSnapshot7D& state);
@@ -152,6 +168,7 @@ class CompositeStrategy : public ILiveStrategy {
     std::unordered_map<std::string, std::int32_t> last_filled_volume_by_order_;
     std::unordered_map<std::string, std::string> position_owner_by_instrument_;
     std::unordered_map<std::string, std::string> active_force_close_window_by_instrument_;
+    std::unordered_map<std::string, StrategyRiskGuardState> risk_guard_state_by_strategy_;
 };
 
 bool RegisterCompositeStrategy(std::string* error = nullptr);

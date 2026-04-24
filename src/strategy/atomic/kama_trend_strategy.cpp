@@ -4,25 +4,116 @@
 #include <cctype>
 #include <cmath>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 
 #include "atomic_param_parsing.h"
+#include "quant_hft/core/structured_log.h"
 #include "quant_hft/strategy/atomic_factory.h"
 
 namespace quant_hft {
 namespace {
 
 std::string NormalizeMode(std::string mode) {
-    std::transform(mode.begin(), mode.end(), mode.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
+    std::transform(mode.begin(), mode.end(), mode.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     return mode;
 }
 
 std::int32_t ResolvePosition(const AtomicStrategyContext& ctx, const std::string& instrument_id) {
     const auto position_it = ctx.net_positions.find(instrument_id);
     return position_it == ctx.net_positions.end() ? 0 : position_it->second;
+}
+
+std::string FormatDouble(double value) {
+    if (!std::isfinite(value)) {
+        return "nan";
+    }
+    std::ostringstream out;
+    out << value;
+    return out.str();
+}
+
+std::string SideToString(Side side) {
+    return side == Side::kBuy ? "buy" : "sell";
+}
+
+std::string ExtractSymbolPrefixLowerLocal(const std::string& instrument_id) {
+    std::string prefix;
+    for (unsigned char ch : instrument_id) {
+        if (std::isalpha(ch) == 0) {
+            break;
+        }
+        prefix.push_back(static_cast<char>(std::tolower(ch)));
+    }
+    return prefix;
+}
+
+std::string ToUpperLocal(std::string text) {
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+    return text;
+}
+
+std::optional<double> ResolveContractMultiplier(const AtomicStrategyContext& ctx,
+                                                const std::string& instrument_id) {
+    std::optional<double> contract_multiplier;
+    auto maybe_set_multiplier = [&](const std::string& key) {
+        if (key.empty() || contract_multiplier.has_value()) {
+            return;
+        }
+        const auto multiplier_it = ctx.contract_multipliers.find(key);
+        if (multiplier_it != ctx.contract_multipliers.end() &&
+            std::isfinite(multiplier_it->second) && multiplier_it->second > 0.0) {
+            contract_multiplier = multiplier_it->second;
+        }
+    };
+
+    maybe_set_multiplier(instrument_id);
+    const std::string symbol_prefix = ExtractSymbolPrefixLowerLocal(instrument_id);
+    maybe_set_multiplier(symbol_prefix);
+    maybe_set_multiplier(ToUpperLocal(symbol_prefix));
+    return contract_multiplier;
+}
+
+CtpRuntimeConfig BuildLogRuntime(const AtomicStrategyContext& ctx) {
+    CtpRuntimeConfig runtime;
+    runtime.log_level = ctx.log_level;
+    runtime.log_sink = ctx.log_sink;
+    return runtime;
+}
+
+void EmitKamaStrategyLog(const AtomicStrategyContext& ctx,
+                         const std::string& level,
+                         const std::string& event,
+                         const LogFields& fields) {
+    const CtpRuntimeConfig runtime = BuildLogRuntime(ctx);
+    EmitStructuredLog(&runtime, "kama_trend_strategy", level, event, fields);
+}
+
+double ComputePositionPnl(const AtomicStrategyContext& ctx,
+                          const std::string& instrument_id,
+                          std::int32_t position,
+                          double price) {
+    const auto avg_price_it = ctx.avg_open_prices.find(instrument_id);
+    if (avg_price_it == ctx.avg_open_prices.end() || !std::isfinite(avg_price_it->second) ||
+        !std::isfinite(price)) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    const double multiplier = ResolveContractMultiplier(ctx, instrument_id).value_or(1.0);
+    const double signed_points = (price - avg_price_it->second) * (position > 0 ? 1.0 : -1.0);
+    return signed_points * multiplier * static_cast<double>(std::abs(position));
+}
+
+double ResolveFixedR(const AtomicParams& params) {
+    for (const char* key : {"R_fixed", "r_fixed", "fixed_R", "fixed_r"}) {
+        const auto it = params.find(key);
+        if (it != params.end()) {
+            return atomic_internal::ParseDouble(it->second, key);
+        }
+    }
+    return 1000.0;
 }
 
 }  // namespace
@@ -35,12 +126,12 @@ void KamaTrendStrategy::Init(const AtomicParams& params) {
     std_period_ = atomic_internal::GetInt(params, "std_period", 20);
     kama_filter_ = atomic_internal::GetDouble(params, "kama_filter", 0.5);
     risk_per_trade_pct_ = atomic_internal::GetDouble(params, "risk_per_trade_pct", 0.01);
+    fixed_r_ = ResolveFixedR(params);
     default_volume_ = atomic_internal::GetInt(params, "default_volume", 1);
     stop_loss_mode_ =
         NormalizeMode(atomic_internal::GetString(params, "stop_loss_mode", "trailing_atr"));
     stop_loss_atr_period_ = atomic_internal::GetInt(params, "stop_loss_atr_period", 14);
-    stop_loss_atr_multiplier_ =
-        atomic_internal::GetDouble(params, "stop_loss_atr_multiplier", 2.0);
+    stop_loss_atr_multiplier_ = atomic_internal::GetDouble(params, "stop_loss_atr_multiplier", 2.0);
     take_profit_mode_ =
         NormalizeMode(atomic_internal::GetString(params, "take_profit_mode", "atr_target"));
     take_profit_atr_period_ = atomic_internal::GetInt(params, "take_profit_atr_period", 14);
@@ -60,6 +151,9 @@ void KamaTrendStrategy::Init(const AtomicParams& params) {
     if (!std::isfinite(risk_per_trade_pct_) || risk_per_trade_pct_ <= 0.0 ||
         risk_per_trade_pct_ > 1.0) {
         throw std::invalid_argument("KamaTrendStrategy risk_per_trade_pct must be in (0, 1]");
+    }
+    if (!std::isfinite(fixed_r_) || fixed_r_ <= 0.0) {
+        throw std::invalid_argument("KamaTrendStrategy R_fixed must be positive");
     }
     if (default_volume_ <= 0) {
         throw std::invalid_argument("KamaTrendStrategy default_volume must be positive");
@@ -219,7 +313,9 @@ std::vector<SignalIntent> KamaTrendStrategy::OnState(const StateSnapshot7D& stat
         const int diff_2nd = ClassifyDiff(kama_t - kama_recent_[1], threshold);
         const int diff_3rd = ClassifyDiff(kama_t - kama_recent_[0], threshold);
         const int trend_sum = diff_1st + diff_2nd + diff_3rd;
-        if (trend_sum == 3 || trend_sum == -3) {
+        const bool price_on_kama_side = (trend_sum == 3 && analysis_close > kama_t) ||
+                                        (trend_sum == -3 && analysis_close < kama_t);
+        if (price_on_kama_side) {
             const int volume =
                 ComputeOrderVolume(ctx, state.instrument_id, last_stop_atr_.value_or(std::nan("")));
             if (volume > 0) {
@@ -231,6 +327,17 @@ std::vector<SignalIntent> KamaTrendStrategy::OnState(const StateSnapshot7D& stat
                 entry_signal.volume = volume;
                 entry_signal.limit_price = state.bar_close;
                 entry_signal.ts_ns = state.ts_ns;
+                EmitKamaStrategyLog(
+                    ctx, "info", "open_signal_emitted",
+                    {{"strategy_id", id_},
+                     {"event_type", "open_signal"},
+                     {"event_ts_ns", std::to_string(state.ts_ns)},
+                     {"instrument_id", state.instrument_id},
+                     {"side", SideToString(entry_signal.side)},
+                     {"volume", std::to_string(volume)},
+                     {"entry_price", FormatDouble(entry_signal.limit_price)},
+                     {"kama_value", FormatDouble(kama_t)},
+                     {"r_value", FormatDouble(fixed_r_)}});
                 has_entry_signal = true;
             }
         }
@@ -249,8 +356,8 @@ std::vector<SignalIntent> KamaTrendStrategy::OnState(const StateSnapshot7D& stat
         if (stop_loss_mode_ == "trailing_atr" && last_stop_atr_.has_value() &&
             std::isfinite(*last_stop_atr_) && *last_stop_atr_ > 0.0) {
             const double stop_distance = stop_loss_atr_multiplier_ * (*last_stop_atr_);
-            double stop_price = direction > 0 ? (avg_open_price - stop_distance)
-                                              : (avg_open_price + stop_distance);
+            double stop_price =
+                direction > 0 ? (avg_open_price - stop_distance) : (avg_open_price + stop_distance);
             const auto stop_it = trailing_stop_by_instrument_.find(state.instrument_id);
             const auto direction_it = trailing_direction_by_instrument_.find(state.instrument_id);
             if (stop_it != trailing_stop_by_instrument_.end() &&
@@ -258,10 +365,10 @@ std::vector<SignalIntent> KamaTrendStrategy::OnState(const StateSnapshot7D& stat
                 direction_it->second == direction) {
                 stop_price = stop_it->second;
             }
-            const double candidate =
-                direction > 0 ? (state.bar_close - stop_distance) : (state.bar_close + stop_distance);
-            stop_price = direction > 0 ? std::max(stop_price, candidate)
-                                       : std::min(stop_price, candidate);
+            const double candidate = direction > 0 ? (state.bar_close - stop_distance)
+                                                   : (state.bar_close + stop_distance);
+            stop_price =
+                direction > 0 ? std::max(stop_price, candidate) : std::min(stop_price, candidate);
             trailing_stop_by_instrument_[state.instrument_id] = stop_price;
             trailing_direction_by_instrument_[state.instrument_id] = direction;
             last_stop_loss_price_ = stop_price;
@@ -342,29 +449,14 @@ int KamaTrendStrategy::ComputeOrderVolume(const AtomicStrategyContext& ctx,
         return default_volume_;
     }
 
-    const double equity = std::isfinite(ctx.account_equity) ? std::max(0.0, ctx.account_equity)
-                                                             : 0.0;
+    const double equity =
+        std::isfinite(ctx.account_equity) ? std::max(0.0, ctx.account_equity) : 0.0;
     const double usable_equity = equity * risk_per_trade_pct_;
     if (usable_equity <= 0.0) {
         return default_volume_;
     }
 
-    std::optional<double> contract_multiplier;
-    auto maybe_set_multiplier = [&](const std::string& key) {
-        if (key.empty() || contract_multiplier.has_value()) {
-            return;
-        }
-        const auto multiplier_it = ctx.contract_multipliers.find(key);
-        if (multiplier_it != ctx.contract_multipliers.end() && std::isfinite(multiplier_it->second) &&
-            multiplier_it->second > 0.0) {
-            contract_multiplier = multiplier_it->second;
-        }
-    };
-    maybe_set_multiplier(instrument_id);
-    const std::string symbol_prefix = ExtractSymbolPrefixLower(instrument_id);
-    maybe_set_multiplier(symbol_prefix);
-    maybe_set_multiplier(ToUpper(symbol_prefix));
-
+    const std::optional<double> contract_multiplier = ResolveContractMultiplier(ctx, instrument_id);
     if (!contract_multiplier.has_value()) {
         return default_volume_;
     }
@@ -375,13 +467,17 @@ int KamaTrendStrategy::ComputeOrderVolume(const AtomicStrategyContext& ctx,
         return default_volume_;
     }
     const double raw_volume = std::floor(usable_equity / loss_per_hand);
-    if (!std::isfinite(raw_volume) || raw_volume < 1.0) {
-        return 0;
+    if (!std::isfinite(raw_volume)) {
+        return default_volume_;
     }
     if (raw_volume > static_cast<double>(std::numeric_limits<int>::max())) {
         return std::numeric_limits<int>::max();
     }
-    return static_cast<int>(raw_volume);
+    int volume = static_cast<int>(raw_volume);
+    if (volume <= 0) {
+        volume = 1;
+    }
+    return volume;
 }
 
 double KamaTrendStrategy::ComputeStdKama() const {
@@ -414,6 +510,29 @@ std::vector<SignalIntent> KamaTrendStrategy::EvaluateRiskSignals(const AtomicStr
         const bool stop_triggered =
             direction > 0 ? (price <= *last_stop_loss_price_) : (price >= *last_stop_loss_price_);
         if (stop_triggered) {
+            const double pnl_amount = ComputePositionPnl(ctx, instrument_id, position, price);
+            const Side close_side = position > 0 ? Side::kSell : Side::kBuy;
+            EmitKamaStrategyLog(
+                ctx, "warn", "stop_loss_triggered",
+                {{"strategy_id", id_},
+                 {"event_type", "stop_loss_triggered"},
+                 {"event_ts_ns", std::to_string(ts_ns)},
+                 {"instrument_id", instrument_id},
+                 {"side", SideToString(close_side)},
+                 {"stop_loss_price", FormatDouble(*last_stop_loss_price_)},
+                 {"actual_fill_price", FormatDouble(price)},
+                 {"loss_amount", FormatDouble(pnl_amount)},
+                 {"stop_loss_type", stop_loss_mode_}});
+            EmitKamaStrategyLog(
+                ctx, "info", "close_signal_emitted",
+                {{"strategy_id", id_},
+                 {"event_type", "close_signal"},
+                 {"event_ts_ns", std::to_string(ts_ns)},
+                 {"instrument_id", instrument_id},
+                 {"side", SideToString(close_side)},
+                 {"close_price", FormatDouble(price)},
+                 {"pnl_amount", FormatDouble(pnl_amount)},
+                 {"close_reason", "stop_loss"}});
             signals.push_back(BuildCloseSignal(id_, instrument_id, SignalType::kStopLoss, position,
                                                price, ts_ns));
         }
@@ -423,8 +542,20 @@ std::vector<SignalIntent> KamaTrendStrategy::EvaluateRiskSignals(const AtomicStr
         const bool take_triggered = direction > 0 ? (price >= *last_take_profit_price_)
                                                   : (price <= *last_take_profit_price_);
         if (take_triggered) {
-            signals.push_back(BuildCloseSignal(id_, instrument_id, SignalType::kTakeProfit, position,
-                                               price, ts_ns));
+            const double pnl_amount = ComputePositionPnl(ctx, instrument_id, position, price);
+            const Side close_side = position > 0 ? Side::kSell : Side::kBuy;
+            EmitKamaStrategyLog(
+                ctx, "info", "close_signal_emitted",
+                {{"strategy_id", id_},
+                 {"event_type", "close_signal"},
+                 {"event_ts_ns", std::to_string(ts_ns)},
+                 {"instrument_id", instrument_id},
+                 {"side", SideToString(close_side)},
+                 {"close_price", FormatDouble(price)},
+                 {"pnl_amount", FormatDouble(pnl_amount)},
+                 {"close_reason", "take_profit"}});
+            signals.push_back(BuildCloseSignal(id_, instrument_id, SignalType::kTakeProfit,
+                                               position, price, ts_ns));
         }
     }
 
@@ -443,9 +574,8 @@ std::string KamaTrendStrategy::ExtractSymbolPrefixLower(const std::string& instr
 }
 
 std::string KamaTrendStrategy::ToUpper(std::string text) {
-    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::toupper(ch));
-    });
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
     return text;
 }
 

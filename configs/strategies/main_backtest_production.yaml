@@ -20,7 +20,7 @@ risk_management:
 
 composite:
   merge_rule: kPriority
-  enable_non_backtest: false
+  enable_non_backtest: true
   sub_strategies:
     - id: kama_trend_production
       enabled: true

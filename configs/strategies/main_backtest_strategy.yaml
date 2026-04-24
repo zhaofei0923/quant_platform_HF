@@ -1,7 +1,8 @@
 # CONFIG DOC
-# Purpose: 回测主策略入口配置（Composite V2）。
+# Purpose: 回测主策略默认入口配置（当前默认基线：KAMA production）。
 # Consumer: strategy_main_config_loader / backtest_replay_support
 # Field dictionary: docs/ops/config_catalog.md (`configs/strategies/main_backtest_strategy.yaml`)
+# Legacy kama_trend_1 baseline entry retained in `configs/strategies/main_backtest_strategy_kama_trend_1.yaml`.
 #
 # 升级要点（2026-02）：
 # 1) `composite.enable_non_backtest` 默认 false：保持历史“仅 backtest”行为。
@@ -24,7 +25,7 @@ backtest:
   # backtest.symbols：配置项说明；示例值：[c]
   symbols: [c]
   # backtest.start_date：配置项说明；示例值：20240101
-  start_date: 20240101
+  start_date: 20230101
   # backtest.end_date：配置项说明；示例值：20240131
   end_date: 20241231
   # backtest.product_config_path：配置项说明；示例值：./instrument_info.json
@@ -51,16 +52,16 @@ composite:
   enable_non_backtest: false
   # composite.sub_strategies：配置项说明；示例值：<空>
   sub_strategies:
-    # composite.sub_strategies.item.id：配置项说明；示例值：kama_trend_1
-    - id: kama_trend_1
+    # composite.sub_strategies.item.id：配置项说明；示例值：kama_trend_production
+    - id: kama_trend_production
       # composite.sub_strategies.enabled：配置项说明；示例值：true
       enabled: true
       # composite.sub_strategies.timeframe_minutes：配置项说明；示例值：1（默认 1）
       timeframe_minutes: 5
       # composite.sub_strategies.type：配置项说明；示例值：KamaTrendStrategy
       type: KamaTrendStrategy
-      # composite.sub_strategies.config_path：配置项说明；示例值：./sub/kama_trend_1.yaml
-      config_path: ./sub/kama_trend_1.yaml
+      # composite.sub_strategies.config_path：配置项说明；示例值：./sub/kama_trend_production.yaml
+      config_path: ./sub/kama_trend_production.yaml
       # composite.sub_strategies.entry_market_regimes：配置项说明；示例值：[kStrongTrend, kWeakTrend]
       entry_market_regimes: [kStrongTrend, kWeakTrend]
       # 示例：按运行模式覆盖参数（默认关闭，仅作为写法说明）
@@ -79,7 +80,7 @@ composite:
       # composite.sub_strategies.enabled：配置项说明；示例值：false
       enabled: false
       # composite.sub_strategies.timeframe_minutes：配置项说明；示例值：5（默认 1）
-      timeframe_minutes: 5
+      timeframe_minutes: 1
       # composite.sub_strategies.type：配置项说明；示例值：TrendStrategy
       type: TrendStrategy
       # composite.sub_strategies.config_path：配置项说明；示例值：./sub/trend_1.yaml

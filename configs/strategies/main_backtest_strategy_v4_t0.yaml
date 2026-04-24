@@ -1,0 +1,30 @@
+# CONFIG DOC
+# Purpose: KAMA v4 T0 基线配置（A/B/C 全关）。
+
+run_type: backtest
+market_state_mode: true
+
+backtest:
+  initial_equity: 200000
+  product_series_mode: raw
+  symbols: [c]
+  start_date: 20230101
+  end_date: 20241231
+  product_config_path: ./instrument_info.json
+  contract_expiry_calendar_path: ./contract_expiry_calendar.yaml
+
+risk_management:
+  enabled: true
+  risk_per_trade_pct: 0.005
+  max_risk_per_trade: 2000.0
+
+composite:
+  merge_rule: kPriority
+  enable_non_backtest: false
+  sub_strategies:
+    - id: kama_trend_v4
+      enabled: true
+      timeframe_minutes: 5
+      type: KamaTrendStrategy
+      config_path: ./sub/kama_trend_v4.yaml
+      entry_market_regimes: [kStrongTrend, kWeakTrend]

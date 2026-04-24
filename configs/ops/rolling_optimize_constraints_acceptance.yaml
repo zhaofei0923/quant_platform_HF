@@ -40,7 +40,7 @@ optimization:
   parallel: 2
   preserve_top_k_trials: 4
   param_space: ./parameter_optim_constraints_rolling_acceptance.yaml
-  target_sub_config_path: ../strategies/sub/kama_trend_1.yaml
+  target_sub_config_path: ../strategies/sub/kama_trend_production.yaml
 
 output:
   root_dir: ../../runtime/step3_2_rolling_acceptance

@@ -1,5 +1,5 @@
 # CONFIG DOC
-# Purpose: single-pass parameter optimization config for kama_trend_1.
+# Purpose: single-pass parameter optimization config for the default KAMA T0 baseline.
 # Consumer: parameter_optim_cli / scripts/build/run_parameter_optim.sh
 # Notes:
 # 1) Paths are repo-root-relative because the wrapper runs from repo root.
@@ -7,7 +7,7 @@
 # 3) profit_factor is trade-derived, so keep emit_trades on while other heavy exports stay off.
 
 composite_config_path: configs/strategies/main_backtest_strategy.yaml
-target_sub_config_path: ./sub/kama_trend_1.yaml
+target_sub_config_path: ./sub/kama_trend_production.yaml
 
 backtest_args:
   engine_mode: parquet

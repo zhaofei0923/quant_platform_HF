@@ -2,7 +2,7 @@
 # Purpose: Rolling fixed-parameter evaluation config using the current main composite strategy.
 # Consumer: rolling_backtest_cli
 # Notes:
-# 1) Reuses configs/strategies/main_backtest_strategy.yaml and configs/strategies/sub/kama_trend_1.yaml directly.
+# 1) Reuses configs/strategies/main_backtest_strategy.yaml and configs/strategies/sub/kama_trend_production.yaml directly.
 # 2) objective stays on profit_factor, so emit_trades must remain enabled.
 
 mode: fixed_params

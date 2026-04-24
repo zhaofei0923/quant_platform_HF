@@ -1,15 +1,13 @@
 # CONFIG DOC
-# Purpose: KamaTrendStrategy 完整子策略参数（entry + sizing + stop/take）。
-# Consumer: atomic_factory / KamaTrendStrategy
-# Field dictionary: docs/ops/config_catalog.md (`configs/strategies/sub/kama_trend_1.yaml`)
+# Purpose: KAMA production baseline config archived from the validated T0 baseline.
 
 params:
-  id: kama_trend_1
+  id: kama_trend_production
   er_period: 10
   fast_period: 2
   slow_period: 30
   std_period: 10
-  kama_filter: 1
+  kama_filter: 1.0
   allowed_regimes: [kStrongTrend, kWeakTrend]
   risk_per_trade_pct: 0.005
   default_volume: 1

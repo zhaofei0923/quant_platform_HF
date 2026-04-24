@@ -1,0 +1,30 @@
+# CONFIG DOC
+# Purpose: KamaTrendStrategy v4.0 参数（A 阶梯止盈 + B 通道突破 + C 时段过滤）。
+# Note: 当前 atomic params loader 只支持 params 下扁平标量键，因此用点号键承载模块化配置。
+
+params:
+  id: kama_trend_v4
+  er_period: 10
+  fast_period: 2
+  slow_period: 30
+  std_period: 10
+  kama_filter: 1.0
+  allowed_regimes: [kStrongTrend, kWeakTrend]
+  risk_per_trade_pct: 0.005
+  default_volume: 1
+  allow_reverse_open: false
+  forbid_open_windows: "21:00-23:30,09:00-09:30"
+  force_close_windows: ""
+  window_timezone: Asia/Shanghai
+  stop_loss_mode: atr
+  stop_loss_atr_period: 14
+  stop_loss_atr_multiplier: 3.5
+  take_profit_mode: none
+  take_profit_atr_period: 14
+  take_profit_atr_multiplier: 30.0
+  trailing_stop.enabled: false
+  trailing_stop.levels: [1.0, 1.5, 2.0]
+  trailing_stop.lock_ratios: [0.5, 1.0, 0.5]
+  channel_breakout.enabled: false
+  channel_breakout.period: 10
+  channel_breakout.volume_ratio: 0.5

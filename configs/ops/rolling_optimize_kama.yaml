@@ -1,5 +1,5 @@
 # CONFIG DOC
-# Purpose: multi-window rolling optimize + out-of-sample evaluation for kama_trend_1.
+# Purpose: multi-window rolling optimize + out-of-sample evaluation for the default KAMA T0 baseline.
 # Consumer: rolling_backtest_cli
 # Notes:
 # 1) Reuses configs/ops/parameter_optim.yaml as the parameter space source so the active
@@ -47,7 +47,7 @@ optimization:
   parallel: 2
   preserve_top_k_trials: 10
   param_space: ./parameter_optim.yaml
-  target_sub_config_path: ../strategies/sub/kama_trend_1.yaml
+  target_sub_config_path: ../strategies/sub/kama_trend_production.yaml
 
 output:
   root_dir: ../../runtime/rolling_optimize_kama

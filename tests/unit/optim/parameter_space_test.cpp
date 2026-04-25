@@ -269,7 +269,7 @@ TEST(ParameterSpaceTest, LoadsRepoOpsParameterOptimConfig) {
     EXPECT_EQ(std::filesystem::path(space.composite_config_path).filename(),
               "main_backtest_strategy.yaml");
     EXPECT_EQ(std::filesystem::path(space.target_sub_config_path).filename(),
-              "kama_trend_1.yaml");
+              "kama_trend_production.yaml");
     EXPECT_EQ(space.backtest_args.at("dataset_root"), "backtest_data/parquet_v2");
     EXPECT_EQ(space.backtest_args.at("product_config_path"),
               "configs/strategies/instrument_info.json");

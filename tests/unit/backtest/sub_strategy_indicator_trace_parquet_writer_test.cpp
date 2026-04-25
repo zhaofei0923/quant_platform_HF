@@ -146,18 +146,20 @@ TEST(SubStrategyIndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicator
     ASSERT_TRUE(parquet_reader->ReadTable(&table).ok());
     ASSERT_NE(table, nullptr);
     EXPECT_EQ(table->num_rows(), 2);
-    ASSERT_EQ(table->num_columns(), 21);
+    ASSERT_EQ(table->num_columns(), 23);
 
     const std::shared_ptr<arrow::Schema> schema = table->schema();
     ASSERT_NE(schema, nullptr);
-    ASSERT_EQ(schema->num_fields(), 21);
+    ASSERT_EQ(schema->num_fields(), 23);
     EXPECT_EQ(schema->field(2)->name(), "dt_utc");
-    EXPECT_EQ(schema->field(3)->name(), "timeframe_minutes");
-    EXPECT_EQ(schema->field(4)->name(), "strategy_id");
-    EXPECT_EQ(schema->field(5)->name(), "strategy_type");
-    EXPECT_EQ(schema->field(16)->name(), "kama");
-    EXPECT_EQ(schema->field(17)->name(), "atr");
-    EXPECT_EQ(schema->field(20)->name(), "market_regime");
+    EXPECT_EQ(schema->field(3)->name(), "trading_day");
+    EXPECT_EQ(schema->field(4)->name(), "action_day");
+    EXPECT_EQ(schema->field(5)->name(), "timeframe_minutes");
+    EXPECT_EQ(schema->field(6)->name(), "strategy_id");
+    EXPECT_EQ(schema->field(7)->name(), "strategy_type");
+    EXPECT_EQ(schema->field(18)->name(), "kama");
+    EXPECT_EQ(schema->field(19)->name(), "atr");
+    EXPECT_EQ(schema->field(22)->name(), "market_regime");
 
     const auto dt_utc_column = table->GetColumnByName("dt_utc");
     ASSERT_NE(dt_utc_column, nullptr);

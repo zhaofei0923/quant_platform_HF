@@ -33,12 +33,14 @@ parameter_optim -> rolling_optimize -> OOS TopN -> final_recommended_params -> f
 
 ## 环境准备
 
-### 1. 准备 Python 与依赖
+### 1. 准备构建工具与依赖
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
+cmake -S . -B build-gcc \
+  -DQUANT_HFT_BUILD_TESTS=ON \
+  -DQUANT_HFT_ENABLE_ARROW_PARQUET=ON \
+  -DCMAKE_C_COMPILER=/usr/bin/gcc \
+  -DCMAKE_CXX_COMPILER=/usr/bin/g++
 ```
 
 ### 2. 准备支持 Parquet 的构建目录

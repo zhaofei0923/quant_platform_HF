@@ -38,7 +38,7 @@ fi
 
 cd "${repo_root}"
 
-pattern='\bpython\b|\bpytest\b|\bstrategy_runner\b|\.py\b'
+pattern='\bpytest\b|\bstrategy_runner\b|python/quant_hft|python/tests|pyproject\.toml|requirements(-dev)?(\.lock)?\.txt|\bpip install\b|\.venv'
 
 matches=""
 if command -v rg >/dev/null 2>&1; then

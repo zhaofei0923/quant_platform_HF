@@ -184,9 +184,9 @@ JSON 形态支持两种写法：
 ## 回测资金与结果口径
 
 - 开仓风险资金：由各子策略 `risk_per_trade_pct` 自行计算
-- 交易导出风险预算：当主配置 `risk_management.enabled=true` 时，为每条策略原生 `kOpen` 成交写出 `risk_budget_r`
+- 交易导出风险预算：当主配置 `risk_management.enabled=true` 时，为每条策略原生 `kOpen` 成交和严格换月合成开仓写出 `risk_budget_r`
 - 导出公式：`risk_budget_r = min(max(0, equity_before_fill) * risk_per_trade_pct, max_risk_per_trade)`
-- 系统合成开仓（如 `rollover_open`、`expiry_close` 首次 reopen）固定写 `0.0`
+- 平仓成交保持 `0.0`；`expiry_close` 后由策略重新开仓的成交按普通 `kOpen` 计算
 - 保证金约束：`available_margin = max(0, account_equity - used_margin_total)`
 - 开仓自动缩量：`max_openable = floor(available_margin / per_lot_margin)`，`volume=min(requested,max_openable)`
 - 手续费口径：按产品费率配置计入 `total_commission`

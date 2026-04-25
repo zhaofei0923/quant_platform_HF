@@ -24,8 +24,15 @@
 - `configs/trading_sessions.yaml`
 - `configs/risk_rules.yaml`
 - `configs/strategies/main_backtest_strategy.yaml`
+- `configs/strategies/main_backtest_production.yaml`
+- `configs/strategies/main_backtest_strategy_kama_trend_1.yaml`
+- `configs/strategies/main_backtest_strategy_v4_t0.yaml`
+- `configs/strategies/main_backtest_strategy_v4_t1.yaml`
+- `configs/strategies/main_backtest_strategy_v4_t2.yaml`
 - `configs/strategies/products_info.yaml`
 - `configs/strategies/sub/kama_trend_1.yaml`
+- `configs/strategies/sub/kama_trend_production.yaml`
+- `configs/strategies/sub/kama_trend_v4.yaml`
 - `configs/strategies/sub/trend_1.yaml`
 - `configs/strategies/instrument_info.json`
 - `configs/perf/baseline.json`
@@ -38,8 +45,14 @@
 - `configs/ops/ctp_rollback_drill.template.env`
 - `configs/ops/backtest_run.yaml`
 - `configs/ops/parameter_optim.yaml`
-- `configs/ops/docs/results/rolling/kama_best_fixed_report.json`
-- `configs/ops/docs/results/rolling/kama_best_fixed_report.md`
+- `configs/ops/parameter_optim_constraints_acceptance.yaml`
+- `configs/ops/parameter_optim_constraints_rolling_acceptance.yaml`
+- `configs/ops/parameter_optim_random_rolling_acceptance.yaml`
+- `configs/ops/rolling_backtest.yaml`
+- `configs/ops/rolling_optimize_constraints_acceptance.yaml`
+- `configs/ops/rolling_optimize_kama.yaml`
+- `configs/ops/rolling_optimize_random_acceptance.yaml`
+- `configs/ops/rolling_optimize_random_acceptance_replay.yaml`
 - `configs/strategies/contract_expiry_calendar.yaml`
 
 ---
@@ -307,8 +320,8 @@
 - 旧字段 `opening_strategies/stop_loss_strategies/take_profit_strategies/time_filters/risk_control_strategies` 在 V2 直接报错。
 - `backtest.max_loss_percent` 已移除，风险预算下沉到子策略参数 `risk_per_trade_pct`。
 - `risk_management` 仅影响回测导出字段 `risk_budget_r`，不改变下单、缩量或风控引擎行为。
-- `risk_budget_r = min(max(0, 成交前权益) * risk_per_trade_pct, max_risk_per_trade)`；仅对策略原生 `kOpen` 成交生效。
-- 系统合成开仓（如 `rollover_open` 与 `expiry_close` 触发的首次 reopen）保持 `0.0`。
+- `risk_budget_r = min(max(0, 成交前权益) * risk_per_trade_pct, max_risk_per_trade)`；对策略原生 `kOpen` 成交和严格换月 `rollover_open` 合成开仓生效。
+- 平仓成交保持 `0.0`；`expiry_close` 后由策略重新开仓的成交按普通 `kOpen` 计算。
 - 当 `run_type != backtest` 且 `composite.enable_non_backtest=false` 时，初始化会 fail-fast。
 - `overrides` 仅允许键 `backtest|sim|live`，且 `params` 仅允许标量值；非法键会 fail-fast。
 - 参数合并顺序：`base params + overrides[run_mode].params`（后者覆盖前者）。
@@ -392,6 +405,36 @@ composite:
 | `contracts` | map | 是 | 无 | 合约字典 | 合约到日历条目的映射 | `contracts: {c2405: ...}` |
 | `contracts.<instrument_id>.last_trading_day` | string | 是 | 无 | `YYYYMMDD` | 该合约在数据集中最后可回放交易日 | `20240329` |
 
+## `configs/strategies/main_backtest_production.yaml`
+
+- Purpose: 生产回测入口，固定到已验证的 KAMA production baseline。
+- Consumer: `backtest_cli` / `rolling_backtest_cli`。
+- 字段说明: 同 `configs/strategies/main_backtest_strategy.yaml`；重点差异是使用 `kama_trend_production` 子策略和 5 分钟周期。
+
+## `configs/strategies/main_backtest_strategy_kama_trend_1.yaml`
+
+- Purpose: 保留 `kama_trend_1` 历史基线入口，用于版本化优化结果复现。
+- Consumer: `backtest_cli` / 历史参数优化配置。
+- 字段说明: 同 `configs/strategies/main_backtest_strategy.yaml`；`trend_1` 作为禁用的历史对照项保留。
+
+## `configs/strategies/main_backtest_strategy_v4_t0.yaml`
+
+- Purpose: KAMA v4 T0 基线入口，模块化增强开关全关。
+- Consumer: `backtest_cli` / A/B 配置对照。
+- 字段说明: 同 `configs/strategies/main_backtest_strategy.yaml`；子策略指向 `sub/kama_trend_v4.yaml`。
+
+## `configs/strategies/main_backtest_strategy_v4_t1.yaml`
+
+- Purpose: KAMA v4 T1 入口，启用 trailing stop 覆盖参数。
+- Consumer: `backtest_cli` / A/B 配置对照。
+- 字段说明: 同 T0；通过 `overrides.backtest.params` 打开 `trailing_stop.enabled`。
+
+## `configs/strategies/main_backtest_strategy_v4_t2.yaml`
+
+- Purpose: KAMA v4 T2 入口，启用 trailing stop 与 channel breakout 覆盖参数。
+- Consumer: `backtest_cli` / A/B 配置对照。
+- 字段说明: 同 T0；通过 `overrides.backtest.params` 打开 `trailing_stop.enabled` 和 `channel_breakout.enabled`。
+
 ## `configs/strategies/products_info.yaml`
 
 - Purpose: 产品信息 YAML 镜像（与 `instrument_info.json` 对齐）。
@@ -448,6 +491,18 @@ composite:
 - `contract_multiplier` 由 `product_config_path` 对应产品信息注入，不在子策略配置里维护。
 - 回测标的由主策略 `backtest.symbols` 控制，子策略默认按 `state.instrument_id` 工作。
 - 时间窗口参数属于组合层控制，不会传入 `KamaTrendStrategy` 内部指标计算；`force_close_windows` 仅在回测 replay 的 tick 循环生效。
+
+## `configs/strategies/sub/kama_trend_production.yaml`
+
+- Purpose: production KAMA 基线参数，归档自已验证 T0 baseline。
+- Consumer: `KamaTrendStrategy::Init`。
+- 字段说明: 同 `configs/strategies/sub/kama_trend_1.yaml`；重点差异是更保守的开仓窗口、`allow_reverse_open=false`、较大的止盈 ATR 倍数。
+
+## `configs/strategies/sub/kama_trend_v4.yaml`
+
+- Purpose: KAMA v4 参数集合，承载 trailing stop / channel breakout / 时段过滤模块参数。
+- Consumer: `KamaTrendStrategy::Init`。
+- 字段说明: 同 `configs/strategies/sub/kama_trend_1.yaml`；点号键用于表达扁平 loader 下的模块化参数。
 
 ## `configs/strategies/sub/trend_1.yaml`
 
@@ -513,7 +568,7 @@ composite:
 ## `configs/perf/baseline.json`
 
 - Purpose: 热路径基准阈值配置。
-- Consumer: `run_hotpath_bench.py`。
+- Consumer: `hotpath_benchmark` 性能门禁脚本。
 
 字段表：
 
@@ -585,7 +640,7 @@ composite:
 ## `configs/deploy/environments/prodlike_multi_host.yaml`
 
 - Purpose: 多主机拟生产故障切换流程模板。
-- Consumer: `failover_orchestrator.py`。
+- Consumer: 多主机部署/故障切换演练流程。
 
 字段表：
 
@@ -728,17 +783,23 @@ composite:
 | `optimization.best_params_yaml` | string | 是 | 无 | 文件路径 | 最优参数输出 | `docs/results/opts/parameter_optim_best_params.yaml` |
 | `parameters[]` | list | 是 | 空 | 参数定义数组 | 待搜索参数空间 | 见文件示例 |
 
-## `configs/ops/docs/results/rolling/kama_best_fixed_report.json`
+## `configs/ops/parameter_optim_constraints_acceptance.yaml`
 
-- Purpose: 固定参数滚动回测样例 JSON 报告。
-- Consumer: 文档示例、结果分析对照。
-- 说明: 保存窗口级 objective、成功率与关键指标快照，用于说明 `rolling_backtest_cli` 的输出结构。
+- Purpose: 参数优化约束 DSL 的小规模 acceptance 配置。
+- Consumer: `parameter_optim_cli`。
+- 字段说明: 同 `configs/ops/parameter_optim.yaml`；重点增加 `optimization.constraints`。
 
-## `configs/ops/docs/results/rolling/kama_best_fixed_report.md`
+## `configs/ops/parameter_optim_constraints_rolling_acceptance.yaml`
 
-- Purpose: 固定参数滚动回测样例 Markdown 报告。
-- Consumer: 文档示例、人工审阅。
-- 说明: 与同名 JSON 报告配套，按窗口列出 train/test 区间和 objective 摘要。
+- Purpose: 滚动优化 acceptance 使用的约束参数空间。
+- Consumer: `rolling_backtest_cli` 的 `optimization.param_space`。
+- 字段说明: 同 `configs/ops/parameter_optim.yaml`；时间窗和 trial 数为 acceptance 运行收窄。
+
+## `configs/ops/parameter_optim_random_rolling_acceptance.yaml`
+
+- Purpose: 随机搜索 acceptance 使用的参数空间。
+- Consumer: `rolling_backtest_cli` 的 `optimization.param_space`。
+- 字段说明: 同 `configs/ops/parameter_optim.yaml`；重点字段为 `optimization.algorithm=random` 与 `random_seed`。
 
 ## `configs/ops/rolling_backtest.yaml`
 
@@ -785,6 +846,30 @@ composite:
 | `output.best_params_dir` | string | 否 | 空 | 目录路径 | 每窗口 best params 输出目录 | `runtime/rolling/best_params` |
 | `output.keep_temp_files` | bool | 否 | `false` | `true/false` | 是否保留临时 trial 产物 | `false` |
 | `output.window_parallel` | int | 否 | `1` | `>0` | 窗口并发数（`rolling_optimize` 强制降级到 1） | `1` |
+
+## `configs/ops/rolling_optimize_constraints_acceptance.yaml`
+
+- Purpose: 约束 DSL 的滚动优化 acceptance 入口。
+- Consumer: `rolling_backtest_cli`。
+- 字段说明: 同 `configs/ops/rolling_backtest.yaml`；`param_space` 指向约束 acceptance 参数空间。
+
+## `configs/ops/rolling_optimize_kama.yaml`
+
+- Purpose: 默认 KAMA T0 baseline 的多窗口滚动优化与样本外评估入口。
+- Consumer: `rolling_backtest_cli`。
+- 字段说明: 同 `configs/ops/rolling_backtest.yaml`；目标函数使用 `hf_standard.risk_metrics.calmar_ratio`。
+
+## `configs/ops/rolling_optimize_random_acceptance.yaml`
+
+- Purpose: 随机搜索滚动优化 acceptance 入口。
+- Consumer: `rolling_backtest_cli`。
+- 字段说明: 同 `configs/ops/rolling_backtest.yaml`；固定 `random_seed` 以验证采样可复现。
+
+## `configs/ops/rolling_optimize_random_acceptance_replay.yaml`
+
+- Purpose: 随机搜索可复现性 replay 入口。
+- Consumer: `rolling_backtest_cli`。
+- 字段说明: 同 `rolling_optimize_random_acceptance.yaml`；输出目录独立，用于对比 trial 序列。
 
 ---
 

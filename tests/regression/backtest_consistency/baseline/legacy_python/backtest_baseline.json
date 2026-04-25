@@ -1,14 +1,14 @@
 {
   "run_id": "base",
   "mode": "deterministic",
-  "data_source": "csv",
-  "engine_mode": "csv",
+  "data_source": "parquet",
+  "engine_mode": "parquet",
   "rollover_mode": "strict",
   "metric_keys": ["total_pnl", "max_drawdown", "win_rate", "fill_rate", "capital_efficiency"],
   "spec": {
-    "csv_path": "runtime/benchmarks/backtest/rb_ci_sample.csv",
-    "dataset_root": "",
-    "engine_mode": "csv",
+    "csv_path": "",
+    "dataset_root": "runtime/benchmarks/backtest/parquet_v2",
+    "engine_mode": "parquet",
     "rollover_mode": "strict",
     "rollover_price_mode": "bbo",
     "rollover_slippage_bps": 0,
@@ -21,35 +21,35 @@
     "run_id": "base",
     "emit_state_snapshots": false
   },
-  "input_signature": "a681ecf438f3cc72",
-  "data_signature": "fb3fb9c3bf398313",
+  "input_signature": "1b0bf8dae8212698",
+  "data_signature": "e5cf2f67f0c7aaee",
   "attribution": {},
   "risk_decomposition": {},
   "replay": {
     "ticks_read": 4,
-    "bars_emitted": 1,
-    "intents_emitted": 1,
+    "bars_emitted": 2,
+    "intents_emitted": 2,
     "first_instrument": "rb2405",
     "last_instrument": "rb2405",
     "instrument_count": 1,
     "instrument_universe": ["rb2405"],
-    "first_ts_ns": 1704067200000000000,
-    "last_ts_ns": 1704067203000000000
+    "first_ts_ns": 1704099600000000000,
+    "last_ts_ns": 1704099662000000000
   },
   "deterministic": {
     "intents_processed": 1,
     "order_events_emitted": 2,
     "wal_records": 0,
-    "instrument_bars": {"rb2405": 1},
-    "instrument_pnl": {"rb2405": {"net_position": 1, "avg_open_price": 102, "realized_pnl": 0, "unrealized_pnl": 0, "last_price": 102}},
+    "instrument_bars": {"rb2405": 2},
+    "instrument_pnl": {"rb2405": {"net_position": 1, "avg_open_price": 99, "realized_pnl": 0, "unrealized_pnl": 30, "last_price": 102}},
     "total_realized_pnl": 0,
-    "total_unrealized_pnl": 0,
+    "total_unrealized_pnl": 30,
     "performance": {
       "total_realized_pnl": 0,
-      "total_unrealized_pnl": 0,
-      "total_pnl": 0,
-      "max_equity": 0,
-      "min_equity": 0,
+      "total_unrealized_pnl": 30,
+      "total_pnl": 30,
+      "max_equity": 1000029.901,
+      "min_equity": 1000000,
       "max_drawdown": 0,
       "order_status_counts": {"ACCEPTED": 1, "FILLED": 1}
     },
@@ -60,9 +60,9 @@
     "rollover_canceled_orders": 0
   },
   "summary": {
-    "intents_emitted": 1,
+    "intents_emitted": 2,
     "order_events": 2,
-    "total_pnl": 0,
+    "total_pnl": 30,
     "max_drawdown": 0
   }
 }

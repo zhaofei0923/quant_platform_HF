@@ -21,6 +21,7 @@ message MarketSnapshot {
   double average_price_raw = 16;
   double average_price_norm = 17;
   bool is_valid_settlement = 18;
+  int64 open_interest = 19;
 }
 
 message StateDimension {
@@ -158,6 +159,8 @@ message StateSnapshot7D {
   double bar_volume = 14;
   bool has_bar = 15;
   uint32 market_regime = 16;
+  int32 timeframe_minutes = 17;
+  double analysis_price_offset = 18;
 }
 
 message SignalIntent {

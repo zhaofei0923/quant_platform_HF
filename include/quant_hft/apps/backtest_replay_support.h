@@ -3942,6 +3942,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             ApplyTrade(&previous_state, close_side, previous_position, close_price,
                        ResolveContractMultiplier(has_product_fee ? &product_fee_book : nullptr,
                                                  previous_contract));
+            const double equity_before_rollover_open = compute_current_equity();
             ApplyTrade(&next_state, open_side, previous_position, open_price,
                        ResolveContractMultiplier(has_product_fee ? &product_fee_book : nullptr,
                                                  current_contract));
@@ -4100,6 +4101,19 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 open_trade.commission = 0.0;
                 open_trade.slippage = open_slip;
                 open_trade.realized_pnl = open_realized_pnl;
+                SignalIntent rollover_open_intent;
+                rollover_open_intent.strategy_id = "rollover";
+                rollover_open_intent.instrument_id = current_contract;
+                rollover_open_intent.signal_type = SignalType::kOpen;
+                rollover_open_intent.side = open_side;
+                rollover_open_intent.offset = OffsetFlag::kOpen;
+                rollover_open_intent.volume = previous_position;
+                rollover_open_intent.limit_price = open_price;
+                rollover_open_intent.ts_ns = tick.ts_ns;
+                rollover_open_intent.trace_id =
+                    "rollover-open-" + current_contract + "-" + std::to_string(tick.ts_ns);
+                open_trade.risk_budget_r =
+                    calculate_risk_budget_r(rollover_open_intent, equity_before_rollover_open);
                 open_trade.strategy_id = "rollover";
                 open_trade.signal_type = "rollover_open";
                 open_trade.regime_at_entry = "rollover";
@@ -5677,7 +5691,9 @@ inline std::string RenderBacktestJson(const BacktestCliResult& result) {
          << "      \"emit_orders\": " << (result.spec.emit_orders ? "true" : "false") << ",\n"
          << "      \"emit_position_history\": "
          << (result.spec.emit_position_history ? "true" : "false") << ",\n"
-         << "      \"position_sampling\": \"on_trade\"\n"
+         << "      \"position_sampling\": \"on_trade\",\n"
+         << "      \"trade_datetime_fields\": [\"timestamp_dt_utc\"],\n"
+         << "      \"order_datetime_fields\": [\"created_at_dt_utc\", \"last_update_dt_utc\"]\n"
          << "    },\n"
          << "    \"advanced_summary\": {\n"
          << "      \"rolling_sharpe_3m_last\": "

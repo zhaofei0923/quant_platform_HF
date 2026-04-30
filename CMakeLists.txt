@@ -137,6 +137,7 @@ add_library(quant_hft_core STATIC
     src/services/portfolio/position_manager.cpp
     src/services/portfolio/in_memory_portfolio_ledger.cpp
     src/services/market_state/bar_aggregator.cpp
+    src/services/market_state/market_data_csv_recorder.cpp
     src/services/market_state/market_state_detector.cpp
     src/services/market_state/rule_market_state_engine.cpp
 )
@@ -406,6 +407,9 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(bar_aggregator_test tests/unit/services/bar_aggregator_test.cpp)
     target_link_libraries(bar_aggregator_test PRIVATE quant_hft_core GTest::gtest_main)
 
+    add_executable(market_data_csv_recorder_test tests/unit/services/market_data_csv_recorder_test.cpp)
+    target_link_libraries(market_data_csv_recorder_test PRIVATE quant_hft_core GTest::gtest_main)
+
     add_executable(order_state_machine_test tests/unit/services/order_state_machine_test.cpp)
     target_link_libraries(order_state_machine_test PRIVATE quant_hft_core GTest::gtest_main)
 
@@ -661,6 +665,7 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(rate_limiter_test)
     gtest_discover_tests(risk_manager_test)
     gtest_discover_tests(bar_aggregator_test)
+    gtest_discover_tests(market_data_csv_recorder_test)
     gtest_discover_tests(order_state_machine_test)
     gtest_discover_tests(execution_planner_test)
     gtest_discover_tests(execution_router_test)

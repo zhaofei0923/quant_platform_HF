@@ -176,6 +176,75 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
             }
         });
 
+    gateway_->RegisterInstrumentMarginRateSnapshotCallback(
+        [this](const std::vector<InstrumentMarginRateSnapshot>& snapshots) {
+            auto copied = snapshots;
+            if (!dispatcher_.Post(
+                    [this, copied = std::move(copied)]() {
+                        InstrumentMarginRateSnapshotCallback callback;
+                        {
+                            std::lock_guard<std::mutex> lock(mutex_);
+                            callback = user_instrument_margin_rate_callback_;
+                        }
+                        if (callback) {
+                            callback(copied);
+                        }
+                    },
+                    EventPriority::kNormal)) {
+                const auto stats = dispatcher_.GetStats();
+                EmitStructuredLog(nullptr, "ctp_trader_adapter", "warn", "dispatcher_queue_full",
+                                  {{"priority", "normal"},
+                                   {"queue_depth", std::to_string(stats.pending_normal)},
+                                   {"dropped_total", std::to_string(stats.dropped_total)}});
+            }
+        });
+
+    gateway_->RegisterInstrumentCommissionRateSnapshotCallback(
+        [this](const std::vector<InstrumentCommissionRateSnapshot>& snapshots) {
+            auto copied = snapshots;
+            if (!dispatcher_.Post(
+                    [this, copied = std::move(copied)]() {
+                        InstrumentCommissionRateSnapshotCallback callback;
+                        {
+                            std::lock_guard<std::mutex> lock(mutex_);
+                            callback = user_instrument_commission_rate_callback_;
+                        }
+                        if (callback) {
+                            callback(copied);
+                        }
+                    },
+                    EventPriority::kNormal)) {
+                const auto stats = dispatcher_.GetStats();
+                EmitStructuredLog(nullptr, "ctp_trader_adapter", "warn", "dispatcher_queue_full",
+                                  {{"priority", "normal"},
+                                   {"queue_depth", std::to_string(stats.pending_normal)},
+                                   {"dropped_total", std::to_string(stats.dropped_total)}});
+            }
+        });
+
+    gateway_->RegisterInstrumentOrderCommRateSnapshotCallback(
+        [this](const std::vector<InstrumentOrderCommRateSnapshot>& snapshots) {
+            auto copied = snapshots;
+            if (!dispatcher_.Post(
+                    [this, copied = std::move(copied)]() {
+                        InstrumentOrderCommRateSnapshotCallback callback;
+                        {
+                            std::lock_guard<std::mutex> lock(mutex_);
+                            callback = user_instrument_order_comm_rate_callback_;
+                        }
+                        if (callback) {
+                            callback(copied);
+                        }
+                    },
+                    EventPriority::kNormal)) {
+                const auto stats = dispatcher_.GetStats();
+                EmitStructuredLog(nullptr, "ctp_trader_adapter", "warn", "dispatcher_queue_full",
+                                  {{"priority", "normal"},
+                                   {"queue_depth", std::to_string(stats.pending_normal)},
+                                   {"dropped_total", std::to_string(stats.dropped_total)}});
+            }
+        });
+
     gateway_->RegisterConnectionStateCallback([this](bool healthy) {
         CtpConnectedGauge()->Set(healthy ? 1.0 : 0.0);
         if (!healthy) {
@@ -519,16 +588,25 @@ int CTPTraderAdapter::EnqueueInvestorPositionQuery() {
 }
 
 bool CTPTraderAdapter::EnqueueInstrumentQuery(int request_id) {
+    return EnqueueInstrumentQuery(request_id, "");
+}
+
+bool CTPTraderAdapter::EnqueueInstrumentQuery(int request_id, const std::string& instrument_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (state_ < TraderSessionState::kLoggedIn) {
         return false;
     }
-    return gateway_->EnqueueInstrumentQuery(request_id);
+    return gateway_->EnqueueInstrumentQuery(request_id, instrument_id);
 }
 
 int CTPTraderAdapter::EnqueueInstrumentQuery() {
     const int request_id = AllocateRequestId();
     return EnqueueInstrumentQuery(request_id) ? request_id : -1;
+}
+
+int CTPTraderAdapter::EnqueueInstrumentQuery(const std::string& instrument_id) {
+    const int request_id = AllocateRequestId();
+    return EnqueueInstrumentQuery(request_id, instrument_id) ? request_id : -1;
 }
 
 bool CTPTraderAdapter::EnqueueInstrumentMarginRateQuery(int request_id,
@@ -557,6 +635,20 @@ bool CTPTraderAdapter::EnqueueInstrumentCommissionRateQuery(int request_id,
 int CTPTraderAdapter::EnqueueInstrumentCommissionRateQuery(const std::string& instrument_id) {
     const int request_id = AllocateRequestId();
     return EnqueueInstrumentCommissionRateQuery(request_id, instrument_id) ? request_id : -1;
+}
+
+bool CTPTraderAdapter::EnqueueInstrumentOrderCommRateQuery(int request_id,
+                                                           const std::string& instrument_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (state_ < TraderSessionState::kLoggedIn) {
+        return false;
+    }
+    return gateway_->EnqueueInstrumentOrderCommRateQuery(request_id, instrument_id);
+}
+
+int CTPTraderAdapter::EnqueueInstrumentOrderCommRateQuery(const std::string& instrument_id) {
+    const int request_id = AllocateRequestId();
+    return EnqueueInstrumentOrderCommRateQuery(request_id, instrument_id) ? request_id : -1;
 }
 
 bool CTPTraderAdapter::EnqueueBrokerTradingParamsQuery(int request_id) {
@@ -625,6 +717,24 @@ void CTPTraderAdapter::RegisterBrokerTradingParamsSnapshotCallback(
     BrokerTradingParamsSnapshotCallback callback) {
     std::lock_guard<std::mutex> lock(mutex_);
     user_broker_trading_params_callback_ = std::move(callback);
+}
+
+void CTPTraderAdapter::RegisterInstrumentMarginRateSnapshotCallback(
+    InstrumentMarginRateSnapshotCallback callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    user_instrument_margin_rate_callback_ = std::move(callback);
+}
+
+void CTPTraderAdapter::RegisterInstrumentCommissionRateSnapshotCallback(
+    InstrumentCommissionRateSnapshotCallback callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    user_instrument_commission_rate_callback_ = std::move(callback);
+}
+
+void CTPTraderAdapter::RegisterInstrumentOrderCommRateSnapshotCallback(
+    InstrumentOrderCommRateSnapshotCallback callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    user_instrument_order_comm_rate_callback_ = std::move(callback);
 }
 
 void CTPTraderAdapter::SetCircuitBreaker(std::function<void(bool)> callback) {

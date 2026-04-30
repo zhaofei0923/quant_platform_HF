@@ -133,10 +133,10 @@ composite:
   merge_rule: kPriority
   enable_non_backtest: true
   sub_strategies:
-    - id: kama_trend_1
+    - id: kama_trend_production
       enabled: true
       type: KamaTrendStrategy
-      config_path: ./sub/kama_trend_1.yaml
+      config_path: ./sub/kama_trend_production.yaml
       overrides:
         sim:
           params:
@@ -177,13 +177,14 @@ JSON 形态支持两种写法：
 - 包装写法：`{ "products": { ... } }`
 - 原始写法：`{ "RB": {...}, "MA": {...} }`（与 `instrument_info.json` 根结构一致）
 
-仍兼容 `products_info.yaml`（内容与 `instrument_info.json` 对齐）。
+运行时推荐使用 `instrument_info.json`；`products_info.yaml` 仅作为产品信息兼容镜像保留。
 
 回测中若配置了 `product_config_path` 但找不到当前 `instrument_id` 的产品项，会 fail-fast 退出。
 
 ## 回测资金与结果口径
 
 - 开仓风险资金：由各子策略 `risk_per_trade_pct` 自行计算
+- 子策略日损阈值：`daily_max_loss_R` 的 R 为动态值，公式为 `max(0, account_equity) * risk_per_trade_pct`
 - 交易导出风险预算：当主配置 `risk_management.enabled=true` 时，为每条策略原生 `kOpen` 成交和严格换月合成开仓写出 `risk_budget_r`
 - 导出公式：`risk_budget_r = min(max(0, equity_before_fill) * risk_per_trade_pct, max_risk_per_trade)`
 - 平仓成交保持 `0.0`；`expiry_close` 后由策略重新开仓的成交按普通 `kOpen` 计算
@@ -347,12 +348,17 @@ docs/results/backtest_runs/
 
 ### CTP
 
-- `CTP_SIM_PASSWORD`
 - `CTP_SIM_BROKER_ID`
 - `CTP_SIM_USER_ID`
 - `CTP_SIM_INVESTOR_ID`
+- `CTP_SIM_PASSWORD`
+- `CTP_SIM_AUTH_CODE`
+- `CTP_SIM_APP_ID`
+- `CTP_SIM_IS_PRODUCTION_MODE`
+- `CTP_SIM_ENABLE_REAL_API`
 - `CTP_SIM_MARKET_FRONT`
 - `CTP_SIM_TRADER_FRONT`
+- `CTP_SIM_INSTRUMENT`
 
 ### 存储外部模式（可选）
 

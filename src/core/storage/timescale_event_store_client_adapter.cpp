@@ -15,6 +15,9 @@ constexpr const char* kTableTradingAccounts = "ctp_trading_accounts";
 constexpr const char* kTableInvestorPositions = "ctp_investor_positions";
 constexpr const char* kTableBrokerTradingParams = "ctp_broker_trading_params";
 constexpr const char* kTableInstrumentMeta = "ctp_instrument_meta";
+constexpr const char* kTableInstrumentMarginRates = "ctp_instrument_margin_rates";
+constexpr const char* kTableInstrumentCommissionRates = "ctp_instrument_commission_rates";
+constexpr const char* kTableInstrumentOrderCommRates = "ctp_instrument_order_comm_rates";
 
 }  // namespace
 
@@ -218,6 +221,72 @@ void TimescaleEventStoreClientAdapter::AppendInstrumentMetaSnapshot(
         {"source", snapshot.source},
     };
     (void)InsertWithRetry(kTableInstrumentMeta, row);
+}
+
+void TimescaleEventStoreClientAdapter::AppendInstrumentMarginRateSnapshot(
+    const InstrumentMarginRateSnapshot& snapshot) {
+    if (snapshot.instrument_id.empty()) {
+        return;
+    }
+
+    std::unordered_map<std::string, std::string> row{
+        {"account_id", snapshot.account_id},
+        {"investor_id", snapshot.investor_id},
+        {"instrument_id", snapshot.instrument_id},
+        {"exchange_id", snapshot.exchange_id},
+        {"hedge_flag", snapshot.hedge_flag},
+        {"long_margin_ratio_by_money", ToString(snapshot.long_margin_ratio_by_money)},
+        {"long_margin_ratio_by_volume", ToString(snapshot.long_margin_ratio_by_volume)},
+        {"short_margin_ratio_by_money", ToString(snapshot.short_margin_ratio_by_money)},
+        {"short_margin_ratio_by_volume", ToString(snapshot.short_margin_ratio_by_volume)},
+        {"is_relative", snapshot.is_relative ? "1" : "0"},
+        {"ts_ns", ToString(snapshot.ts_ns)},
+        {"source", snapshot.source},
+    };
+    (void)InsertWithRetry(kTableInstrumentMarginRates, row);
+}
+
+void TimescaleEventStoreClientAdapter::AppendInstrumentCommissionRateSnapshot(
+    const InstrumentCommissionRateSnapshot& snapshot) {
+    if (snapshot.instrument_id.empty()) {
+        return;
+    }
+
+    std::unordered_map<std::string, std::string> row{
+        {"account_id", snapshot.account_id},
+        {"investor_id", snapshot.investor_id},
+        {"instrument_id", snapshot.instrument_id},
+        {"exchange_id", snapshot.exchange_id},
+        {"open_ratio_by_money", ToString(snapshot.open_ratio_by_money)},
+        {"open_ratio_by_volume", ToString(snapshot.open_ratio_by_volume)},
+        {"close_ratio_by_money", ToString(snapshot.close_ratio_by_money)},
+        {"close_ratio_by_volume", ToString(snapshot.close_ratio_by_volume)},
+        {"close_today_ratio_by_money", ToString(snapshot.close_today_ratio_by_money)},
+        {"close_today_ratio_by_volume", ToString(snapshot.close_today_ratio_by_volume)},
+        {"ts_ns", ToString(snapshot.ts_ns)},
+        {"source", snapshot.source},
+    };
+    (void)InsertWithRetry(kTableInstrumentCommissionRates, row);
+}
+
+void TimescaleEventStoreClientAdapter::AppendInstrumentOrderCommRateSnapshot(
+    const InstrumentOrderCommRateSnapshot& snapshot) {
+    if (snapshot.instrument_id.empty()) {
+        return;
+    }
+
+    std::unordered_map<std::string, std::string> row{
+        {"account_id", snapshot.account_id},
+        {"investor_id", snapshot.investor_id},
+        {"instrument_id", snapshot.instrument_id},
+        {"exchange_id", snapshot.exchange_id},
+        {"hedge_flag", snapshot.hedge_flag},
+        {"order_comm_by_volume", ToString(snapshot.order_comm_by_volume)},
+        {"order_action_comm_by_volume", ToString(snapshot.order_action_comm_by_volume)},
+        {"ts_ns", ToString(snapshot.ts_ns)},
+        {"source", snapshot.source},
+    };
+    (void)InsertWithRetry(kTableInstrumentOrderCommRates, row);
 }
 
 std::vector<MarketSnapshot> TimescaleEventStoreClientAdapter::GetMarketSnapshots(
@@ -527,6 +596,99 @@ std::vector<InstrumentMetaSnapshot> TimescaleEventStoreClientAdapter::GetInstrum
         if (ParseInt32(row, "max_margin_side_algorithm", &flag)) {
             snapshot.max_margin_side_algorithm = flag != 0;
         }
+        (void)ParseInt64(row, "ts_ns", &snapshot.ts_ns);
+        snapshot.source = GetOrEmpty(row, "source");
+        out.push_back(snapshot);
+    }
+    return out;
+}
+
+std::vector<InstrumentMarginRateSnapshot>
+TimescaleEventStoreClientAdapter::GetInstrumentMarginRateSnapshots(
+    const std::string& instrument_id) const {
+    if (client_ == nullptr || instrument_id.empty()) {
+        return {};
+    }
+
+    std::string error;
+    const auto rows = client_->QueryRows(TableName(kTableInstrumentMarginRates),
+                                         "instrument_id", instrument_id, &error);
+    std::vector<InstrumentMarginRateSnapshot> out;
+    out.reserve(rows.size());
+    for (const auto& row : rows) {
+        InstrumentMarginRateSnapshot snapshot;
+        snapshot.account_id = GetOrEmpty(row, "account_id");
+        snapshot.investor_id = GetOrEmpty(row, "investor_id");
+        snapshot.instrument_id = GetOrEmpty(row, "instrument_id");
+        snapshot.exchange_id = GetOrEmpty(row, "exchange_id");
+        snapshot.hedge_flag = GetOrEmpty(row, "hedge_flag");
+        (void)ParseDouble(row, "long_margin_ratio_by_money", &snapshot.long_margin_ratio_by_money);
+        (void)ParseDouble(row, "long_margin_ratio_by_volume", &snapshot.long_margin_ratio_by_volume);
+        (void)ParseDouble(row, "short_margin_ratio_by_money", &snapshot.short_margin_ratio_by_money);
+        (void)ParseDouble(row, "short_margin_ratio_by_volume", &snapshot.short_margin_ratio_by_volume);
+        std::int32_t is_relative = 0;
+        if (ParseInt32(row, "is_relative", &is_relative)) {
+            snapshot.is_relative = is_relative != 0;
+        }
+        (void)ParseInt64(row, "ts_ns", &snapshot.ts_ns);
+        snapshot.source = GetOrEmpty(row, "source");
+        out.push_back(snapshot);
+    }
+    return out;
+}
+
+std::vector<InstrumentCommissionRateSnapshot>
+TimescaleEventStoreClientAdapter::GetInstrumentCommissionRateSnapshots(
+    const std::string& instrument_id) const {
+    if (client_ == nullptr || instrument_id.empty()) {
+        return {};
+    }
+
+    std::string error;
+    const auto rows = client_->QueryRows(TableName(kTableInstrumentCommissionRates),
+                                         "instrument_id", instrument_id, &error);
+    std::vector<InstrumentCommissionRateSnapshot> out;
+    out.reserve(rows.size());
+    for (const auto& row : rows) {
+        InstrumentCommissionRateSnapshot snapshot;
+        snapshot.account_id = GetOrEmpty(row, "account_id");
+        snapshot.investor_id = GetOrEmpty(row, "investor_id");
+        snapshot.instrument_id = GetOrEmpty(row, "instrument_id");
+        snapshot.exchange_id = GetOrEmpty(row, "exchange_id");
+        (void)ParseDouble(row, "open_ratio_by_money", &snapshot.open_ratio_by_money);
+        (void)ParseDouble(row, "open_ratio_by_volume", &snapshot.open_ratio_by_volume);
+        (void)ParseDouble(row, "close_ratio_by_money", &snapshot.close_ratio_by_money);
+        (void)ParseDouble(row, "close_ratio_by_volume", &snapshot.close_ratio_by_volume);
+        (void)ParseDouble(row, "close_today_ratio_by_money", &snapshot.close_today_ratio_by_money);
+        (void)ParseDouble(row, "close_today_ratio_by_volume", &snapshot.close_today_ratio_by_volume);
+        (void)ParseInt64(row, "ts_ns", &snapshot.ts_ns);
+        snapshot.source = GetOrEmpty(row, "source");
+        out.push_back(snapshot);
+    }
+    return out;
+}
+
+std::vector<InstrumentOrderCommRateSnapshot>
+TimescaleEventStoreClientAdapter::GetInstrumentOrderCommRateSnapshots(
+    const std::string& instrument_id) const {
+    if (client_ == nullptr || instrument_id.empty()) {
+        return {};
+    }
+
+    std::string error;
+    const auto rows = client_->QueryRows(TableName(kTableInstrumentOrderCommRates),
+                                         "instrument_id", instrument_id, &error);
+    std::vector<InstrumentOrderCommRateSnapshot> out;
+    out.reserve(rows.size());
+    for (const auto& row : rows) {
+        InstrumentOrderCommRateSnapshot snapshot;
+        snapshot.account_id = GetOrEmpty(row, "account_id");
+        snapshot.investor_id = GetOrEmpty(row, "investor_id");
+        snapshot.instrument_id = GetOrEmpty(row, "instrument_id");
+        snapshot.exchange_id = GetOrEmpty(row, "exchange_id");
+        snapshot.hedge_flag = GetOrEmpty(row, "hedge_flag");
+        (void)ParseDouble(row, "order_comm_by_volume", &snapshot.order_comm_by_volume);
+        (void)ParseDouble(row, "order_action_comm_by_volume", &snapshot.order_action_comm_by_volume);
         (void)ParseInt64(row, "ts_ns", &snapshot.ts_ns);
         snapshot.source = GetOrEmpty(row, "source");
         out.push_back(snapshot);

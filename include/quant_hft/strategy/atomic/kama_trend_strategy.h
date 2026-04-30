@@ -35,13 +35,12 @@ class KamaTrendStrategy final : public ISubStrategy,
                            double atr_value) const;
     double ComputeStdKama() const;
     std::vector<SignalIntent> EvaluateRiskSignals(const AtomicStrategyContext& ctx,
-                                                  const std::string& instrument_id,
-                                                  double price, EpochNanos ts_ns) const;
+                                                  const std::string& instrument_id, double price,
+                                                  EpochNanos ts_ns) const;
     static std::string ExtractSymbolPrefixLower(const std::string& instrument_id);
     static std::string ToUpper(std::string text);
     static SignalIntent BuildCloseSignal(const std::string& strategy_id,
-                                         const std::string& instrument_id,
-                                         SignalType signal_type,
+                                         const std::string& instrument_id, SignalType signal_type,
                                          std::int32_t position, double limit_price,
                                          EpochNanos ts_ns);
 
@@ -52,7 +51,6 @@ class KamaTrendStrategy final : public ISubStrategy,
     int std_period_{20};
     double kama_filter_{0.5};
     double risk_per_trade_pct_{0.01};
-    double fixed_r_{1000.0};
     int default_volume_{1};
     std::string stop_loss_mode_{"trailing_atr"};
     int stop_loss_atr_period_{14};

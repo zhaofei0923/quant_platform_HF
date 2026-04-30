@@ -38,7 +38,8 @@ bool TradingLedgerStoreClientAdapter::AppendOrderEvent(const OrderEvent& event,
         {"exchange_id", event.exchange_id},
         {"status", std::to_string(static_cast<int>(event.status))},
         {"total_volume", ToString(event.total_volume)},
-        {"filled_volume", ToString(event.filled_volume)},
+        {"filled_volume", ToString(event.last_trade_volume > 0 ? event.last_trade_volume
+                                    : event.filled_volume)},
         {"avg_fill_price", ToString(event.avg_fill_price)},
         {"reason", event.reason},
         {"status_msg", event.status_msg},
@@ -318,7 +319,7 @@ std::string TradingLedgerStoreClientAdapter::BuildTradeDate(std::int64_t ts_ns) 
 std::string TradingLedgerStoreClientAdapter::BuildIdempotencyKey(const OrderEvent& event) {
     std::ostringstream key;
     key << event.client_order_id << "|" << event.event_source << "|" << event.ts_ns << "|"
-        << event.filled_volume << "|" << event.trade_id;
+        << event.filled_volume << "|" << event.last_trade_volume << "|" << event.trade_id;
     return key.str();
 }
 

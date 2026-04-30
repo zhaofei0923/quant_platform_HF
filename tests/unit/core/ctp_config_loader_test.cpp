@@ -492,10 +492,20 @@ TEST(CtpConfigLoaderTest, LoadsExecutionAndRiskRuleConfigs) {
         "  impact_cost_bps: 7.5\n"
         "  cancel_after_ms: 1500\n"
         "  cancel_check_interval_ms: 250\n"
+        "  market_data_recording_enabled: true\n"
+        "  market_data_recording_dir: \"runtime/test_market_data\"\n"
+        "  market_data_recording_run_id: \"unit-run\"\n"
+        "  market_data_recording_flush_each_write: true\n"
         "  risk_default_max_order_volume: 12\n"
         "  risk_default_max_order_notional: 200000\n"
         "  risk_default_max_active_orders: 4\n"
         "  risk_default_max_position_notional: 900000\n"
+        "  risk_sim_subaccount_enabled: true\n"
+        "  risk_sim_subaccount_id: \"sim-subaccount-200000\"\n"
+        "  risk_sim_subaccount_initial_equity: 200000\n"
+        "  risk_sim_subaccount_max_margin: 180000\n"
+        "  risk_sim_subaccount_order_margin_rate: 0.12\n"
+        "  risk_sim_subaccount_contract_multiplier: 10\n"
         "  risk_default_max_cancel_count: 8\n"
         "  risk_default_max_cancel_ratio: 0.45\n"
         "  risk_default_rule_group: \"global-default\"\n"
@@ -538,10 +548,21 @@ TEST(CtpConfigLoaderTest, LoadsExecutionAndRiskRuleConfigs) {
     EXPECT_EQ(config.execution.cancel_after_ms, 1500);
     EXPECT_EQ(config.execution.cancel_check_interval_ms, 250);
 
+    EXPECT_TRUE(config.market_data_recording.enabled);
+    EXPECT_EQ(config.market_data_recording.output_dir, "runtime/test_market_data");
+    EXPECT_EQ(config.market_data_recording.run_id, "unit-run");
+    EXPECT_TRUE(config.market_data_recording.flush_each_write);
+
     EXPECT_EQ(config.risk.default_max_order_volume, 12);
     EXPECT_DOUBLE_EQ(config.risk.default_max_order_notional, 200000.0);
     EXPECT_EQ(config.risk.default_max_active_orders, 4);
     EXPECT_DOUBLE_EQ(config.risk.default_max_position_notional, 900000.0);
+    EXPECT_TRUE(config.risk.sim_subaccount_enabled);
+    EXPECT_EQ(config.risk.sim_subaccount_id, "sim-subaccount-200000");
+    EXPECT_DOUBLE_EQ(config.risk.sim_subaccount_initial_equity, 200000.0);
+    EXPECT_DOUBLE_EQ(config.risk.sim_subaccount_max_margin, 180000.0);
+    EXPECT_DOUBLE_EQ(config.risk.sim_subaccount_order_margin_rate, 0.12);
+    EXPECT_DOUBLE_EQ(config.risk.sim_subaccount_contract_multiplier, 10.0);
     EXPECT_EQ(config.risk.default_max_cancel_count, 8);
     EXPECT_DOUBLE_EQ(config.risk.default_max_cancel_ratio, 0.45);
     EXPECT_EQ(config.risk.default_rule_group, "global-default");

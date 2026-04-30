@@ -64,7 +64,8 @@ RiskCheckResult BuildAllow() {
     return result;
 }
 
-std::string BuildRuleId(const std::string& prefix, const std::string& scope, const std::string& key) {
+std::string BuildRuleId(const std::string& prefix, const std::string& scope,
+                        const std::string& key) {
     if (!scope.empty()) {
         return prefix + "." + scope + "." + key;
     }
@@ -73,6 +74,9 @@ std::string BuildRuleId(const std::string& prefix, const std::string& scope, con
 
 bool MatchRule(const RiskRule& rule, const OrderContext& context) {
     if (!rule.enabled) {
+        return false;
+    }
+    if (!rule.account_id.empty() && rule.account_id != context.account_id) {
         return false;
     }
     if (!rule.strategy_id.empty() && rule.strategy_id != context.strategy_id) {
@@ -86,6 +90,9 @@ bool MatchRule(const RiskRule& rule, const OrderContext& context) {
 
 int RuleSpecificity(const RiskRule& rule) {
     int score = 0;
+    if (!rule.account_id.empty()) {
+        score += 4;
+    }
     if (!rule.strategy_id.empty()) {
         score += 2;
     }
@@ -95,12 +102,8 @@ int RuleSpecificity(const RiskRule& rule) {
     return score;
 }
 
-void AddThresholdRule(std::vector<RiskRule>* rules,
-                      RiskRuleType type,
-                      const std::string& rule_id,
-                      const std::string& strategy_id,
-                      double threshold,
-                      int priority) {
+void AddThresholdRule(std::vector<RiskRule>* rules, RiskRuleType type, const std::string& rule_id,
+                      const std::string& strategy_id, double threshold, int priority) {
     if (rules == nullptr || threshold <= 0.0) {
         return;
     }
@@ -183,20 +186,28 @@ std::vector<RiskRule> LoadRiskRulesFromYaml(const std::string& file_path, std::s
         double number = 0.0;
         bool boolean_value = false;
 
-        if ((key == "max_loss_per_order" || key == "max_order_volume" || key == "max_order_rate" ||
-             key == "max_cancel_rate" || key == "max_position_per_instrument" ||
-             key == "max_total_position" || key == "max_leverage" || key == "daily_loss_limit" ||
-             key == "max_daily_loss") &&
+        if ((key == "max_loss_per_order" || key == "max_order_volume" ||
+             key == "max_order_notional" || key == "max_position_notional" ||
+             key == "max_order_rate" || key == "max_cancel_rate" ||
+             key == "max_daily_cancel_count" || key == "max_cancel_count" ||
+             key == "max_position_per_instrument" || key == "max_total_position" ||
+             key == "max_leverage" || key == "daily_loss_limit" || key == "max_daily_loss") &&
             ParseDouble(value, &number)) {
             const int priority = strategy_scope ? 10 : 100;
             if (key == "max_loss_per_order") {
                 add_rule(RiskRuleType::MAX_LOSS_PER_ORDER, key, number, priority);
             } else if (key == "max_order_volume") {
                 add_rule(RiskRuleType::MAX_ORDER_VOLUME, key, number, priority);
+            } else if (key == "max_order_notional") {
+                add_rule(RiskRuleType::MAX_ORDER_NOTIONAL, key, number, priority);
+            } else if (key == "max_position_notional") {
+                add_rule(RiskRuleType::MAX_POSITION_NOTIONAL, key, number, priority);
             } else if (key == "max_order_rate") {
                 add_rule(RiskRuleType::MAX_ORDER_RATE, key, number, priority);
             } else if (key == "max_cancel_rate") {
                 add_rule(RiskRuleType::MAX_CANCEL_RATE, key, number, priority);
+            } else if (key == "max_daily_cancel_count" || key == "max_cancel_count") {
+                add_rule(RiskRuleType::MAX_DAILY_CANCEL_COUNT, key, number, priority);
             } else if (key == "max_position_per_instrument") {
                 add_rule(RiskRuleType::MAX_POSITION_PER_INSTRUMENT, key, number, priority);
             } else if (key == "max_total_position") {
@@ -223,7 +234,8 @@ std::vector<RiskRule> LoadRiskRulesFromYaml(const std::string& file_path, std::s
     }
 
     if (rules.empty() && error != nullptr) {
-        *error = "no risk rules loaded from file: " + file_path + " line=" + std::to_string(line_no);
+        *error =
+            "no risk rules loaded from file: " + file_path + " line=" + std::to_string(line_no);
     } else if (error != nullptr) {
         error->clear();
     }
@@ -231,7 +243,7 @@ std::vector<RiskRule> LoadRiskRulesFromYaml(const std::string& file_path, std::s
 }
 
 class DefaultRiskManager final : public RiskManager {
-public:
+   public:
     DefaultRiskManager(std::shared_ptr<OrderManager> order_manager,
                        std::shared_ptr<ITradingDomainStore> domain_store)
         : order_manager_(std::move(order_manager)), domain_store_(std::move(domain_store)) {}
@@ -245,12 +257,11 @@ public:
 
     bool Initialize(const RiskManagerConfig& config) override {
         config_ = config;
-        RegisterDefaultRiskRules(&executor_,
-                                 order_manager_,
-                                 config_.enable_self_trade_prevention,
+        RegisterDefaultRiskRules(&executor_, order_manager_, config_.enable_self_trade_prevention,
                                  [this](const std::string& key, double rate, int limiter_type) {
                                      return ConsumeRateToken(key, rate, limiter_type);
                                  });
+        RegisterSimSubaccountRule();
 
         std::vector<RiskRule> loaded_rules;
         std::string load_error;
@@ -260,6 +271,9 @@ public:
         if (loaded_rules.empty()) {
             loaded_rules = BuildDefaultRules(config_);
         }
+        const auto runtime_guard_rules = BuildRuntimeGuardRules(config_);
+        loaded_rules.insert(loaded_rules.end(), runtime_guard_rules.begin(),
+                            runtime_guard_rules.end());
         ReloadRules(loaded_rules);
 
         stop_reload_.store(false);
@@ -274,7 +288,8 @@ public:
         for (const auto& rule : active_rules) {
             const auto result = executor_.Execute(rule, intent, context);
             if (!result.allowed) {
-                EmitRejectEvent(rule, context, result.reason, RiskEventSeverity::WARN, intent.client_order_id);
+                EmitRejectEvent(rule, context, result.reason, RiskEventSeverity::WARN,
+                                intent.client_order_id);
                 return result;
             }
         }
@@ -290,9 +305,17 @@ public:
         intent.instrument_id = context.instrument_id;
         auto active_rules = SelectRules(context, true);
         for (const auto& rule : active_rules) {
+            if (rule.type == RiskRuleType::MAX_DAILY_CANCEL_COUNT) {
+                const auto result = CheckDailyCancelCount(rule, context, client_order_id);
+                if (!result.allowed) {
+                    return result;
+                }
+                continue;
+            }
             const auto result = executor_.Execute(rule, intent, context);
             if (!result.allowed) {
-                EmitRejectEvent(rule, context, result.reason, RiskEventSeverity::WARN, client_order_id);
+                EmitRejectEvent(rule, context, result.reason, RiskEventSeverity::WARN,
+                                client_order_id);
                 return result;
             }
         }
@@ -319,11 +342,8 @@ public:
         context.account_id = order.account_id;
         context.strategy_id = order.strategy_id;
         context.instrument_id = order.symbol;
-        EmitRejectEvent(synthetic_rule,
-                        context,
-                        "order rejected: " + reason,
-                        RiskEventSeverity::ERROR,
-                        order.order_id);
+        EmitRejectEvent(synthetic_rule, context, "order rejected: " + reason,
+                        RiskEventSeverity::ERROR, order.order_id);
     }
 
     bool ReloadRules(const std::vector<RiskRule>& rules) override {
@@ -354,6 +374,7 @@ public:
         std::lock_guard<std::mutex> lock(stats_mutex_);
         daily_loss_accumulated_ = 0.0;
         daily_commission_ = 0.0;
+        daily_cancel_count_by_key_.clear();
     }
 
     void RegisterRiskEventCallback(RiskEventCallback callback) override {
@@ -361,33 +382,21 @@ public:
         callback_ = std::move(callback);
     }
 
-private:
+   private:
     static std::vector<RiskRule> BuildDefaultRules(const RiskManagerConfig& config) {
         std::vector<RiskRule> defaults;
-        AddThresholdRule(&defaults,
-                         RiskRuleType::MAX_LOSS_PER_ORDER,
-                         "risk.global.max_loss_per_order",
-                         "",
-                         config.default_max_loss_per_order,
+        AddThresholdRule(&defaults, RiskRuleType::MAX_LOSS_PER_ORDER,
+                         "risk.global.max_loss_per_order", "", config.default_max_loss_per_order,
                          100);
-        AddThresholdRule(&defaults,
-                         RiskRuleType::MAX_ORDER_VOLUME,
-                         "risk.global.max_order_volume",
-                         "",
-                         static_cast<double>(config.default_max_order_volume),
-                         100);
-        AddThresholdRule(&defaults,
-                         RiskRuleType::MAX_ORDER_RATE,
-                         "risk.global.max_order_rate",
-                         "",
-                         static_cast<double>(config.default_max_order_rate),
-                         100);
-        AddThresholdRule(&defaults,
-                         RiskRuleType::MAX_CANCEL_RATE,
-                         "risk.global.max_cancel_rate",
-                         "",
-                         static_cast<double>(config.default_max_cancel_rate),
-                         100);
+        AddThresholdRule(&defaults, RiskRuleType::MAX_ORDER_VOLUME, "risk.global.max_order_volume",
+                         "", static_cast<double>(config.default_max_order_volume), 100);
+        AddThresholdRule(&defaults, RiskRuleType::MAX_ORDER_RATE, "risk.global.max_order_rate", "",
+                         static_cast<double>(config.default_max_order_rate), 100);
+        AddThresholdRule(&defaults, RiskRuleType::MAX_CANCEL_RATE, "risk.global.max_cancel_rate",
+                         "", static_cast<double>(config.default_max_cancel_rate), 100);
+        AddThresholdRule(&defaults, RiskRuleType::MAX_DAILY_CANCEL_COUNT,
+                 "risk.global.max_daily_cancel_count", "",
+                 static_cast<double>(config.default_max_daily_cancel_count), 100);
 
         RiskRule stp;
         stp.rule_id = "risk.global.self_trade_prevention";
@@ -398,6 +407,64 @@ private:
         return defaults;
     }
 
+    static std::vector<RiskRule> BuildRuntimeGuardRules(const RiskManagerConfig& config) {
+        std::vector<RiskRule> rules;
+        AddThresholdRule(&rules, RiskRuleType::MAX_ORDER_NOTIONAL,
+                         "risk.runtime.max_order_notional", "", config.default_max_order_notional,
+                         50);
+        AddThresholdRule(&rules, RiskRuleType::MAX_POSITION_NOTIONAL,
+                         "risk.runtime.max_position_notional", "",
+                         config.default_max_position_notional, 50);
+        if (config.sim_subaccount_enabled) {
+            const double limit = config.sim_subaccount_max_margin > 0.0
+                                     ? config.sim_subaccount_max_margin
+                                     : config.sim_subaccount_initial_equity;
+            if (limit > 0.0) {
+                RiskRule rule;
+                rule.rule_id = "risk.runtime.sim_subaccount_capital";
+                rule.type = RiskRuleType::SIM_SUBACCOUNT_CAPITAL;
+                rule.account_id = config.sim_subaccount_id;
+                rule.threshold = limit;
+                rule.enabled = true;
+                rule.priority = 40;
+                rules.push_back(std::move(rule));
+            }
+        }
+        return rules;
+    }
+
+    void RegisterSimSubaccountRule() {
+        executor_.RegisterRule(
+            RiskRuleType::SIM_SUBACCOUNT_CAPITAL,
+            [this](const RiskRule& rule, const OrderIntent& intent, const OrderContext& context) {
+                if (!config_.sim_subaccount_enabled || rule.threshold <= 0.0) {
+                    return BuildAllow();
+                }
+                if (intent.offset != OffsetFlag::kOpen) {
+                    return BuildAllow();
+                }
+                const double multiplier = config_.sim_subaccount_contract_multiplier > 0.0
+                                              ? config_.sim_subaccount_contract_multiplier
+                                              : std::max(1.0, context.contract_multiplier);
+                const double margin_rate = std::max(0.0, config_.sim_subaccount_order_margin_rate);
+                const double estimated_order_margin = std::fabs(intent.price) *
+                                                      static_cast<double>(intent.volume) *
+                                                      multiplier * margin_rate;
+                const double observed_margin =
+                    std::max(0.0, context.current_margin) + estimated_order_margin;
+                if (observed_margin > rule.threshold) {
+                    RiskCheckResult result;
+                    result.allowed = false;
+                    result.violated_rule = RiskRuleType::SIM_SUBACCOUNT_CAPITAL;
+                    result.reason = "SimNow子账户资金占用超过上限";
+                    result.limit_value = rule.threshold;
+                    result.current_value = observed_margin;
+                    return result;
+                }
+                return BuildAllow();
+            });
+    }
+
     std::vector<RiskRule> SelectRules(const OrderContext& context, bool cancel_only) const {
         std::lock_guard<std::mutex> lock(rules_mutex_);
         std::vector<RiskRule> out;
@@ -406,7 +473,8 @@ private:
             if (!MatchRule(rule, context)) {
                 continue;
             }
-            if (cancel_only && rule.type != RiskRuleType::MAX_CANCEL_RATE) {
+            if (cancel_only && rule.type != RiskRuleType::MAX_CANCEL_RATE &&
+                rule.type != RiskRuleType::MAX_DAILY_CANCEL_COUNT) {
                 continue;
             }
             out.push_back(rule);
@@ -422,8 +490,7 @@ private:
         const int capacity = std::max(1, static_cast<int>(std::ceil(rate)));
         auto it = limiters.find(key);
         if (it == limiters.end()) {
-            auto inserted =
-                limiters.emplace(key, std::make_shared<TokenBucket>(rate, capacity));
+            auto inserted = limiters.emplace(key, std::make_shared<TokenBucket>(rate, capacity));
             it = inserted.first;
         } else {
             it->second->SetRate(rate);
@@ -431,10 +498,34 @@ private:
         return it->second->TryAcquire();
     }
 
-    void EmitRejectEvent(const RiskRule& rule,
-                         const OrderContext& context,
-                         const std::string& description,
-                         RiskEventSeverity severity,
+    RiskCheckResult CheckDailyCancelCount(const RiskRule& rule,
+                                          const OrderContext& context,
+                                          const std::string& client_order_id) {
+        if (rule.threshold <= 0.0) {
+            return BuildAllow();
+        }
+        const auto key = context.account_id + "|" + context.instrument_id;
+        int current_count = 0;
+        {
+            std::lock_guard<std::mutex> lock(stats_mutex_);
+            current_count = ++daily_cancel_count_by_key_[key];
+        }
+        if (static_cast<double>(current_count) > rule.threshold) {
+            RiskCheckResult result;
+            result.allowed = false;
+            result.violated_rule = RiskRuleType::MAX_DAILY_CANCEL_COUNT;
+            result.reason = "日内撤单次数超过上限";
+            result.limit_value = rule.threshold;
+            result.current_value = static_cast<double>(current_count);
+            EmitRejectEvent(rule, context, result.reason, RiskEventSeverity::WARN,
+                            client_order_id);
+            return result;
+        }
+        return BuildAllow();
+    }
+
+    void EmitRejectEvent(const RiskRule& rule, const OrderContext& context,
+                         const std::string& description, RiskEventSeverity severity,
                          const std::string& client_order_id) {
         RiskEvent event;
         event.event_id = std::to_string(NowEpochNanos());
@@ -499,8 +590,11 @@ private:
                 }
                 last_rule_file_write_time_ = current_write_time;
                 std::string error;
-                const auto reloaded = LoadRiskRulesFromYaml(config_.rule_file_path, &error);
+                auto reloaded = LoadRiskRulesFromYaml(config_.rule_file_path, &error);
                 if (!reloaded.empty()) {
+                    const auto runtime_guard_rules = BuildRuntimeGuardRules(config_);
+                    reloaded.insert(reloaded.end(), runtime_guard_rules.begin(),
+                                    runtime_guard_rules.end());
                     ReloadRules(reloaded);
                 }
             }
@@ -526,6 +620,7 @@ private:
     mutable std::mutex stats_mutex_;
     double daily_loss_accumulated_{0.0};
     double daily_commission_{0.0};
+    std::unordered_map<std::string, int> daily_cancel_count_by_key_;
 
     std::atomic<bool> stop_reload_{false};
     std::thread reload_thread_;

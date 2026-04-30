@@ -779,18 +779,19 @@ TEST(CompositeStrategyTest, ForceCloseWindowsAlsoBlockOpeningSignals) {
     EXPECT_EQ(allowed.front().signal_type, SignalType::kOpen);
 }
 
-TEST(CompositeStrategyTest, SessionStartNoOpenWindowBlocksOpenButAllowsCloseSignals) {
-    const std::string open_type = UniqueType("session_start_no_open");
+TEST(CompositeStrategyTest, ForbidOpenWindowsBlockOpenButAllowCloseSignals) {
+    const std::string open_type = UniqueType("forbid_open_allows_close");
     RegisterScriptedType(open_type);
 
     CompositeStrategyDefinition definition;
     definition.run_type = "backtest";
-    definition.sub_strategies = {MakeSubStrategy("open", open_type,
-                                                 {{"id", "open"},
-                                                  {"emit_open", "1"},
-                                                  {"emit_stop_loss", "1"},
-                                                  {"no_open_minutes_after_session_start", "30"},
-                                                  {"window_timezone", "Asia/Shanghai"}})};
+    definition.sub_strategies = {
+        MakeSubStrategy("open", open_type,
+                        {{"id", "open"},
+                         {"emit_open", "1"},
+                         {"emit_stop_loss", "1"},
+                         {"forbid_open_windows", "09:00-09:30,21:00-21:30"},
+                         {"window_timezone", "Asia/Shanghai"}})};
 
     CompositeStrategy strategy(definition, &AtomicFactory::Instance());
     strategy.Initialize(MakeStrategyContext());
@@ -823,10 +824,11 @@ TEST(CompositeStrategyTest, DailyMaxLossGuardBlocksOnlySameDayOpenSignals) {
                                                   {"emit_open", "1"},
                                                   {"emit_stop_loss", "1"},
                                                   {"daily_max_loss_R", "3"},
-                                                  {"R_fixed", "1000"}})};
+                                                  {"risk_per_trade_pct", "0.01"}})};
 
     CompositeStrategy strategy(definition, &AtomicFactory::Instance());
     strategy.Initialize(MakeStrategyContext());
+    strategy.SetBacktestAccountSnapshot(100000.0, 0.0);
     strategy.SetBacktestContractMultiplier("rb2405", 10.0);
 
     OrderEvent open_fill =
@@ -857,6 +859,41 @@ TEST(CompositeStrategyTest, DailyMaxLossGuardBlocksOnlySameDayOpenSignals) {
         strategy.OnState(MakeState("rb2405", AddPseudoLocalDays(PseudoLocalEpochNs(10, 10), 1)));
     ASSERT_EQ(next_day.size(), 1U);
     EXPECT_EQ(next_day.front().signal_type, SignalType::kOpen);
+}
+
+TEST(CompositeStrategyTest, DailyMaxLossGuardUsesDynamicRiskBudgetFromAccountEquity) {
+    const std::string open_type = UniqueType("daily_loss_dynamic_r");
+    RegisterScriptedType(open_type);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {MakeSubStrategy("open", open_type,
+                                                 {{"id", "open"},
+                                                  {"emit_open", "1"},
+                                                  {"daily_max_loss_R", "3"},
+                                                  {"risk_per_trade_pct", "0.01"}})};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+    strategy.SetBacktestAccountSnapshot(200000.0, 0.0);
+    strategy.SetBacktestContractMultiplier("rb2405", 10.0);
+
+    OrderEvent open_fill =
+        MakeOrderEvent("open", "rb2405", Side::kBuy, OffsetFlag::kOpen, 30, 100.0, "open-1");
+    open_fill.ts_ns = PseudoLocalEpochNs(10, 0);
+    strategy.OnOrderEvent(open_fill);
+    OrderEvent loss_fill =
+        MakeOrderEvent("open", "rb2405", Side::kSell, OffsetFlag::kClose, 30, 90.0, "close-1");
+    loss_fill.ts_ns = PseudoLocalEpochNs(10, 5);
+    strategy.OnOrderEvent(loss_fill);
+
+    const std::vector<SignalIntent> allowed =
+        strategy.OnState(MakeState("rb2405", PseudoLocalEpochNs(10, 10)));
+    ASSERT_EQ(allowed.size(), 1U);
+    EXPECT_EQ(allowed.front().signal_type, SignalType::kOpen);
+
+    strategy.SetBacktestAccountSnapshot(100000.0, 0.0);
+    EXPECT_TRUE(strategy.OnState(MakeState("rb2405", PseudoLocalEpochNs(10, 15))).empty());
 }
 
 TEST(CompositeStrategyTest, ConsecutiveLossGuardPausesOpenSignalsUntilNextDay) {

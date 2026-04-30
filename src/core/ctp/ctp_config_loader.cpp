@@ -788,6 +788,35 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* confi
         loaded.runtime.kafka_topic_ticks = "market.ticks.v1";
     }
     loaded.runtime.clickhouse_dsn = get_value("clickhouse_dsn");
+    loaded.market_data_recording.enabled = false;
+    if (const auto it = kv.find("market_data_recording_enabled"); it != kv.end()) {
+        if (!ParseBoolValue(it->second, &loaded.market_data_recording.enabled)) {
+            if (error != nullptr) {
+                *error = "market_data_recording_enabled must be bool";
+            }
+            return false;
+        }
+    }
+    loaded.market_data_recording.output_dir = "runtime/market_data";
+    if (const auto output_dir = get_value("market_data_recording_dir"); !output_dir.empty()) {
+        loaded.market_data_recording.output_dir = output_dir;
+    }
+    loaded.market_data_recording.run_id = get_value("market_data_recording_run_id");
+    loaded.market_data_recording.flush_each_write = false;
+    if (const auto it = kv.find("market_data_recording_flush_each_write"); it != kv.end()) {
+        if (!ParseBoolValue(it->second, &loaded.market_data_recording.flush_each_write)) {
+            if (error != nullptr) {
+                *error = "market_data_recording_flush_each_write must be bool";
+            }
+            return false;
+        }
+    }
+    if (loaded.market_data_recording.enabled && loaded.market_data_recording.output_dir.empty()) {
+        if (error != nullptr) {
+            *error = "market_data_recording_dir must not be empty when enabled";
+        }
+        return false;
+    }
     if (loaded.query_rate_limit_qps <= 0) {
         if (error != nullptr) {
             *error = "query_rate_limit_qps must be > 0";
@@ -872,8 +901,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* confi
         return false;
     }
     loaded.dominant_contract_wait_ms = 5000;
-    SetOptionalInt(kv, "dominant_contract_wait_ms", &loaded.dominant_contract_wait_ms,
-                   &load_error);
+    SetOptionalInt(kv, "dominant_contract_wait_ms", &loaded.dominant_contract_wait_ms, &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
             *error = load_error;
@@ -959,8 +987,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* confi
         loaded.dominant_contract_switch_mode != "dry_run" &&
         loaded.dominant_contract_switch_mode != "flat_only") {
         if (error != nullptr) {
-            *error =
-                "dominant_contract_switch_mode must be one of: startup_only|dry_run|flat_only";
+            *error = "dominant_contract_switch_mode must be one of: startup_only|dry_run|flat_only";
         }
         return false;
     }
@@ -1085,8 +1112,8 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* confi
         }
     }
     loaded.strategy_metrics_emit_interval_ms = 1'000;
-    SetOptionalInt(kv, "strategy_metrics_emit_interval_ms", &loaded.strategy_metrics_emit_interval_ms,
-                   &load_error);
+    SetOptionalInt(kv, "strategy_metrics_emit_interval_ms",
+                   &loaded.strategy_metrics_emit_interval_ms, &load_error);
     if (!load_error.empty()) {
         if (error != nullptr) {
             *error = load_error;
@@ -1318,6 +1345,82 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* confi
     if (loaded.risk.default_max_position_notional < 0.0) {
         if (error != nullptr) {
             *error = "risk_default_max_position_notional must be >= 0";
+        }
+        return false;
+    }
+    loaded.risk.sim_subaccount_enabled = false;
+    const auto sim_subaccount_enabled = get_value("risk_sim_subaccount_enabled");
+    if (!sim_subaccount_enabled.empty() &&
+        !ParseBoolValue(sim_subaccount_enabled, &loaded.risk.sim_subaccount_enabled)) {
+        if (error != nullptr) {
+            *error = "invalid bool value for risk_sim_subaccount_enabled";
+        }
+        return false;
+    }
+    loaded.risk.sim_subaccount_id = get_value("risk_sim_subaccount_id");
+    loaded.risk.sim_subaccount_initial_equity = 0.0;
+    SetOptionalDouble(kv, "risk_sim_subaccount_initial_equity",
+                      &loaded.risk.sim_subaccount_initial_equity, &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    loaded.risk.sim_subaccount_max_margin = 0.0;
+    SetOptionalDouble(kv, "risk_sim_subaccount_max_margin", &loaded.risk.sim_subaccount_max_margin,
+                      &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    loaded.risk.sim_subaccount_order_margin_rate = 1.0;
+    SetOptionalDouble(kv, "risk_sim_subaccount_order_margin_rate",
+                      &loaded.risk.sim_subaccount_order_margin_rate, &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    loaded.risk.sim_subaccount_contract_multiplier = 1.0;
+    SetOptionalDouble(kv, "risk_sim_subaccount_contract_multiplier",
+                      &loaded.risk.sim_subaccount_contract_multiplier, &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.risk.sim_subaccount_enabled) {
+        if (loaded.risk.sim_subaccount_initial_equity <= 0.0) {
+            if (error != nullptr) {
+                *error = "risk_sim_subaccount_initial_equity must be > 0 when enabled";
+            }
+            return false;
+        }
+        if (loaded.risk.sim_subaccount_max_margin <= 0.0) {
+            loaded.risk.sim_subaccount_max_margin = loaded.risk.sim_subaccount_initial_equity;
+        }
+    }
+    if (loaded.risk.sim_subaccount_initial_equity < 0.0 ||
+        loaded.risk.sim_subaccount_max_margin < 0.0) {
+        if (error != nullptr) {
+            *error = "risk_sim_subaccount_initial_equity/max_margin must be >= 0";
+        }
+        return false;
+    }
+    if (loaded.risk.sim_subaccount_order_margin_rate < 0.0) {
+        if (error != nullptr) {
+            *error = "risk_sim_subaccount_order_margin_rate must be >= 0";
+        }
+        return false;
+    }
+    if (loaded.risk.sim_subaccount_contract_multiplier <= 0.0) {
+        if (error != nullptr) {
+            *error = "risk_sim_subaccount_contract_multiplier must be > 0";
         }
         return false;
     }

@@ -2,7 +2,6 @@
 # Purpose: 回测主策略默认入口配置（当前默认基线：KAMA production）。
 # Consumer: strategy_main_config_loader / backtest_replay_support
 # Field dictionary: docs/ops/config_catalog.md (`configs/strategies/main_backtest_strategy.yaml`)
-# Legacy kama_trend_1 baseline entry retained in `configs/strategies/main_backtest_strategy_kama_trend_1.yaml`.
 #
 # 升级要点（2026-02）：
 # 1) `composite.enable_non_backtest` 默认 false：保持历史“仅 backtest”行为。
@@ -75,15 +74,3 @@ composite:
       #   live:
       #     params:
       #       risk_per_trade_pct: 0.005
-    # composite.sub_strategies.item.id：配置项说明；示例值：trend_1
-    - id: trend_1
-      # composite.sub_strategies.enabled：配置项说明；示例值：false
-      enabled: false
-      # composite.sub_strategies.timeframe_minutes：配置项说明；示例值：5（默认 1）
-      timeframe_minutes: 1
-      # composite.sub_strategies.type：配置项说明；示例值：TrendStrategy
-      type: TrendStrategy
-      # composite.sub_strategies.config_path：配置项说明；示例值：./sub/trend_1.yaml
-      config_path: ./sub/trend_1.yaml
-      # composite.sub_strategies.entry_market_regimes：配置项说明；示例值：[kStrongTrend]
-      entry_market_regimes: [kStrongTrend]

@@ -33,7 +33,7 @@ bash scripts/build/run_preprod_rehearsal_gate.sh --build-dir build --results-dir
 
 ## SimNow profiles
 
-- `configs/sim/ctp.yaml`: 7x24 SimNow (`182.254.243.31:40011/40001`)
+- `configs/sim/ctp.yaml`: env-selected SimNow runtime profile; `.env.example` defaults to 7x24 (`182.254.243.31:40011/40001`)
 - `configs/sim/ctp_trading_hours.yaml`: trading-hours-aligned SimNow (`182.254.243.31:30011/30001`)
 - `configs/sim/ctp_trading_hours_group2.yaml`: trading-hours group2 (`182.254.243.31:30012/30002`)
 - `configs/sim/ctp_trading_hours_group3.yaml`: trading-hours group3 (`182.254.243.31:30013/30003`)
@@ -46,7 +46,9 @@ bash scripts/build/run_preprod_rehearsal_gate.sh --build-dir build --results-dir
 
 ## 使用 .env 注入 CTP_SIM_*（推荐）
 
-1) 复制模板并填写账号：
+真实账号密码放在本地 `.env`，不要写入 YAML。`.env` 已被 git 忽略，仓库只保留 `.env.example` 模板。
+
+1) 创建本地环境文件并填写账号：
 ```bash
 cp .env.example .env
 ```
@@ -59,14 +61,16 @@ set -a && source .env && set +a
 env | grep '^CTP_SIM_'
 ```
 
-也可直接通过系统环境变量注入（CI/systemd/k8s），YAML 中 `${CTP_SIM_*}` 会在加载时自动替换。
+默认 `.env.example` 使用 7x24 前置（40001/40011）和 `CTP_SIM_IS_PRODUCTION_MODE=false`。若切换到交易时段前置（30001/30011、30002/30012、30003/30013），需要同时设置 `CTP_SIM_IS_PRODUCTION_MODE=true`，或直接使用对应的 `configs/sim/ctp_trading_hours*.yaml`。
+
+也可直接通过系统环境变量注入（CI/systemd/k8s），YAML 中 `${CTP_SIM_*}` 会在加载时自动替换；主 SimNow 配置通过 `password_env: "CTP_SIM_PASSWORD"` 读取密码。
 
 ## Core Engine config loading
 
 - `core_engine` now loads CTP runtime config from YAML at startup:
 ```bash
-export CTP_SIM_PASSWORD='your_password'
-./build/core_engine configs/sim/ctp.yaml
+set -a && source .env && set +a
+./build/core_engine --config configs/sim/ctp.yaml
 ```
 - Required config items are validated by `CtpConfigLoader + CtpConfigValidator`.
 - `is_production_mode` must be explicit in YAML.
@@ -93,12 +97,12 @@ docker run --rm -p 6379:6379 redis:7-alpine
 cmake -S . -B build -DQUANT_HFT_BUILD_TESTS=ON -DQUANT_HFT_ENABLE_REDIS_EXTERNAL=ON
 cmake --build build -j
 
-export CTP_SIM_PASSWORD='your_password'
+set -a && source .env && set +a
 export QUANT_HFT_REDIS_MODE=external
 export QUANT_HFT_REDIS_HOST=127.0.0.1
 export QUANT_HFT_REDIS_PORT=6379
 
-./build/core_engine configs/sim/ctp.yaml --run-seconds 30
+./build/core_engine --config configs/sim/ctp.yaml --run-seconds 30
 ```
 
 ### Strategy path smoke
@@ -112,10 +116,10 @@ ctest --test-dir build -R "(StrategyRegistryTest|StrategyEngineTest|DemoLiveStra
 ```bash
 cmake -S . -B build-real -DQUANT_HFT_BUILD_TESTS=ON -DQUANT_HFT_ENABLE_CTP_REAL_API=ON
 cmake --build build-real -j
-export CTP_SIM_PASSWORD='your_password'
+set -a && source .env && set +a
 
 LD_LIBRARY_PATH=$PWD/ctp_api/v6.7.11_20250617_api_traderapi_se_linux64:$LD_LIBRARY_PATH \
-  ./build-real/simnow_probe configs/sim/ctp_trading_hours.yaml
+  ./build-real/simnow_probe configs/sim/ctp.yaml --monitor-seconds 30
 ```
 
 Optional probe runtime flags:

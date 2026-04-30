@@ -94,9 +94,8 @@ class CompositeStrategy : public ILiveStrategy {
         std::int32_t timezone_offset_hours{8};
         std::vector<TimeWindow> forbid_open_windows;
         std::vector<TimeWindow> force_close_windows;
-        std::vector<TimeWindow> session_start_no_open_windows;
         double daily_max_loss_r{0.0};
-        double fixed_r{1000.0};
+        double risk_per_trade_pct{0.01};
         std::int32_t max_consecutive_losses{0};
     };
 

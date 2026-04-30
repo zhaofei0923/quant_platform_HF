@@ -26,6 +26,10 @@ enum class RiskRuleType : std::uint8_t {
     SELF_TRADE_PREVENTION = 6,
     MAX_ORDER_VOLUME = 7,
     DAILY_LOSS_LIMIT = 8,
+    MAX_ORDER_NOTIONAL = 9,
+    MAX_POSITION_NOTIONAL = 10,
+    SIM_SUBACCOUNT_CAPITAL = 11,
+    MAX_DAILY_CANCEL_COUNT = 12,
 };
 
 enum class RiskEventSeverity : std::uint8_t {
@@ -46,6 +50,7 @@ struct RiskCheckResult {
 struct RiskRule {
     std::string rule_id;
     RiskRuleType type{RiskRuleType::MAX_ORDER_VOLUME};
+    std::string account_id;
     std::string strategy_id;
     std::string instrument_id;
     double threshold{0.0};
@@ -84,21 +89,29 @@ struct RiskManagerConfig {
     bool enable_self_trade_prevention{true};
     double default_max_loss_per_order{5000.0};
     int default_max_order_volume{100};
+    double default_max_order_notional{0.0};
+    double default_max_position_notional{0.0};
     int default_max_order_rate{50};
     int default_max_cancel_rate{20};
+    int default_max_daily_cancel_count{0};
+    bool sim_subaccount_enabled{false};
+    std::string sim_subaccount_id;
+    double sim_subaccount_initial_equity{0.0};
+    double sim_subaccount_max_margin{0.0};
+    double sim_subaccount_order_margin_rate{1.0};
+    double sim_subaccount_contract_multiplier{1.0};
     std::string rule_file_path{"configs/risk_rules.yaml"};
     bool enable_dynamic_reload{true};
     int reload_interval_seconds{60};
 };
 
 class RiskManager {
-public:
+   public:
     virtual ~RiskManager() = default;
 
     virtual bool Initialize(const RiskManagerConfig& config) = 0;
 
-    virtual RiskCheckResult CheckOrder(const OrderIntent& intent,
-                                       const OrderContext& context) = 0;
+    virtual RiskCheckResult CheckOrder(const OrderIntent& intent, const OrderContext& context) = 0;
 
     virtual RiskCheckResult CheckCancel(const std::string& client_order_id,
                                         const OrderContext& context) = 0;

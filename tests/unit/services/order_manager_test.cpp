@@ -199,6 +199,57 @@ TEST(OrderManagerTest, TradeEventIdempotentByTradeId) {
     EXPECT_EQ(store->trades.size(), 1U);
 }
 
+TEST(OrderManagerTest, TradeEventUsesLastTradeVolumeWhenCumulativeFilledVolumeAdvances) {
+    auto store = std::make_shared<FakeTradingDomainStore>();
+    OrderManager manager(store);
+    auto intent = BuildIntent("ord-trade-volume");
+    intent.volume = 3;
+    (void)manager.CreateOrder(intent);
+
+    auto trade_event = BuildAcceptedEvent("ord-trade-volume");
+    trade_event.event_source = "OnRtnTrade";
+    trade_event.trade_id = "trade-volume-1";
+    trade_event.status = OrderStatus::kPartiallyFilled;
+    trade_event.total_volume = 3;
+    trade_event.filled_volume = 2;
+    trade_event.last_trade_volume = 1;
+    trade_event.avg_fill_price = 5001.0;
+    trade_event.ts_ns = 210;
+    trade_event.exchange_ts_ns = 210;
+
+    Trade trade;
+    std::string error;
+    ASSERT_TRUE(manager.OnTradeEvent(trade_event, &trade, &error)) << error;
+    ASSERT_EQ(store->trades.size(), 1U);
+    EXPECT_EQ(store->trades.front().quantity, 1);
+    EXPECT_EQ(trade.quantity, 1);
+}
+
+TEST(OrderManagerTest, CancelActionRejectedDoesNotMakeOrderTerminal) {
+    auto store = std::make_shared<FakeTradingDomainStore>();
+    OrderManager manager(store);
+    (void)manager.CreateOrder(BuildIntent("ord-cancel-reject"));
+
+    auto accepted = BuildAcceptedEvent("ord-cancel-reject");
+    Order order;
+    std::string error;
+    ASSERT_TRUE(manager.OnOrderEvent(accepted, &order, &error)) << error;
+
+    auto cancel_rejected = accepted;
+    cancel_rejected.event_source = "OnErrRtnOrderAction";
+    cancel_rejected.status = OrderStatus::kRejected;
+    cancel_rejected.reason = "cancel rejected by exchange";
+    cancel_rejected.ts_ns = 101;
+    cancel_rejected.exchange_ts_ns = 101;
+    ASSERT_TRUE(manager.OnOrderEvent(cancel_rejected, &order, &error)) << error;
+
+    EXPECT_EQ(order.status, OrderStatus::kAccepted);
+    EXPECT_EQ(order.filled_quantity, 0);
+    const auto active = manager.GetActiveOrdersByAccount("acc1", "SHFE.ag2406");
+    ASSERT_EQ(active.size(), 1U);
+    EXPECT_EQ(active.front().order_id, "ord-cancel-reject");
+}
+
 TEST(OrderManagerTest, GetActiveOrdersByStrategyFiltersCorrectly) {
     auto store = std::make_shared<FakeTradingDomainStore>();
     OrderManager manager(store);
@@ -220,6 +271,22 @@ TEST(OrderManagerTest, GetActiveOrdersByStrategyFiltersCorrectly) {
     const auto filtered = manager.GetActiveOrdersByStrategy("s1", "SHFE.ag2406");
     ASSERT_EQ(filtered.size(), 1U);
     EXPECT_EQ(filtered.front().symbol, "SHFE.ag2406");
+}
+
+TEST(OrderManagerTest, GetActiveOrdersByAccountSpansStrategies) {
+    auto store = std::make_shared<FakeTradingDomainStore>();
+    OrderManager manager(store);
+
+    auto first = BuildIntent("ord-account-s1");
+    first.strategy_id = "s1";
+    (void)manager.CreateOrder(first);
+
+    auto second = BuildIntent("ord-account-s2");
+    second.strategy_id = "s2";
+    (void)manager.CreateOrder(second);
+
+    const auto active = manager.GetActiveOrdersByAccount("acc1", "SHFE.ag2406");
+    EXPECT_EQ(active.size(), 2U);
 }
 
 }  // namespace

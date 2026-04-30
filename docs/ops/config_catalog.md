@@ -25,15 +25,8 @@
 - `configs/risk_rules.yaml`
 - `configs/strategies/main_backtest_strategy.yaml`
 - `configs/strategies/main_backtest_production.yaml`
-- `configs/strategies/main_backtest_strategy_kama_trend_1.yaml`
-- `configs/strategies/main_backtest_strategy_v4_t0.yaml`
-- `configs/strategies/main_backtest_strategy_v4_t1.yaml`
-- `configs/strategies/main_backtest_strategy_v4_t2.yaml`
 - `configs/strategies/products_info.yaml`
-- `configs/strategies/sub/kama_trend_1.yaml`
 - `configs/strategies/sub/kama_trend_production.yaml`
-- `configs/strategies/sub/kama_trend_v4.yaml`
-- `configs/strategies/sub/trend_1.yaml`
 - `configs/strategies/instrument_info.json`
 - `configs/perf/baseline.json`
 - `configs/perf/backtest_benchmark_baseline.json`
@@ -142,6 +135,10 @@
 | `ctp.kafka_bootstrap_servers` | string | 否 | 环境变量占位符 | host 列表 | Kafka 输出 | `${KAFKA_BOOTSTRAP_SERVERS}` |
 | `ctp.kafka_topic_ticks` | string | 否 | 程序默认 | 非空 | Tick 主题名 | `market.ticks.v1` |
 | `ctp.clickhouse_dsn` | string | 否 | 环境变量占位符 | DSN | ClickHouse 存储 | `${CLICKHOUSE_DSN}` |
+| `ctp.market_data_recording_enabled` | bool | 否 | 程序默认 | `true/false` | 是否把实时 tick 与 1m bar 额外保存为本地 CSV | `true` |
+| `ctp.market_data_recording_dir` | string | 否 | 程序默认 | 非空路径 | 本地行情 CSV 根目录 | `runtime/market_data/simnow` |
+| `ctp.market_data_recording_run_id` | string | 否 | 自动生成 | 目录名或空 | 行情 CSV 运行目录；空值自动生成 `run_<ts_ns>` | `` |
+| `ctp.market_data_recording_flush_each_write` | bool | 否 | 程序默认 | `true/false` | 每条 tick/bar 写入后立即 flush，降低宕机丢失窗口 | `false` |
 | `ctp.audit_hot_days` | int | 否 | 程序默认 | `>=0` | 热数据保留天数 | `7` |
 | `ctp.audit_cold_days` | int | 否 | 程序默认 | `>=0` | 冷数据保留天数 | `180` |
 
@@ -152,7 +149,7 @@
 | `ctp.instruments` | string | 否 | 程序默认 | 逗号分隔标的列表 | 订阅标的 | `SHFE.ag2406,SHFE.rb2405` |
 | `ctp.strategy_ids` | string | 否 | 程序默认 | 逗号分隔策略 ID | 运行策略集合 | `demo` |
 | `ctp.strategy_queue_capacity` | int | 否 | 程序默认 | `>0` | 策略事件队列容量 | `8192` |
-| `ctp.account_id` | string | 否 | 程序默认 | 非空 | 策略账户上下文 | `sim-account` |
+| `ctp.account_id` | string | 否 | 程序默认 | 非空 | 策略账户上下文；SimNow 自动交易建议使用真实投资者/账户标识 | `${CTP_SIM_INVESTOR_ID}` |
 | `ctp.execution_mode` | string | 否 | 程序默认 | `direct/sliced` | 执行模式 | `direct` |
 | `ctp.execution_algo` | string | 否 | 程序默认 | `direct/sliced/twap/vwap_lite` | 执行算法 | `direct` |
 | `ctp.slice_size` | int | 否 | 程序默认 | `>0` | 分片手数 | `2` |
@@ -163,9 +160,15 @@
 | `ctp.cancel_after_ms` | int | 否 | 程序默认 | `>=0` | 超时撤单 | `0` |
 | `ctp.cancel_check_interval_ms` | int | 否 | 程序默认 | `>=0` | 撤单检查周期 | `200` |
 | `ctp.risk_default_max_order_volume` | int | 否 | 程序默认 | `>=0` | 默认单笔手数上限 | `200` |
-| `ctp.risk_default_max_order_notional` | double | 否 | 程序默认 | `>=0` | 默认单笔名义金额上限 | `1000000` |
+| `ctp.risk_default_max_order_notional` | double | 否 | 程序默认 | `>0` | 默认单笔名义金额上限 | `1000000` |
 | `ctp.risk_default_max_active_orders` | int | 否 | 程序默认 | `>=0` | 默认活跃委托上限 | `0` |
 | `ctp.risk_default_max_position_notional` | double | 否 | 程序默认 | `>=0` | 默认持仓名义上限 | `0` |
+| `ctp.risk_sim_subaccount_enabled` | bool | 否 | 程序默认 | `true/false` | 是否启用 SimNow 仿真子账户资金池风控；真实 SimNow 账户资金交易应关闭 | `false` |
+| `ctp.risk_sim_subaccount_id` | string | 否 | `ctp.account_id` | 非空或空 | 仿真子账户标识，用于审计与日志关联；关闭子账户时留空 | `` |
+| `ctp.risk_sim_subaccount_initial_equity` | double | 否 | 程序默认 | `>=0` | 仿真子账户初始权益；关闭子账户时为 0 | `0` |
+| `ctp.risk_sim_subaccount_max_margin` | double | 否 | 初始权益 | `>=0` | 仿真子账户保证金占用上限；关闭子账户时为 0 | `0` |
+| `ctp.risk_sim_subaccount_order_margin_rate` | double | 否 | 程序默认 | `>=0` | 估算新开仓保证金的保证金率；仅子账户启用时生效 | `1.0` |
+| `ctp.risk_sim_subaccount_contract_multiplier` | double | 否 | 程序默认 | `>0` | 估算新开仓保证金的合约乘数；仅子账户启用时生效 | `1.0` |
 | `ctp.risk_default_rule_group` | string | 否 | 程序默认 | 非空 | 默认规则组 | `default` |
 | `ctp.risk_default_rule_version` | string | 否 | 程序默认 | 非空 | 默认规则版本 | `v1` |
 | `ctp.risk_default_policy_id` | string | 否 | 程序默认 | 非空 | 默认策略 ID | `policy.global` |
@@ -309,7 +312,7 @@
 | `composite.sub_strategies[].enabled` | bool | 否 | `true` | `true/false` | 子策略开关 | `true` |
 | `composite.sub_strategies[].timeframe_minutes` | int | 否 | `1` | `>0` | 子策略订阅 Bar 周期（分钟） | `5` |
 | `composite.sub_strategies[].type` | string | 是 | 无 | 注册类型名 | 子策略类型 | `KamaTrendStrategy` |
-| `composite.sub_strategies[].config_path` | string | 条件必填 | 无 | 路径 | 子策略参数配置路径 | `./sub/kama_trend_1.yaml` |
+| `composite.sub_strategies[].config_path` | string | 条件必填 | 无 | 路径 | 子策略参数配置路径 | `./sub/kama_trend_production.yaml` |
 | `composite.sub_strategies[].params` | map | 条件必填 | 无 | 键值对 | 内联参数 | `risk_per_trade_pct: 0.01` |
 | `composite.sub_strategies[].entry_market_regimes` | list[string] | 否 | 空 | 枚举集合 | 仅开仓信号的市场状态门控 | `[kStrongTrend, kWeakTrend]` |
 | `composite.sub_strategies[].overrides` | map | 否 | 空 | `backtest/sim/live` | 运行模式参数覆盖容器 | 见下方示例 |
@@ -352,11 +355,11 @@ composite:
   merge_rule: kPriority
   enable_non_backtest: false
   sub_strategies:
-    - id: kama_trend_1
+    - id: kama_trend_production
       enabled: true
-      timeframe_minutes: 1
+      timeframe_minutes: 5
       type: KamaTrendStrategy
-      config_path: ./sub/kama_trend_1.yaml
+      config_path: ./sub/kama_trend_production.yaml
       entry_market_regimes: [kStrongTrend, kWeakTrend]
 ```
 
@@ -375,11 +378,11 @@ composite:
   merge_rule: kPriority
   enable_non_backtest: true
   sub_strategies:
-    - id: kama_trend_1
+    - id: kama_trend_production
       enabled: true
-      timeframe_minutes: 1
+      timeframe_minutes: 5
       type: KamaTrendStrategy
-      config_path: ./sub/kama_trend_1.yaml
+      config_path: ./sub/kama_trend_production.yaml
       overrides:
         backtest:
           params:
@@ -411,30 +414,6 @@ composite:
 - Consumer: `backtest_cli` / `rolling_backtest_cli`。
 - 字段说明: 同 `configs/strategies/main_backtest_strategy.yaml`；重点差异是使用 `kama_trend_production` 子策略和 5 分钟周期。
 
-## `configs/strategies/main_backtest_strategy_kama_trend_1.yaml`
-
-- Purpose: 保留 `kama_trend_1` 历史基线入口，用于版本化优化结果复现。
-- Consumer: `backtest_cli` / 历史参数优化配置。
-- 字段说明: 同 `configs/strategies/main_backtest_strategy.yaml`；`trend_1` 作为禁用的历史对照项保留。
-
-## `configs/strategies/main_backtest_strategy_v4_t0.yaml`
-
-- Purpose: KAMA v4 T0 基线入口，模块化增强开关全关。
-- Consumer: `backtest_cli` / A/B 配置对照。
-- 字段说明: 同 `configs/strategies/main_backtest_strategy.yaml`；子策略指向 `sub/kama_trend_v4.yaml`。
-
-## `configs/strategies/main_backtest_strategy_v4_t1.yaml`
-
-- Purpose: KAMA v4 T1 入口，启用 trailing stop 覆盖参数。
-- Consumer: `backtest_cli` / A/B 配置对照。
-- 字段说明: 同 T0；通过 `overrides.backtest.params` 打开 `trailing_stop.enabled`。
-
-## `configs/strategies/main_backtest_strategy_v4_t2.yaml`
-
-- Purpose: KAMA v4 T2 入口，启用 trailing stop 与 channel breakout 覆盖参数。
-- Consumer: `backtest_cli` / A/B 配置对照。
-- 字段说明: 同 T0；通过 `overrides.backtest.params` 打开 `trailing_stop.enabled` 和 `channel_breakout.enabled`。
-
 ## `configs/strategies/products_info.yaml`
 
 - Purpose: 产品信息 YAML 镜像（与 `instrument_info.json` 对齐）。
@@ -458,22 +437,24 @@ composite:
 | `products.<P>.commission.close_today_ratio_by_money` | double | 是 | 无 | `>=0` | 平今按金额费率 | `0.0001` |
 | `products.<P>.commission.close_today_ratio_by_volume` | double | 是 | 无 | `>=0` | 平今按量费率（费用=`volume_multiple*ratio*手数`） | `0` |
 
-## `configs/strategies/sub/kama_trend_1.yaml`
+## `configs/strategies/sub/kama_trend_production.yaml`
 
-- Purpose: `KamaTrendStrategy` 完整子策略参数（entry + sizing + stop/take）。
+- Purpose: production KAMA 基线参数，承载仿真/生产使用的优化后参数。
 - Consumer: `atomic_factory` / `KamaTrendStrategy::Init`。
 
 字段表：
 
 | 字段 | 类型 | 必填 | 默认值 | 取值 | 含义 | 示例 |
 |---|---|---|---|---|---|---|
-| `params.id` | string | 否 | 策略实例 ID | 非空 | 子策略 ID | `kama_trend_1` |
+| `params.id` | string | 否 | 策略实例 ID | 非空 | 子策略 ID | `kama_trend_production` |
 | `params.er_period` | int | 否 | `10` | `>0` | KAMA ER 周期 | `10` |
 | `params.fast_period` | int | 否 | `2` | `>0` | KAMA 快周期 | `2` |
 | `params.slow_period` | int | 否 | `30` | `>0` | KAMA 慢周期 | `30` |
 | `params.std_period` | int | 否 | `20` | `>0` | KAMA 标准差窗口 | `20` |
 | `params.kama_filter` | double | 否 | `0.5` | `>=0` | 趋势过滤阈值系数 | `0.5` |
 | `params.risk_per_trade_pct` | double | 否 | `0.01` | `(0,1]` | 单次风险资金比例 | `0.01` |
+| `params.daily_max_loss_R` | double | 否 | `0` | `>=0` | 日内最大实现亏损，单位为动态 R；`R = max(0, account_equity) * risk_per_trade_pct` | `3` |
+| `params.max_consecutive_losses` | int | 否 | `0` | `>=0` | 连续亏损后当日暂停开仓的笔数阈值 | `3` |
 | `params.default_volume` | int | 否 | `1` | `>0` | 默认开仓手数 | `1` |
 | `params.allow_reverse_open` | bool | 否 | `true` | `true/false` | 反向开仓开关；`false` 时遇到反向 `kOpen` 只忽略，不做先平后反开 | `true` |
 | `params.forbid_open_windows` | string | 否 | 空 | `HH:MM-HH:MM[,..]` | 禁止开仓时间窗口；按 `window_timezone` 解释 | `09:00-09:15,10:30-10:35` |
@@ -490,51 +471,8 @@ composite:
 
 - `contract_multiplier` 由 `product_config_path` 对应产品信息注入，不在子策略配置里维护。
 - 回测标的由主策略 `backtest.symbols` 控制，子策略默认按 `state.instrument_id` 工作。
+- `daily_max_loss_R` 使用动态 R 值，随 `account_equity * risk_per_trade_pct` 增减，不再依赖固定金额参数。
 - 时间窗口参数属于组合层控制，不会传入 `KamaTrendStrategy` 内部指标计算；`force_close_windows` 仅在回测 replay 的 tick 循环生效。
-
-## `configs/strategies/sub/kama_trend_production.yaml`
-
-- Purpose: production KAMA 基线参数，归档自已验证 T0 baseline。
-- Consumer: `KamaTrendStrategy::Init`。
-- 字段说明: 同 `configs/strategies/sub/kama_trend_1.yaml`；重点差异是更保守的开仓窗口、`allow_reverse_open=false`、较大的止盈 ATR 倍数。
-
-## `configs/strategies/sub/kama_trend_v4.yaml`
-
-- Purpose: KAMA v4 参数集合，承载 trailing stop / channel breakout / 时段过滤模块参数。
-- Consumer: `KamaTrendStrategy::Init`。
-- 字段说明: 同 `configs/strategies/sub/kama_trend_1.yaml`；点号键用于表达扁平 loader 下的模块化参数。
-
-## `configs/strategies/sub/trend_1.yaml`
-
-- Purpose: `TrendStrategy` 完整子策略参数（entry + sizing + stop/take）。
-- Consumer: `atomic_factory` / `TrendStrategy::Init`。
-
-字段表：
-
-| 字段 | 类型 | 必填 | 默认值 | 取值 | 含义 | 示例 |
-|---|---|---|---|---|---|---|
-| `params.id` | string | 否 | 策略实例 ID | 非空 | 子策略 ID | `trend_1` |
-| `params.er_period` | int | 否 | `10` | `>0` | KAMA ER 周期 | `10` |
-| `params.fast_period` | int | 否 | `2` | `>0` | KAMA 快周期 | `2` |
-| `params.slow_period` | int | 否 | `30` | `>0` | KAMA 慢周期 | `30` |
-| `params.kama_filter` | double | 否 | `0.0` | `>=0` | 开仓阈值系数 | `0.0` |
-| `params.risk_per_trade_pct` | double | 否 | `0.01` | `(0,1]` | 单次风险资金比例 | `0.01` |
-| `params.default_volume` | int | 否 | `1` | `>0` | 默认开仓手数 | `1` |
-| `params.allow_reverse_open` | bool | 否 | `true` | `true/false` | 反向开仓开关；`false` 时反向 `kOpen` 不触发反手 | `true` |
-| `params.forbid_open_windows` | string | 否 | 空 | `HH:MM-HH:MM[,..]` | 禁止开仓时间窗口；按 `window_timezone` 解释 | `09:00-09:15,10:30-10:35` |
-| `params.force_close_windows` | string | 否 | 空 | `HH:MM-HH:MM[,..]` | 强制平仓时间窗口；窗口内同时禁止开仓；仅 `backtest` tick 级强平 | `14:55-15:00` |
-| `params.window_timezone` | string | 否 | `Asia/Shanghai` | `Asia/Shanghai/UTC` | 时间窗口时区 | `Asia/Shanghai` |
-| `params.stop_loss_mode` | string | 否 | `trailing_atr` | `trailing_atr/none` | 止损模型 | `trailing_atr` |
-| `params.stop_loss_atr_period` | int | 否 | `14` | `>0` | 止损 ATR 周期 | `14` |
-| `params.stop_loss_atr_multiplier` | double | 否 | `2.0` | `>0` | 止损 ATR 倍数 | `2.0` |
-| `params.take_profit_mode` | string | 否 | `atr_target` | `atr_target/none` | 止盈模型 | `atr_target` |
-| `params.take_profit_atr_period` | int | 否 | `14` | `>0` | 止盈 ATR 周期 | `14` |
-| `params.take_profit_atr_multiplier` | double | 否 | `3.0` | `>0` | 止盈 ATR 倍数 | `3.0` |
-
-说明：
-
-- 回测标的由主策略 `backtest.symbols` 控制，子策略默认按 `state.instrument_id` 工作。
-- 时间窗口参数属于组合层控制，不参与 `TrendStrategy` 自身指标计算；`force_close_windows` 仅在回测 replay 的 tick 循环生效。
 
 ## `configs/strategies/instrument_info.json`
 
@@ -770,7 +708,7 @@ composite:
 | 字段 | 类型 | 必填 | 默认值 | 取值 | 含义 | 示例 |
 |---|---|---|---|---|---|---|
 | `composite_config_path` | string | 是 | 无 | 文件路径 | 主策略配置路径 | `configs/strategies/main_backtest_strategy.yaml` |
-| `target_sub_config_path` | string | 是 | 无 | 文件路径 | 待优化子策略配置 | `./sub/kama_trend_1.yaml` |
+| `target_sub_config_path` | string | 是 | 无 | 文件路径 | 待优化子策略配置 | `./sub/kama_trend_production.yaml` |
 | `backtest_args` | map | 是 | 无 | `backtest_cli` 参数集 | 单次 trial 的基础回测参数 | 见文件示例 |
 | `optimization.algorithm` | string | 否 | `grid` | `grid` | 优化算法 | `grid` |
 | `optimization.maximize` | bool | 否 | `true` | `true/false` | 是否最大化目标值 | `true` |
@@ -840,7 +778,7 @@ composite:
 | `optimization.max_trials` | int | `rolling_optimize` 必填 | `100` | `>0` | 每窗口 trial 上限 | `100` |
 | `optimization.parallel` | int | `rolling_optimize` 必填 | `1` | `>0` | 窗口内并发 trial 数 | `2` |
 | `optimization.param_space` | string | `rolling_optimize` 必填 | 无 | 文件路径 | 参数空间配置 | `runtime/optim/param_space.yaml` |
-| `optimization.target_sub_config_path` | string | 否 | 空 | 文件路径 | 目标子策略路径（与 param_space 一致性校验） | `configs/strategies/sub/kama_trend_1.yaml` |
+| `optimization.target_sub_config_path` | string | 否 | 空 | 文件路径 | 目标子策略路径（与 param_space 一致性校验） | `configs/strategies/sub/kama_trend_production.yaml` |
 | `output.report_json` | string | 是 | 无 | 文件路径 | 汇总 JSON 报告路径 | `docs/results/rolling_backtest_report.json` |
 | `output.report_md` | string | 是 | 无 | 文件路径 | 汇总 Markdown 报告路径 | `docs/results/rolling_backtest_report.md` |
 | `output.best_params_dir` | string | 否 | 空 | 目录路径 | 每窗口 best params 输出目录 | `runtime/rolling/best_params` |

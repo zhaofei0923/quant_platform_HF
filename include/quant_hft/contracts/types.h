@@ -317,6 +317,7 @@ struct OrderEvent {
     OrderStatus status{OrderStatus::kNew};
     std::int32_t total_volume{0};
     std::int32_t filled_volume{0};
+    std::int32_t last_trade_volume{0};
     double avg_fill_price{0.0};
     std::string reason;
     std::string status_msg;
@@ -410,6 +411,48 @@ struct InstrumentMetaSnapshot {
     std::int32_t volume_multiple{0};
     double price_tick{0.0};
     bool max_margin_side_algorithm{false};
+    EpochNanos ts_ns{0};
+    std::string source;
+};
+
+struct InstrumentMarginRateSnapshot {
+    std::string account_id;
+    std::string investor_id;
+    std::string instrument_id;
+    std::string exchange_id;
+    std::string hedge_flag;
+    double long_margin_ratio_by_money{0.0};
+    double long_margin_ratio_by_volume{0.0};
+    double short_margin_ratio_by_money{0.0};
+    double short_margin_ratio_by_volume{0.0};
+    bool is_relative{false};
+    EpochNanos ts_ns{0};
+    std::string source;
+};
+
+struct InstrumentCommissionRateSnapshot {
+    std::string account_id;
+    std::string investor_id;
+    std::string instrument_id;
+    std::string exchange_id;
+    double open_ratio_by_money{0.0};
+    double open_ratio_by_volume{0.0};
+    double close_ratio_by_money{0.0};
+    double close_ratio_by_volume{0.0};
+    double close_today_ratio_by_money{0.0};
+    double close_today_ratio_by_volume{0.0};
+    EpochNanos ts_ns{0};
+    std::string source;
+};
+
+struct InstrumentOrderCommRateSnapshot {
+    std::string account_id;
+    std::string investor_id;
+    std::string instrument_id;
+    std::string exchange_id;
+    std::string hedge_flag;
+    double order_comm_by_volume{0.0};
+    double order_action_comm_by_volume{0.0};
     EpochNanos ts_ns{0};
     std::string source;
 };

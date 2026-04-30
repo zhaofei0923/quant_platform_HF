@@ -48,7 +48,7 @@ bool OrderStateMachine::OnOrderEvent(const OrderEvent& event) {
     const bool is_cancel_feedback =
         (event.event_source == "OnRspOrderAction" ||
          event.event_source == "OnErrRtnOrderAction") &&
-        event.status == OrderStatus::kAccepted;
+        (event.status == OrderStatus::kAccepted || event.status == OrderStatus::kRejected);
     if (is_cancel_feedback) {
         if (order.is_terminal) {
             return false;

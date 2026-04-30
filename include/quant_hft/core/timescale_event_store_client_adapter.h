@@ -25,6 +25,9 @@ public:
     void AppendInvestorPositionSnapshot(const InvestorPositionSnapshot& snapshot);
     void AppendBrokerTradingParamsSnapshot(const BrokerTradingParamsSnapshot& snapshot);
     void AppendInstrumentMetaSnapshot(const InstrumentMetaSnapshot& snapshot);
+    void AppendInstrumentMarginRateSnapshot(const InstrumentMarginRateSnapshot& snapshot);
+    void AppendInstrumentCommissionRateSnapshot(const InstrumentCommissionRateSnapshot& snapshot);
+    void AppendInstrumentOrderCommRateSnapshot(const InstrumentOrderCommRateSnapshot& snapshot);
 
     std::vector<MarketSnapshot> GetMarketSnapshots(
         const std::string& instrument_id) const override;
@@ -39,6 +42,12 @@ public:
     std::vector<BrokerTradingParamsSnapshot> GetBrokerTradingParamsSnapshots(
         const std::string& account_id) const;
     std::vector<InstrumentMetaSnapshot> GetInstrumentMetaSnapshots(
+        const std::string& instrument_id) const;
+    std::vector<InstrumentMarginRateSnapshot> GetInstrumentMarginRateSnapshots(
+        const std::string& instrument_id) const;
+    std::vector<InstrumentCommissionRateSnapshot> GetInstrumentCommissionRateSnapshots(
+        const std::string& instrument_id) const;
+    std::vector<InstrumentOrderCommRateSnapshot> GetInstrumentOrderCommRateSnapshots(
         const std::string& instrument_id) const;
 
 private:

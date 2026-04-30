@@ -1,0 +1,21 @@
+[Unit]
+Description=Quant HFT SimNow Unattended Trading Supervisor (user unit)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/workspace/quant_platform_HF
+Environment=QUANT_HFT_ENV=simnow
+Environment=QUANT_ROOT=%h/workspace/quant_platform_HF
+EnvironmentFile=-/etc/quant/platform.conf
+ExecStart=/bin/bash -lc ': "${QUANT_ROOT:?QUANT_ROOT is required}"; exec "${QUANT_ROOT}/scripts/ops/supervise_simnow_trading.sh"'
+Restart=always
+RestartSec=20
+KillSignal=SIGTERM
+TimeoutStopSec=45
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

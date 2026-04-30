@@ -12,6 +12,11 @@ bool IsTradeEvent(const OrderEvent& event) {
            event.event_source == "OnRspQryTrade";
 }
 
+bool IsCancelActionFeedback(const OrderEvent& event) {
+    return event.event_source == "OnRspOrderAction" ||
+           event.event_source == "OnErrRtnOrderAction";
+}
+
 }  // namespace
 
 OrderManager::OrderManager(std::shared_ptr<ITradingDomainStore> domain_store,
@@ -98,11 +103,15 @@ bool OrderManager::OnOrderEvent(const OrderEvent& event, Order* out_order, std::
             it = orders_.find(order_id);
         }
         order = it->second;
-        order.status = event.status;
+        if (!IsCancelActionFeedback(event)) {
+            order.status = event.status;
+        }
         if (event.total_volume > 0) {
             order.quantity = event.total_volume;
         }
-        order.filled_quantity = event.filled_volume;
+        if (!IsCancelActionFeedback(event)) {
+            order.filled_quantity = event.filled_volume;
+        }
         order.avg_fill_price = event.avg_fill_price;
         order.updated_at_ns = event.ts_ns > 0 ? event.ts_ns : NowEpochNanos();
         order.message = event.reason.empty() ? event.status_msg : event.reason;
@@ -144,8 +153,8 @@ bool OrderManager::OnTradeEvent(const OrderEvent& event, Trade* out_trade, std::
 
     Trade trade;
     trade.trade_id = event.trade_id.empty() ? event_key : event.trade_id;
-        trade.order_id = ResolveOrderId(event);
-        trade.account_id = event.account_id;
+    trade.order_id = ResolveOrderId(event);
+    trade.account_id = event.account_id;
     trade.strategy_id = event.strategy_id;
     {
         const auto order = GetOrder(trade.order_id);
@@ -158,7 +167,9 @@ bool OrderManager::OnTradeEvent(const OrderEvent& event, Trade* out_trade, std::
     trade.side = event.side;
     trade.offset = event.offset;
     trade.price = event.avg_fill_price;
-    trade.quantity = event.total_volume > 0 ? event.total_volume : event.filled_volume;
+    trade.quantity = event.last_trade_volume > 0
+                         ? event.last_trade_volume
+                         : (event.total_volume > 0 ? event.total_volume : event.filled_volume);
     trade.trade_ts_ns = event.ts_ns > 0 ? event.ts_ns : NowEpochNanos();
     trade.commission = 0.0;
     trade.profit = 0.0;
@@ -197,6 +208,33 @@ std::vector<Order> OrderManager::GetActiveOrders() const {
     out.reserve(orders_.size());
     for (const auto& [order_id, order] : orders_) {
         (void)order_id;
+        if (order.status == OrderStatus::kFilled || order.status == OrderStatus::kCanceled ||
+            order.status == OrderStatus::kRejected) {
+            continue;
+        }
+        out.push_back(order);
+    }
+    return out;
+}
+
+std::vector<Order> OrderManager::GetActiveOrdersByAccount(
+    const std::string& account_id,
+    const std::string& instrument_id) const {
+    if (account_id.empty()) {
+        return {};
+    }
+
+    std::vector<Order> out;
+    std::lock_guard<std::mutex> lock(mutex_);
+    out.reserve(orders_.size());
+    for (const auto& [order_id, order] : orders_) {
+        (void)order_id;
+        if (order.account_id != account_id) {
+            continue;
+        }
+        if (!instrument_id.empty() && order.symbol != instrument_id) {
+            continue;
+        }
         if (order.status == OrderStatus::kFilled || order.status == OrderStatus::kCanceled ||
             order.status == OrderStatus::kRejected) {
             continue;
@@ -270,7 +308,8 @@ std::string OrderManager::BuildTradeEventKey(const OrderEvent& event) {
     }
     return event.order_ref + "|" + std::to_string(event.front_id) + "|" +
            std::to_string(event.session_id) + "|trade|" + event.event_source + "|" +
-           std::to_string(event.exchange_ts_ns) + "|" + std::to_string(event.filled_volume);
+           std::to_string(event.exchange_ts_ns) + "|" + std::to_string(event.filled_volume) +
+           "|" + std::to_string(event.last_trade_volume);
 }
 
 bool OrderManager::IsEventProcessed(const std::string& event_key, std::string* error) const {

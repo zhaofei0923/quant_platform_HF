@@ -128,6 +128,13 @@ struct ExecutionConfig {
     int cancel_check_interval_ms{200};
 };
 
+struct MarketDataRecordingConfig {
+    bool enabled{false};
+    std::string output_dir{"runtime/market_data"};
+    std::string run_id;
+    bool flush_each_write{false};
+};
+
 struct RiskRuleConfig {
     std::string rule_id;
     std::string rule_group;
@@ -155,6 +162,12 @@ struct RiskConfig {
     double default_max_position_notional{0.0};
     int default_max_cancel_count{0};
     double default_max_cancel_ratio{0.0};
+    bool sim_subaccount_enabled{false};
+    std::string sim_subaccount_id;
+    double sim_subaccount_initial_equity{0.0};
+    double sim_subaccount_max_margin{0.0};
+    double sim_subaccount_order_margin_rate{1.0};
+    double sim_subaccount_contract_multiplier{1.0};
     std::string default_rule_group{"default"};
     std::string default_rule_version{"v1"};
     std::string default_policy_id{"policy.global"};
@@ -171,7 +184,7 @@ std::vector<CtpFrontPair> BuildCtpFrontCandidates(const std::string& md_front,
                                                   const std::string& td_front);
 
 class CtpConfigValidator {
-public:
+   public:
     static bool Validate(const CtpRuntimeConfig& config, std::string* error);
 };
 

@@ -108,6 +108,33 @@ TEST(CtpPositionLedgerTest, RejectReleasesAllFrozenVolume) {
     EXPECT_EQ(snapshot.closable, 5);
 }
 
+TEST(CtpPositionLedgerTest, CancelActionRejectedDoesNotReleaseFrozenVolume) {
+    CtpPositionLedger ledger;
+    std::string error;
+
+    ASSERT_TRUE(ledger.ApplyInvestorPositionSnapshot(MakeLongTodaySnapshot(5), &error)) << error;
+
+    CtpOrderIntentForLedger close_intent;
+    close_intent.client_order_id = "ord-cancel-reject";
+    close_intent.account_id = "acc-1";
+    close_intent.instrument_id = "SHFE.ag2406";
+    close_intent.direction = PositionDirection::kLong;
+    close_intent.offset = OffsetFlag::kCloseToday;
+    close_intent.requested_volume = 3;
+    ASSERT_TRUE(ledger.RegisterOrderIntent(close_intent, &error)) << error;
+
+    OrderEvent cancel_rejected = MakeOrderEvent(
+        "ord-cancel-reject", OrderStatus::kRejected, 3, 0, 2);
+    cancel_rejected.event_source = "OnErrRtnOrderAction";
+    ASSERT_TRUE(ledger.ApplyOrderEvent(cancel_rejected, &error)) << error;
+
+    const auto snapshot = ledger.GetPosition("acc-1", "SHFE.ag2406", PositionDirection::kLong,
+                                             "today");
+    EXPECT_EQ(snapshot.position, 5);
+    EXPECT_EQ(snapshot.frozen, 3);
+    EXPECT_EQ(snapshot.closable, 2);
+}
+
 TEST(CtpPositionLedgerTest, OpenFillAddsPositionWithoutFreeze) {
     CtpPositionLedger ledger;
     std::string error;
@@ -130,6 +157,33 @@ TEST(CtpPositionLedgerTest, OpenFillAddsPositionWithoutFreeze) {
     EXPECT_EQ(snapshot.position, 7);
     EXPECT_EQ(snapshot.frozen, 0);
     EXPECT_EQ(snapshot.closable, 7);
+}
+
+TEST(CtpPositionLedgerTest, ExchangeAndHedgeFlagSeparatePositionBuckets) {
+    CtpPositionLedger ledger;
+    std::string error;
+
+    auto hedge_snapshot = MakeLongTodaySnapshot(4);
+    hedge_snapshot.instrument_id = "rb2405";
+    hedge_snapshot.exchange_id = "SHFE";
+    hedge_snapshot.hedge_flag = "3";
+    ASSERT_TRUE(ledger.ApplyInvestorPositionSnapshot(hedge_snapshot, &error)) << error;
+
+    auto spec_snapshot = hedge_snapshot;
+    spec_snapshot.position = 9;
+    spec_snapshot.today_position = 9;
+    spec_snapshot.exchange_id = "DCE";
+    spec_snapshot.hedge_flag = "1";
+    ASSERT_TRUE(ledger.ApplyInvestorPositionSnapshot(spec_snapshot, &error)) << error;
+
+    const auto shfe_hedge =
+        ledger.GetPosition("acc-1", "rb2405", PositionDirection::kLong, "today", "SHFE", "hedge");
+    const auto dce_spec = ledger.GetPosition(
+        "acc-1", "rb2405", PositionDirection::kLong, "today", "DCE", "speculation");
+
+    EXPECT_EQ(shfe_hedge.position, 4);
+    EXPECT_EQ(dce_spec.position, 9);
+    EXPECT_EQ(ledger.GetClosableVolume("acc-1", "rb2405", PositionDirection::kLong, "today"), 0);
 }
 
 }  // namespace quant_hft

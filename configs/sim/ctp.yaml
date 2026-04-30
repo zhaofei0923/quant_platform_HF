@@ -11,6 +11,7 @@ ctp:
   profile: "simnow_env_selected"
   environment: sim
   run_type: sim
+  # 7x24 front(400xx) => false; trading-hours front(300xx) => true.
   is_production_mode: "${CTP_SIM_IS_PRODUCTION_MODE}"
   enable_real_api: "${CTP_SIM_ENABLE_REAL_API}"
   enable_terminal_auth: true
@@ -26,7 +27,7 @@ ctp:
   trader_front: "${CTP_SIM_TRADER_FRONT}"
 
   # Credentials should be injected from environment in real usage.
-  password: "${CTP_SIM_PASSWORD}"
+  password_env: "CTP_SIM_PASSWORD"
   auth_code: "${CTP_SIM_AUTH_CODE}"
   app_id: "${CTP_SIM_APP_ID}"
 
@@ -61,6 +62,10 @@ ctp:
   kafka_bootstrap_servers: "${KAFKA_BOOTSTRAP_SERVERS}"
   kafka_topic_ticks: "market.ticks.v1"
   clickhouse_dsn: "${CLICKHOUSE_DSN}"
+  market_data_recording_enabled: true
+  market_data_recording_dir: "runtime/market_data/simnow"
+  market_data_recording_run_id: ""
+  market_data_recording_flush_each_write: true
   audit_hot_days: 7
   audit_cold_days: 180
 
@@ -78,7 +83,8 @@ ctp:
   strategy_factory: "composite"
   strategy_composite_config: "configs/strategies/main_backtest_production.yaml"
   strategy_queue_capacity: 8192
-  account_id: "sim-account"
+  # Use the real SimNow investor/account context instead of a capped logical subaccount.
+  account_id: "${CTP_SIM_INVESTOR_ID}"
 
   # --- execution params ---
   execution_mode: "direct"   # direct | sliced
@@ -96,6 +102,13 @@ ctp:
   risk_default_max_order_notional: 1000000
   risk_default_max_active_orders: 0
   risk_default_max_position_notional: 0
+  # Disabled for live SimNow simulation: use the broker/account ledger returned by CTP.
+  risk_sim_subaccount_enabled: false
+  risk_sim_subaccount_id: ""
+  risk_sim_subaccount_initial_equity: 0
+  risk_sim_subaccount_max_margin: 0
+  risk_sim_subaccount_order_margin_rate: 1.0
+  risk_sim_subaccount_contract_multiplier: 1.0
   risk_default_rule_group: "default"
   risk_default_rule_version: "v1"
   risk_default_policy_id: "policy.global"

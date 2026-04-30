@@ -217,6 +217,7 @@ message OrderEvent {
   string status = 5;
   int32 total_volume = 6;
   int32 filled_volume = 7;
+  int32 last_trade_volume = 33;
   double avg_fill_price = 8;
   string reason = 9;
   int64 ts_ns = 10;

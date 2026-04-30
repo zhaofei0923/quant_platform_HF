@@ -33,11 +33,11 @@ composite:
   merge_rule: kPriority
   enable_non_backtest: false
   sub_strategies:
-    - id: kama_trend_1
+    - id: kama_trend_production
       enabled: true
-      timeframe_minutes: 1
+      timeframe_minutes: 5
       type: KamaTrendStrategy
-      config_path: ./sub/kama_trend_1.yaml
+      config_path: ./sub/kama_trend_production.yaml
       entry_market_regimes: [kStrongTrend, kWeakTrend]
       overrides:
         backtest:
@@ -46,12 +46,6 @@ composite:
         sim:
           params:
             default_volume: 2
-    - id: trend_1
-      enabled: false
-      timeframe_minutes: 5
-      type: TrendStrategy
-      config_path: ./sub/trend_1.yaml
-      entry_market_regimes: [kStrongTrend]
 ```
 
 ## 升级后如何使用
@@ -71,11 +65,11 @@ composite:
   merge_rule: kPriority
   enable_non_backtest: false
   sub_strategies:
-    - id: kama_trend_1
+    - id: kama_trend_production
       enabled: true
-      timeframe_minutes: 1
+      timeframe_minutes: 5
       type: KamaTrendStrategy
-      config_path: ./sub/kama_trend_1.yaml
+      config_path: ./sub/kama_trend_production.yaml
 ```
 
 ### 示例 2：开启 sim/live 并按运行模式覆盖参数
@@ -93,11 +87,11 @@ composite:
   merge_rule: kPriority
   enable_non_backtest: true
   sub_strategies:
-    - id: kama_trend_1
+    - id: kama_trend_production
       enabled: true
-      timeframe_minutes: 1
+      timeframe_minutes: 5
       type: KamaTrendStrategy
-      config_path: ./sub/kama_trend_1.yaml
+      config_path: ./sub/kama_trend_production.yaml
       overrides:
         backtest:
           params:
@@ -127,17 +121,19 @@ composite:
 
 ## 子策略示例
 
-文件：`configs/strategies/sub/kama_trend_1.yaml`
+文件：`configs/strategies/sub/kama_trend_production.yaml`
 
 ```yaml
 params:
-  id: kama_trend_1
+  id: kama_trend_production
   er_period: 10
   fast_period: 2
   slow_period: 30
   std_period: 20
   kama_filter: 0.5
   risk_per_trade_pct: 0.01
+  daily_max_loss_R: 3
+  max_consecutive_losses: 3
   default_volume: 1
   stop_loss_mode: trailing_atr
   stop_loss_atr_period: 14

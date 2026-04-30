@@ -33,17 +33,22 @@ std::size_t QueryScheduler::DrainOnce() {
         std::lock_guard<std::mutex> lock(mutex_);
         RefillTokens();
 
+        if (in_flight_) {
+            return 0;
+        }
+
         auto remaining = static_cast<std::size_t>(tokens_);
         if (remaining == 0) {
             return 0;
         }
 
         for (std::size_t p = 0; p < queues_.size() && remaining > 0; ++p) {
-            while (!queues_[p].empty() && remaining > 0 && planned < executions.size()) {
+            while (!queues_[p].empty() && remaining > 0 && planned < 1) {
                 executions[planned++] = std::move(queues_[p].front().execute);
                 queues_[p].pop();
                 --remaining;
                 tokens_ -= 1.0;
+                in_flight_ = true;
             }
         }
     }
@@ -52,6 +57,11 @@ std::size_t QueryScheduler::DrainOnce() {
         executions[i]();
     }
     return planned;
+}
+
+void QueryScheduler::MarkComplete() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    in_flight_ = false;
 }
 
 std::size_t QueryScheduler::PendingCount() const {

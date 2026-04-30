@@ -1090,7 +1090,8 @@ bool DailySettlementService::PersistBackfillEvents(const std::string& account_id
         trade.side = event.side;
         trade.offset = event.offset;
         trade.price = event.avg_fill_price;
-        trade.quantity = std::max(1, event.filled_volume);
+        trade.quantity = std::max(1, event.last_trade_volume > 0 ? event.last_trade_volume
+                                     : event.filled_volume);
         const EpochNanos event_ts_ns = event.exchange_ts_ns > 0
                                            ? event.exchange_ts_ns
                                            : (event.ts_ns > 0 ? event.ts_ns : NowEpochNanos());

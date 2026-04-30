@@ -1,19 +1,20 @@
-#include <memory>
-#include <string>
-#include <filesystem>
-#include <unordered_set>
-#include <vector>
+#include "quant_hft/risk/risk_manager.h"
 
 #include <gtest/gtest.h>
 
-#include "quant_hft/risk/risk_manager.h"
+#include <filesystem>
+#include <memory>
+#include <string>
+#include <unordered_set>
+#include <vector>
+
 #include "quant_hft/services/order_manager.h"
 
 namespace quant_hft {
 namespace {
 
 class FakeTradingDomainStore final : public ITradingDomainStore {
-public:
+   public:
     bool UpsertOrder(const Order& order, std::string* error) override {
         (void)order;
         (void)error;
@@ -44,14 +45,14 @@ public:
         return true;
     }
 
-    bool MarkProcessedOrderEvent(const ProcessedOrderEventRecord& event, std::string* error) override {
+    bool MarkProcessedOrderEvent(const ProcessedOrderEventRecord& event,
+                                 std::string* error) override {
         (void)error;
         processed.insert(event.event_key);
         return true;
     }
 
-    bool ExistsProcessedOrderEvent(const std::string& event_key,
-                                   bool* exists,
+    bool ExistsProcessedOrderEvent(const std::string& event_key, bool* exists,
                                    std::string* error) const override {
         (void)error;
         if (exists != nullptr) {
@@ -72,10 +73,8 @@ public:
         return true;
     }
 
-    bool LoadPositionSummary(const std::string& account_id,
-                             const std::string& strategy_id,
-                             std::vector<Position>* out,
-                             std::string* error) const override {
+    bool LoadPositionSummary(const std::string& account_id, const std::string& strategy_id,
+                             std::vector<Position>* out, std::string* error) const override {
         (void)account_id;
         (void)strategy_id;
         (void)error;
@@ -85,10 +84,8 @@ public:
         return true;
     }
 
-    bool UpdateOrderCancelRetry(const std::string& client_order_id,
-                                std::int32_t cancel_retry_count,
-                                EpochNanos last_cancel_ts_ns,
-                                std::string* error) override {
+    bool UpdateOrderCancelRetry(const std::string& client_order_id, std::int32_t cancel_retry_count,
+                                EpochNanos last_cancel_ts_ns, std::string* error) override {
         (void)client_order_id;
         (void)cancel_retry_count;
         (void)last_cancel_ts_ns;
@@ -100,9 +97,7 @@ public:
     mutable std::unordered_set<std::string> processed;
 };
 
-OrderIntent BuildIntent(const std::string& order_id,
-                        Side side = Side::kBuy,
-                        double price = 4000.0,
+OrderIntent BuildIntent(const std::string& order_id, Side side = Side::kBuy, double price = 4000.0,
                         int volume = 1) {
     OrderIntent intent;
     intent.account_id = "acc1";
@@ -138,7 +133,8 @@ TEST(RiskManagerTest, CheckOrderMaxVolumeExceededRejects) {
     config.default_max_order_volume = 2;
     ASSERT_TRUE(risk_manager->Initialize(config));
 
-    auto result = risk_manager->CheckOrder(BuildIntent("ord-a", Side::kBuy, 4000.0, 3), BuildContext());
+    auto result =
+        risk_manager->CheckOrder(BuildIntent("ord-a", Side::kBuy, 4000.0, 3), BuildContext());
     EXPECT_FALSE(result.allowed);
     EXPECT_EQ(result.violated_rule, RiskRuleType::MAX_ORDER_VOLUME);
 }
@@ -162,6 +158,30 @@ TEST(RiskManagerTest, CheckOrderSelfTradePreventionCrossPriceRejects) {
     EXPECT_EQ(result.violated_rule, RiskRuleType::SELF_TRADE_PREVENTION);
 }
 
+TEST(RiskManagerTest, CheckOrderSelfTradePreventionRejectsAcrossStrategiesInSameAccount) {
+    auto store = std::make_shared<FakeTradingDomainStore>();
+    auto order_manager = std::make_shared<OrderManager>(store);
+
+    auto existing_intent = BuildIntent("resting-cross-strategy", Side::kSell, 4000.0, 1);
+    existing_intent.strategy_id = "mean_reversion_001";
+    (void)order_manager->CreateOrder(existing_intent);
+
+    auto risk_manager = CreateRiskManager(order_manager, store);
+    RiskManagerConfig config;
+    config.enable_dynamic_reload = false;
+    config.rule_file_path.clear();
+    ASSERT_TRUE(risk_manager->Initialize(config));
+
+    auto buy_intent = BuildIntent("incoming-cross-strategy", Side::kBuy, 4001.0, 1);
+    buy_intent.strategy_id = "trend_001";
+    auto context = BuildContext();
+    context.strategy_id = buy_intent.strategy_id;
+    const auto result = risk_manager->CheckOrder(buy_intent, context);
+
+    EXPECT_FALSE(result.allowed);
+    EXPECT_EQ(result.violated_rule, RiskRuleType::SELF_TRADE_PREVENTION);
+}
+
 TEST(RiskManagerTest, CheckOrderOrderRateExceededRejects) {
     auto store = std::make_shared<FakeTradingDomainStore>();
     auto order_manager = std::make_shared<OrderManager>(store);
@@ -178,6 +198,35 @@ TEST(RiskManagerTest, CheckOrderOrderRateExceededRejects) {
     EXPECT_FALSE(risk_manager->CheckOrder(BuildIntent("ord-r2"), context).allowed);
 }
 
+TEST(RiskManagerTest, CheckOrderSimSubaccountCapitalExceededRejects) {
+    auto store = std::make_shared<FakeTradingDomainStore>();
+    auto order_manager = std::make_shared<OrderManager>(store);
+    auto risk_manager = CreateRiskManager(order_manager, store);
+
+    RiskManagerConfig config;
+    config.enable_dynamic_reload = false;
+    config.rule_file_path.clear();
+    config.sim_subaccount_enabled = true;
+    config.sim_subaccount_id = "acc1";
+    config.sim_subaccount_initial_equity = 200000.0;
+    config.sim_subaccount_max_margin = 200000.0;
+    config.sim_subaccount_order_margin_rate = 0.1;
+    config.sim_subaccount_contract_multiplier = 10.0;
+    ASSERT_TRUE(risk_manager->Initialize(config));
+
+    auto context = BuildContext();
+    context.current_margin = 199000.0;
+    const auto result =
+        risk_manager->CheckOrder(BuildIntent("ord-subaccount", Side::kBuy, 1000.0, 2), context);
+
+    EXPECT_FALSE(result.allowed);
+    EXPECT_EQ(result.violated_rule, RiskRuleType::SIM_SUBACCOUNT_CAPITAL);
+    ASSERT_TRUE(result.limit_value.has_value());
+    ASSERT_TRUE(result.current_value.has_value());
+    EXPECT_DOUBLE_EQ(result.limit_value.value(), 200000.0);
+    EXPECT_DOUBLE_EQ(result.current_value.value(), 201000.0);
+}
+
 TEST(RiskManagerTest, CheckCancelCancelRateExceededRejects) {
     auto store = std::make_shared<FakeTradingDomainStore>();
     auto order_manager = std::make_shared<OrderManager>(store);
@@ -192,6 +241,27 @@ TEST(RiskManagerTest, CheckCancelCancelRateExceededRejects) {
     auto context = BuildContext();
     EXPECT_TRUE(risk_manager->CheckCancel("ord-c1", context).allowed);
     EXPECT_FALSE(risk_manager->CheckCancel("ord-c2", context).allowed);
+}
+
+TEST(RiskManagerTest, CheckCancelDailyCancelCountExceededRejects) {
+    auto store = std::make_shared<FakeTradingDomainStore>();
+    auto order_manager = std::make_shared<OrderManager>(store);
+    auto risk_manager = CreateRiskManager(order_manager, store);
+
+    RiskManagerConfig config;
+    config.enable_dynamic_reload = false;
+    config.rule_file_path.clear();
+    config.default_max_daily_cancel_count = 1;
+    ASSERT_TRUE(risk_manager->Initialize(config));
+
+    auto context = BuildContext();
+    EXPECT_TRUE(risk_manager->CheckCancel("ord-daily-c1", context).allowed);
+    const auto rejected = risk_manager->CheckCancel("ord-daily-c2", context);
+    EXPECT_FALSE(rejected.allowed);
+    EXPECT_EQ(rejected.violated_rule, RiskRuleType::MAX_DAILY_CANCEL_COUNT);
+
+    risk_manager->ResetDailyStats();
+    EXPECT_TRUE(risk_manager->CheckCancel("ord-daily-c3", context).allowed);
 }
 
 TEST(RiskManagerTest, RiskRuleLoadFromYamlSuccess) {
@@ -225,8 +295,8 @@ TEST(RiskManagerTest, RiskManagerReloadRulesDynamicUpdate) {
     rules.push_back(max_volume_rule);
     ASSERT_TRUE(risk_manager->ReloadRules(rules));
 
-    const auto result = risk_manager->CheckOrder(BuildIntent("ord-reload", Side::kBuy, 4000.0, 2),
-                                                 BuildContext());
+    const auto result =
+        risk_manager->CheckOrder(BuildIntent("ord-reload", Side::kBuy, 4000.0, 2), BuildContext());
     EXPECT_FALSE(result.allowed);
 }
 

@@ -27,6 +27,9 @@ public:
 
     std::optional<Order> GetOrder(const std::string& client_order_id) const;
     std::vector<Order> GetActiveOrders() const;
+    std::vector<Order> GetActiveOrdersByAccount(
+        const std::string& account_id,
+        const std::string& instrument_id = "") const;
     std::vector<Order> GetActiveOrdersByStrategy(
         const std::string& strategy_id,
         const std::string& instrument_id = "") const;

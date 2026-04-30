@@ -54,10 +54,8 @@ CtpRuntimeConfig BuildLogRuntime(const AtomicStrategyContext& ctx) {
     return runtime;
 }
 
-void EmitCompositeLog(const AtomicStrategyContext& ctx,
-                      const std::string& level,
-                      const std::string& event,
-                      const LogFields& fields) {
+void EmitCompositeLog(const AtomicStrategyContext& ctx, const std::string& level,
+                      const std::string& event, const LogFields& fields) {
     const CtpRuntimeConfig runtime = BuildLogRuntime(ctx);
     EmitStructuredLog(&runtime, "composite_strategy", level, event, fields);
 }
@@ -361,6 +359,13 @@ double ResolveContractMultiplier(const AtomicStrategyContext& ctx,
         return *upper;
     }
     return 1.0;
+}
+
+double ComputeRiskBudgetR(const AtomicStrategyContext& ctx, double risk_per_trade_pct) {
+    const double equity =
+        std::isfinite(ctx.account_equity) ? std::max(0.0, ctx.account_equity) : 0.0;
+    const double risk_budget = equity * risk_per_trade_pct;
+    return std::isfinite(risk_budget) ? risk_budget : 0.0;
 }
 
 }  // namespace
@@ -1031,16 +1036,13 @@ bool CompositeStrategy::IsOpenSignalBlockedByStrategyWindows(const SubStrategySl
     if (FindMatchingWindow(slot.forbid_open_windows, now_ns, slot.timezone_offset_hours)) {
         return true;
     }
-    if (FindMatchingWindow(slot.session_start_no_open_windows, now_ns,
-                           slot.timezone_offset_hours)) {
-        return true;
-    }
     return FindMatchingWindow(slot.force_close_windows, now_ns, slot.timezone_offset_hours);
 }
 
 bool CompositeStrategy::IsOpenSignalBlockedByRiskGuards(const SubStrategySlot& slot,
                                                         EpochNanos now_ns) {
-    const bool has_daily_loss_guard = slot.daily_max_loss_r > 0.0 && slot.fixed_r > 0.0;
+    const double risk_budget_r = ComputeRiskBudgetR(atomic_context_, slot.risk_per_trade_pct);
+    const bool has_daily_loss_guard = slot.daily_max_loss_r > 0.0 && risk_budget_r > 0.0;
     const bool has_consecutive_loss_guard = slot.max_consecutive_losses > 0;
     if (!has_daily_loss_guard && !has_consecutive_loss_guard) {
         return false;
@@ -1060,28 +1062,27 @@ bool CompositeStrategy::IsOpenSignalBlockedByRiskGuards(const SubStrategySlot& s
         state.consecutive_losses = 0;
     }
 
-    if (has_daily_loss_guard &&
-        state.daily_realized_pnl <= -(slot.daily_max_loss_r * slot.fixed_r)) {
-        EmitCompositeLog(
-            atomic_context_, "warn", "risk_guard_blocked",
-            {{"strategy_id", slot.strategy_id},
-             {"event_type", "risk_guard_blocked"},
-             {"reason", "daily_max_loss_R"},
-             {"event_ts_ns", std::to_string(now_ns)},
-             {"current_value", FormatDouble(-state.daily_realized_pnl)},
-             {"threshold_value", FormatDouble(slot.daily_max_loss_r * slot.fixed_r)}});
+    const double daily_loss_threshold = slot.daily_max_loss_r * risk_budget_r;
+    if (has_daily_loss_guard && state.daily_realized_pnl <= -daily_loss_threshold) {
+        EmitCompositeLog(atomic_context_, "warn", "risk_guard_blocked",
+                         {{"strategy_id", slot.strategy_id},
+                          {"event_type", "risk_guard_blocked"},
+                          {"reason", "daily_max_loss_R"},
+                          {"event_ts_ns", std::to_string(now_ns)},
+                          {"current_value", FormatDouble(-state.daily_realized_pnl)},
+                          {"threshold_value", FormatDouble(daily_loss_threshold)},
+                          {"r_value", FormatDouble(risk_budget_r)}});
         return true;
     }
     if (has_consecutive_loss_guard &&
         (state.has_loss_pause_day || state.consecutive_losses >= slot.max_consecutive_losses)) {
-        EmitCompositeLog(
-            atomic_context_, "warn", "risk_guard_blocked",
-            {{"strategy_id", slot.strategy_id},
-             {"event_type", "risk_guard_blocked"},
-             {"reason", "max_consecutive_losses"},
-             {"event_ts_ns", std::to_string(now_ns)},
-             {"current_value", std::to_string(state.consecutive_losses)},
-             {"threshold_value", std::to_string(slot.max_consecutive_losses)}});
+        EmitCompositeLog(atomic_context_, "warn", "risk_guard_blocked",
+                         {{"strategy_id", slot.strategy_id},
+                          {"event_type", "risk_guard_blocked"},
+                          {"reason", "max_consecutive_losses"},
+                          {"event_ts_ns", std::to_string(now_ns)},
+                          {"current_value", std::to_string(state.consecutive_losses)},
+                          {"threshold_value", std::to_string(slot.max_consecutive_losses)}});
         return true;
     }
     return false;
@@ -1093,7 +1094,8 @@ void CompositeStrategy::ApplyRiskGuardRealizedPnl(const std::string& strategy_id
     if (slot == nullptr) {
         return;
     }
-    const bool has_daily_loss_guard = slot->daily_max_loss_r > 0.0 && slot->fixed_r > 0.0;
+    const bool has_daily_loss_guard =
+        slot->daily_max_loss_r > 0.0 && slot->risk_per_trade_pct > 0.0;
     const bool has_consecutive_loss_guard = slot->max_consecutive_losses > 0;
     if (!has_daily_loss_guard && !has_consecutive_loss_guard) {
         return;
@@ -1366,33 +1368,25 @@ void CompositeStrategy::BuildAtomicStrategies() {
             ParseOptionalDoubleParam(merged_params, {"daily_max_loss_R", "daily_max_loss_r"},
                                      "daily_max_loss_R")
                 .value_or(0.0);
-        const double fixed_r =
-            ParseOptionalDoubleParam(merged_params, {"R_fixed", "r_fixed", "fixed_R", "fixed_r"},
-                                     "R_fixed")
-                .value_or(1000.0);
+        const double risk_per_trade_pct =
+            ParseOptionalDoubleParam(merged_params, {"risk_per_trade_pct"}, "risk_per_trade_pct")
+                .value_or(0.01);
         const std::int32_t max_consecutive_losses =
             ParseOptionalIntParam(merged_params, {"max_consecutive_losses"},
                                   "max_consecutive_losses")
-                .value_or(0);
-        const std::int32_t no_open_minutes_after_session_start =
-            ParseOptionalIntParam(merged_params, {"no_open_minutes_after_session_start"},
-                                  "no_open_minutes_after_session_start")
                 .value_or(0);
         if (!std::isfinite(daily_max_loss_r) || daily_max_loss_r < 0.0) {
             throw std::runtime_error("sub-strategy `" + definition.id +
                                      "` has invalid daily_max_loss_R");
         }
-        if (!std::isfinite(fixed_r) || fixed_r <= 0.0) {
-            throw std::runtime_error("sub-strategy `" + definition.id + "` has invalid R_fixed");
+        if (!std::isfinite(risk_per_trade_pct) || risk_per_trade_pct <= 0.0 ||
+            risk_per_trade_pct > 1.0) {
+            throw std::runtime_error("sub-strategy `" + definition.id +
+                                     "` has invalid risk_per_trade_pct");
         }
         if (max_consecutive_losses < 0) {
             throw std::runtime_error("sub-strategy `" + definition.id +
                                      "` has invalid max_consecutive_losses");
-        }
-        if (no_open_minutes_after_session_start < 0 ||
-            no_open_minutes_after_session_start >= static_cast<std::int32_t>(kMinutesPerDay)) {
-            throw std::runtime_error("sub-strategy `" + definition.id +
-                                     "` has invalid no_open_minutes_after_session_start");
         }
 
         strategy->Init(merged_params);
@@ -1415,18 +1409,8 @@ void CompositeStrategy::BuildAtomicStrategies() {
             for (const auto& window : parsed_force_close_windows) {
                 slot.force_close_windows.push_back(TimeWindow{window.first, window.second});
             }
-            if (no_open_minutes_after_session_start > 0) {
-                const std::int32_t day_start = 9 * 60;
-                const std::int32_t night_start = 21 * 60;
-                slot.session_start_no_open_windows.push_back(
-                    TimeWindow{day_start, (day_start + no_open_minutes_after_session_start) %
-                                              static_cast<std::int32_t>(kMinutesPerDay)});
-                slot.session_start_no_open_windows.push_back(
-                    TimeWindow{night_start, (night_start + no_open_minutes_after_session_start) %
-                                                static_cast<std::int32_t>(kMinutesPerDay)});
-            }
             slot.daily_max_loss_r = daily_max_loss_r;
-            slot.fixed_r = fixed_r;
+            slot.risk_per_trade_pct = risk_per_trade_pct;
             slot.max_consecutive_losses = max_consecutive_losses;
             sub_strategy_slot_index_by_id_[slot.strategy_id] = sub_strategies_.size();
             sub_strategies_.push_back(std::move(slot));

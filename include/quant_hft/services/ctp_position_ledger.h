@@ -12,6 +12,8 @@ namespace quant_hft {
 struct CtpPositionView {
     std::string account_id;
     std::string instrument_id;
+    std::string exchange_id;
+    std::string hedge_flag;
     PositionDirection direction{PositionDirection::kLong};
     std::string position_date;
     std::int32_t position{0};
@@ -24,6 +26,8 @@ struct CtpOrderIntentForLedger {
     std::string client_order_id;
     std::string account_id;
     std::string instrument_id;
+    std::string exchange_id;
+    std::string hedge_flag{"1"};
     PositionDirection direction{PositionDirection::kLong};
     OffsetFlag offset{OffsetFlag::kOpen};
     std::int32_t requested_volume{0};
@@ -40,22 +44,29 @@ public:
     CtpPositionView GetPosition(const std::string& account_id,
                                 const std::string& instrument_id,
                                 PositionDirection direction,
-                                const std::string& position_date) const;
+                                          const std::string& position_date,
+                                          const std::string& exchange_id = "",
+                                          const std::string& hedge_flag = "1") const;
     std::int32_t GetClosableVolume(const std::string& account_id,
                                    const std::string& instrument_id,
                                    PositionDirection direction,
-                                   const std::string& position_date) const;
+                                              const std::string& position_date,
+                                              const std::string& exchange_id = "",
+                                              const std::string& hedge_flag = "1") const;
 
 private:
     struct PositionKey {
         std::string account_id;
         std::string instrument_id;
+        std::string exchange_id;
+        std::string hedge_flag;
         PositionDirection direction{PositionDirection::kLong};
         std::string position_date;
 
         bool operator==(const PositionKey& rhs) const {
             return account_id == rhs.account_id && instrument_id == rhs.instrument_id &&
-                   direction == rhs.direction && position_date == rhs.position_date;
+                     exchange_id == rhs.exchange_id && hedge_flag == rhs.hedge_flag &&
+                     direction == rhs.direction && position_date == rhs.position_date;
         }
     };
 
@@ -79,10 +90,15 @@ private:
     static bool IsCloseOffset(OffsetFlag offset);
     static bool IsTerminalStatus(OrderStatus status);
     static std::string NormalizePositionDate(const std::string& raw);
+    static std::string NormalizeExchangeId(const std::string& raw,
+                                           const std::string& instrument_id);
+    static std::string NormalizeHedgeFlag(const std::string& raw);
     static std::string ResolvePositionDateForIntent(const CtpOrderIntentForLedger& intent);
     static PositionDirection ParsePositionDirection(const std::string& raw);
     static PositionKey MakeKey(const std::string& account_id,
                                const std::string& instrument_id,
+                               const std::string& exchange_id,
+                               const std::string& hedge_flag,
                                PositionDirection direction,
                                const std::string& position_date);
     static std::int32_t ClampNonNegative(std::int32_t value);

@@ -238,6 +238,7 @@ int main() {
               "status",
               "total_volume",
               "filled_volume",
+              "last_trade_volume",
               "avg_fill_price",
               "reason",
               "status_msg",

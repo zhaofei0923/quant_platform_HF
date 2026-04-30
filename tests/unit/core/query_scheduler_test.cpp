@@ -21,12 +21,15 @@ TEST(QuerySchedulerTest, RespectsRateLimit) {
     }
 
     const auto first = scheduler.DrainOnce();
-    EXPECT_LE(first, 10U);
+    EXPECT_EQ(first, 1U);
     EXPECT_EQ(executed.load(), static_cast<int>(first));
+
+    EXPECT_EQ(scheduler.DrainOnce(), 0U);
+    scheduler.MarkComplete();
 
     std::this_thread::sleep_for(std::chrono::milliseconds(1100));
     const auto second = scheduler.DrainOnce();
-    EXPECT_GT(second, 0U);
+    EXPECT_EQ(second, 1U);
     EXPECT_EQ(executed.load(), static_cast<int>(first + second));
     EXPECT_EQ(scheduler.PendingCount(), 20U - first - second);
 }
@@ -46,6 +49,9 @@ TEST(QuerySchedulerTest, PriorityOrdering) {
         [&order] { order += "H"; },
     });
 
+    scheduler.DrainOnce();
+    EXPECT_EQ(order, "H");
+    scheduler.MarkComplete();
     scheduler.DrainOnce();
     EXPECT_EQ(order, "HL");
 }

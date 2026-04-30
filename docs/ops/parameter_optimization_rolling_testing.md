@@ -364,7 +364,7 @@ composite:
 
 这样有两个好处：
 
-- 不需要改动原始 `configs/strategies/sub/kama_trend_1.yaml`
+- 不需要改动原始 `configs/strategies/sub/kama_trend_production.yaml`
 - 可以并行维护多份候选参数验证配置
 
 ### 第七步：做参数运行稳定性验证

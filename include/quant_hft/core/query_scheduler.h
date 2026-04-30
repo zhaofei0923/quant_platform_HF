@@ -28,6 +28,7 @@ public:
 
     bool TrySchedule(QueryTask task);
     std::size_t DrainOnce();
+    void MarkComplete();
     std::size_t PendingCount() const;
     void SetRateLimit(std::size_t max_qps);
 
@@ -41,6 +42,7 @@ private:
     std::size_t max_qps_{10};
     double tokens_{10.0};
     std::chrono::steady_clock::time_point last_refill_;
+    bool in_flight_{false};
 };
 
 }  // namespace quant_hft

@@ -16,15 +16,22 @@ std::string LowerAscii(std::string value) {
     return value;
 }
 
+bool IsCancelActionFeedback(const OrderEvent& event) {
+    return event.event_source == "OnRspOrderAction" ||
+           event.event_source == "OnErrRtnOrderAction";
+}
+
 }  // namespace
 
 std::size_t CtpPositionLedger::PositionKeyHasher::operator()(
     const PositionKey& key) const {
     const auto h1 = std::hash<std::string>{}(key.account_id);
     const auto h2 = std::hash<std::string>{}(key.instrument_id);
-    const auto h3 = std::hash<int>{}(static_cast<int>(key.direction));
-    const auto h4 = std::hash<std::string>{}(key.position_date);
-    return h1 ^ (h2 << 1) ^ (h3 << 2) ^ (h4 << 3);
+    const auto h3 = std::hash<std::string>{}(key.exchange_id);
+    const auto h4 = std::hash<std::string>{}(key.hedge_flag);
+    const auto h5 = std::hash<int>{}(static_cast<int>(key.direction));
+    const auto h6 = std::hash<std::string>{}(key.position_date);
+    return h1 ^ (h2 << 1) ^ (h3 << 2) ^ (h4 << 3) ^ (h5 << 4) ^ (h6 << 5);
 }
 
 bool CtpPositionLedger::ApplyInvestorPositionSnapshot(
@@ -39,8 +46,12 @@ bool CtpPositionLedger::ApplyInvestorPositionSnapshot(
 
     const auto direction = ParsePositionDirection(snapshot.posi_direction);
     const auto position_date = NormalizePositionDate(snapshot.position_date);
-    const auto key =
-        MakeKey(snapshot.account_id, snapshot.instrument_id, direction, position_date);
+    const auto key = MakeKey(snapshot.account_id,
+                             snapshot.instrument_id,
+                             snapshot.exchange_id,
+                             snapshot.hedge_flag,
+                             direction,
+                             position_date);
 
     PositionBucket bucket;
     bucket.position = ClampNonNegative(snapshot.position);
@@ -83,8 +94,12 @@ bool CtpPositionLedger::RegisterOrderIntent(const CtpOrderIntentForLedger& inten
     }
 
     if (IsCloseOffset(intent.offset)) {
-        const auto key =
-            MakeKey(intent.account_id, intent.instrument_id, intent.direction, pending.position_date);
+        const auto key = MakeKey(intent.account_id,
+                                 intent.instrument_id,
+                                 intent.exchange_id,
+                                 intent.hedge_flag,
+                                 intent.direction,
+                                 pending.position_date);
         auto& bucket = positions_[key];
         const auto closable = std::max(0, bucket.position - bucket.frozen);
         if (closable < intent.requested_volume) {
@@ -106,6 +121,12 @@ bool CtpPositionLedger::RegisterOrderIntent(const CtpOrderIntentForLedger& inten
 }
 
 bool CtpPositionLedger::ApplyOrderEvent(const OrderEvent& event, std::string* error) {
+    if (IsCancelActionFeedback(event)) {
+        if (error != nullptr) {
+            error->clear();
+        }
+        return true;
+    }
     if (event.client_order_id.empty()) {
         if (error != nullptr) {
             *error = "event.client_order_id is required";
@@ -133,6 +154,8 @@ bool CtpPositionLedger::ApplyOrderEvent(const OrderEvent& event, std::string* er
     const auto delta_filled = event.filled_volume - pending.last_filled_volume;
     const auto key = MakeKey(pending.intent.account_id,
                              pending.intent.instrument_id,
+                             pending.intent.exchange_id,
+                             pending.intent.hedge_flag,
                              pending.intent.direction,
                              pending.position_date);
     auto& bucket = positions_[key];
@@ -168,15 +191,24 @@ bool CtpPositionLedger::ApplyOrderEvent(const OrderEvent& event, std::string* er
 CtpPositionView CtpPositionLedger::GetPosition(const std::string& account_id,
                                                const std::string& instrument_id,
                                                PositionDirection direction,
-                                               const std::string& position_date) const {
+                                               const std::string& position_date,
+                                               const std::string& exchange_id,
+                                               const std::string& hedge_flag) const {
     CtpPositionView view;
     view.account_id = account_id;
     view.instrument_id = instrument_id;
+    view.exchange_id = NormalizeExchangeId(exchange_id, instrument_id);
+    view.hedge_flag = NormalizeHedgeFlag(hedge_flag);
     view.direction = direction;
     view.position_date = NormalizePositionDate(position_date);
     view.last_update_ts_ns = NowEpochNanos();
 
-    const auto key = MakeKey(account_id, instrument_id, direction, view.position_date);
+    const auto key = MakeKey(account_id,
+                             instrument_id,
+                             view.exchange_id,
+                             hedge_flag,
+                             direction,
+                             view.position_date);
     std::lock_guard<std::mutex> lock(mutex_);
     const auto it = positions_.find(key);
     if (it == positions_.end()) {
@@ -192,8 +224,11 @@ CtpPositionView CtpPositionLedger::GetPosition(const std::string& account_id,
 std::int32_t CtpPositionLedger::GetClosableVolume(const std::string& account_id,
                                                   const std::string& instrument_id,
                                                   PositionDirection direction,
-                                                  const std::string& position_date) const {
-    const auto snapshot = GetPosition(account_id, instrument_id, direction, position_date);
+                                                  const std::string& position_date,
+                                                  const std::string& exchange_id,
+                                                  const std::string& hedge_flag) const {
+    const auto snapshot =
+        GetPosition(account_id, instrument_id, direction, position_date, exchange_id, hedge_flag);
     return snapshot.closable;
 }
 
@@ -221,6 +256,35 @@ std::string CtpPositionLedger::NormalizePositionDate(const std::string& raw) {
     return normalized;
 }
 
+std::string CtpPositionLedger::NormalizeExchangeId(const std::string& raw,
+                                                   const std::string& instrument_id) {
+    if (!raw.empty()) {
+        return raw;
+    }
+    const auto dot = instrument_id.find('.');
+    if (dot == std::string::npos || dot == 0) {
+        return "";
+    }
+    return instrument_id.substr(0, dot);
+}
+
+std::string CtpPositionLedger::NormalizeHedgeFlag(const std::string& raw) {
+    if (raw.empty()) {
+        return "1";
+    }
+    const auto normalized = LowerAscii(raw);
+    if (normalized == "speculation" || normalized == "spec" || normalized == "s") {
+        return "1";
+    }
+    if (normalized == "hedge" || normalized == "h") {
+        return "3";
+    }
+    if (normalized == "arbitrage" || normalized == "a") {
+        return "2";
+    }
+    return raw;
+}
+
 std::string CtpPositionLedger::ResolvePositionDateForIntent(
     const CtpOrderIntentForLedger& intent) {
     if (intent.offset == OffsetFlag::kCloseToday) {
@@ -242,11 +306,15 @@ PositionDirection CtpPositionLedger::ParsePositionDirection(const std::string& r
 
 CtpPositionLedger::PositionKey CtpPositionLedger::MakeKey(const std::string& account_id,
                                                           const std::string& instrument_id,
+                                                          const std::string& exchange_id,
+                                                          const std::string& hedge_flag,
                                                           PositionDirection direction,
                                                           const std::string& position_date) {
     PositionKey key;
     key.account_id = account_id;
     key.instrument_id = instrument_id;
+    key.exchange_id = NormalizeExchangeId(exchange_id, instrument_id);
+    key.hedge_flag = NormalizeHedgeFlag(hedge_flag);
     key.direction = direction;
     key.position_date = NormalizePositionDate(position_date);
     return key;

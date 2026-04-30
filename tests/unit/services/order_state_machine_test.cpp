@@ -230,6 +230,7 @@ TEST(OrderStateMachineTest, KeepsOrderActiveWhenCancelActionIsRejected) {
     ASSERT_TRUE(machine.OnOrderEvent(accepted));
 
     OrderEvent cancel_rejected = accepted;
+    cancel_rejected.status = OrderStatus::kRejected;
     cancel_rejected.event_source = "OnErrRtnOrderAction";
     cancel_rejected.reason = "cancel_request_rejected";
     cancel_rejected.ts_ns = 3;

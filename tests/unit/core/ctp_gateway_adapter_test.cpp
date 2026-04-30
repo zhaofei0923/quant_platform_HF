@@ -1,13 +1,14 @@
+#include "quant_hft/core/ctp_gateway_adapter.h"
+
+#include <gtest/gtest.h>
+
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <string>
 #include <thread>
-
-#include <gtest/gtest.h>
-
-#include "quant_hft/core/ctp_gateway_adapter.h"
 
 namespace quant_hft {
 
@@ -30,22 +31,21 @@ TEST(CtpGatewayAdapterTest, ConnectSubscribeAndOrderFlow) {
     std::atomic<int> order_events{0};
     std::atomic<int> accepted_events{0};
     std::atomic<int> canceled_events{0};
-    adapter.RegisterOrderEventCallback(
-        [&](const OrderEvent& event) {
-            order_events.fetch_add(1);
-            if (event.status == OrderStatus::kAccepted) {
-                accepted_events.fetch_add(1);
-                EXPECT_EQ(event.side, Side::kSell);
-                EXPECT_EQ(event.offset, OffsetFlag::kCloseToday);
-                EXPECT_EQ(event.instrument_id, "SHFE.ag2406");
-            }
-            if (event.status == OrderStatus::kCanceled) {
-                canceled_events.fetch_add(1);
-                EXPECT_EQ(event.side, Side::kSell);
-                EXPECT_EQ(event.offset, OffsetFlag::kCloseToday);
-                EXPECT_EQ(event.instrument_id, "SHFE.ag2406");
-            }
-        });
+    adapter.RegisterOrderEventCallback([&](const OrderEvent& event) {
+        order_events.fetch_add(1);
+        if (event.status == OrderStatus::kAccepted) {
+            accepted_events.fetch_add(1);
+            EXPECT_EQ(event.side, Side::kSell);
+            EXPECT_EQ(event.offset, OffsetFlag::kCloseToday);
+            EXPECT_EQ(event.instrument_id, "SHFE.ag2406");
+        }
+        if (event.status == OrderStatus::kCanceled) {
+            canceled_events.fetch_add(1);
+            EXPECT_EQ(event.side, Side::kSell);
+            EXPECT_EQ(event.offset, OffsetFlag::kCloseToday);
+            EXPECT_EQ(event.instrument_id, "SHFE.ag2406");
+        }
+    });
 
     OrderIntent intent;
     intent.account_id = "a1";
@@ -107,11 +107,13 @@ TEST(CtpGatewayAdapterTest, QuerySnapshotsInSimulatedMode) {
     std::atomic<int> position_callbacks{0};
     std::atomic<int> instrument_callbacks{0};
     std::atomic<int> broker_param_callbacks{0};
-    adapter.RegisterTradingAccountSnapshotCallback(
-        [&](const TradingAccountSnapshot& snapshot) {
-            EXPECT_EQ(snapshot.investor_id, "191202");
-            account_callbacks.fetch_add(1);
-        });
+    std::atomic<int> margin_rate_callbacks{0};
+    std::atomic<int> commission_rate_callbacks{0};
+    std::atomic<int> order_comm_rate_callbacks{0};
+    adapter.RegisterTradingAccountSnapshotCallback([&](const TradingAccountSnapshot& snapshot) {
+        EXPECT_EQ(snapshot.investor_id, "191202");
+        account_callbacks.fetch_add(1);
+    });
     adapter.RegisterInvestorPositionSnapshotCallback(
         [&](const std::vector<InvestorPositionSnapshot>& snapshots) {
             EXPECT_TRUE(snapshots.empty());
@@ -127,13 +129,36 @@ TEST(CtpGatewayAdapterTest, QuerySnapshotsInSimulatedMode) {
             EXPECT_FALSE(snapshot.margin_price_type.empty());
             broker_param_callbacks.fetch_add(1);
         });
+    adapter.RegisterInstrumentMarginRateSnapshotCallback(
+        [&](const std::vector<InstrumentMarginRateSnapshot>& snapshots) {
+            ASSERT_EQ(snapshots.size(), 1U);
+            EXPECT_EQ(snapshots.front().instrument_id, "SHFE.ag2406");
+            EXPECT_DOUBLE_EQ(snapshots.front().long_margin_ratio_by_money, 0.1);
+            margin_rate_callbacks.fetch_add(1);
+        });
+    adapter.RegisterInstrumentCommissionRateSnapshotCallback(
+        [&](const std::vector<InstrumentCommissionRateSnapshot>& snapshots) {
+            ASSERT_EQ(snapshots.size(), 1U);
+            EXPECT_EQ(snapshots.front().instrument_id, "SHFE.ag2406");
+            EXPECT_DOUBLE_EQ(snapshots.front().open_ratio_by_money, 0.0001);
+            commission_rate_callbacks.fetch_add(1);
+        });
+    adapter.RegisterInstrumentOrderCommRateSnapshotCallback(
+        [&](const std::vector<InstrumentOrderCommRateSnapshot>& snapshots) {
+            ASSERT_EQ(snapshots.size(), 1U);
+            EXPECT_EQ(snapshots.front().instrument_id, "SHFE.ag2406");
+            EXPECT_DOUBLE_EQ(snapshots.front().order_comm_by_volume, 0.0);
+            order_comm_rate_callbacks.fetch_add(1);
+        });
 
     EXPECT_TRUE(adapter.EnqueueTradingAccountQuery(11));
     EXPECT_TRUE(adapter.EnqueueInvestorPositionQuery(12));
     EXPECT_TRUE(adapter.EnqueueInstrumentQuery(13));
+    EXPECT_TRUE(adapter.EnqueueInstrumentQuery(18, "DCE.c2607"));
     EXPECT_TRUE(adapter.EnqueueBrokerTradingParamsQuery(14));
     EXPECT_TRUE(adapter.EnqueueInstrumentMarginRateQuery(15, "SHFE.ag2406"));
     EXPECT_TRUE(adapter.EnqueueInstrumentCommissionRateQuery(16, "SHFE.ag2406"));
+    EXPECT_TRUE(adapter.EnqueueInstrumentOrderCommRateQuery(17, "SHFE.ag2406"));
 
     const auto account = adapter.GetLastTradingAccountSnapshot();
     EXPECT_EQ(account.investor_id, "191202");
@@ -141,14 +166,25 @@ TEST(CtpGatewayAdapterTest, QuerySnapshotsInSimulatedMode) {
     EXPECT_TRUE(positions.empty());
     const auto metas = adapter.GetLastInstrumentMetaSnapshots();
     EXPECT_FALSE(metas.empty());
-    EXPECT_EQ(metas.front().instrument_id, "SHFE.ag2406");
+    EXPECT_NE(std::find_if(metas.begin(), metas.end(),
+                           [](const auto& meta) { return meta.instrument_id == "SHFE.ag2406"; }),
+              metas.end());
+    EXPECT_NE(std::find_if(metas.begin(), metas.end(),
+                           [](const auto& meta) { return meta.instrument_id == "DCE.c2607"; }),
+              metas.end());
     const auto broker_params = adapter.GetLastBrokerTradingParamsSnapshot();
     EXPECT_FALSE(broker_params.margin_price_type.empty());
+    EXPECT_EQ(adapter.GetLastInstrumentMarginRateSnapshots().size(), 1U);
+    EXPECT_EQ(adapter.GetLastInstrumentCommissionRateSnapshots().size(), 1U);
+    EXPECT_EQ(adapter.GetLastInstrumentOrderCommRateSnapshots().size(), 1U);
 
     EXPECT_EQ(account_callbacks.load(), 1);
     EXPECT_EQ(position_callbacks.load(), 1);
     EXPECT_EQ(instrument_callbacks.load(), 1);
     EXPECT_EQ(broker_param_callbacks.load(), 1);
+    EXPECT_EQ(margin_rate_callbacks.load(), 1);
+    EXPECT_EQ(commission_rate_callbacks.load(), 1);
+    EXPECT_EQ(order_comm_rate_callbacks.load(), 1);
 }
 
 TEST(CtpGatewayAdapterTest, CallbackCanReenterCancelOrderWithoutLockContention) {
@@ -175,27 +211,24 @@ TEST(CtpGatewayAdapterTest, CallbackCanReenterCancelOrderWithoutLockContention) 
     bool cancel_done = false;
     std::thread cancel_thread;
 
-    adapter.RegisterOrderEventCallback(
-        [&](const OrderEvent& event) {
-            if (event.status != OrderStatus::kAccepted || first_accept_seen.exchange(true)) {
-                return;
+    adapter.RegisterOrderEventCallback([&](const OrderEvent& event) {
+        if (event.status != OrderStatus::kAccepted || first_accept_seen.exchange(true)) {
+            return;
+        }
+
+        cancel_thread = std::thread([&]() {
+            const bool ok = adapter.CancelOrder(event.client_order_id, "trace-cancel");
+            cancel_result.store(ok);
+            {
+                std::lock_guard<std::mutex> lock(wait_mutex);
+                cancel_done = true;
             }
-
-            cancel_thread = std::thread(
-                [&]() {
-                    const bool ok = adapter.CancelOrder(event.client_order_id, "trace-cancel");
-                    cancel_result.store(ok);
-                    {
-                        std::lock_guard<std::mutex> lock(wait_mutex);
-                        cancel_done = true;
-                    }
-                    wait_cv.notify_one();
-                });
-
-            std::unique_lock<std::mutex> lock(wait_mutex);
-            cancel_finished_in_callback =
-                wait_cv.wait_for(lock, 50ms, [&]() { return cancel_done; });
+            wait_cv.notify_one();
         });
+
+        std::unique_lock<std::mutex> lock(wait_mutex);
+        cancel_finished_in_callback = wait_cv.wait_for(lock, 50ms, [&]() { return cancel_done; });
+    });
 
     OrderIntent intent;
     intent.account_id = "a1";

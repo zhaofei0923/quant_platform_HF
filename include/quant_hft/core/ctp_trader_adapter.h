@@ -38,6 +38,12 @@ class CTPTraderAdapter {
     using InstrumentMetaSnapshotCallback = CtpGatewayAdapter::InstrumentMetaSnapshotCallback;
     using BrokerTradingParamsSnapshotCallback =
         CtpGatewayAdapter::BrokerTradingParamsSnapshotCallback;
+    using InstrumentMarginRateSnapshotCallback =
+        CtpGatewayAdapter::InstrumentMarginRateSnapshotCallback;
+    using InstrumentCommissionRateSnapshotCallback =
+        CtpGatewayAdapter::InstrumentCommissionRateSnapshotCallback;
+    using InstrumentOrderCommRateSnapshotCallback =
+        CtpGatewayAdapter::InstrumentOrderCommRateSnapshotCallback;
 
     explicit CTPTraderAdapter(std::size_t query_qps_limit = 10, std::size_t dispatcher_workers = 1,
                               std::size_t callback_queue_size = 5000,
@@ -73,11 +79,15 @@ class CTPTraderAdapter {
     bool EnqueueInvestorPositionQuery(int request_id);
     int EnqueueInvestorPositionQuery();
     bool EnqueueInstrumentQuery(int request_id);
+    bool EnqueueInstrumentQuery(int request_id, const std::string& instrument_id);
     int EnqueueInstrumentQuery();
+    int EnqueueInstrumentQuery(const std::string& instrument_id);
     bool EnqueueInstrumentMarginRateQuery(int request_id, const std::string& instrument_id);
     int EnqueueInstrumentMarginRateQuery(const std::string& instrument_id);
     bool EnqueueInstrumentCommissionRateQuery(int request_id, const std::string& instrument_id);
     int EnqueueInstrumentCommissionRateQuery(const std::string& instrument_id);
+    bool EnqueueInstrumentOrderCommRateQuery(int request_id, const std::string& instrument_id);
+    int EnqueueInstrumentOrderCommRateQuery(const std::string& instrument_id);
     bool EnqueueBrokerTradingParamsQuery(int request_id);
     int EnqueueBrokerTradingParamsQuery();
     bool EnqueueOrderQuery(int request_id);
@@ -90,6 +100,12 @@ class CTPTraderAdapter {
     void RegisterInvestorPositionSnapshotCallback(InvestorPositionSnapshotCallback callback);
     void RegisterInstrumentMetaSnapshotCallback(InstrumentMetaSnapshotCallback callback);
     void RegisterBrokerTradingParamsSnapshotCallback(BrokerTradingParamsSnapshotCallback callback);
+    void RegisterInstrumentMarginRateSnapshotCallback(
+        InstrumentMarginRateSnapshotCallback callback);
+    void RegisterInstrumentCommissionRateSnapshotCallback(
+        InstrumentCommissionRateSnapshotCallback callback);
+    void RegisterInstrumentOrderCommRateSnapshotCallback(
+        InstrumentOrderCommRateSnapshotCallback callback);
     void SetCircuitBreaker(std::function<void(bool)> callback);
 
     CtpUserSessionInfo GetLastUserSession() const;
@@ -122,6 +138,9 @@ class CTPTraderAdapter {
     InvestorPositionSnapshotCallback user_investor_position_callback_;
     InstrumentMetaSnapshotCallback user_instrument_meta_callback_;
     BrokerTradingParamsSnapshotCallback user_broker_trading_params_callback_;
+    InstrumentMarginRateSnapshotCallback user_instrument_margin_rate_callback_;
+    InstrumentCommissionRateSnapshotCallback user_instrument_commission_rate_callback_;
+    InstrumentOrderCommRateSnapshotCallback user_instrument_order_comm_rate_callback_;
     MarketDataConnectConfig last_connect_config_;
     bool has_connect_config_{false};
     TraderSessionState state_{TraderSessionState::kDisconnected};

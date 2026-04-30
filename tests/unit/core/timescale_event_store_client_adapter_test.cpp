@@ -234,6 +234,41 @@ TEST(TimescaleEventStoreClientAdapterTest, StoresAndLoadsCtpQuerySnapshots) {
     instrument_meta.source = "ctp";
     store.AppendInstrumentMetaSnapshot(instrument_meta);
 
+    InstrumentMarginRateSnapshot margin_rate;
+    margin_rate.account_id = "acc-1";
+    margin_rate.investor_id = "191202";
+    margin_rate.instrument_id = "SHFE.ag2406";
+    margin_rate.exchange_id = "SHFE";
+    margin_rate.hedge_flag = "1";
+    margin_rate.long_margin_ratio_by_money = 0.12;
+    margin_rate.short_margin_ratio_by_money = 0.13;
+    margin_rate.ts_ns = 127;
+    margin_rate.source = "ctp";
+    store.AppendInstrumentMarginRateSnapshot(margin_rate);
+
+    InstrumentCommissionRateSnapshot commission_rate;
+    commission_rate.account_id = "acc-1";
+    commission_rate.investor_id = "191202";
+    commission_rate.instrument_id = "SHFE.ag2406";
+    commission_rate.exchange_id = "SHFE";
+    commission_rate.open_ratio_by_money = 0.0001;
+    commission_rate.close_ratio_by_volume = 2.0;
+    commission_rate.ts_ns = 128;
+    commission_rate.source = "ctp";
+    store.AppendInstrumentCommissionRateSnapshot(commission_rate);
+
+    InstrumentOrderCommRateSnapshot order_comm_rate;
+    order_comm_rate.account_id = "acc-1";
+    order_comm_rate.investor_id = "191202";
+    order_comm_rate.instrument_id = "SHFE.ag2406";
+    order_comm_rate.exchange_id = "SHFE";
+    order_comm_rate.hedge_flag = "1";
+    order_comm_rate.order_comm_by_volume = 1.0;
+    order_comm_rate.order_action_comm_by_volume = 0.5;
+    order_comm_rate.ts_ns = 129;
+    order_comm_rate.source = "ctp";
+    store.AppendInstrumentOrderCommRateSnapshot(order_comm_rate);
+
     const auto accounts = store.GetTradingAccountSnapshots("acc-1");
     ASSERT_EQ(accounts.size(), 1U);
     EXPECT_DOUBLE_EQ(accounts[0].balance, 1'000'000.0);
@@ -249,6 +284,18 @@ TEST(TimescaleEventStoreClientAdapterTest, StoresAndLoadsCtpQuerySnapshots) {
     const auto metas = store.GetInstrumentMetaSnapshots("SHFE.ag2406");
     ASSERT_EQ(metas.size(), 1U);
     EXPECT_EQ(metas[0].exchange_id, "SHFE");
+
+    const auto margin_rates = store.GetInstrumentMarginRateSnapshots("SHFE.ag2406");
+    ASSERT_EQ(margin_rates.size(), 1U);
+    EXPECT_DOUBLE_EQ(margin_rates[0].long_margin_ratio_by_money, 0.12);
+
+    const auto commission_rates = store.GetInstrumentCommissionRateSnapshots("SHFE.ag2406");
+    ASSERT_EQ(commission_rates.size(), 1U);
+    EXPECT_DOUBLE_EQ(commission_rates[0].close_ratio_by_volume, 2.0);
+
+    const auto order_comm_rates = store.GetInstrumentOrderCommRateSnapshots("SHFE.ag2406");
+    ASSERT_EQ(order_comm_rates.size(), 1U);
+    EXPECT_DOUBLE_EQ(order_comm_rates[0].order_action_comm_by_volume, 0.5);
 }
 
 }  // namespace quant_hft

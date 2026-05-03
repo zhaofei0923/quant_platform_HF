@@ -190,6 +190,14 @@ void WriteFakePython(const std::filesystem::path& path, const std::filesystem::p
                         "  esac\n"
                         "done\n"
                         "case \"$(basename \"${script_path}\")\" in\n"
+                        "  generate_backtest_report.py)\n"
+                        "    if [[ -z \"${output}\" ]]; then\n"
+                        "      output=\"${run_dir}/strategy_回测分析报告_generated.md\"\n"
+                        "    fi\n"
+                        "    mkdir -p \"$(dirname \"${output}\")\"\n"
+                        "    printf 'generated report\\n' >\"${output}\"\n"
+                        "    printf '[report] 报告已生成: %s\\n' \"${output}\"\n"
+                        "    ;;\n"
                         "  backtest_analysis_report.py)\n"
                         "    if [[ -z \"${output}\" ]]; then\n"
                         "      output=\"${run_dir}/strategy_回测分析报告_unit.md\"\n"
@@ -295,6 +303,7 @@ TEST(RunBacktestWithValidationScriptTest, FastModeDisablesHeavyOutputsAndSkipsFo
 
     const std::string python_invocations = ReadFile(python_log);
     EXPECT_NE(python_invocations.find("backtest_validation_report.py"), std::string::npos);
+    EXPECT_EQ(python_invocations.find("generate_backtest_report.py"), std::string::npos);
     EXPECT_EQ(python_invocations.find("backtest_analysis_report.py"), std::string::npos);
 }
 
@@ -339,6 +348,7 @@ TEST(RunBacktestWithValidationScriptTest, DefaultModeKeepsHeavyOutputsAndPublish
 
     const std::string python_invocations = ReadFile(python_log);
     EXPECT_NE(python_invocations.find("backtest_validation_report.py"), std::string::npos);
+    EXPECT_NE(python_invocations.find("generate_backtest_report.py"), std::string::npos);
     EXPECT_NE(python_invocations.find("backtest_analysis_report.py"), std::string::npos);
 }
 

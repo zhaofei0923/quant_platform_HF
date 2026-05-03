@@ -231,6 +231,13 @@ fi
 echo "[step] 生成检测报告"
 python3 "${repo_root}/scripts/analysis/backtest_validation_report.py" --run-dir "${latest_after}" --strict
 
+if [[ "${fast_mode}" == true ]]; then
+  echo "[step] fast 模式跳过标准回测分析报告"
+else
+  echo "[step] 生成标准回测分析报告"
+  python3 "${repo_root}/scripts/analysis/generate_backtest_report.py" --run-dir "${latest_after}"
+fi
+
 formal_report="$(find "${latest_after}" -maxdepth 1 -type f -name '*_回测分析报告_*.md' | sort | tail -n 1 || true)"
 
 if [[ -n "${formal_report}" ]]; then

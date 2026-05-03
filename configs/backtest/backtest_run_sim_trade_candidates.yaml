@@ -10,7 +10,7 @@ auto_install_arrow_parquet_deps: true
 
 engine_mode: parquet
 dataset_root: backtest_data/parquet_v2
-product_ids: "c,rb,m"
+product_ids: "hc"
 #product_ids: "c,rb,m,hc"
 strategy_main_config_template: configs/strategies/main_sim_trade_candidate_{product}.yaml
 strategy_id_template: kama_candidate_{product}

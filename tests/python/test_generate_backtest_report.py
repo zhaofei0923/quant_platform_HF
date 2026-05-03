@@ -16,7 +16,9 @@ SCRIPT_PATH = REPO_ROOT / "scripts" / "analysis" / "generate_backtest_report.py"
 
 def _load_module():
     """Load the script as a module, registering it in sys.modules first."""
-    spec = importlib.util.spec_from_file_location("generate_backtest_report", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location(
+        "generate_backtest_report", SCRIPT_PATH
+    )
     if spec is None or spec.loader is None:
         raise RuntimeError(f"unable to load script module from {SCRIPT_PATH}")
     module = importlib.util.module_from_spec(spec)
@@ -49,25 +51,49 @@ compute_expectancy = mod.compute_expectancy
 compute_r_buckets = mod.compute_r_buckets
 compute_actual_fill_rate = mod.compute_actual_fill_rate
 compute_regime_attribution = mod.compute_regime_attribution
+build_round_trips = mod.build_round_trips
 build_star_rating = mod.build_star_rating
 generate_report = mod.generate_report
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 TRADE_COLUMNS = [
-    "fill_seq", "trade_id", "symbol", "side", "offset", "volume", "price",
-    "timestamp_ns", "timestamp_dt_local", "commission", "slippage",
-    "realized_pnl", "strategy_id", "signal_type", "regime_at_entry",
+    "fill_seq",
+    "trade_id",
+    "symbol",
+    "side",
+    "offset",
+    "volume",
+    "price",
+    "timestamp_ns",
+    "timestamp_dt_local",
+    "commission",
+    "slippage",
+    "realized_pnl",
+    "strategy_id",
+    "signal_type",
+    "regime_at_entry",
     "risk_budget_r",
 ]
 
 ORDER_COLUMNS = [
-    "order_seq", "order_id", "status", "symbol", "side",
+    "order_seq",
+    "order_id",
+    "status",
+    "symbol",
+    "side",
 ]
 
 DAILY_COLUMNS = [
-    "date", "capital", "daily_return_pct", "cumulative_return_pct",
-    "drawdown_pct", "position_value", "trades_count", "turnover", "market_regime",
+    "date",
+    "capital",
+    "daily_return_pct",
+    "cumulative_return_pct",
+    "drawdown_pct",
+    "position_value",
+    "trades_count",
+    "turnover",
+    "market_regime",
 ]
 
 
@@ -80,9 +106,20 @@ def _write_csv(path: Path, columns: list[str], rows: list[dict]) -> None:
             writer.writerow(row)
 
 
-def _make_trade(fill_seq, symbol, side, offset, volume, price, realized_pnl,
-                risk_budget_r, signal_type="kOpen", commission=10.0,
-                timestamp_ns=1000000000000000000, regime="kStrongTrend"):
+def _make_trade(
+    fill_seq,
+    symbol,
+    side,
+    offset,
+    volume,
+    price,
+    realized_pnl,
+    risk_budget_r,
+    signal_type="kOpen",
+    commission=10.0,
+    timestamp_ns=1000000000000000000,
+    regime="kStrongTrend",
+):
     return {
         "fill_seq": str(fill_seq),
         "trade_id": f"t{fill_seq}",
@@ -113,8 +150,15 @@ def _make_order(order_seq, order_id, status="FILLED"):
     }
 
 
-def _make_daily(date, capital, daily_return, cumulative_return,
-                drawdown=0.0, position_value=0.0, regime="kStrongTrend"):
+def _make_daily(
+    date,
+    capital,
+    daily_return,
+    cumulative_return,
+    drawdown=0.0,
+    position_value=0.0,
+    regime="kStrongTrend",
+):
     return {
         "date": date,
         "capital": str(capital),
@@ -195,10 +239,18 @@ def _build_run_dir(tmp: Path, multi: bool = True) -> Path:
     daily_rows = []
     for i in range(252):
         capital = 100000 + i * 60
-        daily_rows.append(_make_daily(
-            f"2024010{i % 3 + 1}{(i+1):02d}" if i < 10 else f"2024{i // 100 + 1:02d}{(i % 100):02d}",
-            capital, 0.06, (capital / 100000 - 1) * 100,
-        ))
+        daily_rows.append(
+            _make_daily(
+                (
+                    f"2024010{i % 3 + 1}{(i+1):02d}"
+                    if i < 10
+                    else f"2024{i // 100 + 1:02d}{(i % 100):02d}"
+                ),
+                capital,
+                0.06,
+                (capital / 100000 - 1) * 100,
+            )
+        )
     # Fix date formatting
     for i, row in enumerate(daily_rows):
         if i < 10:
@@ -214,11 +266,35 @@ def _build_run_dir(tmp: Path, multi: bool = True) -> Path:
     # Trade CSV (paired open/close)
     trades = []
     for i in range(50):
-        trades.append(_make_trade(i * 2, "rb2505", "buy", "Open", 2, 3800 + i, 0, 2000 + i * 50,
-                                  signal_type="kOpen", timestamp_ns=1700000000000000000))
+        trades.append(
+            _make_trade(
+                i * 2,
+                "rb2505",
+                "buy",
+                "Open",
+                2,
+                3800 + i,
+                0,
+                2000 + i * 50,
+                signal_type="kOpen",
+                timestamp_ns=1700000000000000000,
+            )
+        )
         pnl = 500 + i * 50  # mostly wins
-        trades.append(_make_trade(i * 2 + 1, "rb2505", "sell", "Close", 2, 3900 + i, pnl, 0,
-                                  signal_type="kStopLoss", timestamp_ns=1700000000000000000 + (i + 1) * 3_600_000_000_000))
+        trades.append(
+            _make_trade(
+                i * 2 + 1,
+                "rb2505",
+                "sell",
+                "Close",
+                2,
+                3900 + i,
+                pnl,
+                0,
+                signal_type="kStopLoss",
+                timestamp_ns=1700000000000000000 + (i + 1) * 3_600_000_000_000,
+            )
+        )
     _write_csv(run_dir / "csv" / "trades.csv", TRADE_COLUMNS, trades)
 
     # Order CSV
@@ -234,11 +310,48 @@ def _build_run_dir(tmp: Path, multi: bool = True) -> Path:
         for prod in varieties:
             vdir = run_dir / "csv" / "varieties" / prod / "backtest"
             vdir.mkdir(parents=True)
-            vt = [_make_trade(i, f"{prod}2505", "buy", "Open", 2, 4000, 0, 2000, timestamp_ns=1700000000000000000 + i * 1000) for i in range(10)]
-            vt += [_make_trade(i + 10, f"{prod}2505", "sell", "Close", 2, 4100, 300 + i * 20, 0, signal_type="kStopLoss", timestamp_ns=1700000000000000000 + (i + 11) * 1000) for i in range(10)]
+            vt = [
+                _make_trade(
+                    i,
+                    f"{prod}2505",
+                    "buy",
+                    "Open",
+                    2,
+                    4000,
+                    0,
+                    2000,
+                    timestamp_ns=1700000000000000000 + i * 1000,
+                )
+                for i in range(10)
+            ]
+            vt += [
+                _make_trade(
+                    i + 10,
+                    f"{prod}2505",
+                    "sell",
+                    "Close",
+                    2,
+                    4100,
+                    300 + i * 20,
+                    0,
+                    signal_type="kStopLoss",
+                    timestamp_ns=1700000000000000000 + (i + 11) * 1000,
+                )
+                for i in range(10)
+            ]
             _write_csv(vdir / "trades.csv", TRADE_COLUMNS, vt)
             _write_csv(vdir / "orders.csv", ORDER_COLUMNS, orders[:20])
-            _write_csv(vdir / "position_history.csv", ["timestamp_ns", "symbol", "net_position", "avg_price", "unrealized_pnl"], [])
+            _write_csv(
+                vdir / "position_history.csv",
+                [
+                    "timestamp_ns",
+                    "symbol",
+                    "net_position",
+                    "avg_price",
+                    "unrealized_pnl",
+                ],
+                [],
+            )
 
     return run_dir
 
@@ -323,6 +436,22 @@ class TestMetricComputation(unittest.TestCase):
         vals = [1.0, -0.5, 2.0, -0.3, 1.5]
         e = compute_expectancy(vals)
         self.assertGreater(e, 0.5)
+
+    def test_round_trips_pair_close_to_prior_open(self):
+        rows = parse_trade_rows(
+            [
+                _make_trade(
+                    1, "rb2505", "buy", "Open", 2, 3800, 0, 2000, commission=10
+                ),
+                _make_trade(
+                    2, "rb2505", "sell", "Close", 2, 3900, 300, 0, commission=12
+                ),
+            ]
+        )
+        trips = build_round_trips(rows)
+        self.assertEqual(len(trips), 1)
+        self.assertAlmostEqual(trips[0].net_pnl, 278.0)
+        self.assertAlmostEqual(trips[0].r_multiple, 0.15)
 
     def test_r_buckets(self):
         vals = [-2.5, -1.5, -0.5, 0.5, 1.5, 2.5, 3.5]
@@ -442,6 +571,9 @@ class TestReportGeneration(unittest.TestCase):
         self.assertIn("执行质量", text)
         self.assertIn("蒙特卡洛模拟", text)
         self.assertIn("多品种分解分析", text)
+        self.assertIn("| 夏普比率 | 0.0000 |", text)
+        self.assertIn("| c | 10 | 3,700.00 | 100.00% | 0.1950 | 200.00 |", text)
+        self.assertNotIn("| c | 20 | 3,700.00 | 50.00% | 0.0000 |", text)
         self.assertIn("系统架构与数据完整性", text)
         self.assertIn("综合建议与下一步", text)
         self.assertIn("附录", text)

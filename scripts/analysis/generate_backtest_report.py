@@ -96,7 +96,10 @@ def _product_prefix(symbol: str) -> str:
 
 
 def _build_table(headers: list[str], rows: list[list[str]]) -> str:
-    lines = ["| " + " | ".join(headers) + " |", "| " + " | ".join([":---"] * len(headers)) + " |"]
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join([":---"] * len(headers)) + " |",
+    ]
     for row in rows:
         lines.append("| " + " | ".join(row) + " |")
     return "\n".join(lines)
@@ -274,6 +277,15 @@ class DrawdownWindow:
     pnl: float
 
 
+@dataclass
+class RoundTrip:
+    open_trade: TradeRow
+    close_trade: TradeRow
+    net_pnl: float
+    r_multiple: float
+    holding_minutes: float
+
+
 def _as_float(val: Any, default: float = 0.0) -> float:
     try:
         return float(val) if val is not None else default
@@ -337,9 +349,7 @@ def parse_trade_rows(raw: list[dict[str, str]]) -> list[TradeRow]:
 
 
 def parse_order_rows(raw: list[dict[str, str]]) -> list[OrderRow]:
-    return [
-        OrderRow(order_id=str(r["order_id"]), status=str(r["status"])) for r in raw
-    ]
+    return [OrderRow(order_id=str(r["order_id"]), status=str(r["status"])) for r in raw]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -382,7 +392,9 @@ def compute_calmar(annualized_return: float, max_dd_pct: float) -> float:
 def compute_annualized_return(cumulative_return_pct: float, trading_days: int) -> float:
     if trading_days <= 0:
         return 0.0
-    return ((1.0 + cumulative_return_pct / 100.0) ** (252.0 / trading_days) - 1.0) * 100.0
+    return (
+        (1.0 + cumulative_return_pct / 100.0) ** (252.0 / trading_days) - 1.0
+    ) * 100.0
 
 
 def compute_annualized_volatility(daily_returns_pct: list[float]) -> float:
@@ -410,7 +422,9 @@ def compute_expected_shortfall_95(daily_returns_pct: list[float]) -> float:
     return -_mean(tail)
 
 
-def compute_max_drawdown(daily_rows: list[DailyRow], initial_equity: float) -> DrawdownWindow:
+def compute_max_drawdown(
+    daily_rows: list[DailyRow], initial_equity: float
+) -> DrawdownWindow:
     peak_cap = initial_equity
     peak_date = daily_rows[0].date
     max_dd = -1.0
@@ -442,7 +456,9 @@ def compute_max_drawdown(daily_rows: list[DailyRow], initial_equity: float) -> D
     )
 
 
-def compute_drawdown_windows(daily_rows: list[DailyRow], initial_equity: float, top_n: int = 3) -> list[DrawdownWindow]:
+def compute_drawdown_windows(
+    daily_rows: list[DailyRow], initial_equity: float, top_n: int = 3
+) -> list[DrawdownWindow]:
     """Return top-N drawdown events (non-overlapping, by peak)."""
     windows: list[DrawdownWindow] = []
     peak_cap = initial_equity
@@ -563,7 +579,9 @@ def compute_actual_fill_rate(orders: list[OrderRow]) -> float:
     return filled / len(statuses) * 100.0
 
 
-def compute_regime_attribution(daily_rows: list[DailyRow], initial_equity: float) -> list[dict[str, Any]]:
+def compute_regime_attribution(
+    daily_rows: list[DailyRow], initial_equity: float
+) -> list[dict[str, Any]]:
     groups: dict[str, list[float]] = defaultdict(list)
     prev = initial_equity
     for row in daily_rows:
@@ -594,7 +612,9 @@ def compute_regime_attribution(daily_rows: list[DailyRow], initial_equity: float
     return result
 
 
-def compute_slippage_stats(trades: list[TradeRow], signal_type: str | None = None) -> dict[str, float]:
+def compute_slippage_stats(
+    trades: list[TradeRow], signal_type: str | None = None
+) -> dict[str, float]:
     vals = [
         t.slippage
         for t in trades
@@ -609,6 +629,40 @@ def compute_slippage_stats(trades: list[TradeRow], signal_type: str | None = Non
         "min": min(vals),
         "p95": _percentile(vals, 0.95),
     }
+
+
+def build_round_trips(trades: list[TradeRow]) -> list[RoundTrip]:
+    """Pair close fills to prior opens and return completed round-trips."""
+    open_trades = [t for t in trades if t.offset == "Open" and t.risk_budget_r > 0]
+    close_trades = [t for t in trades if t.offset != "Open"]
+
+    from collections import deque
+
+    open_queues: dict[tuple[str, str], deque[TradeRow]] = defaultdict(deque)
+    for t in sorted(open_trades, key=lambda x: x.timestamp_ns):
+        side = "long" if t.side.lower() == "buy" else "short"
+        open_queues[(t.symbol, side)].append(t)
+
+    round_trips: list[RoundTrip] = []
+    for ct in sorted(close_trades, key=lambda x: x.timestamp_ns):
+        close_side = "long" if ct.side.lower() == "sell" else "short"
+        q = open_queues.get((ct.symbol, close_side))
+        if not q:
+            continue
+        ot = q.popleft()
+        holding_minutes = 0.0
+        if ct.timestamp_ns > ot.timestamp_ns:
+            holding_minutes = (ct.timestamp_ns - ot.timestamp_ns) / 1e9 / 60.0
+        round_trips.append(
+            RoundTrip(
+                open_trade=ot,
+                close_trade=ct,
+                net_pnl=ct.realized_pnl - ot.commission - ct.commission,
+                r_multiple=ct.realized_pnl / ot.risk_budget_r,
+                holding_minutes=holding_minutes,
+            )
+        )
+    return round_trips
 
 
 def build_star_rating(
@@ -629,7 +683,9 @@ def build_star_rating(
     s_wr = min(100.0, max(0.0, win_rate / 70.0 * 100.0))
     s_dd = min(100.0, max(0.0, (25.0 - max_dd) / 25.0 * 100.0))
 
-    composite = s_sharpe * 0.30 + s_calmar * 0.25 + s_pf * 0.20 + s_wr * 0.15 + s_dd * 0.10
+    composite = (
+        s_sharpe * 0.30 + s_calmar * 0.25 + s_pf * 0.20 + s_wr * 0.15 + s_dd * 0.10
+    )
 
     if composite >= 85:
         stars, grade = 5, "A"
@@ -701,7 +757,11 @@ def _render_executive_summary(
         _build_table(
             ["指标", "数值", "说明"],
             [
-                ["年化收益率", _fmt_pct(annualized_return), f"基于 {trading_days} 个交易日复利折算"],
+                [
+                    "年化收益率",
+                    _fmt_pct(annualized_return),
+                    f"基于 {trading_days} 个交易日复利折算",
+                ],
                 ["累计收益率", _fmt_pct(cumulative_return), "整个回测区间的总收益"],
                 ["最大回撤", _fmt_pct(max_dd), "峰值到谷底的最大跌幅"],
                 ["夏普比率", _fmt_ratio(sharpe), "单位风险的超额收益"],
@@ -734,7 +794,9 @@ def _render_performance_overview(
     avg_nonzero_exposure: float,
     nonzero_ratio: float,
 ) -> str:
-    avg_exposure = (nonzero_ratio / 100.0) * avg_nonzero_exposure if nonzero_ratio > 0 else 0.0
+    avg_exposure = (
+        (nonzero_ratio / 100.0) * avg_nonzero_exposure if nonzero_ratio > 0 else 0.0
+    )
     lines = [
         "## 二、绩效概览",
         "",
@@ -745,9 +807,17 @@ def _render_performance_overview(
             [
                 ["初始权益", _fmt_money(initial_equity), "backtest_*.json"],
                 ["最终权益", _fmt_money(final_equity), "backtest_*.json"],
-                ["净盈亏", _fmt_money(final_equity - initial_equity), "final - initial"],
+                [
+                    "净盈亏",
+                    _fmt_money(final_equity - initial_equity),
+                    "final - initial",
+                ],
                 ["累计收益率", _fmt_pct(cumulative_return), "daily_equity.csv"],
-                ["年化收益率", _fmt_pct(annualized_return), f"{trading_days} 个交易日复利"],
+                [
+                    "年化收益率",
+                    _fmt_pct(annualized_return),
+                    f"{trading_days} 个交易日复利",
+                ],
                 ["年化波动率", _fmt_pct(annualized_vol), "日收益率标准差年化"],
                 ["最大回撤", _fmt_pct(max_dd), "daily_equity.csv"],
                 ["Calmar 比率", _fmt_ratio(calmar), "年化收益 / 最大回撤"],
@@ -793,7 +863,11 @@ def _render_risk_analysis(
                 ["VaR (95%)", _fmt_pct(var_95), "历史模拟法，95% 置信日 VaR"],
                 ["ES (95%)", _fmt_pct(es_95), "尾部条件期望损失"],
                 ["Ulcer Index", _fmt_ratio(ulcer), "回撤深度与持续时间的综合指标"],
-                ["Recovery Factor", _fmt_ratio(recovery_factor), "净收益 / 最大回撤绝对值"],
+                [
+                    "Recovery Factor",
+                    _fmt_ratio(recovery_factor),
+                    "净收益 / 最大回撤绝对值",
+                ],
                 ["最大回撤", _fmt_pct(max_dd), "整个回测区间的最大回撤"],
             ],
         ),
@@ -823,7 +897,11 @@ def _render_risk_analysis(
 
     # Tail-risk: max single-day loss
     worst_day = min(daily_returns_pct) if daily_returns_pct else 0.0
-    worst_5 = sorted(daily_returns_pct)[:5] if len(daily_returns_pct) >= 5 else daily_returns_pct
+    worst_5 = (
+        sorted(daily_returns_pct)[:5]
+        if len(daily_returns_pct) >= 5
+        else daily_returns_pct
+    )
     lines.append("### 3.3 尾部风险")
     lines.append("")
     lines.append(f"- 最大单日亏损: **{_fmt_pct(worst_day)}**")
@@ -880,7 +958,10 @@ def _render_trade_statistics(
         "",
         _build_table(
             ["R 区间", "笔数", "占比"],
-            [[label, _fmt_int(cnt), _fmt_pct(ratio)] for label, cnt, ratio in compute_r_buckets(r_values)],
+            [
+                [label, _fmt_int(cnt), _fmt_pct(ratio)]
+                for label, cnt, ratio in compute_r_buckets(r_values)
+            ],
         ),
         "",
     ]
@@ -896,7 +977,11 @@ def _render_trade_statistics(
     lines.append("### 4.3 信号类型分析")
     lines.append("")
     sig_rows = [
-        [sig, _fmt_int(cnt), _fmt_pct(cnt / sum(signal_counts.values()) * 100 if signal_counts else 0)]
+        [
+            sig,
+            _fmt_int(cnt),
+            _fmt_pct(cnt / sum(signal_counts.values()) * 100 if signal_counts else 0),
+        ]
         for sig, cnt in signal_counts.most_common()
     ]
     lines.append(_build_table(["信号类型", "出现次数", "占比"], sig_rows))
@@ -932,12 +1017,20 @@ def _render_regime_attribution(regimes: list[dict[str, Any]]) -> str:
     best = max(regimes, key=lambda r: r["total_pnl"])
     worst = min(regimes, key=lambda r: r["total_pnl"])
     trend_pnl = sum(r["total_pnl"] for r in regimes if "Trend" in r["regime"])
-    range_pnl = sum(r["total_pnl"] for r in regimes if r["regime"] in {"kRanging", "kFlat"})
+    range_pnl = sum(
+        r["total_pnl"] for r in regimes if r["regime"] in {"kRanging", "kFlat"}
+    )
 
-    lines.append(f"- 最佳状态: **{best['regime']}** (累计 {_fmt_money(best['total_pnl'])})")
-    lines.append(f"- 最弱状态: **{worst['regime']}** (累计 {_fmt_money(worst['total_pnl'])})")
+    lines.append(
+        f"- 最佳状态: **{best['regime']}** (累计 {_fmt_money(best['total_pnl'])})"
+    )
+    lines.append(
+        f"- 最弱状态: **{worst['regime']}** (累计 {_fmt_money(worst['total_pnl'])})"
+    )
     if trend_pnl > abs(range_pnl):
-        lines.append("- **策略呈现明显的趋势跟随特征**，趋势状态收益贡献显著高于震荡/平淡状态。")
+        lines.append(
+            "- **策略呈现明显的趋势跟随特征**，趋势状态收益贡献显著高于震荡/平淡状态。"
+        )
     else:
         lines.append("- **趋势属性不够纯粹**，震荡/平淡状态对绩效拖累明显。")
     lines.append("")
@@ -963,10 +1056,26 @@ def _render_execution_quality(
         _build_table(
             ["指标", "结果", "来源"],
             [
-                ["原始 Fill Rate", _fmt_pct(fill_rate_json * 100), "hf_standard.execution_quality"],
-                ["实际成交率 (去重)", _fmt_pct(actual_fill_rate), "orders.csv 按 order_id 去重"],
-                ["撤单率", _fmt_pct(cancel_rate * 100), "hf_standard.execution_quality"],
-                ["平均等待时间", f"{avg_wait_ms:.2f} ms", "hf_standard.execution_quality"],
+                [
+                    "原始 Fill Rate",
+                    _fmt_pct(fill_rate_json * 100),
+                    "hf_standard.execution_quality",
+                ],
+                [
+                    "实际成交率 (去重)",
+                    _fmt_pct(actual_fill_rate),
+                    "orders.csv 按 order_id 去重",
+                ],
+                [
+                    "撤单率",
+                    _fmt_pct(cancel_rate * 100),
+                    "hf_standard.execution_quality",
+                ],
+                [
+                    "平均等待时间",
+                    f"{avg_wait_ms:.2f} ms",
+                    "hf_standard.execution_quality",
+                ],
                 ["总手续费", _fmt_money(total_commission), "deterministic.performance"],
                 ["平均手续费/笔", _fmt_money(avg_commission_per_trade), "trades.csv"],
             ],
@@ -1028,15 +1137,19 @@ def _render_monte_carlo(mc: dict[str, Any]) -> str:
         "",
     ]
     prob_loss = mc.get("prob_loss", 0)
-    mean_cap = mc.get("mean_final_capital", 0)
     ci_low = mc.get("ci_95_lower", 0)
-    ci_high = mc.get("ci_95_upper", 0)
     if prob_loss < 0.02 and ci_low > 0:
-        lines.append("- **结论**: 模拟结果稳健，亏损概率极低，95% 置信区间下限显著为正，策略生存能力优秀。")
+        lines.append(
+            "- **结论**: 模拟结果稳健，亏损概率极低，95% 置信区间下限显著为正，策略生存能力优秀。"
+        )
     elif prob_loss < 0.10:
-        lines.append("- **结论**: 模拟结果可接受，亏损概率较低，95% CI 下限为正但幅度有限。")
+        lines.append(
+            "- **结论**: 模拟结果可接受，亏损概率较低，95% CI 下限为正但幅度有限。"
+        )
     else:
-        lines.append("- **结论**: 模拟结果提示风险较高，亏损概率不容忽视，建议降低风险敞口或优化策略。")
+        lines.append(
+            "- **结论**: 模拟结果提示风险较高，亏损概率不容忽视，建议降低风险敞口或优化策略。"
+        )
     lines.append("")
     return "\n".join(lines)
 
@@ -1069,13 +1182,17 @@ def _render_multi_contract_analysis(
         if not raw:
             continue
         vt = parse_trade_rows(raw)
-        net_pnls = [t.realized_pnl - t.commission for t in vt]
+        round_trip_items = build_round_trips(vt)
+        net_pnls = [rt.net_pnl for rt in round_trip_items]
         total_pnl = sum(net_pnls)
-        n_trades = len(vt)
-        wr = sum(1 for v in net_pnls if v > 0) / n_trades * 100.0 if n_trades > 0 else 0.0
-        r_vals = [t.realized_pnl / t.risk_budget_r for t in vt if t.offset == "Open" and t.risk_budget_r > 0]
+        n_trades = len(round_trip_items)
+        wr = compute_win_rate(net_pnls)
+        r_vals = [rt.r_multiple for rt in round_trip_items]
         avg_r = _mean(r_vals) if r_vals else 0.0
-        comm = sum(t.commission for t in vt)
+        comm = sum(
+            rt.open_trade.commission + rt.close_trade.commission
+            for rt in round_trip_items
+        )
         variety_stats.append(
             {
                 "product": prod,
@@ -1090,7 +1207,7 @@ def _render_multi_contract_analysis(
     if variety_stats:
         lines.append(
             _build_table(
-                ["品种", "交易笔数", "净盈亏", "胜率", "平均R", "手续费"],
+                ["品种", "已完成交易数", "已完成净盈亏", "胜率", "平均R", "手续费"],
                 [
                     [
                         s["product"],
@@ -1112,10 +1229,22 @@ def _render_multi_contract_analysis(
         lines.append("")
         contrib_rows = []
         for s in variety_stats:
-            pnl_share = s["total_pnl"] / total_pnl_all * 100.0 if total_pnl_all != 0 else 0.0
-            color = "核心贡献" if pnl_share > 40 else ("稳定贡献" if pnl_share > 0 else "拖累")
-            contrib_rows.append([s["product"], _fmt_money(s["total_pnl"]), _fmt_pct(pnl_share), color])
-        lines.append(_build_table(["品种", "净盈亏", "利润占比", "贡献评价"], contrib_rows))
+            pnl_share = (
+                s["total_pnl"] / total_pnl_all * 100.0 if total_pnl_all != 0 else 0.0
+            )
+            color = (
+                "核心贡献"
+                if pnl_share > 40
+                else ("稳定贡献" if pnl_share > 0 else "拖累")
+            )
+            contrib_rows.append(
+                [s["product"], _fmt_money(s["total_pnl"]), _fmt_pct(pnl_share), color]
+            )
+        lines.append(
+            _build_table(
+                ["品种", "已完成净盈亏", "已完成利润占比", "贡献评价"], contrib_rows
+            )
+        )
         lines.append("")
 
     # Correlation matrix (when pandas is available)
@@ -1180,7 +1309,11 @@ def _render_single_contract_analysis(trades: list[TradeRow]) -> str:
     session_trades: dict[str, int] = defaultdict(int)
     for t in trades:
         try:
-            hour = int(t.timestamp_dt_local[11:13]) if len(t.timestamp_dt_local) >= 13 else 0
+            hour = (
+                int(t.timestamp_dt_local[11:13])
+                if len(t.timestamp_dt_local) >= 13
+                else 0
+            )
         except (ValueError, IndexError):
             hour = 0
         if 9 <= hour < 11:
@@ -1252,11 +1385,17 @@ def _render_recommendations(
     ]
 
     if stars >= 4:
-        lines.append("- **推荐进入 Paper Trading 观察**: 收益/回撤比和风控合规性均达到较好水平。")
+        lines.append(
+            "- **推荐进入 Paper Trading 观察**: 收益/回撤比和风控合规性均达到较好水平。"
+        )
     elif stars >= 3:
-        lines.append("- **建议谨慎进入观察池**: 策略具备一定收益弹性，但需验证震荡市与超预算损失的稳定性。")
+        lines.append(
+            "- **建议谨慎进入观察池**: 策略具备一定收益弹性，但需验证震荡市与超预算损失的稳定性。"
+        )
     else:
-        lines.append("- **暂不推荐直接进入实盘观察**: 当前收益质量或回撤控制尚不足以支持后续灰度。")
+        lines.append(
+            "- **暂不推荐直接进入实盘观察**: 当前收益质量或回撤控制尚不足以支持后续灰度。"
+        )
     lines.append("")
 
     lines.append("### 10.2 风险控制建议")
@@ -1268,7 +1407,9 @@ def _render_recommendations(
 
     lines.append("### 10.3 参数优化方向")
     lines.append("")
-    lines.append(f"- 最弱市场状态为 **{worst_regime}**，建议针对该状态进行参数调优或信号过滤。")
+    lines.append(
+        f"- 最弱市场状态为 **{worst_regime}**，建议针对该状态进行参数调优或信号过滤。"
+    )
     lines.append("- 建议围绕止损参数、入场市场状态过滤做系统性参数扫描。")
     lines.append("- 若滑点模型偏乐观，建议在下一轮回测中引入更保守的滑点假设。")
     lines.append("")
@@ -1382,14 +1523,12 @@ def generate_report(
     det = payload.get("deterministic", {}) or {}
     replay = payload.get("replay", {}) or {}
     perf = det.get("performance", {}) or {}
-    spec = payload.get("spec", {}) or {}
 
     initial_equity = _as_float(
         payload.get("initial_equity", perf.get("initial_equity", 0))
     )
     final_equity = _as_float(payload.get("final_equity", perf.get("final_equity", 0)))
 
-    adv = hf.get("advanced_summary", {}) or {}
     exec_q = hf.get("execution_quality", {}) or {}
     risk_m = hf.get("risk_metrics", {}) or {}
     mc = hf.get("monte_carlo", {}) or {}
@@ -1401,13 +1540,15 @@ def generate_report(
     annualized_return = compute_annualized_return(cumulative_return, trading_days)
     annualized_vol = compute_annualized_volatility(daily_returns_pct)
     max_dd = max((r.drawdown_pct for r in daily_rows), default=0.0)
-    sharpe = adv.get("rolling_sharpe_3m_last") or compute_sharpe(daily_returns_pct, risk_free_rate)
+    sharpe = compute_sharpe(daily_returns_pct, risk_free_rate)
     sortino = compute_sortino(daily_returns_pct, risk_free_rate)
     calmar = compute_calmar(annualized_return, max_dd)
 
     var_95 = _as_float(risk_m.get("var_95", compute_var_95(daily_returns_pct)))
     es_95 = _as_float(
-        risk_m.get("expected_shortfall_95", compute_expected_shortfall_95(daily_returns_pct))
+        risk_m.get(
+            "expected_shortfall_95", compute_expected_shortfall_95(daily_returns_pct)
+        )
     )
     ulcer = _as_float(risk_m.get("ulcer_index", 0))
     recovery_factor = _as_float(risk_m.get("recovery_factor", 0))
@@ -1438,37 +1579,17 @@ def generate_report(
     avg_nonzero_exposure = _mean(exposures) * 100.0 if exposures else 0.0
 
     # ── Trade-level metrics ────────────────────────────────────────────────
-    # Open trades carry risk_budget_r but zero PnL; close trades carry PnL
-    # but zero risk_budget_r.  Pair close→open to get proper R-multiples.
-    open_trades = [t for t in trades if t.offset == "Open" and t.risk_budget_r > 0]
-    close_trades = [t for t in trades if t.offset != "Open"]
+    # Open fills carry risk_budget_r while close fills carry realized PnL.
+    # Pair them before computing round-trip win rate, PnL and R-multiples.
+    round_trip_items = build_round_trips(trades)
+    close_trades = [rt.close_trade for rt in round_trip_items]
+    r_values = [rt.r_multiple for rt in round_trip_items]
+    completed_net = [rt.net_pnl for rt in round_trip_items]
+    holding_minutes_list = [
+        rt.holding_minutes for rt in round_trip_items if rt.holding_minutes > 0.0
+    ]
 
-    # Build open-trade queues per (symbol, side)
-    from collections import deque
-
-    open_queues: dict[tuple[str, str], deque[TradeRow]] = defaultdict(deque)
-    for t in sorted(open_trades, key=lambda x: x.timestamp_ns):
-        side = "long" if t.side.lower() == "buy" else "short"
-        open_queues[(t.symbol, side)].append(t)
-
-    # Pair close trades to open trades
-    r_values: list[float] = []
-    completed_net: list[float] = []
-    holding_minutes_list: list[float] = []
-    for ct in sorted(close_trades, key=lambda x: x.timestamp_ns):
-        close_side = "long" if ct.side.lower() == "sell" else "short"
-        q = open_queues.get((ct.symbol, close_side))
-        if not q:
-            continue
-        ot = q.popleft()  # FIFO match
-        r_val = ct.realized_pnl / ot.risk_budget_r
-        r_values.append(r_val)
-        net_pnl = ct.realized_pnl - ot.commission - ct.commission
-        completed_net.append(net_pnl)
-        if ct.timestamp_ns > ot.timestamp_ns:
-            holding_minutes_list.append((ct.timestamp_ns - ot.timestamp_ns) / 1e9 / 60.0)
-
-    round_trips = len(close_trades)
+    round_trips = len(round_trip_items)
     wins = [v for v in completed_net if v > 0]
     losses = [v for v in completed_net if v < 0]
 
@@ -1517,7 +1638,9 @@ def generate_report(
 
     # ── Regime attribution ─────────────────────────────────────────────────
     regimes = compute_regime_attribution(daily_rows, initial_equity)
-    worst_regime = min(regimes, key=lambda r: r["total_pnl"])["regime"] if regimes else "kUnknown"
+    worst_regime = (
+        min(regimes, key=lambda r: r["total_pnl"])["regime"] if regimes else "kUnknown"
+    )
 
     # ── Star rating ────────────────────────────────────────────────────────
     stars, grade, rating_rationale = build_star_rating(
@@ -1629,7 +1752,9 @@ def generate_report(
 
     if is_multi:
         sections.append(
-            _render_multi_contract_analysis(run_dir, varieties, trades, daily_rows, total_commission)
+            _render_multi_contract_analysis(
+                run_dir, varieties, trades, daily_rows, total_commission
+            )
         )
     else:
         sections.append(_render_single_contract_analysis(trades))
@@ -1671,8 +1796,15 @@ def generate_report(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="生成幻方量化标准回测分析报告")
     parser.add_argument("--run-dir", type=Path, required=True, help="回测结果目录")
-    parser.add_argument("--output", type=Path, default=None, help="报告输出路径（默认生成在 run_dir 内）")
-    parser.add_argument("--risk-free-rate", type=float, default=0.02, help="年化无风险利率（默认 0.02）")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="报告输出路径（默认生成在 run_dir 内）",
+    )
+    parser.add_argument(
+        "--risk-free-rate", type=float, default=0.02, help="年化无风险利率（默认 0.02）"
+    )
     args = parser.parse_args(argv)
 
     try:

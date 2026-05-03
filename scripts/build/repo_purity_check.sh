@@ -43,11 +43,13 @@ declare -a violations=()
 declare -A allowed_python_assets=(
   ["scripts/analysis/backtest_analysis_report.py"]=1
   ["scripts/analysis/backtest_validation_report.py"]=1
+  ["scripts/analysis/generate_backtest_report.py"]=1
   ["scripts/analysis/plot_sub_trace_plotly.py"]=1
   ["scripts/build/audit_contract_expiry_calendar.py"]=1
   ["scripts/build/verify_config_docs_coverage.py"]=1
   ["scripts/build/verify_products_info_sync.py"]=1
   ["tests/python/test_backtest_analysis_report.py"]=1
+  ["tests/python/test_generate_backtest_report.py"]=1
   ["tests/python/test_plot_sub_trace_plotly.py"]=1
 )
 

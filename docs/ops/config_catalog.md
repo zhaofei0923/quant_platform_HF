@@ -18,6 +18,7 @@
 - `configs/dev/ctp.yaml`
 - `configs/prod/ctp.yaml`
 - `configs/sim/ctp.yaml`
+- `configs/sim/ctp_sim_trade_candidates.yaml`
 - `configs/sim/ctp_trading_hours.yaml`
 - `configs/sim/ctp_trading_hours_group2.yaml`
 - `configs/sim/ctp_trading_hours_group3.yaml`
@@ -25,8 +26,16 @@
 - `configs/risk_rules.yaml`
 - `configs/strategies/main_backtest_strategy.yaml`
 - `configs/strategies/main_backtest_production.yaml`
+- `configs/strategies/main_sim_trade_candidate_c.yaml`
+- `configs/strategies/main_sim_trade_candidate_rb.yaml`
+- `configs/strategies/main_sim_trade_candidate_m.yaml`
+- `configs/strategies/main_sim_trade_candidate_hc.yaml`
 - `configs/strategies/products_info.yaml`
 - `configs/strategies/sub/kama_trend_production.yaml`
+- `configs/strategies/sub/kama_sim_trade_candidate_c.yaml`
+- `configs/strategies/sub/kama_sim_trade_candidate_rb.yaml`
+- `configs/strategies/sub/kama_sim_trade_candidate_m.yaml`
+- `configs/strategies/sub/kama_sim_trade_candidate_hc.yaml`
 - `configs/strategies/instrument_info.json`
 - `configs/perf/baseline.json`
 - `configs/perf/backtest_benchmark_baseline.json`
@@ -36,16 +45,15 @@
 - `configs/deploy/environments/prodlike_multi_host.yaml`
 - `configs/ops/ctp_cutover.template.env`
 - `configs/ops/ctp_rollback_drill.template.env`
-- `configs/ops/backtest_run.yaml`
+- `configs/backtest/backtest_run.yaml`
+- `configs/backtest/backtest_run_sim_trade_candidates.yaml`
+- `configs/backtest/backtest_run_sim_trade_candidate_c.yaml`
+- `configs/backtest/backtest_run_sim_trade_candidate_rb.yaml`
+- `configs/backtest/backtest_run_sim_trade_candidate_m.yaml`
+- `configs/backtest/backtest_run_sim_trade_candidate_hc.yaml`
 - `configs/ops/parameter_optim.yaml`
-- `configs/ops/parameter_optim_constraints_acceptance.yaml`
-- `configs/ops/parameter_optim_constraints_rolling_acceptance.yaml`
-- `configs/ops/parameter_optim_random_rolling_acceptance.yaml`
-- `configs/ops/rolling_backtest.yaml`
-- `configs/ops/rolling_optimize_constraints_acceptance.yaml`
+- `configs/backtest/rolling_backtest.yaml`
 - `configs/ops/rolling_optimize_kama.yaml`
-- `configs/ops/rolling_optimize_random_acceptance.yaml`
-- `configs/ops/rolling_optimize_random_acceptance_replay.yaml`
 - `configs/strategies/contract_expiry_calendar.yaml`
 
 ---
@@ -64,6 +72,7 @@
 | `ctp.enable_terminal_auth` | bool | 否 | 程序默认 | `true`/`false` | 终端认证流程 | `true` |
 | `ctp.strategy_factory` | string | 否 | `demo` | `demo`/`composite` | 策略工厂选择 | `composite` |
 | `ctp.strategy_composite_config` | string | 条件必填 | 无 | 路径（相对 `ctp.yaml`） | `strategy_factory=composite` 时使用 | `../strategies/main_backtest_strategy.yaml` |
+| `ctp.strategy_composite_config_map.<strategy_id>` | string | 条件必填 | 无 | 路径（相对 `ctp.yaml`） | 为指定策略实例覆盖 Composite 配置；可替代全局 `strategy_composite_config` | `../strategies/c.yaml` |
 
 ### 连接与鉴权
 
@@ -139,6 +148,8 @@
 | `ctp.market_data_recording_dir` | string | 否 | 程序默认 | 非空路径 | 本地行情 CSV 根目录 | `runtime/market_data/simnow` |
 | `ctp.market_data_recording_run_id` | string | 否 | 自动生成 | 目录名或空 | 行情 CSV 运行目录；空值自动生成 `run_<ts_ns>` | `` |
 | `ctp.market_data_recording_flush_each_write` | bool | 否 | 程序默认 | `true/false` | 每条 tick/bar 写入后立即 flush，降低宕机丢失窗口 | `false` |
+| `ctp.market_data_recording_partition_by_product` | bool | 否 | `false` | `true/false` | 额外按品种写入 `varieties/<product>/market` 下的 tick/bar CSV | `true` |
+| `ctp.market_data_recording_write_global_copy` | bool | 否 | `false` | `true/false` | 开启按品种写入时是否继续保留全局 `ticks.csv`/`bars_1m.csv` | `true` |
 | `ctp.audit_hot_days` | int | 否 | 程序默认 | `>=0` | 热数据保留天数 | `7` |
 | `ctp.audit_cold_days` | int | 否 | 程序默认 | `>=0` | 冷数据保留天数 | `180` |
 
@@ -231,6 +242,12 @@
   - 默认风控模板（`risk_default_*`）
   - 自定义风控组模板（`risk_rule_<group>_*`）
 
+## `configs/sim/ctp_sim_trade_candidates.yaml`
+
+- Purpose: SimNow 多品种候选参数联调配置，运行 `c/rb/m/hc` 四个独立 Composite 实例。
+- Consumer: `core_engine` / `simnow_compare_cli`。
+- 字段说明: 见“CTP 通用字段字典”；重点字段为 `strategy_composite_config_map.<strategy_id>`、`product_ids` 与行情按品种分区开关。
+
 ## `configs/sim/ctp_trading_hours.yaml`
 
 - Purpose: SimNow 交易时段组 1 前置配置。
@@ -296,6 +313,7 @@
 | 字段 | 类型 | 必填 | 默认值 | 取值 | 含义 | 示例 |
 |---|---|---|---|---|---|---|
 | `run_type` | string | 是 | 无 | `backtest` | 运行类型校验 | `backtest` |
+| `product_id` | string | 否 | 空 | 品种小写 ID | 非空时 Composite 仅处理该品种的行情与成交 | `rb` |
 | `market_state_mode` | bool | 否 | `true` | `true/false` | 是否启用市场状态门控 | `true` |
 | `backtest.initial_equity` | double | 是 | 无 | `>0` | 回测初始权益 | `200000` |
 | `backtest.symbols` | list[string] | 是 | 无 | 品种或合约 | 数据选择范围 | `[c]` |
@@ -326,6 +344,7 @@
 - `risk_budget_r = min(max(0, 成交前权益) * risk_per_trade_pct, max_risk_per_trade)`；对策略原生 `kOpen` 成交和严格换月 `rollover_open` 合成开仓生效。
 - 平仓成交保持 `0.0`；`expiry_close` 后由策略重新开仓的成交按普通 `kOpen` 计算。
 - 当 `run_type != backtest` 且 `composite.enable_non_backtest=false` 时，初始化会 fail-fast。
+- `product_id` 为空时保持旧行为；非空时会按合约字母前缀过滤，例如 `SHFE.rb2405` 与 `rb2405` 都匹配 `rb`。
 - `overrides` 仅允许键 `backtest|sim|live`，且 `params` 仅允许标量值；非法键会 fail-fast。
 - 参数合并顺序：`base params + overrides[run_mode].params`（后者覆盖前者）。
 - `entry_market_regimes` 仅影响 `kOpen`；`StopLoss/TakeProfit/Close/ForceClose` 不受该门控影响。
@@ -414,6 +433,30 @@ composite:
 - Consumer: `backtest_cli` / `rolling_backtest_cli`。
 - 字段说明: 同 `configs/strategies/main_backtest_strategy.yaml`；重点差异是使用 `kama_trend_production` 子策略和 5 分钟周期。
 
+## `configs/strategies/main_sim_trade_candidate_c.yaml`
+
+- Purpose: `c` 品种仿真候选参数的 Composite 入口，可被回测和 SimNow 复用。
+- Consumer: `backtest_cli` / `core_engine`。
+- 字段说明: 同 `configs/strategies/main_backtest_strategy.yaml`；重点字段为 `composite.product_id=c` 与 `sub/kama_sim_trade_candidate_c.yaml`。
+
+## `configs/strategies/main_sim_trade_candidate_rb.yaml`
+
+- Purpose: `rb` 品种仿真候选参数的 Composite 入口，可被回测和 SimNow 复用。
+- Consumer: `backtest_cli` / `core_engine`。
+- 字段说明: 同 `configs/strategies/main_backtest_strategy.yaml`；重点字段为 `composite.product_id=rb` 与 `sub/kama_sim_trade_candidate_rb.yaml`。
+
+## `configs/strategies/main_sim_trade_candidate_m.yaml`
+
+- Purpose: `m` 品种仿真候选参数的 Composite 入口，可被回测和 SimNow 复用。
+- Consumer: `backtest_cli` / `core_engine`。
+- 字段说明: 同 `configs/strategies/main_backtest_strategy.yaml`；重点字段为 `composite.product_id=m` 与 `sub/kama_sim_trade_candidate_m.yaml`。
+
+## `configs/strategies/main_sim_trade_candidate_hc.yaml`
+
+- Purpose: `hc` 品种仿真候选参数的 Composite 入口，可被回测和 SimNow 复用。
+- Consumer: `backtest_cli` / `core_engine`。
+- 字段说明: 同 `configs/strategies/main_backtest_strategy.yaml`；重点字段为 `composite.product_id=hc` 与 `sub/kama_sim_trade_candidate_hc.yaml`。
+
 ## `configs/strategies/products_info.yaml`
 
 - Purpose: 产品信息 YAML 镜像（与 `instrument_info.json` 对齐）。
@@ -473,6 +516,30 @@ composite:
 - 回测标的由主策略 `backtest.symbols` 控制，子策略默认按 `state.instrument_id` 工作。
 - `daily_max_loss_R` 使用动态 R 值，随 `account_equity * risk_per_trade_pct` 增减，不再依赖固定金额参数。
 - 时间窗口参数属于组合层控制，不会传入 `KamaTrendStrategy` 内部指标计算；`force_close_windows` 仅在回测 replay 的 tick 循环生效。
+
+## `configs/strategies/sub/kama_sim_trade_candidate_c.yaml`
+
+- Purpose: `c` 品种 KAMA 仿真候选参数，来源于 `docs/ops/sim_trade_candidate_params.md`。
+- Consumer: `atomic_factory` / `KamaTrendStrategy::Init`。
+- 字段说明: 同 `configs/strategies/sub/kama_trend_production.yaml`；核心参数为 `kama_filter=1.2`、`risk_per_trade_pct=0.005`、`stop_loss_atr_multiplier=4.0`。
+
+## `configs/strategies/sub/kama_sim_trade_candidate_rb.yaml`
+
+- Purpose: `rb` 品种 KAMA 仿真候选参数，来源于 `docs/ops/sim_trade_candidate_params.md`。
+- Consumer: `atomic_factory` / `KamaTrendStrategy::Init`。
+- 字段说明: 同 `configs/strategies/sub/kama_trend_production.yaml`；核心参数为 `kama_filter=0.2`、`risk_per_trade_pct=0.005`、`stop_loss_atr_multiplier=5.0`。
+
+## `configs/strategies/sub/kama_sim_trade_candidate_m.yaml`
+
+- Purpose: `m` 品种 KAMA 仿真候选参数，来源于 `docs/ops/sim_trade_candidate_params.md`。
+- Consumer: `atomic_factory` / `KamaTrendStrategy::Init`。
+- 字段说明: 同 `configs/strategies/sub/kama_trend_production.yaml`；核心参数为 `kama_filter=1.1`、`risk_per_trade_pct=0.005`、`stop_loss_atr_multiplier=4.125`。
+
+## `configs/strategies/sub/kama_sim_trade_candidate_hc.yaml`
+
+- Purpose: `hc` 品种 KAMA 仿真候选参数，来源于 `docs/ops/sim_trade_candidate_params.md`。
+- Consumer: `atomic_factory` / `KamaTrendStrategy::Init`。
+- 字段说明: 同 `configs/strategies/sub/kama_trend_production.yaml`；核心参数为 `kama_filter=0.2`、`risk_per_trade_pct=0.005`、`stop_loss_atr_multiplier=6.0`。
 
 ## `configs/strategies/instrument_info.json`
 
@@ -636,7 +703,7 @@ composite:
 | `MAX_ROLLBACK_SECONDS` | 是 | 中 | 最大回滚耗时 | `180` |
 | `ROLLBACK_EVIDENCE_OUTPUT` | 是 | 中 | 回滚证据输出路径 | `docs/results/ctp_rollback_result.env` |
 
-## `configs/ops/backtest_run.yaml`
+## `configs/backtest/backtest_run.yaml`
 
 - Purpose: 一键编译 + parquet 回测运行配置。
 - Consumer: `scripts/build/run_backtest_from_config.sh`。
@@ -663,7 +730,12 @@ composite:
 | `auto_install_arrow_parquet_deps` | bool | 否 | `true` | `true/false` | 构建失败时自动安装依赖并重试一次 | `true` |
 | `engine_mode` | string | 是 | 无 | `parquet` | 回测数据引擎模式 | `parquet` |
 | `dataset_root` | string | 是 | 无 | 目录路径 | Parquet 数据根目录 | `backtest_data/parquet_v2` |
-| `strategy_main_config_path` | string | 是 | 无 | 文件路径 | 主策略配置文件 | `configs/strategies/main_backtest_strategy.yaml` |
+| `product_ids` | string | 三选一 | 无 | 逗号分隔品种 ID | 按品种选择回测范围；脚本用模板展开为单品种或多品种策略配置 | `c,rb,m,hc` |
+| `strategy_main_config_template` | string | product_ids 模式必填 | 无 | 包含 `{product}` 的文件路径模板 | `product_ids` 模式下生成每个品种的主策略配置路径 | `configs/strategies/main_sim_trade_candidate_{product}.yaml` |
+| `strategy_id_template` | string | 否 | 空 | 包含 `{product}` 的字符串模板 | `product_ids` 模式下生成每个品种的策略实例 ID | `kama_candidate_{product}` |
+| `strategy_main_config_path` | string | 三选一 | 无 | 文件路径 | 单策略主配置文件；与 `product_ids`、`strategy_main_config_paths` 互斥 | `configs/strategies/main_backtest_strategy.yaml` |
+| `strategy_main_config_paths` | string | 三选一 | 无 | 逗号分隔文件路径 | 显式多策略主配置文件列表；单次回测按时间戳归并多品种 tick | `configs/strategies/main_sim_trade_candidate_c.yaml,configs/strategies/main_sim_trade_candidate_rb.yaml` |
+| `strategy_ids` | string | 否 | 空 | 逗号分隔字符串 | 与 `strategy_main_config_paths` 一一对应的策略实例 ID；`product_ids` 模式可由 `strategy_id_template` 生成 | `kama_candidate_c,kama_candidate_rb` |
 | `detector_config` | string | 否 | 空 | 文件路径 | 市场状态检测器配置文件路径；透传给 `backtest_cli --detector_config` | `configs/sim/ctp.yaml` |
 | `output_root_dir` | string | 否 | `docs/results/backtest_runs` | 目录路径 | 回测归档根目录（每次运行创建 `run_dir` 子目录） | `docs/results/backtest_runs` |
 | `timestamp_timezone` | string | 否 | `local` | `local/utc` | `run_dir` 时间戳时区（`utc` 带 `Z`） | `utc` |
@@ -682,6 +754,7 @@ composite:
 | `emit_trades` | bool | 否 | `true` | `true/false` | 是否输出 trades 明细 | `true` |
 | `emit_orders` | bool | 否 | `true` | `true/false` | 是否输出 orders 明细 | `true` |
 | `emit_position_history` | bool | 否 | `false` | `true/false` | 是否输出持仓快照明细 | `false` |
+| `emit_per_variety_outputs` | bool | 否 | `false` | `true/false` | 是否额外输出 `varieties/<product>/backtest` 分区 CSV | `true` |
 | `trace_output_format` | string | 否 | `csv` | `csv/parquet/both` | 指标 trace 输出格式 | `csv` |
 | `emit_indicator_trace` | bool | 否 | `false` | `true/false` | 是否输出主策略指标追踪 | `true` |
 | `indicator_trace_path` | string | 否 | 空 | 文件路径 | 指标追踪文件名模板（仅取 basename，落在本次 run_dir；扩展名按 `trace_output_format` 归一化） | `my_trace.csv` |
@@ -694,6 +767,36 @@ composite:
 
 - `detector_config` 是路径字段，不支持在 `backtest_run.yaml` 内联 `market_state_detector` 配置块。
 - `run_backtest_with_validation.sh` 直接转调 `run_backtest_from_config.sh`，因此会自动继承该字段。
+
+## `configs/backtest/backtest_run_sim_trade_candidates.yaml`
+
+- Purpose: `c/rb/m/hc` 仿真候选参数的组合级 Parquet 回测运行配置。
+- Consumer: `scripts/build/run_backtest_from_config.sh`。
+- 字段说明: 同 `configs/backtest/backtest_run.yaml`；重点字段为 `product_ids`、`strategy_main_config_template` 和 `strategy_id_template`。把 `product_ids` 改成 `hc` 可做单品种回测，改成 `c,rb,m,hc` 可做组合回测；单次回测进程会按时间戳归并播放多品种 tick，并为每个品种加载独立 Composite 配置。
+
+## `configs/backtest/backtest_run_sim_trade_candidate_c.yaml`
+
+- Purpose: `c` 品种仿真候选参数的全周期 Parquet 回测运行配置。
+- Consumer: `scripts/build/run_backtest_from_config.sh`。
+- 字段说明: 同 `configs/backtest/backtest_run.yaml`；重点字段为 `strategy_main_config_path=configs/strategies/main_sim_trade_candidate_c.yaml` 与 `emit_per_variety_outputs=true`。
+
+## `configs/backtest/backtest_run_sim_trade_candidate_rb.yaml`
+
+- Purpose: `rb` 品种仿真候选参数的全周期 Parquet 回测运行配置。
+- Consumer: `scripts/build/run_backtest_from_config.sh`。
+- 字段说明: 同 `configs/backtest/backtest_run.yaml`；重点字段为 `strategy_main_config_path=configs/strategies/main_sim_trade_candidate_rb.yaml` 与 `emit_per_variety_outputs=true`。
+
+## `configs/backtest/backtest_run_sim_trade_candidate_m.yaml`
+
+- Purpose: `m` 品种仿真候选参数的全周期 Parquet 回测运行配置。
+- Consumer: `scripts/build/run_backtest_from_config.sh`。
+- 字段说明: 同 `configs/backtest/backtest_run.yaml`；重点字段为 `strategy_main_config_path=configs/strategies/main_sim_trade_candidate_m.yaml` 与 `emit_per_variety_outputs=true`。
+
+## `configs/backtest/backtest_run_sim_trade_candidate_hc.yaml`
+
+- Purpose: `hc` 品种仿真候选参数的全周期 Parquet 回测运行配置。
+- Consumer: `scripts/build/run_backtest_from_config.sh`。
+- 字段说明: 同 `configs/backtest/backtest_run.yaml`；重点字段为 `strategy_main_config_path=configs/strategies/main_sim_trade_candidate_hc.yaml` 与 `emit_per_variety_outputs=true`。
 
 ## `configs/ops/parameter_optim.yaml`
 
@@ -721,25 +824,7 @@ composite:
 | `optimization.best_params_yaml` | string | 是 | 无 | 文件路径 | 最优参数输出 | `docs/results/opts/parameter_optim_best_params.yaml` |
 | `parameters[]` | list | 是 | 空 | 参数定义数组 | 待搜索参数空间 | 见文件示例 |
 
-## `configs/ops/parameter_optim_constraints_acceptance.yaml`
-
-- Purpose: 参数优化约束 DSL 的小规模 acceptance 配置。
-- Consumer: `parameter_optim_cli`。
-- 字段说明: 同 `configs/ops/parameter_optim.yaml`；重点增加 `optimization.constraints`。
-
-## `configs/ops/parameter_optim_constraints_rolling_acceptance.yaml`
-
-- Purpose: 滚动优化 acceptance 使用的约束参数空间。
-- Consumer: `rolling_backtest_cli` 的 `optimization.param_space`。
-- 字段说明: 同 `configs/ops/parameter_optim.yaml`；时间窗和 trial 数为 acceptance 运行收窄。
-
-## `configs/ops/parameter_optim_random_rolling_acceptance.yaml`
-
-- Purpose: 随机搜索 acceptance 使用的参数空间。
-- Consumer: `rolling_backtest_cli` 的 `optimization.param_space`。
-- 字段说明: 同 `configs/ops/parameter_optim.yaml`；重点字段为 `optimization.algorithm=random` 与 `random_seed`。
-
-## `configs/ops/rolling_backtest.yaml`
+## `configs/backtest/rolling_backtest.yaml`
 
 - Purpose: 滚动窗口回测与滚动优化运行配置。
 - Consumer: `rolling_backtest_cli`。
@@ -785,29 +870,11 @@ composite:
 | `output.keep_temp_files` | bool | 否 | `false` | `true/false` | 是否保留临时 trial 产物 | `false` |
 | `output.window_parallel` | int | 否 | `1` | `>0` | 窗口并发数（`rolling_optimize` 强制降级到 1） | `1` |
 
-## `configs/ops/rolling_optimize_constraints_acceptance.yaml`
-
-- Purpose: 约束 DSL 的滚动优化 acceptance 入口。
-- Consumer: `rolling_backtest_cli`。
-- 字段说明: 同 `configs/ops/rolling_backtest.yaml`；`param_space` 指向约束 acceptance 参数空间。
-
 ## `configs/ops/rolling_optimize_kama.yaml`
 
 - Purpose: 默认 KAMA T0 baseline 的多窗口滚动优化与样本外评估入口。
 - Consumer: `rolling_backtest_cli`。
-- 字段说明: 同 `configs/ops/rolling_backtest.yaml`；目标函数使用 `hf_standard.risk_metrics.calmar_ratio`。
-
-## `configs/ops/rolling_optimize_random_acceptance.yaml`
-
-- Purpose: 随机搜索滚动优化 acceptance 入口。
-- Consumer: `rolling_backtest_cli`。
-- 字段说明: 同 `configs/ops/rolling_backtest.yaml`；固定 `random_seed` 以验证采样可复现。
-
-## `configs/ops/rolling_optimize_random_acceptance_replay.yaml`
-
-- Purpose: 随机搜索可复现性 replay 入口。
-- Consumer: `rolling_backtest_cli`。
-- 字段说明: 同 `rolling_optimize_random_acceptance.yaml`；输出目录独立，用于对比 trial 序列。
+- 字段说明: 同 `configs/backtest/rolling_backtest.yaml`；目标函数使用 `hf_standard.risk_metrics.calmar_ratio`。
 
 ---
 
@@ -841,7 +908,7 @@ composite:
 
 ```bash
 bash scripts/build/run_backtest_from_config.sh \
-  --config configs/ops/backtest_run.yaml
+  --config configs/backtest/backtest_run.yaml
 ```
 
 ### 配置覆盖校验

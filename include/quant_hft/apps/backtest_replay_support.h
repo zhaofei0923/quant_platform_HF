@@ -1136,6 +1136,15 @@ inline bool ExtractJsonBool(const std::string& json, const std::string& key, boo
 
 }  // namespace detail
 
+struct BacktestStrategyConfig {
+    std::string strategy_id;
+    std::string strategy_factory{"composite"};
+    std::string strategy_main_config_path;
+    std::string strategy_composite_config;
+    std::string product_id;
+    RiskManagementConfig risk_management;
+};
+
 struct BacktestCliSpec {
     std::string csv_path;
     std::string dataset_root;
@@ -1162,6 +1171,7 @@ struct BacktestCliSpec {
     std::string strategy_main_config_path;
     std::string strategy_factory{"demo"};
     std::string strategy_composite_config;
+    std::vector<BacktestStrategyConfig> strategy_configs;
     bool emit_state_snapshots{false};
     bool emit_indicator_trace{false};
     std::string trace_output_format{"csv"};
@@ -1171,6 +1181,7 @@ struct BacktestCliSpec {
     bool emit_trades{true};
     bool emit_orders{true};
     bool emit_position_history{false};
+    bool emit_per_variety_outputs{false};
     MarketStateDetectorConfig detector_config{};
 };
 
@@ -1473,6 +1484,20 @@ class ReplayTimeframeFanout {
         return out;
     }
 
+    void ResetInstrument(const std::string& instrument_id) {
+        if (instrument_id.empty()) {
+            return;
+        }
+        const std::string prefix = instrument_id + "|";
+        for (auto it = buckets_.begin(); it != buckets_.end();) {
+            if (it->first.rfind(prefix, 0) == 0) {
+                it = buckets_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
    private:
     struct BucketState {
         bool initialized{false};
@@ -1753,6 +1778,108 @@ inline bool IsApproxEqual(double left, double right, double abs_tol = 1e-8, doub
 inline std::string ExtractSingleProductSymbol(const std::vector<std::string>& symbols);
 inline bool IsParquetProductChainSelection(const std::vector<std::string>& symbols);
 
+inline std::string DefaultBacktestStrategyId(const std::string& config_path, std::size_t index) {
+    std::filesystem::path path(config_path);
+    std::string stem = path.stem().string();
+    if (stem.empty()) {
+        stem = "strategy_" + std::to_string(index);
+    }
+    return stem;
+}
+
+inline void AppendUniqueStrings(const std::vector<std::string>& values,
+                                std::vector<std::string>* out) {
+    if (out == nullptr) {
+        return;
+    }
+    std::set<std::string> seen(out->begin(), out->end());
+    for (const std::string& value : values) {
+        if (value.empty() || !seen.insert(value).second) {
+            continue;
+        }
+        out->push_back(value);
+    }
+}
+
+inline std::string PrimaryStrategyMainConfigPath(const BacktestCliSpec& spec) {
+    if (!spec.strategy_main_config_path.empty()) {
+        return spec.strategy_main_config_path;
+    }
+    for (const BacktestStrategyConfig& config : spec.strategy_configs) {
+        if (!config.strategy_main_config_path.empty()) {
+            return config.strategy_main_config_path;
+        }
+    }
+    return "";
+}
+
+inline bool PopulateStrategyConfigFromMainPath(const std::string& main_config_path,
+                                               const std::string& strategy_id,
+                                               BacktestStrategyConfig* out,
+                                               StrategyMainConfig* loaded_main_config,
+                                               std::string* error) {
+    if (out == nullptr) {
+        if (error != nullptr) {
+            *error = "strategy config output is null";
+        }
+        return false;
+    }
+    StrategyMainConfig main_config;
+    if (!LoadStrategyMainConfig(main_config_path, &main_config, error)) {
+        return false;
+    }
+    if (main_config.run_type != "backtest") {
+        if (error != nullptr) {
+            *error = "strategy_main_config run_type must be backtest for backtest replay";
+        }
+        return false;
+    }
+
+    out->strategy_id =
+        strategy_id.empty() ? DefaultBacktestStrategyId(main_config_path, 0) : strategy_id;
+    out->strategy_factory = "composite";
+    out->strategy_main_config_path = main_config_path;
+    out->strategy_composite_config = main_config_path;
+    out->product_id = main_config.composite.product_id;
+    out->risk_management = main_config.risk_management;
+    if (loaded_main_config != nullptr) {
+        *loaded_main_config = std::move(main_config);
+    }
+    return true;
+}
+
+inline bool ResolveBacktestStrategyConfigs(const BacktestCliSpec& spec,
+                                           std::vector<BacktestStrategyConfig>* out,
+                                           std::string* error) {
+    if (out == nullptr) {
+        if (error != nullptr) {
+            *error = "strategy config output is null";
+        }
+        return false;
+    }
+    out->clear();
+    if (!spec.strategy_configs.empty()) {
+        *out = spec.strategy_configs;
+        return true;
+    }
+
+    BacktestStrategyConfig config;
+    config.strategy_id = spec.strategy_factory;
+    config.strategy_factory = spec.strategy_factory;
+    config.strategy_main_config_path = spec.strategy_main_config_path;
+    config.strategy_composite_config = spec.strategy_composite_config;
+    if (!spec.strategy_main_config_path.empty()) {
+        StrategyMainConfig main_config;
+        if (!LoadStrategyMainConfig(spec.strategy_main_config_path, &main_config, error)) {
+            return false;
+        }
+        config.product_id = main_config.composite.product_id;
+        config.risk_management = main_config.risk_management;
+    }
+    out->push_back(std::move(config));
+    return true;
+}
+
 inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::string* error) {
     if (out == nullptr) {
         if (error != nullptr) {
@@ -1802,8 +1929,8 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
         detail::GetArgAny(args, {"product_series_mode", "product-series-mode"}, "raw"));
     spec.rollover_price_mode = detail::ToLower(
         detail::GetArgAny(args, {"rollover_price_mode", "rollover-price-mode"}, "bbo"));
-    spec.start_date = detail::NormalizeTradingDay(
-        detail::GetArgAny(args, {"start_date", "start-date", "start"}));
+    spec.start_date =
+        detail::NormalizeTradingDay(detail::GetArgAny(args, {"start_date", "start-date", "start"}));
     spec.end_date =
         detail::NormalizeTradingDay(detail::GetArgAny(args, {"end_date", "end-date", "end"}));
     spec.wal_path = detail::GetArgAny(args, {"wal_path", "wal-path"});
@@ -1816,14 +1943,47 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
     spec.contract_expiry_calendar_path =
         detail::GetArgAny(args, {"contract_expiry_calendar_path", "contract-expiry-calendar-path"});
     spec.strategy_main_config_path = detail::GetArgAny(
-        args,
-        {"strategy_main_config_path", "strategy-main-config-path", "main_config",
-         "main-config", "composite_config", "composite-config"});
+        args, {"strategy_main_config_path", "strategy-main-config-path", "main_config",
+               "main-config", "composite_config", "composite-config"});
     spec.strategy_factory =
         detail::ToLower(detail::GetArgAny(args, {"strategy_factory", "strategy-factory"}, "demo"));
     spec.strategy_composite_config =
         detail::GetArgAny(args, {"strategy_composite_config", "strategy-composite-config"});
     spec.symbols = detail::SplitCommaList(detail::GetArgAny(args, {"symbols", "symbol"}));
+
+    const std::vector<std::string> strategy_main_config_paths = detail::SplitCommaList(
+        detail::GetArgAny(args, {"strategy_main_config_paths", "strategy-main-config-paths",
+                                 "main_configs", "main-configs"}));
+    const std::vector<std::string> strategy_ids =
+        detail::SplitCommaList(detail::GetArgAny(args, {"strategy_ids", "strategy-ids"}));
+    if (!strategy_main_config_paths.empty() && !spec.strategy_main_config_path.empty()) {
+        if (error != nullptr) {
+            *error =
+                "strategy_main_config_path and strategy_main_config_paths are mutually "
+                "exclusive";
+        }
+        return false;
+    }
+    if (!strategy_main_config_paths.empty() && !strategy_ids.empty() &&
+        strategy_ids.size() != strategy_main_config_paths.size()) {
+        if (error != nullptr) {
+            *error = "strategy_ids size must match strategy_main_config_paths size";
+        }
+        return false;
+    }
+    if (!strategy_main_config_paths.empty() && has_strategy_factory &&
+        spec.strategy_factory != "composite") {
+        if (error != nullptr) {
+            *error = "strategy_main_config_paths currently supports strategy_factory=composite";
+        }
+        return false;
+    }
+    if (!strategy_main_config_paths.empty() && has_strategy_composite_config) {
+        if (error != nullptr) {
+            *error = "strategy_composite_config is not used with strategy_main_config_paths";
+        }
+        return false;
+    }
 
     {
         const std::string raw =
@@ -1973,8 +2133,20 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
         spec.emit_position_history = parsed;
     }
     {
-        const std::string raw_streaming = detail::GetArgAny(
-            args, {"streaming", "streaming_mode", "streaming-mode"}, "false");
+        const std::string raw_emit = detail::GetArgAny(
+            args, {"emit_per_variety_outputs", "emit-per-variety-outputs"}, "false");
+        bool parsed = false;
+        if (!detail::ParseBool(raw_emit, &parsed)) {
+            if (error != nullptr) {
+                *error = "invalid emit_per_variety_outputs: " + raw_emit;
+            }
+            return false;
+        }
+        spec.emit_per_variety_outputs = parsed;
+    }
+    {
+        const std::string raw_streaming =
+            detail::GetArgAny(args, {"streaming", "streaming_mode", "streaming-mode"}, "false");
         bool parsed = true;
         if (!detail::ParseBool(raw_streaming, &parsed)) {
             if (error != nullptr) {
@@ -1996,7 +2168,51 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
         }
         spec.strict_parquet = parsed;
     }
-    if (!spec.strategy_main_config_path.empty()) {
+    if (!strategy_main_config_paths.empty()) {
+        spec.strategy_factory = "composite";
+        spec.strategy_configs.clear();
+        spec.strategy_configs.reserve(strategy_main_config_paths.size());
+        bool applied_defaults = false;
+        for (std::size_t index = 0; index < strategy_main_config_paths.size(); ++index) {
+            StrategyMainConfig main_config;
+            BacktestStrategyConfig strategy_config;
+            const std::string strategy_id =
+                index < strategy_ids.size()
+                    ? strategy_ids[index]
+                    : DefaultBacktestStrategyId(strategy_main_config_paths[index], index);
+            if (!PopulateStrategyConfigFromMainPath(strategy_main_config_paths[index], strategy_id,
+                                                    &strategy_config, &main_config, error)) {
+                return false;
+            }
+            if (!applied_defaults) {
+                if (!has_initial_equity) {
+                    spec.initial_equity = main_config.backtest.initial_equity;
+                }
+                if (!has_product_series_mode && main_config.backtest.product_series_mode != "raw") {
+                    spec.product_series_mode = main_config.backtest.product_series_mode;
+                }
+                if (!has_start_date && !main_config.backtest.start_date.empty()) {
+                    spec.start_date = detail::NormalizeTradingDay(main_config.backtest.start_date);
+                }
+                if (!has_end_date && !main_config.backtest.end_date.empty()) {
+                    spec.end_date = detail::NormalizeTradingDay(main_config.backtest.end_date);
+                }
+                if (!has_product_config_path && !main_config.backtest.product_config_path.empty()) {
+                    spec.product_config_path = main_config.backtest.product_config_path;
+                }
+                if (!has_contract_expiry_calendar_path &&
+                    !main_config.backtest.contract_expiry_calendar_path.empty()) {
+                    spec.contract_expiry_calendar_path =
+                        main_config.backtest.contract_expiry_calendar_path;
+                }
+                applied_defaults = true;
+            }
+            if (!has_symbols) {
+                AppendUniqueStrings(main_config.backtest.symbols, &spec.symbols);
+            }
+            spec.strategy_configs.push_back(std::move(strategy_config));
+        }
+    } else if (!spec.strategy_main_config_path.empty()) {
         StrategyMainConfig main_config;
         if (!LoadStrategyMainConfig(spec.strategy_main_config_path, &main_config, error)) {
             return false;
@@ -2102,25 +2318,41 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
             }
             return false;
         }
-        if (!IsParquetProductChainSelection(spec.symbols) ||
-            ExtractSingleProductSymbol(spec.symbols).empty()) {
+        if (!IsParquetProductChainSelection(spec.symbols)) {
             if (error != nullptr) {
-                *error = "rollover_mode=expiry_close requires a single product symbol selection";
+                *error = "rollover_mode=expiry_close requires product symbol selection";
             }
             return false;
         }
     }
-    if (spec.strategy_factory != "demo" && spec.strategy_factory != "composite") {
+    if (spec.strategy_configs.empty() && spec.strategy_factory != "demo" &&
+        spec.strategy_factory != "composite") {
         if (error != nullptr) {
             *error = "unsupported strategy_factory: " + spec.strategy_factory;
         }
         return false;
     }
-    if (spec.strategy_factory == "composite" && spec.strategy_composite_config.empty()) {
+    if (spec.strategy_configs.empty() && spec.strategy_factory == "composite" &&
+        spec.strategy_composite_config.empty()) {
         if (error != nullptr) {
             *error = "strategy_composite_config is required when strategy_factory=composite";
         }
         return false;
+    }
+    for (const BacktestStrategyConfig& strategy_config : spec.strategy_configs) {
+        if (strategy_config.strategy_factory != "composite") {
+            if (error != nullptr) {
+                *error = "unsupported strategy_factory in strategy_main_config_paths: " +
+                         strategy_config.strategy_factory;
+            }
+            return false;
+        }
+        if (strategy_config.strategy_composite_config.empty()) {
+            if (error != nullptr) {
+                *error = "strategy_composite_config is required for multi-strategy backtest";
+            }
+            return false;
+        }
     }
 
     if (spec.engine_mode == "csv" && spec.csv_path.empty()) {
@@ -2188,6 +2420,16 @@ inline std::string BuildInputSignature(const BacktestCliSpec& spec) {
         }
         symbols_stream << spec.symbols[index];
     }
+    std::ostringstream strategy_configs_stream;
+    for (std::size_t index = 0; index < spec.strategy_configs.size(); ++index) {
+        if (index > 0) {
+            strategy_configs_stream << ',';
+        }
+        const BacktestStrategyConfig& config = spec.strategy_configs[index];
+        strategy_configs_stream << config.strategy_id << ':' << config.strategy_factory << ':'
+                                << config.strategy_main_config_path << ':'
+                                << config.strategy_composite_config << ':' << config.product_id;
+    }
 
     std::ostringstream oss;
     oss << "csv_path=" << spec.csv_path << ';' << "dataset_root=" << spec.dataset_root << ';'
@@ -2234,6 +2476,7 @@ inline std::string BuildInputSignature(const BacktestCliSpec& spec) {
         << "strategy_main_config_path=" << spec.strategy_main_config_path << ';'
         << "strategy_factory=" << spec.strategy_factory << ';'
         << "strategy_composite_config=" << spec.strategy_composite_config << ';'
+        << "strategy_configs=" << strategy_configs_stream.str() << ';'
         << "emit_state_snapshots=" << (spec.emit_state_snapshots ? "true" : "false") << ';'
         << "trace_output_format=" << spec.trace_output_format << ';'
         << "emit_indicator_trace=" << (spec.emit_indicator_trace ? "true" : "false") << ';'
@@ -2243,7 +2486,8 @@ inline std::string BuildInputSignature(const BacktestCliSpec& spec) {
         << "sub_strategy_indicator_trace_path=" << spec.sub_strategy_indicator_trace_path << ';'
         << "emit_trades=" << (spec.emit_trades ? "true" : "false") << ';'
         << "emit_orders=" << (spec.emit_orders ? "true" : "false") << ';'
-        << "emit_position_history=" << (spec.emit_position_history ? "true" : "false") << ';';
+        << "emit_position_history=" << (spec.emit_position_history ? "true" : "false") << ';'
+        << "emit_per_variety_outputs=" << (spec.emit_per_variety_outputs ? "true" : "false") << ';';
     return detail::StableDigest(oss.str());
 }
 
@@ -3276,8 +3520,20 @@ inline bool ResolveSubscribedTimeframes(const BacktestCliSpec& spec,
         return false;
     }
     std::set<std::int32_t> timeframe_set;
-    if (spec.strategy_factory == "composite") {
-        if (spec.strategy_composite_config.empty()) {
+    const std::vector<BacktestStrategyConfig> strategy_configs = [&]() {
+        if (!spec.strategy_configs.empty()) {
+            return spec.strategy_configs;
+        }
+        BacktestStrategyConfig config;
+        config.strategy_factory = spec.strategy_factory;
+        config.strategy_composite_config = spec.strategy_composite_config;
+        return std::vector<BacktestStrategyConfig>{config};
+    }();
+    for (const BacktestStrategyConfig& strategy_config : strategy_configs) {
+        if (strategy_config.strategy_factory != "composite") {
+            continue;
+        }
+        if (strategy_config.strategy_composite_config.empty()) {
             if (error != nullptr) {
                 *error = "strategy_composite_config is required to resolve timeframe subscription";
             }
@@ -3286,7 +3542,7 @@ inline bool ResolveSubscribedTimeframes(const BacktestCliSpec& spec,
 
         CompositeStrategyDefinition definition;
         std::string load_error;
-        if (!LoadCompositeStrategyDefinition(spec.strategy_composite_config, &definition,
+        if (!LoadCompositeStrategyDefinition(strategy_config.strategy_composite_config, &definition,
                                              &load_error)) {
             if (error != nullptr) {
                 *error =
@@ -3495,38 +3751,80 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         return false;
     }
 
-    std::unique_ptr<ILiveStrategy> strategy =
-        StrategyRegistry::Instance().Create(spec.strategy_factory);
-    if (strategy == nullptr) {
-        if (error != nullptr) {
-            *error = "strategy_factory not found: " + spec.strategy_factory;
-        }
-        return false;
-    }
-    StrategyContext strategy_ctx;
-    strategy_ctx.strategy_id = spec.strategy_factory;
-    strategy_ctx.account_id = spec.account_id;
-    strategy_ctx.metadata["run_type"] = "backtest";
-    strategy_ctx.metadata["strategy_factory"] = spec.strategy_factory;
-    if (spec.strategy_factory == "composite") {
-        strategy_ctx.metadata["composite_config_path"] = spec.strategy_composite_config;
-    }
-    try {
-        strategy->Initialize(strategy_ctx);
-    } catch (const std::exception& ex) {
-        if (error != nullptr) {
-            *error = std::string("strategy initialize failed: ") + ex.what();
-        }
-        return false;
-    } catch (...) {
-        if (error != nullptr) {
-            *error = "strategy initialize failed: unknown exception";
-        }
+    std::vector<BacktestStrategyConfig> strategy_configs;
+    if (!ResolveBacktestStrategyConfigs(spec, &strategy_configs, error)) {
         return false;
     }
 
-    CompositeStrategy* composite_strategy = dynamic_cast<CompositeStrategy*>(strategy.get());
-    if (spec.emit_sub_strategy_indicator_trace && composite_strategy == nullptr) {
+    struct BacktestStrategyRuntime {
+        BacktestStrategyConfig config;
+        StrategyContext context;
+        std::unique_ptr<ILiveStrategy> strategy;
+        CompositeStrategy* composite{nullptr};
+    };
+
+    std::vector<BacktestStrategyRuntime> strategy_runtimes;
+    strategy_runtimes.reserve(strategy_configs.size());
+
+    auto initialize_strategy_runtime = [&](BacktestStrategyRuntime* runtime) -> bool {
+        if (runtime == nullptr) {
+            if (error != nullptr) {
+                *error = "strategy runtime is null";
+            }
+            return false;
+        }
+        runtime->strategy = StrategyRegistry::Instance().Create(runtime->config.strategy_factory);
+        if (runtime->strategy == nullptr) {
+            if (error != nullptr) {
+                *error = "strategy_factory not found: " + runtime->config.strategy_factory;
+            }
+            return false;
+        }
+        runtime->context.strategy_id = runtime->config.strategy_id;
+        runtime->context.account_id = spec.account_id;
+        runtime->context.metadata["run_type"] = "backtest";
+        runtime->context.metadata["strategy_factory"] = runtime->config.strategy_factory;
+        if (runtime->config.strategy_factory == "composite") {
+            runtime->context.metadata["composite_config_path"] =
+                runtime->config.strategy_composite_config;
+        }
+        try {
+            runtime->strategy->Initialize(runtime->context);
+        } catch (const std::exception& ex) {
+            if (error != nullptr) {
+                *error = std::string("strategy initialize failed: ") + ex.what();
+            }
+            return false;
+        } catch (...) {
+            if (error != nullptr) {
+                *error = "strategy initialize failed: unknown exception";
+            }
+            return false;
+        }
+        runtime->composite = dynamic_cast<CompositeStrategy*>(runtime->strategy.get());
+        return true;
+    };
+
+    for (const BacktestStrategyConfig& config : strategy_configs) {
+        BacktestStrategyRuntime runtime;
+        runtime.config = config;
+        if (!initialize_strategy_runtime(&runtime)) {
+            for (BacktestStrategyRuntime& initialized : strategy_runtimes) {
+                if (initialized.strategy != nullptr) {
+                    initialized.strategy->Shutdown();
+                }
+            }
+            return false;
+        }
+        strategy_runtimes.push_back(std::move(runtime));
+    }
+
+    const auto has_composite_strategy = [&]() {
+        return std::any_of(
+            strategy_runtimes.begin(), strategy_runtimes.end(),
+            [](const BacktestStrategyRuntime& runtime) { return runtime.composite != nullptr; });
+    };
+    if (spec.emit_sub_strategy_indicator_trace && !has_composite_strategy()) {
         if (error != nullptr) {
             *error =
                 "emit_sub_strategy_indicator_trace requires strategy_factory=composite and a "
@@ -3584,7 +3882,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     bool has_product_fee = false;
     std::string resolved_product_config_path;
     if (!detail::ResolveBacktestProductConfigPath(spec.product_config_path,
-                                                  spec.strategy_main_config_path,
+                                                  PrimaryStrategyMainConfigPath(spec),
                                                   &resolved_product_config_path, error)) {
         return false;
     }
@@ -3595,8 +3893,61 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         has_product_fee = true;
     }
 
-    auto apply_known_contract_multipliers = [&]() {
-        if (!has_product_fee || composite_strategy == nullptr) {
+    auto runtime_matches_product = [](const BacktestStrategyRuntime& runtime,
+                                      const std::string& product_id) {
+        if (product_id.empty() || runtime.config.product_id.empty()) {
+            return true;
+        }
+        return detail::ToLower(runtime.config.product_id) == detail::ToLower(product_id);
+    };
+    auto runtime_matches_instrument = [&](const BacktestStrategyRuntime& runtime,
+                                          const std::string& instrument_id) {
+        return runtime_matches_product(runtime, detail::InstrumentSymbolPrefix(instrument_id));
+    };
+
+    auto dispatch_order_event = [&](const OrderEvent& event) {
+        for (BacktestStrategyRuntime& runtime : strategy_runtimes) {
+            if (runtime.strategy != nullptr) {
+                runtime.strategy->OnOrderEvent(event);
+            }
+        }
+    };
+
+    auto dispatch_state = [&](const StateSnapshot7D& state) {
+        std::vector<SignalIntent> all_intents;
+        for (BacktestStrategyRuntime& runtime : strategy_runtimes) {
+            if (runtime.strategy == nullptr) {
+                continue;
+            }
+            std::vector<SignalIntent> intents = runtime.strategy->OnState(state);
+            all_intents.insert(all_intents.end(), intents.begin(), intents.end());
+        }
+        return all_intents;
+    };
+
+    auto for_each_composite = [&](auto&& callback) {
+        for (BacktestStrategyRuntime& runtime : strategy_runtimes) {
+            if (runtime.composite != nullptr) {
+                callback(runtime, *runtime.composite);
+            }
+        }
+    };
+
+    auto find_position_owner = [&](const std::string& instrument_id) {
+        for (BacktestStrategyRuntime& runtime : strategy_runtimes) {
+            if (runtime.composite == nullptr) {
+                continue;
+            }
+            const std::string owner = runtime.composite->GetBacktestPositionOwner(instrument_id);
+            if (!owner.empty()) {
+                return owner;
+            }
+        }
+        return std::string{};
+    };
+
+    auto apply_known_contract_multipliers_to = [&](CompositeStrategy* composite) {
+        if (!has_product_fee || composite == nullptr) {
             return;
         }
         std::unordered_map<std::string, double> multipliers;
@@ -3604,21 +3955,41 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             return;
         }
         for (const auto& [instrument_id, multiplier] : multipliers) {
-            composite_strategy->SetBacktestContractMultiplier(instrument_id, multiplier);
+            composite->SetBacktestContractMultiplier(instrument_id, multiplier);
         }
+    };
+
+    auto apply_known_contract_multipliers = [&]() {
+        if (!has_product_fee) {
+            return;
+        }
+        for_each_composite([&](BacktestStrategyRuntime& /*runtime*/, CompositeStrategy& composite) {
+            apply_known_contract_multipliers_to(&composite);
+        });
     };
     apply_known_contract_multipliers();
 
-    RiskManagementConfig risk_management_config;
-    if (!spec.strategy_main_config_path.empty()) {
-        StrategyMainConfig main_config;
-        if (!LoadStrategyMainConfig(spec.strategy_main_config_path, &main_config, error)) {
-            return false;
+    RiskManagementConfig default_risk_management_config;
+    std::unordered_map<std::string, RiskManagementConfig> risk_management_by_product;
+    for (const BacktestStrategyConfig& strategy_config : strategy_configs) {
+        if (strategy_config.product_id.empty()) {
+            default_risk_management_config = strategy_config.risk_management;
+            continue;
         }
-        risk_management_config = main_config.risk_management;
+        risk_management_by_product[detail::ToLower(strategy_config.product_id)] =
+            strategy_config.risk_management;
+        if (!default_risk_management_config.enabled) {
+            default_risk_management_config = strategy_config.risk_management;
+        }
     }
 
     auto calculate_risk_budget_r = [&](const SignalIntent& intent, double equity_before_fill) {
+        const std::string product_id = detail::ToLower(detail::InstrumentSymbolPrefix(
+            intent.instrument_id.empty() ? std::string{} : intent.instrument_id));
+        const auto risk_it = risk_management_by_product.find(product_id);
+        const RiskManagementConfig& risk_management_config =
+            risk_it == risk_management_by_product.end() ? default_risk_management_config
+                                                        : risk_it->second;
         if (!risk_management_config.enabled || intent.offset != OffsetFlag::kOpen) {
             return 0.0;
         }
@@ -3634,30 +4005,39 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
 
     const bool expiry_close_mode = spec.rollover_mode == "expiry_close";
     ContractExpiryCalendar contract_expiry_calendar;
-    std::string expiry_close_product_symbol;
-    std::vector<std::string> expiry_chain_contracts;
-    std::size_t expiry_active_contract_index = 0;
-    std::unordered_set<std::string> expiry_retired_contracts;
+    struct ExpiryCloseProductState {
+        std::string product_symbol;
+        std::vector<std::string> chain_contracts;
+        std::size_t active_contract_index{0};
+        std::unordered_set<std::string> retired_contracts;
+    };
+    std::map<std::string, ExpiryCloseProductState> expiry_close_products;
     if (expiry_close_mode) {
         if (!LoadContractExpiryCalendar(spec.contract_expiry_calendar_path,
                                         &contract_expiry_calendar, error)) {
             return false;
         }
-        expiry_close_product_symbol = ExtractSingleProductSymbol(spec.symbols);
-        if (expiry_close_product_symbol.empty()) {
+        const ParquetSymbolSelection selection = BuildParquetSymbolSelection(spec.symbols);
+        if (!selection.instrument_ids.empty() || selection.product_symbols.empty()) {
             if (error != nullptr) {
-                *error = "rollover_mode=expiry_close requires a single product symbol";
+                *error = "rollover_mode=expiry_close requires product symbol selection";
             }
             return false;
         }
+        for (const std::string& product : selection.product_symbols) {
+            ExpiryCloseProductState state;
+            state.product_symbol = product;
+            expiry_close_products[product] = std::move(state);
+        }
 
-        std::unordered_set<std::string> seen_contracts;
         for (const ReplayTick& tick : ticks) {
-            if (detail::InstrumentSymbolPrefix(tick.instrument_id) != expiry_close_product_symbol) {
+            const std::string product = detail::InstrumentSymbolPrefix(tick.instrument_id);
+            auto state_it = expiry_close_products.find(product);
+            if (state_it == expiry_close_products.end()) {
                 continue;
             }
             const std::string canonical = CanonicalContractInstrumentId(tick.instrument_id);
-            if (!seen_contracts.insert(canonical).second) {
+            if (!state_it->second.retired_contracts.insert(canonical).second) {
                 continue;
             }
             if (contract_expiry_calendar.Find(canonical) == nullptr) {
@@ -3667,27 +4047,30 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 }
                 return false;
             }
-            expiry_chain_contracts.push_back(canonical);
+            state_it->second.chain_contracts.push_back(canonical);
         }
-        if (expiry_chain_contracts.empty()) {
-            if (error != nullptr) {
-                *error = "no contracts found for expiry_close product symbol: " +
-                         expiry_close_product_symbol;
+        for (auto& [product, state] : expiry_close_products) {
+            state.retired_contracts.clear();
+            if (state.chain_contracts.empty()) {
+                if (error != nullptr) {
+                    *error = "no contracts found for expiry_close product symbol: " + product;
+                }
+                return false;
             }
-            return false;
+            std::sort(
+                state.chain_contracts.begin(), state.chain_contracts.end(),
+                [&](const std::string& left, const std::string& right) {
+                    const ContractExpiryEntry* left_entry = contract_expiry_calendar.Find(left);
+                    const ContractExpiryEntry* right_entry = contract_expiry_calendar.Find(right);
+                    if (left_entry == nullptr || right_entry == nullptr) {
+                        return left < right;
+                    }
+                    if (left_entry->last_trading_day != right_entry->last_trading_day) {
+                        return left_entry->last_trading_day < right_entry->last_trading_day;
+                    }
+                    return left < right;
+                });
         }
-        std::sort(expiry_chain_contracts.begin(), expiry_chain_contracts.end(),
-                  [&](const std::string& left, const std::string& right) {
-                      const ContractExpiryEntry* left_entry = contract_expiry_calendar.Find(left);
-                      const ContractExpiryEntry* right_entry = contract_expiry_calendar.Find(right);
-                      if (left_entry == nullptr || right_entry == nullptr) {
-                          return left < right;
-                      }
-                      if (left_entry->last_trading_day != right_entry->last_trading_day) {
-                          return left_entry->last_trading_day < right_entry->last_trading_day;
-                      }
-                      return left < right;
-                  });
     }
 
     std::map<std::string, std::string> symbol_active_contract;
@@ -4120,10 +4503,11 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 trades.push_back(std::move(open_trade));
             }
 
-            if (composite_strategy != nullptr) {
-                composite_strategy->ApplyBacktestRollover(previous_contract, current_contract,
-                                                          close_price, open_price, tick.ts_ns);
-            }
+            for_each_composite(
+                [&](BacktestStrategyRuntime& /*runtime*/, CompositeStrategy& composite) {
+                    composite.ApplyBacktestRollover(previous_contract, current_contract,
+                                                    close_price, open_price, tick.ts_ns);
+                });
 
             record_position_snapshot(previous_contract, tick.ts_ns);
             record_position_snapshot(current_contract, tick.ts_ns);
@@ -4314,40 +4698,28 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         trade->timestamp_dt_local = local_dt_from_tick(execution_tick);
     };
 
-    auto reinitialize_backtest_strategy = [&]() -> bool {
-        strategy->Shutdown();
-        strategy = StrategyRegistry::Instance().Create(spec.strategy_factory);
-        if (strategy == nullptr) {
-            if (error != nullptr) {
-                *error = "strategy_factory not found during expiry_close reset: " +
-                         spec.strategy_factory;
+    auto reinitialize_backtest_strategy = [&](const std::string& product_id) -> bool {
+        bool reinitialized_any = false;
+        for (BacktestStrategyRuntime& runtime : strategy_runtimes) {
+            if (!runtime_matches_product(runtime, product_id)) {
+                continue;
             }
+            if (runtime.strategy != nullptr) {
+                runtime.strategy->Shutdown();
+            }
+            if (!initialize_strategy_runtime(&runtime)) {
+                if (error != nullptr && error->empty()) {
+                    *error = "strategy initialize failed during expiry_close reset";
+                }
+                return false;
+            }
+            apply_known_contract_multipliers_to(runtime.composite);
+            reinitialized_any = true;
+        }
+        if (!reinitialized_any && error != nullptr) {
+            *error = "no strategy matched expiry_close product reset: " + product_id;
             return false;
         }
-        try {
-            strategy->Initialize(strategy_ctx);
-        } catch (const std::exception& ex) {
-            if (error != nullptr) {
-                *error = std::string("strategy initialize failed during expiry_close reset: ") +
-                         ex.what();
-            }
-            return false;
-        } catch (...) {
-            if (error != nullptr) {
-                *error = "strategy initialize failed during expiry_close reset: unknown exception";
-            }
-            return false;
-        }
-        composite_strategy = dynamic_cast<CompositeStrategy*>(strategy.get());
-        if (spec.emit_sub_strategy_indicator_trace && composite_strategy == nullptr) {
-            if (error != nullptr) {
-                *error =
-                    "emit_sub_strategy_indicator_trace requires strategy_factory=composite and a "
-                    "CompositeStrategy instance";
-            }
-            return false;
-        }
-        apply_known_contract_multipliers();
         return true;
     };
 
@@ -4470,7 +4842,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         filled_event.filled_volume = exec_volume;
         filled_event.avg_fill_price = fill_price;
         filled_event.ts_ns = execution_tick.ts_ns;
-        strategy->OnOrderEvent(filled_event);
+        dispatch_order_event(filled_event);
 
         if (spec.emit_orders) {
             OrderRecord accepted_order;
@@ -4574,28 +4946,51 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         return true;
     };
 
-    auto reset_expiry_close_session = [&]() -> bool {
-        replay_bar_contexts.clear();
-        pending_bar_intents_by_instrument.clear();
-        pending_tick_intents_by_instrument.clear();
-        regime_detectors.clear();
-        timeframe_fanout = detail::ReplayTimeframeFanout(subscribed_timeframes);
-        product_series_adjuster = ProductSeriesAdjuster(enable_product_series_adjustment);
-        if (replay_bar_aggregator_config.has_value()) {
-            replay_bar_aggregator =
-                std::make_unique<BarAggregator>(replay_bar_aggregator_config.value());
+    auto erase_replay_contexts_for_instrument = [&](const std::string& instrument_id) {
+        if (instrument_id.empty()) {
+            return;
         }
-        return reinitialize_backtest_strategy();
+        const std::string prefix = instrument_id + "|";
+        for (auto it = replay_bar_contexts.begin(); it != replay_bar_contexts.end();) {
+            if (it->first.rfind(prefix, 0) == 0) {
+                it = replay_bar_contexts.erase(it);
+            } else {
+                ++it;
+            }
+        }
     };
 
-    auto current_expiry_active_contract = [&]() -> std::string {
-        if (!expiry_close_mode || expiry_active_contract_index >= expiry_chain_contracts.size()) {
+    auto reset_expiry_close_session = [&](const std::string& instrument_id,
+                                          const std::string& product_id) -> bool {
+        erase_replay_contexts_for_instrument(instrument_id);
+        pending_bar_intents_by_instrument.erase(instrument_id);
+        pending_tick_intents_by_instrument.erase(instrument_id);
+        regime_detectors.erase(instrument_id);
+        instrument_last_tick_ts_ns.erase(instrument_id);
+        timeframe_fanout.ResetInstrument(instrument_id);
+        if (replay_bar_aggregator != nullptr) {
+            replay_bar_aggregator->ResetInstrument(instrument_id);
+        }
+        return reinitialize_backtest_strategy(product_id);
+    };
+
+    auto current_expiry_active_contract = [&](const std::string& product_id) -> std::string {
+        const auto state_it = expiry_close_products.find(product_id);
+        if (!expiry_close_mode || state_it == expiry_close_products.end() ||
+            state_it->second.active_contract_index >= state_it->second.chain_contracts.size()) {
             return "";
         }
-        return expiry_chain_contracts[expiry_active_contract_index];
+        return state_it->second.chain_contracts[state_it->second.active_contract_index];
     };
 
-    auto process_expiry_close_tick = [&](const ReplayTick& execution_tick) -> bool {
+    auto process_expiry_close_tick = [&](const ReplayTick& execution_tick,
+                                         ExpiryCloseProductState* expiry_state) -> bool {
+        if (expiry_state == nullptr) {
+            if (error != nullptr) {
+                *error = "expiry_close product state is null";
+            }
+            return false;
+        }
         const std::string canonical_instrument =
             CanonicalContractInstrumentId(execution_tick.instrument_id);
         const ContractExpiryEntry* expiry_entry =
@@ -4617,10 +5012,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 execution_tick.ask_price_1, spec.rollover_price_mode, spec.rollover_slippage_bps);
 
             SignalIntent expiry_intent;
-            expiry_intent.strategy_id =
-                composite_strategy != nullptr
-                    ? composite_strategy->GetBacktestPositionOwner(execution_tick.instrument_id)
-                    : "";
+            expiry_intent.strategy_id = find_position_owner(execution_tick.instrument_id);
             if (expiry_intent.strategy_id.empty()) {
                 expiry_intent.strategy_id = "expiry";
             }
@@ -4642,12 +5034,14 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             }
         }
 
-        expiry_retired_contracts.insert(canonical_instrument);
-        if (expiry_active_contract_index < expiry_chain_contracts.size() &&
-            expiry_chain_contracts[expiry_active_contract_index] == canonical_instrument) {
-            ++expiry_active_contract_index;
+        expiry_state->retired_contracts.insert(canonical_instrument);
+        if (expiry_state->active_contract_index < expiry_state->chain_contracts.size() &&
+            expiry_state->chain_contracts[expiry_state->active_contract_index] ==
+                canonical_instrument) {
+            ++expiry_state->active_contract_index;
         }
-        return reset_expiry_close_session();
+        return reset_expiry_close_session(execution_tick.instrument_id,
+                                          expiry_state->product_symbol);
     };
 
     auto process_tick_intents = [&](const std::vector<SignalIntent>& intents,
@@ -4821,32 +5215,38 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             used_margin_total =
                 ComputeTotalMarginUsed(position_state, mark_price, product_fee_book);
             max_margin_used = std::max(max_margin_used, used_margin_total);
-            if (composite_strategy != nullptr) {
-                const ProductFeeEntry* entry = product_fee_book.Find(state.instrument_id);
-                if (entry != nullptr && entry->contract_multiplier > 0.0) {
-                    composite_strategy->SetBacktestContractMultiplier(state.instrument_id,
-                                                                      entry->contract_multiplier);
-                }
-            }
+            for_each_composite(
+                [&](BacktestStrategyRuntime& /*runtime*/, CompositeStrategy& composite) {
+                    const ProductFeeEntry* entry = product_fee_book.Find(state.instrument_id);
+                    if (entry != nullptr && entry->contract_multiplier > 0.0) {
+                        composite.SetBacktestContractMultiplier(state.instrument_id,
+                                                                entry->contract_multiplier);
+                    }
+                });
         }
-        if (composite_strategy != nullptr) {
+        if (has_composite_strategy()) {
             const double equity =
                 ComputeTotalEquity(spec.initial_equity, position_state, mark_price,
                                    total_commission, has_product_fee ? &product_fee_book : nullptr);
-            composite_strategy->SetBacktestAccountSnapshot(equity, equity - spec.initial_equity);
+            for_each_composite(
+                [&](BacktestStrategyRuntime& /*runtime*/, CompositeStrategy& composite) {
+                    composite.SetBacktestAccountSnapshot(equity, equity - spec.initial_equity);
+                });
         }
-        std::vector<SignalIntent> intents = strategy->OnState(state);
+        std::vector<SignalIntent> intents = dispatch_state(state);
 
         if (spec.emit_sub_strategy_indicator_trace) {
-            if (composite_strategy == nullptr) {
-                if (error != nullptr) {
-                    *error =
-                        "emit_sub_strategy_indicator_trace requires strategy_factory=composite";
+            std::vector<CompositeAtomicTraceRow> atomic_trace_rows;
+            for (BacktestStrategyRuntime& runtime : strategy_runtimes) {
+                if (runtime.composite == nullptr ||
+                    !runtime_matches_instrument(runtime, state.instrument_id)) {
+                    continue;
                 }
-                return false;
+                const std::vector<CompositeAtomicTraceRow> runtime_rows =
+                    runtime.composite->CollectAtomicIndicatorTrace();
+                atomic_trace_rows.insert(atomic_trace_rows.end(), runtime_rows.begin(),
+                                         runtime_rows.end());
             }
-            const std::vector<CompositeAtomicTraceRow> atomic_trace_rows =
-                composite_strategy->CollectAtomicIndicatorTrace();
             for (const auto& atomic_trace : atomic_trace_rows) {
                 SubStrategyIndicatorTraceRow row;
                 row.instrument_id = state.instrument_id;
@@ -4993,12 +5393,17 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         if (expiry_close_mode) {
             const std::string canonical_instrument =
                 CanonicalContractInstrumentId(tick.instrument_id);
-            if (expiry_retired_contracts.find(canonical_instrument) !=
-                expiry_retired_contracts.end()) {
+            const std::string product_id = detail::InstrumentSymbolPrefix(tick.instrument_id);
+            auto expiry_state_it = expiry_close_products.find(product_id);
+            if (expiry_state_it == expiry_close_products.end()) {
+                continue;
+            }
+            if (expiry_state_it->second.retired_contracts.find(canonical_instrument) !=
+                expiry_state_it->second.retired_contracts.end()) {
                 continue;
             }
 
-            const std::string active_contract = current_expiry_active_contract();
+            const std::string active_contract = current_expiry_active_contract(product_id);
             if (active_contract.empty()) {
                 continue;
             }
@@ -5019,7 +5424,7 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             const std::string tick_trading_day = trading_day_from_tick(tick);
             if (tick_trading_day == expiry_entry->last_trading_day &&
                 detail::IsDaySessionTick(tick.update_time)) {
-                if (!process_expiry_close_tick(tick)) {
+                if (!process_expiry_close_tick(tick, &expiry_state_it->second)) {
                     return false;
                 }
                 if (spec.deterministic_fills) {
@@ -5043,24 +5448,36 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             }
         }
 
-        if (spec.deterministic_fills && composite_strategy != nullptr) {
+        if (spec.deterministic_fills && has_composite_strategy()) {
             if (has_product_fee) {
                 used_margin_total =
                     ComputeTotalMarginUsed(position_state, mark_price, product_fee_book);
                 max_margin_used = std::max(max_margin_used, used_margin_total);
                 const ProductFeeEntry* entry = product_fee_book.Find(tick.instrument_id);
                 if (entry != nullptr && entry->contract_multiplier > 0.0) {
-                    composite_strategy->SetBacktestContractMultiplier(tick.instrument_id,
-                                                                      entry->contract_multiplier);
+                    for_each_composite(
+                        [&](BacktestStrategyRuntime& /*runtime*/, CompositeStrategy& composite) {
+                            composite.SetBacktestContractMultiplier(tick.instrument_id,
+                                                                    entry->contract_multiplier);
+                        });
                 }
             }
             const double equity =
                 ComputeTotalEquity(spec.initial_equity, position_state, mark_price,
                                    total_commission, has_product_fee ? &product_fee_book : nullptr);
-            composite_strategy->SetBacktestAccountSnapshot(equity, equity - spec.initial_equity);
+            for_each_composite(
+                [&](BacktestStrategyRuntime& /*runtime*/, CompositeStrategy& composite) {
+                    composite.SetBacktestAccountSnapshot(equity, equity - spec.initial_equity);
+                });
 
-            const std::vector<SignalIntent> tick_intents =
-                composite_strategy->OnBacktestTick(tick.instrument_id, tick.ts_ns, tick.last_price);
+            std::vector<SignalIntent> tick_intents;
+            for_each_composite(
+                [&](BacktestStrategyRuntime& /*runtime*/, CompositeStrategy& composite) {
+                    const std::vector<SignalIntent> runtime_intents =
+                        composite.OnBacktestTick(tick.instrument_id, tick.ts_ns, tick.last_price);
+                    tick_intents.insert(tick_intents.end(), runtime_intents.begin(),
+                                        runtime_intents.end());
+                });
             replay.intents_emitted += static_cast<std::int64_t>(tick_intents.size());
             if (!process_tick_intents(tick_intents, tick, tick.last_price,
                                       MarketRegime::kUnknown)) {
@@ -5144,7 +5561,11 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
     replay.instrument_count = static_cast<std::int64_t>(instrument_universe.size());
     replay.instrument_universe.assign(instrument_universe.begin(), instrument_universe.end());
 
-    strategy->Shutdown();
+    for (BacktestStrategyRuntime& runtime : strategy_runtimes) {
+        if (runtime.strategy != nullptr) {
+            runtime.strategy->Shutdown();
+        }
+    }
 
     BacktestCliResult result;
     result.run_id = spec.run_id;
@@ -5440,6 +5861,23 @@ inline std::string RenderBacktestJson(const BacktestCliResult& result) {
          << "    \"strategy_factory\": \"" << JsonEscape(result.spec.strategy_factory) << "\",\n"
          << "    \"strategy_composite_config\": \""
          << JsonEscape(result.spec.strategy_composite_config) << "\",\n"
+         << "    \"strategy_configs\": [";
+
+    for (std::size_t i = 0; i < result.spec.strategy_configs.size(); ++i) {
+        if (i > 0) {
+            json << ", ";
+        }
+        const BacktestStrategyConfig& strategy_config = result.spec.strategy_configs[i];
+        json << "{" << "\"strategy_id\": \"" << JsonEscape(strategy_config.strategy_id) << "\", "
+             << "\"strategy_factory\": \"" << JsonEscape(strategy_config.strategy_factory) << "\", "
+             << "\"strategy_main_config_path\": \""
+             << JsonEscape(strategy_config.strategy_main_config_path) << "\", "
+             << "\"strategy_composite_config\": \""
+             << JsonEscape(strategy_config.strategy_composite_config) << "\", "
+             << "\"product_id\": \"" << JsonEscape(strategy_config.product_id) << "\"" << "}";
+    }
+
+    json << "],\n"
          << "    \"trace_output_format\": \"" << JsonEscape(result.spec.trace_output_format)
          << "\",\n"
          << "    \"market_state_detector\": {\n"
@@ -5479,7 +5917,9 @@ inline std::string RenderBacktestJson(const BacktestCliResult& result) {
          << "    \"emit_trades\": " << (result.spec.emit_trades ? "true" : "false") << ",\n"
          << "    \"emit_orders\": " << (result.spec.emit_orders ? "true" : "false") << ",\n"
          << "    \"emit_position_history\": "
-         << (result.spec.emit_position_history ? "true" : "false") << "\n"
+         << (result.spec.emit_position_history ? "true" : "false") << ",\n"
+         << "    \"emit_per_variety_outputs\": "
+         << (result.spec.emit_per_variety_outputs ? "true" : "false") << "\n"
          << "  },\n"
          << "  \"input_signature\": \"" << JsonEscape(result.input_signature) << "\",\n"
          << "  \"data_signature\": \"" << JsonEscape(result.data_signature) << "\",\n"
@@ -5691,6 +6131,8 @@ inline std::string RenderBacktestJson(const BacktestCliResult& result) {
          << "      \"emit_orders\": " << (result.spec.emit_orders ? "true" : "false") << ",\n"
          << "      \"emit_position_history\": "
          << (result.spec.emit_position_history ? "true" : "false") << ",\n"
+         << "      \"emit_per_variety_outputs\": "
+         << (result.spec.emit_per_variety_outputs ? "true" : "false") << ",\n"
          << "      \"position_sampling\": \"on_trade\",\n"
          << "      \"trade_datetime_fields\": [\"timestamp_dt_utc\"],\n"
          << "      \"order_datetime_fields\": [\"created_at_dt_utc\", \"last_update_dt_utc\"]\n"

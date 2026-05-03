@@ -269,10 +269,31 @@ def analyze_sub_trace(path: Path) -> dict[str, Any]:
     return analyze_sub_trace_parquet(path)
 
 
+def _find_backtest_json(run_dir: Path) -> Path:
+    """在 run_dir 中自动发现回测结果 JSON 文件。"""
+    # 优先匹配 backtest_auto.json
+    default = run_dir / "backtest_auto.json"
+    if default.exists():
+        return default
+
+    # 其次匹配包含 backtest_ 前缀的 json（排除 validation_report, position_history 等辅助文件）
+    candidates = sorted(run_dir.glob("backtest_*.json"))
+    exclude_keywords = [
+        "validation_report", "position_history", "orders", "trades",
+        "indicator_trace", "sub_strategy_indicator_trace",
+    ]
+    for c in candidates:
+        if not any(kw in c.name for kw in exclude_keywords):
+            return c
+
+    # 最后回退到 backtest_auto.json 以触发原始错误
+    return default
+
+
 def make_report(run_dir: Path, strict: bool) -> tuple[str, bool]:
-    json_path = run_dir / "backtest_auto.json"
+    json_path = _find_backtest_json(run_dir)
     if not json_path.exists():
-        raise FileNotFoundError(f"缺少回测结果文件: {json_path}")
+        raise FileNotFoundError(f"缺少回测结果文件: {json_path} (目录: {run_dir})")
 
     payload = load_json(json_path)
     deterministic = payload.get("deterministic", {}) or {}

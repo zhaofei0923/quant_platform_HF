@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "quant_hft/contracts/instrument_utils.h"
 #include "quant_hft/core/structured_log.h"
 #include "quant_hft/strategy/atomic_factory.h"
 #include "quant_hft/strategy/composite_config_loader.h"
@@ -415,6 +416,7 @@ void CompositeStrategy::Initialize(const StrategyContext& ctx) {
         run_type_it != strategy_context_.metadata.end() && !run_type_it->second.empty()) {
         definition_.run_type = run_type_it->second;
     }
+    definition_.product_id = ToLower(Trim(definition_.product_id));
 
     if (!IsValidRunType(definition_.run_type)) {
         throw std::runtime_error("unsupported run_type: " + definition_.run_type);
@@ -437,6 +439,9 @@ void CompositeStrategy::Initialize(const StrategyContext& ctx) {
 }
 
 std::vector<SignalIntent> CompositeStrategy::OnState(const StateSnapshot7D& state) {
+    if (!MatchesProduct(state.instrument_id)) {
+        return {};
+    }
     atomic_context_.market_regime = state.market_regime;
     std::vector<SignalIntent> non_open_signals;
     std::vector<SignalIntent> opening_signals;
@@ -509,6 +514,9 @@ std::vector<SignalIntent> CompositeStrategy::OnState(const StateSnapshot7D& stat
 }
 
 void CompositeStrategy::OnOrderEvent(const OrderEvent& event) {
+    if (!MatchesProduct(event.instrument_id)) {
+        return;
+    }
     const std::string order_id =
         !event.exchange_order_id.empty() ? event.exchange_order_id : event.client_order_id;
     if (order_id.empty() || event.instrument_id.empty()) {
@@ -612,6 +620,9 @@ std::vector<SignalIntent> CompositeStrategy::OnTimer(EpochNanos now_ns) {
 std::vector<SignalIntent> CompositeStrategy::OnBacktestTick(const std::string& instrument_id,
                                                             EpochNanos now_ns, double last_price) {
     if (instrument_id.empty()) {
+        return {};
+    }
+    if (!MatchesProduct(instrument_id)) {
         return {};
     }
 
@@ -916,10 +927,16 @@ void CompositeStrategy::SetBacktestContractMultiplier(const std::string& instrum
     if (instrument_id.empty() || !std::isfinite(multiplier) || multiplier <= 0.0) {
         return;
     }
+    if (!MatchesProduct(instrument_id)) {
+        return;
+    }
     atomic_context_.contract_multipliers[instrument_id] = multiplier;
 }
 
 std::string CompositeStrategy::GetBacktestPositionOwner(const std::string& instrument_id) const {
+    if (!MatchesProduct(instrument_id)) {
+        return "";
+    }
     const auto it = position_owner_by_instrument_.find(instrument_id);
     return it == position_owner_by_instrument_.end() ? "" : it->second;
 }
@@ -930,6 +947,9 @@ void CompositeStrategy::ApplyBacktestRollover(const std::string& previous_instru
                                               EpochNanos ts_ns) {
     if (previous_instrument_id.empty() || current_instrument_id.empty() ||
         previous_instrument_id == current_instrument_id) {
+        return;
+    }
+    if (!MatchesProduct(previous_instrument_id) || !MatchesProduct(current_instrument_id)) {
         return;
     }
 
@@ -1016,6 +1036,13 @@ bool CompositeStrategy::IsOpenSignalAllowedByRegime(const SubStrategySlot& slot,
     }
     return std::find(slot.entry_market_regimes.begin(), slot.entry_market_regimes.end(), regime) !=
            slot.entry_market_regimes.end();
+}
+
+bool CompositeStrategy::MatchesProduct(const std::string& instrument_id) const {
+    if (definition_.product_id.empty() || instrument_id.empty()) {
+        return true;
+    }
+    return ExtractProductIdFromInstrumentId(instrument_id) == definition_.product_id;
 }
 
 bool CompositeStrategy::AllowOpeningByTimeFilters(EpochNanos now_ns,

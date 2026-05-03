@@ -1,218 +1,114 @@
 # Agent Guidelines for quant_platform_HF
 
-This document provides essential commands and style guidelines for agentic coding agents working in this repository. It covers build, lint, test commands, and code style conventions for both C++ and Python.
+Use this file as the always-on project guide for coding agents. Keep it concise: link to deeper docs instead of copying them here.
 
-## Build Commands
+## Current Stack
 
-### C++ Build
+- The active execution and strategy stack is pure C++: C++17 by default, C++20 only when `QUANT_HFT_ENABLE_ARROW_PARQUET=ON` is configured.
+- Do not reintroduce the retired Python package, pybind bridge, or Python strategy runner. The only Python assets allowed by repository policy are the small analysis/build helper scripts and tests whitelisted in [scripts/build/repo_purity_check.sh](scripts/build/repo_purity_check.sh).
+- Treat [docs/archive](docs/archive) and [docs/archive_legacy](docs/archive_legacy) as historical context only. Prefer [README.md](README.md), [develop/00-实现对齐矩阵与缺口总览.md](develop/00-实现对齐矩阵与缺口总览.md), and focused docs under [develop](develop) for current design intent.
+- Never hard-code CTP credentials. Use local `.env` values derived from [.env.example](.env.example) and keep secrets out of YAML, docs, and tests.
+
+## Architecture Map
+
+- Main library: `quant_hft_core` in [CMakeLists.txt](CMakeLists.txt), with CLI entry points in [src/apps](src/apps).
+- Public APIs and shared domain types live under [include/quant_hft](include/quant_hft); keep cross-module contracts centralized there.
+- The intended dependency direction is `Apps -> Strategy -> Services -> Core -> Contracts`.
+- Strategy orchestration lives in [src/strategy](src/strategy) and [include/quant_hft/strategy](include/quant_hft/strategy). `StrategyEngine` dispatches `ILiveStrategy` callbacks and routes `SignalIntent` into execution/risk.
+- Domain services live under [src/services](src/services): risk, order/execution, portfolio, settlement, and market state.
+- Core adapters live under [src/core](src/core): CTP gateway/config, WAL regulatory replay, storage clients, common dispatchers, performance helpers, and monitoring.
+- Backtest, indicators, parameter optimization, and rolling validation are first-class C++ modules under [src/backtest](src/backtest), [src/indicators](src/indicators), [src/optim](src/optim), and [src/rolling](src/rolling).
+- For detailed architecture, link to [develop/01-系统架构设计/01-02-核心模块划分与职责.md](develop/01-系统架构设计/01-02-核心模块划分与职责.md) and [develop/06-开发者指南/06-02-代码结构与开发流程.md](develop/06-开发者指南/06-02-代码结构与开发流程.md).
+
+## Build and Test
+
 ```bash
-# Configure with tests enabled (default)
-cmake -S . -B build -DQUANT_HFT_BUILD_TESTS=ON
+# Full bootstrap on a fresh Ubuntu-like machine: install deps, configure, build, test, audit.
+./scripts/build/bootstrap.sh
 
-# If mixed-toolchain issues appear in WSL, use isolated GCC build dir
-cmake -S . -B build-gcc -DQUANT_HFT_BUILD_TESTS=ON -DCMAKE_C_COMPILER=/usr/bin/gcc -DCMAKE_CXX_COMPILER=/usr/bin/g++
+# Manual configure with tests and compile_commands.json for clang-tidy.
+cmake -S . -B build -DQUANT_HFT_BUILD_TESTS=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
-# Build all targets
+# Build all targets.
 cmake --build build -j$(nproc)
 
-# Build all targets in GCC-isolated directory
-cmake --build build-gcc -j$(nproc)
-
-# Build a specific target (e.g., core_engine)
-cmake --build build --target core_engine
-
-# Configure with external Redis/TimescaleDB support (optional)
-cmake -S . -B build-ext -DQUANT_HFT_BUILD_TESTS=ON -DQUANT_HFT_ENABLE_REDIS_EXTERNAL=ON -DQUANT_HFT_ENABLE_TIMESCALE_EXTERNAL=ON
-```
-
-### Python Environment
-```bash
-# Create virtual environment (if not present)
-python3 -m venv .venv
-source .venv/bin/activate
-
-# Install package with development dependencies
-pip install -e ".[dev]"
-```
-
-## Lint & Format Commands
-
-### C++ Linting
-```bash
-# Run clang-tidy (requires build directory with compile_commands.json)
-cmake -S . -B build -DQUANT_HFT_BUILD_TESTS=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-cd build && run-clang-tidy -header-filter='.*' -checks='-*,bugprone-*,cppcoreguidelines-*,modernize-*,performance-*,readability-*'
-
-# Format with clang-format (check)
-clang-format --dry-run -Werror --style=file include/**/*.h src/**/*.cpp
-
-# Format (apply)
-clang-format -i --style=file include/**/*.h src/**/*.cpp
-```
-
-### Python Linting & Formatting
-```bash
-# Ruff check (fast linting)
-ruff check python scripts
-
-# Black format check
-black --check python scripts
-
-# Black format (apply)
-black python scripts
-
-# MyPy type checking (strict)
-mypy python/quant_hft
-```
-
-## Test Commands
-
-### C++ Tests
-```bash
-# Run all C++ tests via CTest
+# Run all C++ tests.
 ctest --test-dir build --output-on-failure
 
-# Run a specific test executable
-./build/tests/unit/core/object_pool_test
+# Run focused tests discovered by CTest.
+ctest --test-dir build -R "(strategy_engine_test|execution_engine_test)" --output-on-failure
 
-# Run a single test case with gtest filter
-./build/tests/unit/core/object_pool_test --gtest_filter=*ReusesReleasedSlot*
-
-# Discover and run tests with CTest regex
-ctest --test-dir build -R object_pool_test
+# Run a test binary directly with a GoogleTest filter.
+./build/object_pool_test --gtest_filter='*ReusesReleasedSlot*'
 ```
 
-### Python Tests
+Useful configuration flags:
+
 ```bash
-# Run all Python tests
-pytest python/tests -q
+# Isolated GCC build when mixed-toolchain state causes trouble.
+cmake -S . -B build-gcc -DQUANT_HFT_BUILD_TESTS=ON \
+  -DCMAKE_C_COMPILER=/usr/bin/gcc -DCMAKE_CXX_COMPILER=/usr/bin/g++
 
-# Run a specific test file
-pytest python/tests/unit/test_contracts.py -q
-
-# Run a single test function
-pytest python/tests/unit/test_contracts.py::test_signal_intent_validation -v
-
-# With coverage report
-pytest python/tests --cov=quant_hft --cov-report=html
+# Optional feature paths.
+cmake -S . -B build-parquet -DQUANT_HFT_BUILD_TESTS=ON -DQUANT_HFT_ENABLE_ARROW_PARQUET=ON
+cmake -S . -B build-ext -DQUANT_HFT_BUILD_TESTS=ON \
+  -DQUANT_HFT_ENABLE_REDIS_EXTERNAL=ON -DQUANT_HFT_ENABLE_TIMESCALE_EXTERNAL=ON
+cmake -S . -B build-real -DQUANT_HFT_BUILD_TESTS=ON -DQUANT_HFT_ENABLE_CTP_REAL_API=ON
 ```
 
-### Additional Verification Scripts
+## Quality Gates
+
+Run the narrowest useful verification for the change first, then broaden before handoff.
+
 ```bash
-# Verify Protobuf contract synchronization
-python scripts/build/verify_contract_sync.py
+# CI-style hard gates.
+bash scripts/build/dependency_audit.sh --build-dir build
+bash scripts/build/repo_purity_check.sh --repo-root .
+bash scripts/build/doc_purity_check.sh --repo-root .
 
-# Verify development requirements
-python scripts/build/verify_develop_requirements.py
+# Regression and rehearsal gates used by CI and release work.
+bash scripts/build/run_consistency_gates.sh --build-dir build --results-dir docs/results
+bash scripts/build/run_preprod_rehearsal_gate.sh --build-dir build --results-dir docs/results
 
-# Performance benchmark smoke test
-python scripts/perf/run_hotpath_bench.py --benchmark-bin build/hotpath_benchmark --baseline configs/perf/baseline.json
-
-# One-command v3 acceptance (core_sim + WAL replay + evidence)
+# One-command v3 acceptance: core simulation, WAL replay, and evidence artifacts.
 scripts/ops/run_v3_acceptance.sh
 ```
 
-## Code Style Guidelines
+Use the helper scripts that match the area being changed:
 
-### C++ Style
-- **Formatting**: Follow `.clang-format` (Google style with 4‑space indent, 100‑column limit, pointer alignment left).
-- **Includes**: Sort includes case‑sensitive. Use `#pragma once` guards.
-- **Naming**:
-  - Class/struct names: `PascalCase`
-  - Functions/variables: `snake_case`
-  - Member variables: `snake_case_` (trailing underscore)
-  - Constants: `kCamelCase` or `UPPER_SNAKE_CASE`
-- **Namespace**: `quant_hft` for project code.
-- **Error handling**: Prefer `throw std::runtime_error` for fatal errors; use `try`/`catch(...)` for recovery where appropriate.
-- **Smart pointers**: Use `std::unique_ptr` and `std::shared_ptr` with `std::make_unique`/`std::make_shared`.
-- **Clang‑Tidy**: Enabled checks include `bugprone-*`, `cppcoreguidelines-*`, `modernize-*`, `performance-*`, `readability-*`.
-
-### Python Style
-- **Formatting**: Black with line length 100, target Python 3.10.
-- **Linting**: Ruff with select rules (`E`, `F`, `I`, `B`, `UP`).
-- **Type checking**: MyPy strict mode.
-- **Naming**:
-  - Class names: `PascalCase`
-  - Functions/variables: `snake_case`
-  - Constants: `UPPER_SNAKE_CASE`
-- **Imports**: Group standard library, third‑party, local imports separated by blank lines. Use absolute imports.
-- **Docstrings**: Triple‑quoted strings, first line brief, followed by description.
-- **Error handling**: Raise specific exceptions (`ValueError`, `RuntimeError`) with descriptive messages. Avoid bare `except:`.
-
-## Import Conventions
-
-### C++
-```cpp
-// System headers first
-#include <cstdint>
-#include <memory>
-
-// Third‑party headers (if any)
-#include <gtest/gtest.h>
-
-// Project headers (relative to `include/`)
-#include "quant_hft/core/object_pool.h"
+```bash
+python3 scripts/build/verify_products_info_sync.py
+python3 scripts/build/verify_config_docs_coverage.py
+bash scripts/build/run_parameter_optim.sh
+bash scripts/build/run_rolling_backtest.sh
 ```
 
-### Python
-```python
-from __future__ import annotations
+## Formatting and Static Checks
 
-import os
-import sys
-from typing import Any, Optional
+```bash
+# Format check and apply using the repository .clang-format.
+git ls-files '*.h' '*.cpp' | xargs clang-format --dry-run -Werror --style=file
+git ls-files '*.h' '*.cpp' | xargs clang-format -i --style=file
 
-import numpy as np
-import pandas as pd
-
-from quant_hft.contracts import OrderEvent, SignalIntent
+# clang-tidy uses .clang-tidy and requires a configured build with compile_commands.json.
+run-clang-tidy -p build -header-filter='include/quant_hft/.*|src/.*'
 ```
 
-## Naming Conventions
+- Formatting is Google-based with 4-space indentation, 100-column limit, left pointer alignment, and case-sensitive include sorting.
+- `.clang-tidy` enables `bugprone-*`, `cppcoreguidelines-*`, `modernize-*`, `performance-*`, and `readability-*`.
 
-| Language | Category | Convention | Example |
-|----------|----------|------------|---------|
-| C++ | Class/struct | `PascalCase` | `ObjectPool` |
-| C++ | Function/method | `snake_case` | `acquire()` |
-| C++ | Variable | `snake_case` | `buffer_size` |
-| C++ | Member variable | `snake_case_` | `capacity_` |
-| C++ | Constant | `kCamelCase` or `UPPER_SNAKE_CASE` | `kDefaultSize`, `MAX_RETRIES` |
-| Python | Class | `PascalCase` | `StrategyBase` |
-| Python | Function | `snake_case` | `validate_signal_intents` |
-| Python | Variable | `snake_case` | `instrument_id` |
-| Python | Constant | `UPPER_SNAKE_CASE` | `BACKTEST_CTX_REQUIRED_KEYS` |
+## C++ Conventions
 
-## Error Handling Patterns
+- Namespace project code under `quant_hft`.
+- Use `PascalCase` for classes/structs, `snake_case` for functions and locals, trailing underscore for member fields, and `kCamelCase` or `UPPER_SNAKE_CASE` for constants.
+- Include order is system headers, third-party headers, then project headers relative to `include/`.
+- Prefer `std::unique_ptr`/`std::shared_ptr` with `std::make_unique`/`std::make_shared`.
+- Throw specific `std::runtime_error`-style exceptions for unrecoverable failures; use boundary-level catch blocks only where recovery or diagnostics are meaningful.
+- Keep hot-path code allocation-aware. Reuse existing object pools, dispatchers, fixed-decimal utilities, and domain stores instead of adding parallel mechanisms.
 
-### C++
-- Use exceptions for unrecoverable errors: `throw std::runtime_error("description");`
-- Catch exceptions at subsystem boundaries with `catch(...)` to log and continue where recovery is possible.
-- Avoid throwing in destructors.
-- Use `noexcept` where appropriate.
+## Documentation and Evidence
 
-### Python
-- Raise built‑in exceptions with clear messages: `raise ValueError("intent strategy_id is required")`
-- Use custom exception classes for domain‑specific errors.
-- Use `try`/`except` blocks to handle recoverable errors; always specify exception types.
-- Log errors with `logging.exception()` in exception handlers.
-
-## Additional Resources
-
-- **`.clang‑format`**: Google‑based style with project‑specific tweaks.
-- **`.clang‑tidy`**: Enabled check groups listed in the file.
-- **`pyproject.toml`**: Black, Ruff, MyPy configuration.
-- **`CMakeLists.txt`**: Build options, test definitions.
-- **`.github/workflows/ci.yml`**: CI pipeline for reference.
-- **`scripts/build/bootstrap.sh`**: Full bootstrap script.
-
-## Notes for Agents
-
-- Always run linting and formatting commands before committing.
-- For C++, ensure the build directory is configured with `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON` for clang‑tidy.
-- Python dependencies are installed via `pip install -e ".[dev]"`.
-- Run tests for both C++ and Python after making changes.
-- Follow the existing patterns in the codebase for consistency.
-
----
-
-*This file is intended to be updated as the project evolves. Keep it concise and focused on information needed by automated agents.*
+- Link existing docs instead of duplicating long explanations. Start with [README.md](README.md), [develop/06-开发者指南/06-01-环境搭建与快速开始.md](develop/06-开发者指南/06-01-环境搭建与快速开始.md), and [develop/08-测试与验证/08-01-测试策略与验证方案.md](develop/08-测试与验证/08-01-测试策略与验证方案.md).
+- Keep current docs free of retired Python-era workflow references; [scripts/build/doc_purity_check.sh](scripts/build/doc_purity_check.sh) enforces this for `docs` and [README.md](README.md).
+- For operational or acceptance work, write evidence under [docs/results](docs/results) or [runtime](runtime) only when a script or runbook expects it.
+- When touching SimNow or CTP behavior, check the current SimNow notes in repository memory and [README.md](README.md) before changing config defaults.

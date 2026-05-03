@@ -133,6 +133,8 @@ struct MarketDataRecordingConfig {
     std::string output_dir{"runtime/market_data"};
     std::string run_id;
     bool flush_each_write{false};
+    bool partition_by_product{false};
+    bool write_global_copy{false};
 };
 
 struct RiskRuleConfig {

@@ -339,6 +339,38 @@ TEST(CompositeStrategyTest, DispatchesOnlyEnabledSubStrategies) {
     EXPECT_EQ(signals.front().signal_type, SignalType::kOpen);
 }
 
+TEST(CompositeStrategyTest, FiltersStateAndOrderEventsByProductId) {
+    const std::string scripted_type = UniqueType("product_filter");
+    RegisterScriptedType(scripted_type);
+
+    CompositeStrategyDefinition definition;
+    definition.product_id = "rb";
+    definition.run_type = "backtest";
+    definition.sub_strategies = {MakeSubStrategy(
+        "s1", scripted_type, {{"id", "s1"}, {"emit_open", "1"}, {"open_side", "buy"}})};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+
+    std::vector<std::string> call_log;
+    g_call_log = &call_log;
+    EXPECT_TRUE(strategy.OnState(MakeState("DCE.m2405", 10)).empty());
+    const std::vector<SignalIntent> signals = strategy.OnState(MakeState("SHFE.rb2405", 20));
+    g_call_log = nullptr;
+
+    ASSERT_EQ(call_log.size(), 1U);
+    EXPECT_EQ(call_log.front(), "s1");
+    ASSERT_EQ(signals.size(), 1U);
+    EXPECT_EQ(signals.front().instrument_id, "SHFE.rb2405");
+
+    strategy.OnOrderEvent(
+        MakeOrderEvent("s1", "DCE.m2405", Side::kBuy, OffsetFlag::kOpen, 1, 100.0, "m-order"));
+    EXPECT_EQ(strategy.GetBacktestPositionOwner("DCE.m2405"), "");
+    strategy.OnOrderEvent(
+        MakeOrderEvent("s1", "SHFE.rb2405", Side::kBuy, OffsetFlag::kOpen, 1, 100.0, "rb-order"));
+    EXPECT_EQ(strategy.GetBacktestPositionOwner("SHFE.rb2405"), "s1");
+}
+
 TEST(CompositeStrategyTest, DispatchesSubStrategiesByTimeframeMinutes) {
     const std::string tf1_type = UniqueType("tf1");
     const std::string tf5_type = UniqueType("tf5");

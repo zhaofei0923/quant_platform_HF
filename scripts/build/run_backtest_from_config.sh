@@ -16,7 +16,7 @@ if [[ -d "${local_arrow_pkgconfig}" ]]; then
   esac
 fi
 
-config_path="configs/ops/backtest_run.yaml"
+config_path="configs/backtest/backtest_run.yaml"
 dry_run=false
 skip_build=false
 quiet_backtest_stdout=true
@@ -28,7 +28,7 @@ usage() {
 Usage: scripts/build/run_backtest_from_config.sh [options]
 
 Options:
-  --config PATH   Backtest run config file (default: configs/ops/backtest_run.yaml)
+  --config PATH   Backtest run config file (default: configs/backtest/backtest_run.yaml)
   --dry-run       Print commands only, do not execute
   --skip-build    Skip cmake configure/build and run backtest directly
   -h, --help      Show help
@@ -387,6 +387,46 @@ append_arg_if_set() {
   fi
 }
 
+csv_from_product_template() {
+  local products_raw="$1"
+  local template="$2"
+  local field_name="$3"
+  local item=""
+  local product=""
+  local expanded=""
+  local joined=""
+  local count=0
+
+  if [[ -z "${template}" ]]; then
+    echo "error: ${field_name} is required when product_ids is set" >&2
+    exit 2
+  fi
+  if [[ "${template}" != *"{product}"* ]]; then
+    echo "error: ${field_name} must contain {product} when product_ids is set" >&2
+    exit 2
+  fi
+
+  IFS=',' read -ra items <<< "${products_raw}"
+  for item in "${items[@]}"; do
+    product="$(to_lower "$(trim "${item}")")"
+    if [[ -z "${product}" ]]; then
+      continue
+    fi
+    expanded="${template//\{product\}/${product}}"
+    if [[ -n "${joined}" ]]; then
+      joined+=","
+    fi
+    joined+="${expanded}"
+    count=$((count + 1))
+  done
+
+  if [[ "${count}" -eq 0 ]]; then
+    echo "error: product_ids must contain at least one product" >&2
+    exit 2
+  fi
+  printf '%s' "${joined}"
+}
+
 emit_step() {
   local message="$1"
   if is_true "${show_steps}"; then
@@ -406,7 +446,12 @@ timestamp_timezone="$(to_lower "$(cfg_get "timestamp_timezone" "local")")"
 
 engine_mode="$(to_lower "$(cfg_get "engine_mode" "parquet")")"
 dataset_root_raw="$(cfg_get "dataset_root" "")"
+product_ids_raw="$(cfg_get "product_ids" "")"
 strategy_main_config_path_raw="$(cfg_get "strategy_main_config_path" "")"
+strategy_main_config_paths_raw="$(cfg_get "strategy_main_config_paths" "")"
+strategy_main_config_template_raw="$(cfg_get "strategy_main_config_template" "")"
+strategy_ids="$(cfg_get "strategy_ids" "")"
+strategy_id_template="$(cfg_get "strategy_id_template" "")"
 detector_config_raw="$(cfg_get "detector_config" "")"
 output_json_raw="$(cfg_get "output_json" "")"
 output_md_raw="$(cfg_get "output_md" "")"
@@ -424,6 +469,7 @@ rollover_slippage_bps="$(cfg_get "rollover_slippage_bps" "0")"
 emit_trades="$(cfg_get "emit_trades" "true")"
 emit_orders="$(cfg_get "emit_orders" "true")"
 emit_position_history="$(cfg_get "emit_position_history" "false")"
+emit_per_variety_outputs="$(cfg_get "emit_per_variety_outputs" "false")"
 emit_indicator_trace="$(cfg_get "emit_indicator_trace" "false")"
 trace_output_format="$(normalize_trace_output_format "$(cfg_get "trace_output_format" "csv")")"
 indicator_trace_path_raw="$(cfg_get "indicator_trace_path" "")"
@@ -437,9 +483,28 @@ formal_analysis_report_path_raw="$(cfg_get "formal_analysis_report_path" "")"
 formal_analysis_report_date="$(cfg_get "formal_analysis_report_date" "")"
 formal_analysis_sample_trades="$(cfg_get "formal_analysis_sample_trades" "10")"
 
-if [[ -z "${engine_mode}" || -z "${dataset_root_raw}" || -z "${strategy_main_config_path_raw}" ||
+if [[ -n "${product_ids_raw}" ]]; then
+  if [[ -n "${strategy_main_config_path_raw}" || -n "${strategy_main_config_paths_raw}" ]]; then
+    echo "error: product_ids is mutually exclusive with strategy_main_config_path and strategy_main_config_paths" >&2
+    exit 2
+  fi
+  strategy_main_config_paths_raw="$(csv_from_product_template \
+    "${product_ids_raw}" "${strategy_main_config_template_raw}" "strategy_main_config_template")"
+  if [[ -z "${strategy_ids}" && -n "${strategy_id_template}" ]]; then
+    strategy_ids="$(csv_from_product_template \
+      "${product_ids_raw}" "${strategy_id_template}" "strategy_id_template")"
+  fi
+fi
+
+if [[ -z "${engine_mode}" || -z "${dataset_root_raw}" ||
+      ( -z "${strategy_main_config_path_raw}" && -z "${strategy_main_config_paths_raw}" ) ||
       -z "${output_json_raw}" || -z "${output_md_raw}" ]]; then
-  echo "error: required config keys: engine_mode, dataset_root, strategy_main_config_path, output_json, output_md" >&2
+  echo "error: required config keys: engine_mode, dataset_root, one of product_ids/strategy_main_config_path/strategy_main_config_paths, output_json, output_md" >&2
+  exit 2
+fi
+
+if [[ -n "${strategy_main_config_path_raw}" && -n "${strategy_main_config_paths_raw}" ]]; then
+  echo "error: strategy_main_config_path and strategy_main_config_paths are mutually exclusive" >&2
   exit 2
 fi
 
@@ -464,6 +529,28 @@ dataset_root="$(to_abs_path "${dataset_root_raw}")"
 strategy_main_config_path="$(to_abs_path "${strategy_main_config_path_raw}")"
 detector_config="$(to_abs_path "${detector_config_raw}")"
 output_root_dir="$(to_abs_path "${output_root_dir_raw}")"
+
+csv_abs_paths() {
+  local raw="$1"
+  local item=""
+  local joined=""
+  local abs=""
+  IFS=',' read -ra items <<< "${raw}"
+  for item in "${items[@]}"; do
+    item="$(trim "${item}")"
+    if [[ -z "${item}" ]]; then
+      continue
+    fi
+    abs="$(to_abs_path "${item}")"
+    if [[ -n "${joined}" ]]; then
+      joined+=","
+    fi
+    joined+="${abs}"
+  done
+  printf '%s' "${joined}"
+}
+
+strategy_main_config_paths="$(csv_abs_paths "${strategy_main_config_paths_raw}")"
 
 run_timestamp="$(timestamp_now "${timestamp_timezone}")"
 effective_run_id="${run_id}"
@@ -502,9 +589,18 @@ else
   formal_analysis_report_path=""
 fi
 
-if [[ ! -f "${strategy_main_config_path}" ]]; then
+if [[ -n "${strategy_main_config_path}" && ! -f "${strategy_main_config_path}" ]]; then
   echo "error: strategy_main_config_path does not exist: ${strategy_main_config_path}" >&2
   exit 2
+fi
+if [[ -n "${strategy_main_config_paths}" ]]; then
+  IFS=',' read -ra strategy_main_config_path_items <<< "${strategy_main_config_paths}"
+  for strategy_main_config_path_item in "${strategy_main_config_path_items[@]}"; do
+    if [[ ! -f "${strategy_main_config_path_item}" ]]; then
+      echo "error: strategy_main_config_paths entry does not exist: ${strategy_main_config_path_item}" >&2
+      exit 2
+    fi
+  done
 fi
 if [[ ! -d "${dataset_root}" ]]; then
   echo "error: dataset_root does not exist: ${dataset_root}" >&2
@@ -632,11 +728,17 @@ backtest_cmd=(
   "${backtest_bin}"
   --engine_mode "${engine_mode}"
   --dataset_root "${dataset_root}"
-  --strategy_main_config_path "${strategy_main_config_path}"
   --output_json "${output_json}"
   --output_md "${output_md}"
   --run_id "${effective_run_id}"
 )
+
+if [[ -n "${strategy_main_config_paths}" ]]; then
+  backtest_cmd+=(--strategy_main_config_paths "${strategy_main_config_paths}")
+  append_arg_if_set backtest_cmd --strategy_ids "${strategy_ids}"
+else
+  backtest_cmd+=(--strategy_main_config_path "${strategy_main_config_path}")
+fi
 
 append_arg_if_set backtest_cmd --export_csv_dir "${export_csv_dir}"
 append_arg_if_set backtest_cmd --max_ticks "${max_ticks}"
@@ -651,6 +753,9 @@ append_arg_if_set backtest_cmd --rollover_slippage_bps "${rollover_slippage_bps}
 append_arg_if_set backtest_cmd --emit_trades "${emit_trades}"
 append_arg_if_set backtest_cmd --emit_orders "${emit_orders}"
 append_arg_if_set backtest_cmd --emit_position_history "${emit_position_history}"
+if is_true "${emit_per_variety_outputs}"; then
+  backtest_cmd+=(--emit_per_variety_outputs true)
+fi
 append_arg_if_set backtest_cmd --trace_output_format "${trace_output_format}"
 if is_true "${emit_indicator_trace}"; then
   backtest_cmd+=(--emit_indicator_trace true --indicator_trace_path "${indicator_trace_path}")
@@ -670,7 +775,21 @@ if [[ "${dry_run}" == true ]] || ! is_true "${progress_only}"; then
   echo "run_dir=${run_dir}"
   echo "trace_output_format=${trace_output_format}"
   echo "dataset_root=${dataset_root}"
-  echo "strategy_main_config_path=${strategy_main_config_path}"
+  if [[ -n "${product_ids_raw}" ]]; then
+    echo "product_ids=${product_ids_raw}"
+    echo "strategy_main_config_template=${strategy_main_config_template_raw}"
+    if [[ -n "${strategy_id_template}" ]]; then
+      echo "strategy_id_template=${strategy_id_template}"
+    fi
+  fi
+  if [[ -n "${strategy_main_config_paths}" ]]; then
+    echo "strategy_main_config_paths=${strategy_main_config_paths}"
+    if [[ -n "${strategy_ids}" ]]; then
+      echo "strategy_ids=${strategy_ids}"
+    fi
+  else
+    echo "strategy_main_config_path=${strategy_main_config_path}"
+  fi
   echo "detector_config=${detector_config}"
   echo "output_json=${output_json}"
   echo "output_md=${output_md}"
@@ -683,6 +802,7 @@ if [[ "${dry_run}" == true ]] || ! is_true "${progress_only}"; then
   fi
   echo "dry_run=${dry_run}, skip_build=${skip_build}"
   echo "quiet_backtest_stdout=${quiet_backtest_stdout}, progress_only=${progress_only}"
+  echo "emit_per_variety_outputs=${emit_per_variety_outputs}"
   echo "emit_formal_analysis_report=${emit_formal_analysis_report}"
   if [[ -n "${formal_analysis_report_path}" ]]; then
     echo "formal_analysis_report_path=${formal_analysis_report_path}"

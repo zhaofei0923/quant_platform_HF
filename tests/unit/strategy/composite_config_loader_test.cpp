@@ -43,6 +43,7 @@ TEST(CompositeConfigLoaderTest, LoadsV2YamlSubStrategiesWithEnabledAndRegimeGate
     const std::filesystem::path path =
         WriteTempFile(root / "composite.yaml",
                       "composite:\n"
+                      "  product_id: RB\n"
                       "  merge_rule: kPriority\n"
                       "  sub_strategies:\n"
                       "    - id: kama_1\n"
@@ -58,6 +59,7 @@ TEST(CompositeConfigLoaderTest, LoadsV2YamlSubStrategiesWithEnabledAndRegimeGate
     CompositeStrategyDefinition definition;
     std::string error;
     ASSERT_TRUE(LoadCompositeStrategyDefinition(path.string(), &definition, &error)) << error;
+    EXPECT_EQ(definition.product_id, "rb");
     ASSERT_EQ(definition.sub_strategies.size(), 2U);
     EXPECT_EQ(definition.sub_strategies[0].id, "kama_1");
     EXPECT_TRUE(definition.sub_strategies[0].enabled);
@@ -77,13 +79,12 @@ TEST(CompositeConfigLoaderTest, LoadsV2YamlSubStrategiesWithEnabledAndRegimeGate
 
 TEST(CompositeConfigLoaderTest, RejectsLegacyStrategySections) {
     const std::filesystem::path root = MakeTempDir("quant_hft_composite_v2_legacy_section");
-    const std::filesystem::path path =
-        WriteTempFile(root / "legacy.yaml",
-                      "composite:\n"
-                      "  merge_rule: kPriority\n"
-                      "  opening_strategies:\n"
-                      "    - id: legacy\n"
-                      "      type: TrendOpening\n");
+    const std::filesystem::path path = WriteTempFile(root / "legacy.yaml",
+                                                     "composite:\n"
+                                                     "  merge_rule: kPriority\n"
+                                                     "  opening_strategies:\n"
+                                                     "    - id: legacy\n"
+                                                     "      type: TrendOpening\n");
 
     CompositeStrategyDefinition definition;
     std::string error;
@@ -96,17 +97,16 @@ TEST(CompositeConfigLoaderTest, RejectsLegacyStrategySections) {
 
 TEST(CompositeConfigLoaderTest, RejectsLegacyMarketRegimesField) {
     const std::filesystem::path root = MakeTempDir("quant_hft_composite_v2_legacy_regimes");
-    const std::filesystem::path path =
-        WriteTempFile(root / "legacy_regime.yaml",
-                      "composite:\n"
-                      "  merge_rule: kPriority\n"
-                      "  sub_strategies:\n"
-                      "    - id: kama_1\n"
-                      "      enabled: true\n"
-                      "      type: KamaTrendStrategy\n"
-                      "      params:\n"
-                      "        id: kama_1\n"
-                      "      market_regimes: [kStrongTrend]\n");
+    const std::filesystem::path path = WriteTempFile(root / "legacy_regime.yaml",
+                                                     "composite:\n"
+                                                     "  merge_rule: kPriority\n"
+                                                     "  sub_strategies:\n"
+                                                     "    - id: kama_1\n"
+                                                     "      enabled: true\n"
+                                                     "      type: KamaTrendStrategy\n"
+                                                     "      params:\n"
+                                                     "        id: kama_1\n"
+                                                     "      market_regimes: [kStrongTrend]\n");
 
     CompositeStrategyDefinition definition;
     std::string error;
@@ -119,16 +119,15 @@ TEST(CompositeConfigLoaderTest, RejectsLegacyMarketRegimesField) {
 
 TEST(CompositeConfigLoaderTest, RejectsLegacyStrategyTypeNames) {
     const std::filesystem::path root = MakeTempDir("quant_hft_composite_v2_legacy_type");
-    const std::filesystem::path path =
-        WriteTempFile(root / "legacy_type.yaml",
-                      "composite:\n"
-                      "  merge_rule: kPriority\n"
-                      "  sub_strategies:\n"
-                      "    - id: kama_1\n"
-                      "      enabled: true\n"
-                      "      type: KamaTrendOpening\n"
-                      "      params:\n"
-                      "        id: kama_1\n");
+    const std::filesystem::path path = WriteTempFile(root / "legacy_type.yaml",
+                                                     "composite:\n"
+                                                     "  merge_rule: kPriority\n"
+                                                     "  sub_strategies:\n"
+                                                     "    - id: kama_1\n"
+                                                     "      enabled: true\n"
+                                                     "      type: KamaTrendOpening\n"
+                                                     "      params:\n"
+                                                     "        id: kama_1\n");
 
     CompositeStrategyDefinition definition;
     std::string error;
@@ -154,6 +153,7 @@ TEST(CompositeConfigLoaderTest, LoadsV2JsonCompositeConfig) {
         WriteTempFile(root / "composite.json",
                       "{\n"
                       "  \"composite\": {\n"
+                      "    \"product_id\": \"HC\",\n"
                       "    \"merge_rule\": \"kPriority\",\n"
                       "    \"sub_strategies\": [\n"
                       "      {\n"
@@ -170,6 +170,7 @@ TEST(CompositeConfigLoaderTest, LoadsV2JsonCompositeConfig) {
     CompositeStrategyDefinition definition;
     std::string error;
     ASSERT_TRUE(LoadCompositeStrategyDefinition(path.string(), &definition, &error)) << error;
+    EXPECT_EQ(definition.product_id, "hc");
     ASSERT_EQ(definition.sub_strategies.size(), 1U);
     EXPECT_EQ(definition.sub_strategies[0].id, "kama_1");
     EXPECT_TRUE(definition.sub_strategies[0].enabled);
@@ -213,8 +214,9 @@ TEST(CompositeConfigLoaderTest, LoadsEnableNonBacktestAndOverridesFromYaml) {
     ASSERT_TRUE(LoadCompositeStrategyDefinition(path.string(), &definition, &error)) << error;
     EXPECT_TRUE(definition.enable_non_backtest);
     ASSERT_EQ(definition.sub_strategies.size(), 1U);
-    EXPECT_EQ(definition.sub_strategies[0].overrides.backtest_params.at("take_profit_atr_multiplier"),
-              "20.0");
+    EXPECT_EQ(
+        definition.sub_strategies[0].overrides.backtest_params.at("take_profit_atr_multiplier"),
+        "20.0");
     EXPECT_EQ(definition.sub_strategies[0].overrides.sim_params.at("default_volume"), "2");
     EXPECT_TRUE(definition.sub_strategies[0].overrides.live_params.empty());
 
@@ -270,20 +272,19 @@ TEST(CompositeConfigLoaderTest, LoadsOverridesFromJson) {
 
 TEST(CompositeConfigLoaderTest, RejectsUnsupportedOverridesRunModeKey) {
     const std::filesystem::path root = MakeTempDir("quant_hft_composite_v2_override_invalid");
-    const std::filesystem::path path =
-        WriteTempFile(root / "invalid_overrides.yaml",
-                      "composite:\n"
-                      "  merge_rule: kPriority\n"
-                      "  sub_strategies:\n"
-                      "    - id: kama_1\n"
-                      "      enabled: true\n"
-                      "      type: KamaTrendStrategy\n"
-                      "      params:\n"
-                      "        id: kama_1\n"
-                      "      overrides:\n"
-                      "        paper:\n"
-                      "          params:\n"
-                      "            risk_per_trade_pct: 0.02\n");
+    const std::filesystem::path path = WriteTempFile(root / "invalid_overrides.yaml",
+                                                     "composite:\n"
+                                                     "  merge_rule: kPriority\n"
+                                                     "  sub_strategies:\n"
+                                                     "    - id: kama_1\n"
+                                                     "      enabled: true\n"
+                                                     "      type: KamaTrendStrategy\n"
+                                                     "      params:\n"
+                                                     "        id: kama_1\n"
+                                                     "      overrides:\n"
+                                                     "        paper:\n"
+                                                     "          params:\n"
+                                                     "            risk_per_trade_pct: 0.02\n");
 
     CompositeStrategyDefinition definition;
     std::string error;
@@ -298,16 +299,15 @@ TEST(CompositeConfigLoaderTest, LoadsTimeframeMinutesFromYamlAndJson) {
     WriteTempFile(yaml_root / "sub" / "kama.yaml",
                   "params:\n"
                   "  id: kama_1\n");
-    const std::filesystem::path yaml_path =
-        WriteTempFile(yaml_root / "composite.yaml",
-                      "composite:\n"
-                      "  merge_rule: kPriority\n"
-                      "  sub_strategies:\n"
-                      "    - id: kama_1\n"
-                      "      enabled: true\n"
-                      "      type: KamaTrendStrategy\n"
-                      "      timeframe_minutes: 5\n"
-                      "      config_path: ./sub/kama.yaml\n");
+    const std::filesystem::path yaml_path = WriteTempFile(yaml_root / "composite.yaml",
+                                                          "composite:\n"
+                                                          "  merge_rule: kPriority\n"
+                                                          "  sub_strategies:\n"
+                                                          "    - id: kama_1\n"
+                                                          "      enabled: true\n"
+                                                          "      type: KamaTrendStrategy\n"
+                                                          "      timeframe_minutes: 5\n"
+                                                          "      config_path: ./sub/kama.yaml\n");
 
     CompositeStrategyDefinition yaml_definition;
     std::string error;
@@ -351,17 +351,16 @@ TEST(CompositeConfigLoaderTest, LoadsTimeframeMinutesFromYamlAndJson) {
 
 TEST(CompositeConfigLoaderTest, RejectsInvalidTimeframeMinutes) {
     const std::filesystem::path root = MakeTempDir("quant_hft_composite_v2_timeframe_invalid");
-    const std::filesystem::path path =
-        WriteTempFile(root / "invalid_timeframe.yaml",
-                      "composite:\n"
-                      "  merge_rule: kPriority\n"
-                      "  sub_strategies:\n"
-                      "    - id: trend_1\n"
-                      "      enabled: true\n"
-                      "      type: TrendStrategy\n"
-                      "      timeframe_minutes: 0\n"
-                      "      params:\n"
-                      "        id: trend_1\n");
+    const std::filesystem::path path = WriteTempFile(root / "invalid_timeframe.yaml",
+                                                     "composite:\n"
+                                                     "  merge_rule: kPriority\n"
+                                                     "  sub_strategies:\n"
+                                                     "    - id: trend_1\n"
+                                                     "      enabled: true\n"
+                                                     "      type: TrendStrategy\n"
+                                                     "      timeframe_minutes: 0\n"
+                                                     "      params:\n"
+                                                     "        id: trend_1\n");
 
     CompositeStrategyDefinition definition;
     std::string error;

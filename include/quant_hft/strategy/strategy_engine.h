@@ -27,7 +27,13 @@ struct StrategyEngineConfig {
 };
 
 class StrategyEngine {
-public:
+   public:
+    struct StrategyLaunchSpec {
+        std::string strategy_id;
+        std::string strategy_factory;
+        StrategyContext context;
+    };
+
     struct Stats {
         std::uint64_t enqueued_events{0};
         std::uint64_t processed_events{0};
@@ -45,10 +51,9 @@ public:
     explicit StrategyEngine(StrategyEngineConfig config = {}, IntentSink intent_sink = nullptr);
     ~StrategyEngine();
 
-    bool Start(const std::vector<std::string>& strategy_ids,
-               const std::string& strategy_factory,
-               const StrategyContext& base_context,
-               std::string* error);
+    bool Start(const std::vector<std::string>& strategy_ids, const std::string& strategy_factory,
+               const StrategyContext& base_context, std::string* error);
+    bool Start(const std::vector<StrategyLaunchSpec>& launch_specs, std::string* error);
     void Stop();
 
     void EnqueueState(const StateSnapshot7D& state);
@@ -58,7 +63,7 @@ public:
 
     Stats GetStats() const;
 
-private:
+   private:
     enum class EventType {
         kState,
         kOrderEvent,
@@ -74,6 +79,7 @@ private:
 
     struct StrategyEntry {
         std::string strategy_id;
+        std::string account_id;
         std::unique_ptr<ILiveStrategy> strategy;
     };
 
@@ -95,7 +101,6 @@ private:
     std::deque<EngineEvent> queue_;
     std::vector<StrategyEntry> strategies_;
     std::vector<StrategyMetric> cached_metrics_;
-    std::string account_id_;
     Stats stats_;
     bool running_{false};
     bool stop_requested_{false};

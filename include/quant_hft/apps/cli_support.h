@@ -166,7 +166,7 @@ inline std::string DefaultParameterOptimConfigPath() {
 }
 
 inline std::string DefaultRollingBacktestConfigPath() {
-    return (std::filesystem::path("configs") / "ops" / "rolling_backtest.yaml").string();
+    return (std::filesystem::path("configs") / "backtest" / "rolling_backtest.yaml").string();
 }
 
 inline ResolvedConfigPath ResolveConfigPathWithDefault(const ArgMap& args,

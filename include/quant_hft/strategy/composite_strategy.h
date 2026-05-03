@@ -34,6 +34,7 @@ struct SubStrategyDefinition {
 };
 
 struct CompositeStrategyDefinition {
+    std::string product_id;
     std::string run_type{"live"};
     bool enable_non_backtest{false};
     bool market_state_mode{true};
@@ -143,6 +144,7 @@ class CompositeStrategy : public ILiveStrategy {
     static AtomicParams MergeParamsForRunMode(const SubStrategyDefinition& definition,
                                               RunMode run_mode);
     static bool IsValidRunType(const std::string& run_type);
+    bool MatchesProduct(const std::string& instrument_id) const;
     void LoadDefinitionFromContext();
     void BuildAtomicStrategies();
     const SubStrategySlot* FindSubStrategySlot(const std::string& strategy_id) const;

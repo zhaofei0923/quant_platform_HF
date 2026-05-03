@@ -408,9 +408,8 @@ bool ApplyStrategyField(SubStrategyDefinition* strategy, const std::string& key,
         return true;
     }
     if (key == "type") {
-        if (value == "KamaTrendOpening" || value == "TrendOpening" ||
-            value == "TrailingStopLoss" || value == "ATRStopLoss" ||
-            value == "ATRTakeProfit" || value == "TimeFilter" ||
+        if (value == "KamaTrendOpening" || value == "TrendOpening" || value == "TrailingStopLoss" ||
+            value == "ATRStopLoss" || value == "ATRTakeProfit" || value == "TimeFilter" ||
             value == "MaxPositionRiskControl") {
             if (error != nullptr) {
                 *error = FormatLineError(
@@ -461,8 +460,7 @@ bool ApplyStrategyField(SubStrategyDefinition* strategy, const std::string& key,
     if (key == "market_regimes") {
         if (error != nullptr) {
             *error = FormatLineError(
-                line_no,
-                "field `market_regimes` has been removed; use `entry_market_regimes`");
+                line_no, "field `market_regimes` has been removed; use `entry_market_regimes`");
         }
         return false;
     }
@@ -602,6 +600,10 @@ bool LoadCompositeYaml(const std::filesystem::path& path, CompositeStrategyDefin
                 }
                 continue;
             }
+            if (key == "product_id") {
+                definition.product_id = ToLower(value);
+                continue;
+            }
             if (key == "run_type") {
                 if (value.empty()) {
                     if (error != nullptr) {
@@ -694,11 +696,12 @@ bool LoadCompositeYaml(const std::filesystem::path& path, CompositeStrategyDefin
                 }
                 return false;
             }
-            AtomicParams* override_params = SelectOverrideParams(current_strategy, overrides_run_mode);
+            AtomicParams* override_params =
+                SelectOverrideParams(current_strategy, overrides_run_mode);
             if (override_params == nullptr) {
                 if (error != nullptr) {
-                    *error = FormatLineError(line_no, "unsupported overrides run mode: " +
-                                                          overrides_run_mode);
+                    *error = FormatLineError(
+                        line_no, "unsupported overrides run mode: " + overrides_run_mode);
                 }
                 return false;
             }
@@ -718,15 +721,15 @@ bool LoadCompositeYaml(const std::filesystem::path& path, CompositeStrategyDefin
             if (overrides_run_mode.empty()) {
                 if (!value.empty()) {
                     if (error != nullptr) {
-                        *error = FormatLineError(line_no, "overrides run_mode must be a YAML section");
+                        *error =
+                            FormatLineError(line_no, "overrides run_mode must be a YAML section");
                     }
                     return false;
                 }
                 if (SelectOverrideParams(current_strategy, key) == nullptr) {
                     if (error != nullptr) {
-                        *error = FormatLineError(
-                            line_no, "unsupported overrides key: " + key +
-                                         " (allowed: backtest|sim|live)");
+                        *error = FormatLineError(line_no, "unsupported overrides key: " + key +
+                                                              " (allowed: backtest|sim|live)");
                     }
                     return false;
                 }
@@ -930,8 +933,7 @@ bool ParseStrategyOverridesJsonObject(const simple_json::Value& value, SubStrate
         AtomicParams* override_params = SelectOverrideParams(out, run_mode);
         if (override_params == nullptr) {
             if (error != nullptr) {
-                *error = "unsupported overrides key: " + run_mode +
-                         " (allowed: backtest|sim|live)";
+                *error = "unsupported overrides key: " + run_mode + " (allowed: backtest|sim|live)";
             }
             return false;
         }
@@ -1000,9 +1002,8 @@ bool ParseStrategyJsonObject(const simple_json::Value& item, SubStrategyDefiniti
                 return false;
             }
             if (value.string_value == "KamaTrendOpening" || value.string_value == "TrendOpening" ||
-                value.string_value == "TrailingStopLoss" ||
-                value.string_value == "ATRStopLoss" || value.string_value == "ATRTakeProfit" ||
-                value.string_value == "TimeFilter" ||
+                value.string_value == "TrailingStopLoss" || value.string_value == "ATRStopLoss" ||
+                value.string_value == "ATRTakeProfit" || value.string_value == "TimeFilter" ||
                 value.string_value == "MaxPositionRiskControl") {
                 if (error != nullptr) {
                     *error =
@@ -1200,6 +1201,16 @@ bool LoadCompositeJson(const std::filesystem::path& path, CompositeStrategyDefin
             }
             continue;
         }
+        if (key == "product_id") {
+            if (!value.IsString()) {
+                if (error != nullptr) {
+                    *error = "product_id must be string";
+                }
+                return false;
+            }
+            definition.product_id = ToLower(value.string_value);
+            continue;
+        }
         if (key == "run_type") {
             if (!value.IsString() || value.string_value.empty()) {
                 if (error != nullptr) {
@@ -1240,7 +1251,8 @@ bool LoadCompositeJson(const std::filesystem::path& path, CompositeStrategyDefin
             key == "take_profit_strategies" || key == "time_filters" ||
             key == "risk_control_strategies") {
             if (error != nullptr) {
-                *error = "legacy section `" + key + "` is no longer supported; use `sub_strategies`";
+                *error =
+                    "legacy section `" + key + "` is no longer supported; use `sub_strategies`";
             }
             return false;
         }

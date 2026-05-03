@@ -36,6 +36,24 @@ std::filesystem::path WriteManifest(const std::filesystem::path& dataset_root,
     return manifest;
 }
 
+std::filesystem::path WriteManifestWithContracts(
+    const std::filesystem::path& dataset_root,
+    const std::vector<std::pair<std::string, std::string>>& day_contracts) {
+    const auto manifest = dataset_root / "_manifest" / "partitions.jsonl";
+    std::filesystem::create_directories(manifest.parent_path());
+    std::ofstream out(manifest);
+    int file_index = 0;
+    for (const auto& [day, instrument_id] : day_contracts) {
+        out << "{\"file_path\":\"source=rb/trading_day=" << day << "/instrument_id="
+            << instrument_id << "/part-" << file_index++ << ".parquet\",";
+        out << "\"source\":\"rb\",\"trading_day\":\"" << day
+            << "\",\"instrument_id\":\"" << instrument_id
+            << "\",\"min_ts_ns\":1,\"max_ts_ns\":2,\"row_count\":1}\n";
+    }
+    out.close();
+    return manifest;
+}
+
 RollingConfig BuildConfig(const std::filesystem::path& dataset_root,
                           const std::filesystem::path& manifest,
                           const std::string& type) {
@@ -99,6 +117,41 @@ TEST(WindowGeneratorTest, GeneratesRollingWindowsAndDropsTail) {
     EXPECT_EQ(windows[1].train_end, "20230104");
     EXPECT_EQ(windows[1].test_start, "20230105");
     EXPECT_EQ(windows[1].test_end, "20230106");
+
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}
+
+TEST(WindowGeneratorTest, FiltersRollingWindowsWhoseTestRangeCrossesContracts) {
+    const auto dir = MakeTempDir("window_generator_single_contract_test");
+    const auto dataset_root = dir / "data";
+    const auto manifest = WriteManifestWithContracts(
+        dataset_root,
+        {{"20230101", "rb2305"},
+         {"20230102", "rb2305"},
+         {"20230103", "rb2305"},
+         {"20230104", "rb2310"},
+         {"20230105", "rb2310"},
+         {"20230106", "rb2310"},
+         {"20230107", "rb2310"},
+         {"20230108", "rb2401"}});
+
+    RollingConfig config = BuildConfig(dataset_root, manifest, "rolling");
+    config.backtest_base.symbols = {"rb"};
+    config.window.require_single_contract_test = true;
+
+    std::vector<std::string> trading_days;
+    std::string error;
+    ASSERT_TRUE(BuildTradingDayCalendar(config, &trading_days, &error)) << error;
+
+    std::vector<Window> windows;
+    ASSERT_TRUE(GenerateWindows(config, trading_days, &windows, &error)) << error;
+    ASSERT_EQ(windows.size(), 1U);
+    EXPECT_EQ(windows[0].index, 0);
+    EXPECT_EQ(windows[0].train_start, "20230103");
+    EXPECT_EQ(windows[0].train_end, "20230104");
+    EXPECT_EQ(windows[0].test_start, "20230105");
+    EXPECT_EQ(windows[0].test_end, "20230106");
 
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);

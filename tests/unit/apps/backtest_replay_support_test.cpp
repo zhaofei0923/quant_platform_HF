@@ -168,6 +168,23 @@ std::filesystem::path WriteMultiMinuteReplayCsv(const std::string& stem) {
     return path;
 }
 
+std::filesystem::path WriteInterleavedProductReplayCsv(const std::string& stem) {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto path =
+        std::filesystem::temp_directory_path() / (stem + "_" + std::to_string(stamp) + ".csv");
+    std::ofstream out(path);
+    out << "InstrumentID,TradingDay,UpdateTime,UpdateMillisec,LastPrice,Volume,BidPrice1,"
+           "BidVolume1,AskPrice1,AskVolume1\n";
+    out << "c2405,20240103,09:00:00,0,100,100,99,20,101,18\n";
+    out << "rb2405,20240103,09:00:01,0,200,100,199,20,201,18\n";
+    out << "c2405,20240103,09:01:00,0,101,101,100,20,102,18\n";
+    out << "rb2405,20240103,09:01:01,0,201,101,200,20,202,18\n";
+    out << "c2405,20240103,09:02:00,0,102,102,101,20,103,18\n";
+    out << "rb2405,20240103,09:02:01,0,202,102,201,20,203,18\n";
+    out.close();
+    return path;
+}
+
 std::filesystem::path WriteInstrumentSwitchReplayCsv(const std::string& stem) {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto path =
@@ -736,12 +753,11 @@ std::filesystem::path WriteParquetManifest(
                 return {};
             }
         }
-        out << "{\"file_path\":\"" << relative_path.generic_string() << "\","
-            << "\"source\":\"" << source << "\","
-            << "\"trading_day\":\"" << trading_day << "\","
-            << "\"instrument_id\":\"" << instrument_id << "\","
-            << "\"min_ts_ns\":" << min_it->ts_ns << ',' << "\"max_ts_ns\":" << max_it->ts_ns << ','
-            << "\"row_count\":" << ticks.size() << "}\n";
+        out << "{\"file_path\":\"" << relative_path.generic_string() << "\"," << "\"source\":\""
+            << source << "\"," << "\"trading_day\":\"" << trading_day << "\","
+            << "\"instrument_id\":\"" << instrument_id << "\"," << "\"min_ts_ns\":" << min_it->ts_ns
+            << ',' << "\"max_ts_ns\":" << max_it->ts_ns << ',' << "\"row_count\":" << ticks.size()
+            << "}\n";
     }
 
     if (!out.good()) {
@@ -858,6 +874,53 @@ std::filesystem::path WriteTempMainStrategyConfig(
     out << "      enabled: true\n";
     out << "      type: TrendStrategy\n";
     out << "      config_path: " << composite_path.string() << "\n";
+    out.close();
+    return path;
+}
+
+std::filesystem::path WriteProductAtomicStrategyConfig(const std::string& id) {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto path =
+        std::filesystem::temp_directory_path() /
+        ("quant_hft_product_atomic_cfg_" + id + "_" + std::to_string(stamp) + ".yaml");
+    std::ofstream out(path);
+    out << "params:\n";
+    out << "  id: " << id << "\n";
+    out << "  volume: 1\n";
+    out.close();
+    return path;
+}
+
+std::filesystem::path WriteProductMainStrategyConfig(const std::filesystem::path& atomic_cfg,
+                                                     const std::string& strategy_type,
+                                                     const std::string& product_id,
+                                                     const std::string& symbol,
+                                                     const std::string& sub_strategy_id) {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto path = std::filesystem::temp_directory_path() /
+                      ("quant_hft_product_main_strategy_config_" + product_id + "_" +
+                       std::to_string(stamp) + ".yaml");
+    std::ofstream out(path);
+    out << "run_type: backtest\n";
+    out << "market_state_mode: true\n";
+    out << "backtest:\n";
+    out << "  initial_equity: 123456\n";
+    out << "  symbols: [" << symbol << "]\n";
+    out << "  start_date: 20240101\n";
+    out << "  end_date: 20240110\n";
+    out << "risk_management:\n";
+    out << "  enabled: true\n";
+    out << "  risk_per_trade_pct: 0.005\n";
+    out << "  max_risk_per_trade: 2000\n";
+    out << "composite:\n";
+    out << "  product_id: " << product_id << "\n";
+    out << "  merge_rule: kPriority\n";
+    out << "  sub_strategies:\n";
+    out << "    - id: " << sub_strategy_id << "\n";
+    out << "      enabled: true\n";
+    out << "      timeframe_minutes: 1\n";
+    out << "      type: " << strategy_type << "\n";
+    out << "      config_path: " << atomic_cfg.string() << "\n";
     out.close();
     return path;
 }
@@ -1868,6 +1931,7 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecParsesDetailEmissionFlags) {
     args["emit_trades"] = "false";
     args["emit_orders"] = "false";
     args["emit_position_history"] = "true";
+    args["emit_per_variety_outputs"] = "true";
 
     BacktestCliSpec spec;
     std::string error;
@@ -1875,6 +1939,7 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecParsesDetailEmissionFlags) {
     EXPECT_FALSE(spec.emit_trades);
     EXPECT_FALSE(spec.emit_orders);
     EXPECT_TRUE(spec.emit_position_history);
+    EXPECT_TRUE(spec.emit_per_variety_outputs);
 }
 
 TEST(BacktestReplaySupportTest, ParseBacktestCliSpecParsesCapitalAndConfigFields) {
@@ -1981,6 +2046,89 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecAllowsCliOverrideOverMainStr
     std::filesystem::remove(main_cfg, ec);
 }
 
+TEST(BacktestReplaySupportTest, ParseBacktestCliSpecAcceptsMultiStrategyMainConfigs) {
+    const std::string strategy_type = UniqueAtomicType("multi_parse_open_once");
+    RegisterOpenOnceReplayType(strategy_type);
+    const std::filesystem::path c_atomic = WriteProductAtomicStrategyConfig("open_once_c");
+    const std::filesystem::path rb_atomic = WriteProductAtomicStrategyConfig("open_once_rb");
+    const std::filesystem::path c_main =
+        WriteProductMainStrategyConfig(c_atomic, strategy_type, "c", "c", "open_once_c");
+    const std::filesystem::path rb_main =
+        WriteProductMainStrategyConfig(rb_atomic, strategy_type, "rb", "rb", "open_once_rb");
+
+    ArgMap args;
+    args["engine_mode"] = "csv";
+    args["csv_path"] = "backtest_data/rb.csv";
+    args["strategy_main_config_paths"] = c_main.string() + "," + rb_main.string();
+    args["strategy_ids"] = "candidate_c,candidate_rb";
+    args["product_config_path"] = "";
+
+    BacktestCliSpec spec;
+    std::string error;
+    ASSERT_TRUE(ParseBacktestCliSpec(args, &spec, &error)) << error;
+    ASSERT_EQ(spec.strategy_configs.size(), 2U);
+    EXPECT_EQ(spec.strategy_configs[0].strategy_id, "candidate_c");
+    EXPECT_EQ(spec.strategy_configs[0].product_id, "c");
+    EXPECT_EQ(spec.strategy_configs[1].strategy_id, "candidate_rb");
+    EXPECT_EQ(spec.strategy_configs[1].product_id, "rb");
+    ASSERT_EQ(spec.symbols.size(), 2U);
+    EXPECT_EQ(spec.symbols[0], "c");
+    EXPECT_EQ(spec.symbols[1], "rb");
+    EXPECT_EQ(spec.strategy_factory, "composite");
+
+    std::error_code ec;
+    std::filesystem::remove(c_atomic, ec);
+    std::filesystem::remove(rb_atomic, ec);
+    std::filesystem::remove(c_main, ec);
+    std::filesystem::remove(rb_main, ec);
+}
+
+TEST(BacktestReplaySupportTest, RunBacktestSpecReplaysInterleavedMultiProductStrategies) {
+    const std::string strategy_type = UniqueAtomicType("multi_replay_open_once");
+    RegisterOpenOnceReplayType(strategy_type);
+    const std::filesystem::path csv_path =
+        WriteInterleavedProductReplayCsv("quant_hft_interleaved_multi_product");
+    const std::filesystem::path c_atomic = WriteProductAtomicStrategyConfig("open_once_c");
+    const std::filesystem::path rb_atomic = WriteProductAtomicStrategyConfig("open_once_rb");
+    const std::filesystem::path c_main =
+        WriteProductMainStrategyConfig(c_atomic, strategy_type, "c", "c2405", "open_once_c");
+    const std::filesystem::path rb_main =
+        WriteProductMainStrategyConfig(rb_atomic, strategy_type, "rb", "rb2405", "open_once_rb");
+
+    ArgMap args;
+    args["engine_mode"] = "csv";
+    args["csv_path"] = csv_path.string();
+    args["strategy_main_config_paths"] = c_main.string() + "," + rb_main.string();
+    args["strategy_ids"] = "candidate_c,candidate_rb";
+    args["product_config_path"] = "";
+
+    BacktestCliSpec spec;
+    std::string error;
+    ASSERT_TRUE(ParseBacktestCliSpec(args, &spec, &error)) << error;
+
+    BacktestCliResult result;
+    ASSERT_TRUE(RunBacktestSpec(spec, &result, &error)) << error;
+    EXPECT_EQ(result.replay.instrument_count, 2);
+    EXPECT_EQ(result.deterministic.instrument_bars.at("c2405"), 3);
+    EXPECT_EQ(result.deterministic.instrument_bars.at("rb2405"), 3);
+
+    bool saw_c_trade = false;
+    bool saw_rb_trade = false;
+    for (const TradeRecord& trade : result.trades) {
+        saw_c_trade = saw_c_trade || trade.symbol == "c2405";
+        saw_rb_trade = saw_rb_trade || trade.symbol == "rb2405";
+    }
+    EXPECT_TRUE(saw_c_trade);
+    EXPECT_TRUE(saw_rb_trade);
+
+    std::error_code ec;
+    std::filesystem::remove(csv_path, ec);
+    std::filesystem::remove(c_atomic, ec);
+    std::filesystem::remove(rb_atomic, ec);
+    std::filesystem::remove(c_main, ec);
+    std::filesystem::remove(rb_main, ec);
+}
+
 TEST(BacktestReplaySupportTest, ParseBacktestCliSpecRejectsExpiryCloseWithoutCalendarPath) {
     ArgMap args;
     args["engine_mode"] = "parquet";
@@ -2032,7 +2180,7 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecRejectsExpiryCloseForExplici
     BacktestCliSpec spec;
     std::string error;
     EXPECT_FALSE(ParseBacktestCliSpec(args, &spec, &error));
-    EXPECT_NE(error.find("single product symbol"), std::string::npos);
+    EXPECT_NE(error.find("product symbol selection"), std::string::npos);
 
     std::error_code ec;
     std::filesystem::remove(calendar_cfg, ec);
@@ -2213,6 +2361,19 @@ TEST(BacktestReplaySupportTest, BuildInputSignatureChangesWithIndicatorTraceSpec
     BacktestCliSpec right = left;
     right.emit_indicator_trace = true;
     right.indicator_trace_path = "runtime/research/indicator_trace/sig-right.parquet";
+
+    EXPECT_NE(BuildInputSignature(left), BuildInputSignature(right));
+}
+
+TEST(BacktestReplaySupportTest, BuildInputSignatureChangesWithPerVarietyOutputSpec) {
+    BacktestCliSpec left;
+    left.engine_mode = "csv";
+    left.csv_path = "backtest_data/rb.csv";
+    left.run_id = "sig-per-variety-left";
+    left.emit_per_variety_outputs = false;
+
+    BacktestCliSpec right = left;
+    right.emit_per_variety_outputs = true;
 
     EXPECT_NE(BuildInputSignature(left), BuildInputSignature(right));
 }

@@ -37,6 +37,7 @@ struct RollingWindowSpec {
     int min_train_days{180};
     std::string start_date;
     std::string end_date;
+    bool require_single_contract_test{false};
 };
 
 struct RollingOptimizationSpec {

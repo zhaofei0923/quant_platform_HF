@@ -28,7 +28,7 @@ if (( ${#pyarrow_candidates[@]} > 0 )); then
   esac
 fi
 
-default_config_path="configs/ops/rolling_backtest.yaml"
+default_config_path="configs/backtest/rolling_backtest.yaml"
 config_path="${default_config_path}"
 build_dir=""
 dry_run=false
@@ -41,7 +41,7 @@ Usage: scripts/build/run_rolling_backtest.sh [options]
 
 Options:
   --config PATH      Rolling backtest YAML config
-                     Default: configs/ops/rolling_backtest.yaml
+                     Default: configs/backtest/rolling_backtest.yaml
   --build-dir PATH   CMake build directory
                      Default: auto-detect build-gcc, then build
   --skip-build       Skip cmake build and run rolling_backtest_cli directly

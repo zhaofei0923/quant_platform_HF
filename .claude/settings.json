@@ -1,0 +1,55 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)",
+      "Bash(cmake:*)",
+      "Bash(ctest:*)",
+      "Bash(find:*)",
+      "Bash(head:*)",
+      "Bash(wc:*)",
+      "Bash(cat:*)",
+      "Bash(grep:*)",
+      "Bash(mkdir:*)",
+      "Bash(which:*)",
+      "Bash(uname:*)",
+      "Bash(nproc:*)",
+      "Bash(df:*)",
+      "Bash(free:*)",
+      "Bash(git:status)",
+      "Bash(git:diff*)",
+      "Bash(git:log*)",
+      "Bash(python3:scripts/build/analyze_optimization_report.py*)",
+      "Bash(./scripts/build/run_parameter_optim.sh:*)",
+      "Bash(./scripts/build/run_rolling_backtest.sh:*)",
+      "Bash(./scripts/build/run_backtest_with_validation.sh:*)",
+      "Bash(./build-*/backtest_cli:*)",
+      "Bash(./build-*/parameter_optim_cli:*)",
+      "Bash(./build-*/rolling_backtest_cli:*)",
+      "Bash(./build-*/oos_top10_validation_cli:*)",
+      "Bash(scripts/build/run_consistency_gates.sh:*)",
+      "Bash(scripts/build/run_preprod_rehearsal_gate.sh:*)"
+    ],
+    "ask": [
+      "Bash(git:commit*)",
+      "Bash(git:push*)",
+      "Bash(git:rebase*)",
+      "Bash(git:branch*)",
+      "Bash(rm:*)",
+      "Bash(chmod:*)",
+      "Bash(sudo:*)"
+    ],
+    "deny": [
+      "Bash(> /dev:*)",
+      "Bash(curl:*)",
+      "Bash(wget:*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": []
+      }
+    ]
+  }
+}

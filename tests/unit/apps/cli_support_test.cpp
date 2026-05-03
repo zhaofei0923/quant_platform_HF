@@ -28,7 +28,7 @@ std::filesystem::path WriteFile(const std::filesystem::path& path, const std::st
 
 TEST(CliSupportTest, UsesOpsAndRuntimeDefaultConfigPaths) {
     EXPECT_EQ(DefaultParameterOptimConfigPath(), "configs/ops/parameter_optim.yaml");
-    EXPECT_EQ(DefaultRollingBacktestConfigPath(), "configs/ops/rolling_backtest.yaml");
+    EXPECT_EQ(DefaultRollingBacktestConfigPath(), "configs/backtest/rolling_backtest.yaml");
 }
 
 TEST(CliSupportTest, ResolveConfigPathWithDefaultUsesExplicitConfigWhenProvided) {

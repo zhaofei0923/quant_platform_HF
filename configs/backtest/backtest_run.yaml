@@ -1,5 +1,5 @@
 # 配置文件用途：一键编译 + 启动 backtest_cli（parquet-only）
-# 使用方式：bash scripts/build/run_backtest_from_config.sh --config configs/ops/backtest_run.yaml
+# 使用方式：bash scripts/build/run_backtest_from_config.sh --config configs/backtest/backtest_run.yaml
 
 # build_dir：CMake 构建目录；示例值：build-gcc
 # build_dir：配置项说明；示例值：build-gcc
@@ -85,6 +85,8 @@ emit_orders: true
 # emit_position_history：是否输出持仓快照明细；示例值：false
 # emit_position_history：配置项说明；示例值：false
 emit_position_history: true
+# emit_per_variety_outputs：按品种额外导出 varieties/<product>/backtest/{trades,orders,position_history}.csv；示例值：false
+emit_per_variety_outputs: false
 # trace_output_format：trace 输出格式；示例值：csv（可选 csv/parquet/both）
 # trace_output_format：配置项说明；示例值：csv
 trace_output_format: csv

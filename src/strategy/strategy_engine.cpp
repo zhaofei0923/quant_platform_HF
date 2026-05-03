@@ -31,47 +31,71 @@ StrategyEngine::StrategyEngine(StrategyEngineConfig config, IntentSink intent_si
     }
 }
 
-StrategyEngine::~StrategyEngine() {
-    Stop();
-}
+StrategyEngine::~StrategyEngine() { Stop(); }
 
 bool StrategyEngine::Start(const std::vector<std::string>& strategy_ids,
-                           const std::string& strategy_factory,
-                           const StrategyContext& base_context,
+                           const std::string& strategy_factory, const StrategyContext& base_context,
+                           std::string* error) {
+    std::vector<StrategyLaunchSpec> launch_specs;
+    launch_specs.reserve(strategy_ids.size());
+    for (const std::string& strategy_id : strategy_ids) {
+        StrategyLaunchSpec spec;
+        spec.strategy_id = strategy_id;
+        spec.strategy_factory = strategy_factory;
+        spec.context = base_context;
+        launch_specs.push_back(std::move(spec));
+    }
+    return Start(launch_specs, error);
+}
+
+bool StrategyEngine::Start(const std::vector<StrategyLaunchSpec>& launch_specs,
                            std::string* error) {
     Stop();
 
-    if (strategy_ids.empty()) {
+    if (launch_specs.empty()) {
         if (error != nullptr) {
             *error = "strategy_ids must not be empty";
         }
         return false;
     }
-    if (strategy_factory.empty()) {
-        if (error != nullptr) {
-            *error = "strategy_factory must not be empty";
-        }
-        return false;
-    }
 
     std::vector<StrategyEntry> initialized;
-    initialized.reserve(strategy_ids.size());
+    initialized.reserve(launch_specs.size());
     try {
-        for (const auto& strategy_id : strategy_ids) {
-            auto strategy = StrategyRegistry::Instance().Create(strategy_factory);
-            if (strategy == nullptr) {
+        for (const StrategyLaunchSpec& spec : launch_specs) {
+            if (spec.strategy_id.empty()) {
                 if (error != nullptr) {
-                    *error = "strategy_factory not found: " + strategy_factory;
+                    *error = "strategy_id must not be empty";
                 }
                 for (auto& entry : initialized) {
                     entry.strategy->Shutdown();
                 }
                 return false;
             }
-            StrategyContext strategy_context = base_context;
-            strategy_context.strategy_id = strategy_id;
+            if (spec.strategy_factory.empty()) {
+                if (error != nullptr) {
+                    *error = "strategy_factory must not be empty";
+                }
+                for (auto& entry : initialized) {
+                    entry.strategy->Shutdown();
+                }
+                return false;
+            }
+            auto strategy = StrategyRegistry::Instance().Create(spec.strategy_factory);
+            if (strategy == nullptr) {
+                if (error != nullptr) {
+                    *error = "strategy_factory not found: " + spec.strategy_factory;
+                }
+                for (auto& entry : initialized) {
+                    entry.strategy->Shutdown();
+                }
+                return false;
+            }
+            StrategyContext strategy_context = spec.context;
+            strategy_context.strategy_id = spec.strategy_id;
             strategy->Initialize(strategy_context);
-            initialized.push_back(StrategyEntry{strategy_id, std::move(strategy)});
+            initialized.push_back(
+                StrategyEntry{spec.strategy_id, strategy_context.account_id, std::move(strategy)});
         }
     } catch (const std::exception& ex) {
         if (error != nullptr) {
@@ -91,14 +115,15 @@ bool StrategyEngine::Start(const std::vector<std::string>& strategy_ids,
         return false;
     }
 
-    if (config_.state_persistence != nullptr && config_.load_state_on_start &&
-        !base_context.account_id.empty()) {
+    if (config_.state_persistence != nullptr && config_.load_state_on_start) {
         for (auto& entry : initialized) {
+            if (entry.account_id.empty()) {
+                continue;
+            }
             StrategyState loaded_state;
             std::string load_error;
-            if (!config_.state_persistence->LoadStrategyState(base_context.account_id,
-                                                              entry.strategy_id, &loaded_state,
-                                                              &load_error)) {
+            if (!config_.state_persistence->LoadStrategyState(entry.account_id, entry.strategy_id,
+                                                              &loaded_state, &load_error)) {
                 continue;
             }
             std::string apply_error;
@@ -120,7 +145,6 @@ bool StrategyEngine::Start(const std::vector<std::string>& strategy_ids,
         queue_.clear();
         strategies_ = std::move(initialized);
         cached_metrics_.clear();
-        account_id_ = base_context.account_id;
         stats_ = {};
         last_state_snapshot_ns_ = 0;
         last_metrics_collect_ns_ = 0;
@@ -152,7 +176,6 @@ void StrategyEngine::Stop() {
         strategies_to_shutdown = std::move(strategies_);
         queue_.clear();
         cached_metrics_.clear();
-        account_id_.clear();
         running_ = false;
         stop_requested_ = false;
         last_state_snapshot_ns_ = 0;
@@ -221,9 +244,8 @@ void StrategyEngine::WorkerLoop() {
             if (queue_.empty()) {
                 const auto wait_interval =
                     std::chrono::nanoseconds(std::max<EpochNanos>(1, config_.timer_interval_ns));
-                cv_.wait_for(lock, wait_interval, [&]() {
-                    return stop_requested_ || !queue_.empty();
-                });
+                cv_.wait_for(lock, wait_interval,
+                             [&]() { return stop_requested_ || !queue_.empty(); });
             }
 
             if (stop_requested_ && queue_.empty()) {
@@ -327,8 +349,7 @@ void StrategyEngine::DispatchTimer(EpochNanos now_ns) {
 }
 
 void StrategyEngine::MaybeSnapshotStates(EpochNanos now_ns) {
-    if (config_.state_persistence == nullptr || config_.state_snapshot_interval_ns <= 0 ||
-        account_id_.empty()) {
+    if (config_.state_persistence == nullptr || config_.state_snapshot_interval_ns <= 0) {
         return;
     }
     if (last_state_snapshot_ns_ > 0 &&
@@ -349,8 +370,9 @@ void StrategyEngine::MaybeSnapshotStates(EpochNanos now_ns) {
             ++failures;
             continue;
         }
-        if (!config_.state_persistence->SaveStrategyState(account_id_, entry.strategy_id, state,
-                                                          &state_error)) {
+        if (entry.account_id.empty() ||
+            !config_.state_persistence->SaveStrategyState(entry.account_id, entry.strategy_id,
+                                                          state, &state_error)) {
             ++failures;
             continue;
         }
@@ -393,7 +415,8 @@ void StrategyEngine::MaybeCollectMetrics(EpochNanos now_ns) {
     }
 }
 
-void StrategyEngine::EmitIntents(const std::string& strategy_id, std::vector<SignalIntent> intents) {
+void StrategyEngine::EmitIntents(const std::string& strategy_id,
+                                 std::vector<SignalIntent> intents) {
     if (!intent_sink_) {
         return;
     }

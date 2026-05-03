@@ -5,7 +5,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/../.." && pwd)"
 cd "${repo_root}"
 
-config_path="configs/ops/backtest_run.yaml"
+config_path="configs/backtest/backtest_run_sim_trade_candidates.yaml"
 fast_mode=false
 fast_start_date=""
 fast_end_date=""
@@ -65,12 +65,27 @@ resolve_runs_root_from_config() {
   to_abs_path "${output_root_dir}"
 }
 
+latest_run_dir_from_root() {
+  local root="$1"
+  local latest=""
+  shopt -s nullglob
+  local dirs=("${root}"/*/)
+  shopt -u nullglob
+  if (( ${#dirs[@]} == 0 )); then
+    printf ''
+    return 0
+  fi
+  latest="$(ls -1dt "${dirs[@]}" 2>/dev/null | head -n 1 || true)"
+  latest="${latest%/}"
+  printf '%s' "${latest}"
+}
+
 usage() {
   cat <<'EOF'
 Usage: scripts/build/run_backtest_with_validation.sh [options]
 
 Options:
-  --config PATH            Backtest run config file (default: configs/ops/backtest_run.yaml)
+  --config PATH            Backtest run config file (default: configs/backtest/backtest_run_sim_trade_candidates.yaml)
   --fast                   Disable heavy trace outputs and formal report generation for faster iteration
   --fast-start-date DATE   Override start_date in fast mode (YYYYMMDD)
   --fast-end-date DATE     Override end_date in fast mode (YYYYMMDD)
@@ -196,12 +211,12 @@ fi
 runs_root="$(resolve_runs_root_from_config "${config_path}")"
 mkdir -p "${runs_root}"
 
-latest_before="$(ls -1dt "${runs_root}"/backtest-* 2>/dev/null | head -n 1 || true)"
+latest_before="$(latest_run_dir_from_root "${runs_root}")"
 
 echo "[step] 执行回测"
 "${script_dir}/run_backtest_from_config.sh" --config "${config_path}" "${forward_args[@]}"
 
-latest_after="$(ls -1dt "${runs_root}"/backtest-* 2>/dev/null | head -n 1 || true)"
+latest_after="$(latest_run_dir_from_root "${runs_root}")"
 if [[ -z "${latest_after}" ]]; then
   echo "error: 未找到回测输出目录: ${runs_root}" >&2
   exit 2

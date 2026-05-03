@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <limits>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -24,6 +25,95 @@ std::string NormalizeTradingDay(const std::string& raw) {
         return "";
     }
     return digits;
+}
+
+std::string NormalizeSymbol(const std::string& raw) {
+    std::string normalized;
+    normalized.reserve(raw.size());
+    for (char ch : raw) {
+        normalized.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+    }
+    return normalized;
+}
+
+bool BuildInstrumentByDay(const RollingConfig& config,
+                          std::map<std::string, std::set<std::string>>* instruments_by_day,
+                          std::string* error) {
+    if (instruments_by_day == nullptr) {
+        if (error != nullptr) {
+            *error = "instrument map output is null";
+        }
+        return false;
+    }
+    instruments_by_day->clear();
+
+    std::string source;
+    if (!config.backtest_base.symbols.empty()) {
+        source = NormalizeSymbol(config.backtest_base.symbols.front());
+    }
+
+    ParquetDataFeed feed(config.backtest_base.dataset_root);
+    if (!feed.LoadManifestJsonl(config.backtest_base.dataset_manifest, error)) {
+        return false;
+    }
+
+    const auto partitions = feed.QueryPartitions(0,
+                                                 std::numeric_limits<EpochNanos>::max(),
+                                                 std::vector<std::string>{},
+                                                 source);
+    for (const auto& partition : partitions) {
+        const std::string day = NormalizeTradingDay(partition.trading_day);
+        if (day.empty() || day < config.window.start_date || day > config.window.end_date) {
+            continue;
+        }
+        if (partition.instrument_id.empty()) {
+            continue;
+        }
+        (*instruments_by_day)[day].insert(partition.instrument_id);
+    }
+
+    return true;
+}
+
+bool HasSingleContractInRange(const std::vector<std::string>& trading_days,
+                              std::size_t begin,
+                              std::size_t end_exclusive,
+                              const std::map<std::string, std::set<std::string>>& instruments_by_day) {
+    std::set<std::string> instruments;
+    for (std::size_t index = begin; index < end_exclusive; ++index) {
+        const auto it = instruments_by_day.find(trading_days[index]);
+        if (it == instruments_by_day.end()) {
+            return false;
+        }
+        instruments.insert(it->second.begin(), it->second.end());
+        if (instruments.size() > 1) {
+            return false;
+        }
+    }
+    return instruments.size() == 1;
+}
+
+void PushWindowIfAllowed(const RollingConfig& config,
+                         const std::vector<std::string>& trading_days,
+                         std::size_t train_begin,
+                         std::size_t train_end_exclusive,
+                         std::size_t test_begin,
+                         std::size_t test_end_exclusive,
+                         const std::map<std::string, std::set<std::string>>& instruments_by_day,
+                         int* window_index,
+                         std::vector<Window>* windows) {
+    if (config.window.require_single_contract_test &&
+        !HasSingleContractInRange(trading_days, test_begin, test_end_exclusive, instruments_by_day)) {
+        return;
+    }
+
+    Window window;
+    window.index = (*window_index)++;
+    window.train_start = trading_days[train_begin];
+    window.train_end = trading_days[train_end_exclusive - 1];
+    window.test_start = trading_days[test_begin];
+    window.test_end = trading_days[test_end_exclusive - 1];
+    windows->push_back(std::move(window));
 }
 
 }  // namespace
@@ -96,6 +186,12 @@ bool GenerateWindows(const RollingConfig& config,
     const int test_len = config.window.test_length_days;
     const int step = config.window.step_days;
 
+    std::map<std::string, std::set<std::string>> instruments_by_day;
+    if (config.window.require_single_contract_test &&
+        !BuildInstrumentByDay(config, &instruments_by_day, error)) {
+        return false;
+    }
+
     if (config.window.type == "rolling") {
         std::size_t index = 0;
         int window_index = 0;
@@ -108,13 +204,15 @@ bool GenerateWindows(const RollingConfig& config,
                 break;
             }
 
-            Window window;
-            window.index = window_index++;
-            window.train_start = trading_days[train_begin];
-            window.train_end = trading_days[train_end_exclusive - 1];
-            window.test_start = trading_days[test_begin];
-            window.test_end = trading_days[test_end_exclusive - 1];
-            windows->push_back(std::move(window));
+            PushWindowIfAllowed(config,
+                                trading_days,
+                                train_begin,
+                                train_end_exclusive,
+                                test_begin,
+                                test_end_exclusive,
+                                instruments_by_day,
+                                &window_index,
+                                windows);
 
             index += static_cast<std::size_t>(step);
         }
@@ -128,13 +226,15 @@ bool GenerateWindows(const RollingConfig& config,
             if (test_end_exclusive > trading_days.size()) {
                 break;
             }
-            Window window;
-            window.index = window_index++;
-            window.train_start = trading_days.front();
-            window.train_end = trading_days[test_begin - 1];
-            window.test_start = trading_days[test_begin];
-            window.test_end = trading_days[test_end_exclusive - 1];
-            windows->push_back(std::move(window));
+            PushWindowIfAllowed(config,
+                                trading_days,
+                                0,
+                                test_begin,
+                                test_begin,
+                                test_end_exclusive,
+                                instruments_by_day,
+                                &window_index,
+                                windows);
         }
     } else {
         if (error != nullptr) {

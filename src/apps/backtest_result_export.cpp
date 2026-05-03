@@ -1,12 +1,16 @@
-#include "quant_hft/apps/backtest_replay_support.h"
-
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <map>
+#include <set>
 #include <sstream>
 #include <string>
+#include <vector>
+
+#include "quant_hft/apps/backtest_replay_support.h"
+#include "quant_hft/contracts/instrument_utils.h"
 
 namespace quant_hft::apps {
 
@@ -58,8 +62,8 @@ bool WriteDailyCsv(const BacktestCliResult& result, const std::filesystem::path&
            "trades_count,turnover,market_regime\n";
     for (const DailyPerformance& row : result.daily) {
         out << CsvEscape(row.date) << ',' << CsvDouble(row.capital) << ','
-            << CsvDouble(row.daily_return_pct) << ',' << CsvDouble(row.cumulative_return_pct)
-            << ',' << CsvDouble(row.drawdown_pct) << ',' << CsvDouble(row.position_value) << ','
+            << CsvDouble(row.daily_return_pct) << ',' << CsvDouble(row.cumulative_return_pct) << ','
+            << CsvDouble(row.drawdown_pct) << ',' << CsvDouble(row.position_value) << ','
             << row.trades_count << ',' << CsvDouble(row.turnover) << ','
             << CsvEscape(row.market_regime) << '\n';
     }
@@ -78,12 +82,11 @@ bool WriteTradesCsv(const BacktestCliResult& result, const std::filesystem::path
     out << "fill_seq,trade_id,order_id,symbol,exchange,side,offset,volume,price,timestamp_ns,"
            "signal_ts_ns,trading_day,action_day,update_time,timestamp_dt_local,signal_dt_local,"
            "commission,timestamp_dt_utc,slippage,realized_pnl,strategy_id,signal_type,"
-            "regime_at_entry,risk_budget_r\n";
+           "regime_at_entry,risk_budget_r\n";
     const std::vector<TradeRecord> sorted_trades = SortTradesForOutput(result.trades);
     for (const TradeRecord& row : sorted_trades) {
         out << row.fill_seq << ',' << CsvEscape(row.trade_id) << ',' << CsvEscape(row.order_id)
-            << ','
-            << CsvEscape(row.symbol) << ',' << CsvEscape(row.exchange) << ','
+            << ',' << CsvEscape(row.symbol) << ',' << CsvEscape(row.exchange) << ','
             << CsvEscape(row.side) << ',' << CsvEscape(row.offset) << ',' << row.volume << ','
             << CsvDouble(row.price) << ',' << row.timestamp_ns << ',' << row.signal_ts_ns << ','
             << CsvEscape(row.trading_day) << ',' << CsvEscape(row.action_day) << ','
@@ -113,15 +116,14 @@ bool WriteOrdersCsv(const BacktestCliResult& result, const std::filesystem::path
     const std::vector<OrderRecord> sorted_orders = SortOrdersForOutput(result.orders);
     for (const OrderRecord& row : sorted_orders) {
         out << row.order_seq << ',' << CsvEscape(row.order_id) << ','
-            << CsvEscape(row.client_order_id) << ','
-            << CsvEscape(row.symbol) << ',' << CsvEscape(row.type) << ',' << CsvEscape(row.side)
-            << ',' << CsvEscape(row.offset) << ',' << CsvDouble(row.price) << ',' << row.volume
-            << ',' << CsvEscape(row.status) << ',' << row.filled_volume << ','
-            << CsvDouble(row.avg_fill_price) << ',' << row.created_at_ns << ','
-            << CsvEscape(row.created_at_dt_utc) << ',' << row.last_update_ns << ','
-            << CsvEscape(row.last_update_dt_utc) << ',' << CsvEscape(row.trading_day) << ','
-            << CsvEscape(row.action_day) << ',' << CsvEscape(row.update_time) << ','
-            << CsvEscape(row.created_at_dt_local) << ','
+            << CsvEscape(row.client_order_id) << ',' << CsvEscape(row.symbol) << ','
+            << CsvEscape(row.type) << ',' << CsvEscape(row.side) << ',' << CsvEscape(row.offset)
+            << ',' << CsvDouble(row.price) << ',' << row.volume << ',' << CsvEscape(row.status)
+            << ',' << row.filled_volume << ',' << CsvDouble(row.avg_fill_price) << ','
+            << row.created_at_ns << ',' << CsvEscape(row.created_at_dt_utc) << ','
+            << row.last_update_ns << ',' << CsvEscape(row.last_update_dt_utc) << ','
+            << CsvEscape(row.trading_day) << ',' << CsvEscape(row.action_day) << ','
+            << CsvEscape(row.update_time) << ',' << CsvEscape(row.created_at_dt_local) << ','
             << CsvEscape(row.last_update_dt_local) << ',' << CsvEscape(row.strategy_id) << ','
             << CsvEscape(row.cancel_reason) << '\n';
     }
@@ -145,6 +147,59 @@ bool WritePositionCsv(const BacktestCliResult& result, const std::filesystem::pa
     return true;
 }
 
+std::string ProductIdForSymbol(const std::string& symbol) {
+    std::string product_id = ExtractProductIdFromInstrumentId(symbol);
+    return product_id.empty() ? std::string("unknown") : product_id;
+}
+
+bool WritePerVarietyCsv(const BacktestCliResult& result, const std::filesystem::path& base_dir,
+                        std::string* error) {
+    std::map<std::string, std::vector<TradeRecord>> trades_by_product;
+    std::map<std::string, std::vector<OrderRecord>> orders_by_product;
+    std::map<std::string, std::vector<PositionSnapshot>> positions_by_product;
+    std::set<std::string> products;
+
+    for (const TradeRecord& row : result.trades) {
+        const std::string product_id = ProductIdForSymbol(row.symbol);
+        trades_by_product[product_id].push_back(row);
+        products.insert(product_id);
+    }
+    for (const OrderRecord& row : result.orders) {
+        const std::string product_id = ProductIdForSymbol(row.symbol);
+        orders_by_product[product_id].push_back(row);
+        products.insert(product_id);
+    }
+    for (const PositionSnapshot& row : result.position_history) {
+        const std::string product_id = ProductIdForSymbol(row.symbol);
+        positions_by_product[product_id].push_back(row);
+        products.insert(product_id);
+    }
+
+    for (const std::string& product_id : products) {
+        const std::filesystem::path product_dir = base_dir / "varieties" / product_id / "backtest";
+        std::filesystem::create_directories(product_dir);
+
+        BacktestCliResult product_result = result;
+        product_result.trades = trades_by_product[product_id];
+        product_result.orders = orders_by_product[product_id];
+        product_result.position_history = positions_by_product[product_id];
+
+        if (result.spec.emit_trades &&
+            !WriteTradesCsv(product_result, product_dir / "trades.csv", error)) {
+            return false;
+        }
+        if (result.spec.emit_orders &&
+            !WriteOrdersCsv(product_result, product_dir / "orders.csv", error)) {
+            return false;
+        }
+        if (result.spec.emit_position_history &&
+            !WritePositionCsv(product_result, product_dir / "position_history.csv", error)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 bool ExportBacktestCsv(const BacktestCliResult& result, const std::string& out_dir,
@@ -159,16 +214,17 @@ bool ExportBacktestCsv(const BacktestCliResult& result, const std::string& out_d
         if (!WriteDailyCsv(result, base_dir / "daily_equity.csv", error)) {
             return false;
         }
-        if (result.spec.emit_trades &&
-            !WriteTradesCsv(result, base_dir / "trades.csv", error)) {
+        if (result.spec.emit_trades && !WriteTradesCsv(result, base_dir / "trades.csv", error)) {
             return false;
         }
-        if (result.spec.emit_orders &&
-            !WriteOrdersCsv(result, base_dir / "orders.csv", error)) {
+        if (result.spec.emit_orders && !WriteOrdersCsv(result, base_dir / "orders.csv", error)) {
             return false;
         }
         if (result.spec.emit_position_history &&
             !WritePositionCsv(result, base_dir / "position_history.csv", error)) {
+            return false;
+        }
+        if (result.spec.emit_per_variety_outputs && !WritePerVarietyCsv(result, base_dir, error)) {
             return false;
         }
     } catch (const std::exception& ex) {

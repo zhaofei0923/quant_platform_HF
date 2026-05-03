@@ -1,14 +1,11 @@
 # CONFIG DOC
-# Purpose: SimNow 联调/压测配置（由环境变量选择交易时段或 7x24）。
+# Purpose: SimNow multi-product run config for candidates in docs/ops/sim_trade_candidate_params.md.
 # Consumer: core_engine / simnow_compare_cli
-# Field dictionary: docs/ops/config_catalog.md (`configs/sim/ctp.yaml`)
-# Notes:
-#   1) strategy_factory=composite 时必须配置 strategy_composite_config。
-#   2) risk_rule_<group>_* 为分组风控模板字段，键名需与 risk_rule_groups 对齐。
+# Usage: ./build/core_engine --config configs/sim/ctp_sim_trade_candidates.yaml
 
 ctp:
   # --- identity & runtime mode ---
-  profile: "simnow_env_selected"
+  profile: "simnow_trade_candidates"
   environment: sim
   run_type: sim
   # 7x24 front(400xx) => false; trading-hours front(300xx) => true.
@@ -17,16 +14,11 @@ ctp:
   enable_terminal_auth: true
 
   # --- connection & auth ---
-  # Fronts are selected via environment variables.
-  # Trading-hours group1/2/3 are 30001/30011, 30002/30012, 30003/30013.
-  # 7x24 is 40001/40011.
   broker_id: "${CTP_SIM_BROKER_ID}"
   user_id: "${CTP_SIM_USER_ID}"
   investor_id: "${CTP_SIM_INVESTOR_ID}"
   market_front: "${CTP_SIM_MARKET_FRONT}"
   trader_front: "${CTP_SIM_TRADER_FRONT}"
-
-  # Credentials should be injected from environment in real usage.
   password_env: "CTP_SIM_PASSWORD"
   auth_code: "${CTP_SIM_AUTH_CODE}"
   app_id: "${CTP_SIM_APP_ID}"
@@ -37,7 +29,7 @@ ctp:
   order_insert_rate_per_sec: 50
   order_cancel_rate_per_sec: 50
   order_bucket_capacity: 20
-  cancel_bucket_capacity: 20
+  cancel_bucket_capacity: 5
   query_bucket_capacity: 5
   cancel_retry_max: 3
   cancel_retry_base_ms: 1000
@@ -66,14 +58,14 @@ ctp:
   market_data_recording_dir: "runtime/market_data/simnow"
   market_data_recording_run_id: ""
   market_data_recording_flush_each_write: true
-  market_data_recording_partition_by_product: false
+  market_data_recording_partition_by_product: true
   market_data_recording_write_global_copy: false
   audit_hot_days: 7
   audit_cold_days: 180
 
   # --- strategy/runtime pipeline ---
   instruments: ""
-  product_ids: "c"
+  product_ids: "c,rb,m,hc"
   active_contract_mode: "dominant_open_interest"   # static | dominant_open_interest
   dominant_contract_wait_ms: 5000
   dominant_contract_recheck_interval_ms: 60000
@@ -81,15 +73,14 @@ ctp:
   dominant_contract_min_lead_windows: 3
   dominant_contract_min_hold_ms: 900000
   dominant_contract_switch_mode: "flat_only"   # startup_only | dry_run | flat_only
-  strategy_ids: "kama_trend_production"
+  strategy_ids: "kama_candidate_c,kama_candidate_rb,kama_candidate_m,kama_candidate_hc"
   strategy_factory: "composite"
-  strategy_composite_config: "configs/strategies/main_backtest_production.yaml"
-  # Optional per-strategy overrides for multi-product runs:
-  # strategy_composite_config_map:
-  #   kama_trend_c: "configs/strategies/main_backtest_production_c.yaml"
-  #   kama_trend_rb: "configs/strategies/main_backtest_production_rb.yaml"
+  strategy_composite_config_map:
+    kama_candidate_c: "configs/strategies/main_sim_trade_candidate_c.yaml"
+    kama_candidate_rb: "configs/strategies/main_sim_trade_candidate_rb.yaml"
+    kama_candidate_m: "configs/strategies/main_sim_trade_candidate_m.yaml"
+    kama_candidate_hc: "configs/strategies/main_sim_trade_candidate_hc.yaml"
   strategy_queue_capacity: 8192
-  # Use the real SimNow investor/account context instead of a capped logical subaccount.
   account_id: "${CTP_SIM_INVESTOR_ID}"
 
   # --- execution params ---
@@ -100,7 +91,7 @@ ctp:
   twap_duration_ms: 0
   vwap_lookback_bars: 20
   throttle_reject_ratio: 0.0
-  cancel_after_ms: 0          # 0 disables timeout-based cancel
+  cancel_after_ms: 0
   cancel_check_interval_ms: 200
 
   # --- default risk policy ---
@@ -108,7 +99,6 @@ ctp:
   risk_default_max_order_notional: 1000000
   risk_default_max_active_orders: 0
   risk_default_max_position_notional: 0
-  # Disabled for live SimNow simulation: use the broker/account ledger returned by CTP.
   risk_sim_subaccount_enabled: false
   risk_sim_subaccount_id: ""
   risk_sim_subaccount_initial_equity: 0
@@ -122,7 +112,6 @@ ctp:
   risk_default_decision_tags: "default-risk"
 
   # --- custom risk rule groups ---
-  # Dominant-contract mode should not bind risk rules to a fixed instrument id.
   risk_rule_groups: ""
 
   # --- reconnect ---

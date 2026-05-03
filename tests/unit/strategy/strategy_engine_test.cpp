@@ -1,6 +1,6 @@
-#include "quant_hft/strategy/live_strategy.h"
 #include "quant_hft/strategy/strategy_engine.h"
-#include "quant_hft/strategy/strategy_registry.h"
+
+#include <gtest/gtest.h>
 
 #include <algorithm>
 #include <atomic>
@@ -14,7 +14,8 @@
 #include <unordered_map>
 #include <vector>
 
-#include <gtest/gtest.h>
+#include "quant_hft/strategy/live_strategy.h"
+#include "quant_hft/strategy/strategy_registry.h"
 
 namespace quant_hft {
 namespace {
@@ -22,6 +23,7 @@ namespace {
 struct Probe {
     std::mutex mutex;
     std::vector<std::string> initialized_strategy_ids;
+    std::vector<std::string> initialized_composite_paths;
     std::vector<EpochNanos> observed_state_ts;
     std::vector<std::string> observed_order_events;
     std::vector<std::string> observed_account_snapshots;
@@ -78,12 +80,15 @@ bool ContainsEvent(const std::vector<std::string>& events, const std::string& ne
 }
 
 class RecordingStrategy final : public ILiveStrategy {
-public:
+   public:
     void Initialize(const StrategyContext& ctx) override {
         strategy_id_ = ctx.strategy_id;
         if (g_probe != nullptr) {
             std::lock_guard<std::mutex> lock(g_probe->mutex);
             g_probe->initialized_strategy_ids.push_back(strategy_id_);
+            const auto config_it = ctx.metadata.find("composite_config_path");
+            g_probe->initialized_composite_paths.push_back(
+                config_it == ctx.metadata.end() ? std::string() : config_it->second);
         }
     }
 
@@ -146,7 +151,8 @@ public:
     }
 
     std::vector<StrategyMetric> CollectMetrics() const override {
-        return {StrategyMetric{"strategy_engine_test_metric", loaded_from_state_ ? 1.0 : 0.0,
+        return {StrategyMetric{"strategy_engine_test_metric",
+                               loaded_from_state_ ? 1.0 : 0.0,
                                {{"strategy_id", strategy_id_}}}};
     }
 
@@ -168,13 +174,13 @@ public:
 
     void Shutdown() override {}
 
-private:
+   private:
     std::string strategy_id_;
     bool loaded_from_state_{false};
 };
 
 class TestStatePersistence final : public IStrategyStatePersistence {
-public:
+   public:
     bool SaveStrategyState(const std::string& account_id, const std::string& strategy_id,
                            const StrategyState& state, std::string* error) override {
         (void)error;
@@ -220,7 +226,7 @@ public:
         return load_calls_;
     }
 
-private:
+   private:
     mutable std::mutex mutex_;
     mutable std::uint64_t load_calls_{0};
     std::uint64_t save_calls_{0};
@@ -235,9 +241,7 @@ TEST(StrategyEngineTest, DispatchesStateAndOrderEventsToAllStrategies) {
     std::string error;
     const auto factory_name = UniqueFactoryName();
     ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
-        factory_name,
-        []() { return std::make_unique<RecordingStrategy>(); },
-        &error))
+        factory_name, []() { return std::make_unique<RecordingStrategy>(); }, &error))
         << error;
 
     std::mutex sink_mutex;
@@ -296,6 +300,44 @@ TEST(StrategyEngineTest, DispatchesStateAndOrderEventsToAllStrategies) {
     EXPECT_EQ(stats.unmatched_order_events, 0U);
 }
 
+TEST(StrategyEngineTest, StartsLaunchSpecsWithPerStrategyMetadata) {
+    Probe probe;
+    g_probe = &probe;
+    ResetThrowingBehavior();
+
+    std::string error;
+    const auto factory_name = UniqueFactoryName();
+    ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
+        factory_name, []() { return std::make_unique<RecordingStrategy>(); }, &error))
+        << error;
+
+    StrategyEngineConfig cfg;
+    cfg.queue_capacity = 64;
+    cfg.timer_interval_ns = 1000 * 1000 * 1000;
+    StrategyEngine engine(cfg, nullptr);
+
+    StrategyContext c_context;
+    c_context.metadata["composite_config_path"] = "configs/c.yaml";
+    StrategyContext rb_context;
+    rb_context.metadata["composite_config_path"] = "configs/rb.yaml";
+
+    std::vector<StrategyEngine::StrategyLaunchSpec> specs = {
+        StrategyEngine::StrategyLaunchSpec{"c_alpha", factory_name, c_context},
+        StrategyEngine::StrategyLaunchSpec{"rb_alpha", factory_name, rb_context},
+    };
+    ASSERT_TRUE(engine.Start(specs, &error)) << error;
+    engine.Stop();
+    g_probe = nullptr;
+
+    std::lock_guard<std::mutex> lock(probe.mutex);
+    ASSERT_EQ(probe.initialized_strategy_ids.size(), 2U);
+    EXPECT_TRUE(ContainsEvent(probe.initialized_strategy_ids, "c_alpha"));
+    EXPECT_TRUE(ContainsEvent(probe.initialized_strategy_ids, "rb_alpha"));
+    ASSERT_EQ(probe.initialized_composite_paths.size(), 2U);
+    EXPECT_TRUE(ContainsEvent(probe.initialized_composite_paths, "configs/c.yaml"));
+    EXPECT_TRUE(ContainsEvent(probe.initialized_composite_paths, "configs/rb.yaml"));
+}
+
 TEST(StrategyEngineTest, RoutesOrderEventByStrategyId) {
     Probe probe;
     g_probe = &probe;
@@ -304,9 +346,7 @@ TEST(StrategyEngineTest, RoutesOrderEventByStrategyId) {
     std::string error;
     const auto factory_name = UniqueFactoryName();
     ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
-        factory_name,
-        []() { return std::make_unique<RecordingStrategy>(); },
-        &error))
+        factory_name, []() { return std::make_unique<RecordingStrategy>(); }, &error))
         << error;
 
     StrategyEngineConfig cfg;
@@ -349,9 +389,7 @@ TEST(StrategyEngineTest, CountsUnmatchedOrderEvents) {
     std::string error;
     const auto factory_name = UniqueFactoryName();
     ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
-        factory_name,
-        []() { return std::make_unique<RecordingStrategy>(); },
-        &error))
+        factory_name, []() { return std::make_unique<RecordingStrategy>(); }, &error))
         << error;
 
     StrategyEngineConfig cfg;
@@ -390,9 +428,7 @@ TEST(StrategyEngineTest, IsolatesStrategyExceptionsInOrderDispatch) {
     std::string error;
     const auto factory_name = UniqueFactoryName();
     ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
-        factory_name,
-        []() { return std::make_unique<RecordingStrategy>(); },
-        &error))
+        factory_name, []() { return std::make_unique<RecordingStrategy>(); }, &error))
         << error;
 
     {
@@ -435,9 +471,7 @@ TEST(StrategyEngineTest, TriggersTimerCallbacks) {
     std::string error;
     const auto factory_name = UniqueFactoryName();
     ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
-        factory_name,
-        []() { return std::make_unique<RecordingStrategy>(); },
-        &error))
+        factory_name, []() { return std::make_unique<RecordingStrategy>(); }, &error))
         << error;
 
     StrategyEngineConfig cfg;
@@ -470,9 +504,7 @@ TEST(StrategyEngineTest, DispatchesAccountSnapshotsToAllStrategies) {
     std::string error;
     const auto factory_name = UniqueFactoryName();
     ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
-        factory_name,
-        []() { return std::make_unique<RecordingStrategy>(); },
-        &error))
+        factory_name, []() { return std::make_unique<RecordingStrategy>(); }, &error))
         << error;
 
     StrategyEngineConfig cfg;
@@ -510,9 +542,7 @@ TEST(StrategyEngineTest, CollectAllMetricsReturnsCachedMetrics) {
     std::string error;
     const auto factory_name = UniqueFactoryName();
     ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
-        factory_name,
-        []() { return std::make_unique<RecordingStrategy>(); },
-        &error))
+        factory_name, []() { return std::make_unique<RecordingStrategy>(); }, &error))
         << error;
 
     StrategyEngineConfig cfg;
@@ -547,9 +577,7 @@ TEST(StrategyEngineTest, LoadsAndSnapshotsStateWithPersistenceHook) {
     std::string error;
     const auto factory_name = UniqueFactoryName();
     ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
-        factory_name,
-        []() { return std::make_unique<RecordingStrategy>(); },
-        &error))
+        factory_name, []() { return std::make_unique<RecordingStrategy>(); }, &error))
         << error;
 
     auto persistence = std::make_shared<TestStatePersistence>();
@@ -592,9 +620,7 @@ TEST(StrategyEngineTest, DropsOldestEventsWhenQueueIsFull) {
     std::string error;
     const auto factory_name = UniqueFactoryName();
     ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
-        factory_name,
-        []() { return std::make_unique<RecordingStrategy>(); },
-        &error))
+        factory_name, []() { return std::make_unique<RecordingStrategy>(); }, &error))
         << error;
 
     std::mutex sink_mutex;

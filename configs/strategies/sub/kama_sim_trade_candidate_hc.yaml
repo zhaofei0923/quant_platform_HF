@@ -1,0 +1,25 @@
+# CONFIG DOC
+# Purpose: KAMA simulation trade candidate params for hc from docs/ops/sim_trade_candidate_params.md.
+
+params:
+  id: kama_candidate_hc
+  er_period: 10
+  fast_period: 2
+  slow_period: 30
+  std_period: 10
+  kama_filter: 0.2
+  allowed_regimes: [kStrongTrend, kWeakTrend]
+  risk_per_trade_pct: 0.005
+  daily_max_loss_R: 3
+  max_consecutive_losses: 3
+  default_volume: 1
+  allow_reverse_open: false
+  forbid_open_windows: "21:00-23:00,09:00-09:30"
+  force_close_windows: ""
+  window_timezone: Asia/Shanghai
+  stop_loss_mode: trailing_atr
+  stop_loss_atr_period: 14
+  stop_loss_atr_multiplier: 6.0
+  take_profit_mode: atr_target
+  take_profit_atr_period: 14
+  take_profit_atr_multiplier: 30.0

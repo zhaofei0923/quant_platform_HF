@@ -27,8 +27,8 @@ parameter_optim -> rolling_optimize -> OOS TopN -> final_recommended_params -> f
 
 - 单次参数优化配置：`configs/ops/parameter_optim.yaml`
 - rolling optimize 配置：`configs/ops/rolling_optimize_kama.yaml`
-- 固定参数 rolling 验证配置：`configs/ops/rolling_backtest.yaml`
-- 回测验证脚本配置：`configs/ops/backtest_run.yaml`
+- 固定参数 rolling 验证配置：`configs/backtest/rolling_backtest.yaml`
+- 回测验证脚本配置：`configs/backtest/backtest_run.yaml`
 - TopN 样本外验证 CLI：`build-gcc/oos_top10_validation_cli` 或 `build/oos_top10_validation_cli`
 
 ## 环境准备
@@ -191,10 +191,7 @@ optimization:
     - "profit_factor > 1.1"
 ```
 
-当前仓库可参考：
-
-- `configs/ops/parameter_optim_constraints_rolling_acceptance.yaml`
-- `configs/ops/rolling_optimize_constraints_acceptance.yaml`
+当前仓库不再保留专用约束 acceptance YAML。需要验证约束 DSL 时，从 `configs/ops/parameter_optim.yaml` 或 `configs/ops/rolling_optimize_kama.yaml` 复制运行配置，并在参数空间配置里加入 `optimization.constraints`。
 
 使用建议：
 
@@ -223,11 +220,7 @@ parameters:
     step: 0.1
 ```
 
-当前仓库可直接参考：
-
-- `configs/ops/parameter_optim_random_rolling_acceptance.yaml`
-- `configs/ops/rolling_optimize_random_acceptance.yaml`
-- `configs/ops/rolling_optimize_random_acceptance_replay.yaml`
+当前仓库不再保留专用随机搜索 acceptance YAML。需要复现随机搜索时，从 `configs/ops/parameter_optim.yaml` 或 `configs/ops/rolling_optimize_kama.yaml` 复制运行配置，并设置 `optimization.algorithm=random` 与固定 `random_seed`。
 
 使用建议：
 
@@ -373,17 +366,17 @@ composite:
 
 ### 1. 固定参数 rolling testing
 
-先在多窗口上验证这个推荐参数是否持续可用。当前标准配置是 `configs/ops/rolling_backtest.yaml`，模式为 `fixed_params`。
+先在多窗口上验证这个推荐参数是否持续可用。当前标准配置是 `configs/backtest/rolling_backtest.yaml`，模式为 `fixed_params`。
 
 建议复制一份 rolling 配置，例如 `rolling_backtest_candidate.yaml`，把其中的 `backtest_base.strategy_composite_config` 指向你的验证专用主策略配置，然后执行：
 
 ```bash
 scripts/build/run_rolling_backtest.sh \
   --build-dir build-gcc \
-  --config configs/ops/rolling_backtest_candidate.yaml
+  --config configs/backtest/rolling_backtest_candidate.yaml
 ```
 
-如果你是直接在 `configs/ops/rolling_backtest.yaml` 上修改，也可以把命令中的配置路径替换回原文件。运行后重点看：
+如果你是直接在 `configs/backtest/rolling_backtest.yaml` 上修改，也可以把命令中的配置路径替换回原文件。运行后重点看：
 
 - 各窗口 success 是否连续稳定
 - test window 的目标函数是否明显退化
@@ -394,18 +387,18 @@ scripts/build/run_rolling_backtest.sh \
 
 rolling 结果稳定后，再做一次正式回测与检测报告，确认该参数组合在完整运行链路中没有异常输出、无效报表或明显结构性风险。
 
-建议复制 `configs/ops/backtest_run.yaml` 为验证专用版本，并把 `strategy_main_config_path` 指向你带有参数覆盖的主策略配置，然后执行：
+建议复制 `configs/backtest/backtest_run.yaml` 为验证专用版本，并把 `strategy_main_config_path` 指向你带有参数覆盖的主策略配置，然后执行：
 
 ```bash
 bash scripts/build/run_backtest_with_validation.sh \
-  --config configs/ops/backtest_run_candidate.yaml
+  --config configs/backtest/backtest_run_candidate.yaml
 ```
 
 如果只是快速试跑，也可以加 `--fast`：
 
 ```bash
 bash scripts/build/run_backtest_with_validation.sh \
-  --config configs/ops/backtest_run_candidate.yaml \
+  --config configs/backtest/backtest_run_candidate.yaml \
   --fast \
   --fast-start-date 20240101 \
   --fast-end-date 20240331 \
@@ -477,10 +470,8 @@ output:
 
 - 单次寻优配置：`configs/ops/parameter_optim.yaml`
 - rolling optimize 配置：`configs/ops/rolling_optimize_kama.yaml`
-- 固定参数 rolling 配置：`configs/ops/rolling_backtest.yaml`
-- 回测验证配置：`configs/ops/backtest_run.yaml`
-- 约束示例：`configs/ops/parameter_optim_constraints_rolling_acceptance.yaml`
-- 随机搜索示例：`configs/ops/parameter_optim_random_rolling_acceptance.yaml`
+- 固定参数 rolling 配置：`configs/backtest/rolling_backtest.yaml`
+- 回测验证配置：`configs/backtest/backtest_run.yaml`
 - 已有验收文档：
   - `docs/results/opts/rolling_optimize_step2_1_acceptance.md`
   - `docs/results/opts/rolling_optimize_step2_2_acceptance.md`
@@ -492,6 +483,6 @@ output:
 1. `configs/ops/parameter_optim.yaml`
 2. `configs/ops/rolling_optimize_kama.yaml`
 3. `configs/strategies/main_backtest_strategy.yaml`
-4. `configs/ops/backtest_run.yaml`
+4. `configs/backtest/backtest_run.yaml`
 
 把这四类文件理解透，再结合 TopN OOS 和 overrides 覆盖参数，整条“找最优参数到验证稳定性”的链路就能稳定跑通。

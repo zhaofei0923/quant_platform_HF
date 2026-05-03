@@ -82,5 +82,59 @@ TEST(MarketDataCsvRecorderTest, WritesTickAndBarCsvFiles) {
     std::filesystem::remove_all(root);
 }
 
+TEST(MarketDataCsvRecorderTest, WritesPartitionedTickAndBarCsvFilesByProduct) {
+    const auto token = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto root =
+        std::filesystem::temp_directory_path() / ("quant_hft_market_data_partitioned_" + token);
+
+    MarketDataRecordingConfig config;
+    config.enabled = true;
+    config.output_dir = root.string();
+    config.run_id = "unit-run";
+    config.flush_each_write = true;
+    config.partition_by_product = true;
+
+    MarketDataCsvRecorder recorder;
+    std::string error;
+    ASSERT_TRUE(recorder.Open(config, &error)) << error;
+
+    MarketSnapshot tick;
+    tick.instrument_id = "SHFE.rb2405";
+    tick.exchange_id = "SHFE";
+    tick.trading_day = "20260429";
+    tick.action_day = "20260429";
+    tick.update_time = "09:30:01";
+    tick.last_price = 3500.0;
+    ASSERT_TRUE(recorder.AppendTick(tick, &error)) << error;
+
+    BarSnapshot bar;
+    bar.instrument_id = "SHFE.rb2405";
+    bar.exchange_id = "SHFE";
+    bar.trading_day = "20260429";
+    bar.action_day = "20260429";
+    bar.minute = "20260429 09:30";
+    bar.open = 3500.0;
+    bar.high = 3501.0;
+    bar.low = 3499.0;
+    bar.close = 3500.5;
+    bar.analysis_open = bar.open;
+    bar.analysis_high = bar.high;
+    bar.analysis_low = bar.low;
+    bar.analysis_close = bar.close;
+    ASSERT_TRUE(recorder.AppendBar(bar, &error)) << error;
+    ASSERT_TRUE(recorder.Close(&error)) << error;
+
+    EXPECT_FALSE(std::filesystem::exists(root / "unit-run" / "ticks.csv"));
+    EXPECT_FALSE(std::filesystem::exists(root / "unit-run" / "bars_1m.csv"));
+    const auto tick_text =
+        ReadTextFile(root / "unit-run" / "varieties" / "rb" / "market" / "ticks.csv");
+    const auto bar_text =
+        ReadTextFile(root / "unit-run" / "varieties" / "rb" / "market" / "bars_1m.csv");
+    EXPECT_NE(tick_text.find("SHFE.rb2405,SHFE,20260429"), std::string::npos);
+    EXPECT_NE(bar_text.find("SHFE.rb2405,SHFE,20260429"), std::string::npos);
+
+    std::filesystem::remove_all(root);
+}
+
 }  // namespace
 }  // namespace quant_hft

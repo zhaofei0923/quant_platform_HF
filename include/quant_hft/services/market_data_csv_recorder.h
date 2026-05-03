@@ -2,8 +2,10 @@
 
 #include <cstdint>
 #include <fstream>
+#include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 
 #include "quant_hft/core/ctp_config.h"
 #include "quant_hft/services/bar_aggregator.h"
@@ -32,6 +34,15 @@ class MarketDataCsvRecorder {
     const std::string& output_dir() const noexcept { return output_dir_; }
 
    private:
+    struct ProductStreams {
+        std::string tick_path;
+        std::string bar_path;
+        std::ofstream tick_out;
+        std::ofstream bar_out;
+    };
+
+    ProductStreams* EnsureProductStreams(const std::string& instrument_id, std::string* error);
+
     bool is_open_{false};
     std::int64_t ticks_written_{0};
     std::int64_t bars_written_{0};
@@ -42,6 +53,7 @@ class MarketDataCsvRecorder {
     mutable std::mutex mutex_;
     std::ofstream tick_out_;
     std::ofstream bar_out_;
+    std::unordered_map<std::string, std::unique_ptr<ProductStreams>> product_streams_;
 };
 
 }  // namespace quant_hft

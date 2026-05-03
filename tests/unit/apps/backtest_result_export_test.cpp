@@ -1,5 +1,3 @@
-#include "quant_hft/apps/backtest_replay_support.h"
-
 #include <gtest/gtest.h>
 
 #include <chrono>
@@ -8,6 +6,8 @@
 #include <string>
 #include <system_error>
 #include <vector>
+
+#include "quant_hft/apps/backtest_replay_support.h"
 
 namespace quant_hft::apps {
 namespace {
@@ -133,13 +133,9 @@ TEST(BacktestResultExportTest, TradesCsvSortsByTradingDaySessionAndTimestamp) {
     BacktestCliResult result;
     result.spec.emit_trades = true;
     result.trades = {
-        MakeTrade(1,
-                  "trade-day",
-                  detail::ToEpochNs("20240110", "09:44:11", 0),
+        MakeTrade(1, "trade-day", detail::ToEpochNs("20240110", "09:44:11", 0),
                   "2024-01-10 09:44:11"),
-        MakeTrade(2,
-                  "trade-night",
-                  detail::ToEpochNs("20240110", "22:51:06", 0),
+        MakeTrade(2, "trade-night", detail::ToEpochNs("20240110", "22:51:06", 0),
                   "2024-01-09 22:51:06"),
     };
     result.trades[0].signal_ts_ns = result.trades[0].timestamp_ns;
@@ -196,6 +192,65 @@ TEST(BacktestResultExportTest, TradesCsvAppendsRiskBudgetAsLastColumn) {
     const std::string csv_text = ReadFileText(out_dir / "trades.csv");
     EXPECT_NE(csv_text.find("regime_at_entry,risk_budget_r\n"), std::string::npos);
     EXPECT_NE(csv_text.find(",kUnknown,123.45\n"), std::string::npos);
+
+    std::error_code ec;
+    std::filesystem::remove_all(out_dir, ec);
+}
+
+TEST(BacktestResultExportTest, WritesPerVarietyCsvOutputsWhenEnabled) {
+    BacktestCliResult result;
+    result.spec.emit_trades = true;
+    result.spec.emit_orders = true;
+    result.spec.emit_position_history = true;
+    result.spec.emit_per_variety_outputs = true;
+
+    TradeRecord rb_trade = MakeTrade(1, "rb-trade", 100, "2024-01-03 14:55:00");
+    rb_trade.symbol = "SHFE.rb2405";
+    TradeRecord m_trade = MakeTrade(2, "m-trade", 200, "2024-01-03 14:56:00");
+    m_trade.symbol = "DCE.m2405";
+    result.trades = {rb_trade, m_trade};
+
+    OrderRecord rb_order = MakeOrder(1, "rb-order", 100, 100);
+    rb_order.symbol = "SHFE.rb2405";
+    OrderRecord m_order = MakeOrder(2, "m-order", 200, 200);
+    m_order.symbol = "DCE.m2405";
+    result.orders = {rb_order, m_order};
+
+    PositionSnapshot rb_position;
+    rb_position.timestamp_ns = 100;
+    rb_position.symbol = "SHFE.rb2405";
+    rb_position.net_position = 1;
+    PositionSnapshot m_position;
+    m_position.timestamp_ns = 200;
+    m_position.symbol = "DCE.m2405";
+    m_position.net_position = 2;
+    result.position_history = {rb_position, m_position};
+
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const std::filesystem::path out_dir =
+        std::filesystem::temp_directory_path() /
+        ("quant_hft_backtest_export_per_variety_test_" + std::to_string(stamp));
+
+    std::string error;
+    ASSERT_TRUE(ExportBacktestCsv(result, out_dir.string(), &error)) << error;
+
+    const std::string rb_trades =
+        ReadFileText(out_dir / "varieties" / "rb" / "backtest" / "trades.csv");
+    const std::string m_trades =
+        ReadFileText(out_dir / "varieties" / "m" / "backtest" / "trades.csv");
+    EXPECT_NE(rb_trades.find("rb-trade"), std::string::npos);
+    EXPECT_EQ(rb_trades.find("m-trade"), std::string::npos);
+    EXPECT_NE(m_trades.find("m-trade"), std::string::npos);
+    EXPECT_EQ(m_trades.find("rb-trade"), std::string::npos);
+
+    const std::string rb_orders =
+        ReadFileText(out_dir / "varieties" / "rb" / "backtest" / "orders.csv");
+    const std::string m_positions =
+        ReadFileText(out_dir / "varieties" / "m" / "backtest" / "position_history.csv");
+    EXPECT_NE(rb_orders.find("rb-order"), std::string::npos);
+    EXPECT_EQ(rb_orders.find("m-order"), std::string::npos);
+    EXPECT_NE(m_positions.find("DCE.m2405"), std::string::npos);
+    EXPECT_EQ(m_positions.find("SHFE.rb2405"), std::string::npos);
 
     std::error_code ec;
     std::filesystem::remove_all(out_dir, ec);

@@ -260,7 +260,8 @@ TEST(RunBacktestFromConfigScriptTest, SkipBuildPassesThroughOptionalArgs) {
                                "max_ticks: 123\n"
                                "start_date: 20240101\n"
                                "end_date: 20240131\n"
-                               "emit_position_history: true\n");
+                               "emit_position_history: true\n"
+                               "emit_per_variety_outputs: true\n");
 
     const std::string command = "bash scripts/build/run_backtest_from_config.sh --config '" +
                                 EscapePathForShell(config_path) + "' --skip-build";
@@ -287,6 +288,8 @@ TEST(RunBacktestFromConfigScriptTest, SkipBuildPassesThroughOptionalArgs) {
     EXPECT_EQ(*FindArgValue(args, "--end_date"), "20240131");
     ASSERT_NE(FindArgValue(args, "--emit_position_history"), nullptr);
     EXPECT_EQ(*FindArgValue(args, "--emit_position_history"), "true");
+    ASSERT_NE(FindArgValue(args, "--emit_per_variety_outputs"), nullptr);
+    EXPECT_EQ(*FindArgValue(args, "--emit_per_variety_outputs"), "true");
 
     const std::filesystem::path output_json_path(*FindArgValue(args, "--output_json"));
     const std::filesystem::path output_md_path(*FindArgValue(args, "--output_md"));
@@ -302,6 +305,191 @@ TEST(RunBacktestFromConfigScriptTest, SkipBuildPassesThroughOptionalArgs) {
 
     const std::regex run_dir_pattern("^passthrough-run_[0-9]{8}T[0-9]{6}Z$");
     EXPECT_TRUE(std::regex_match(run_dir.filename().string(), run_dir_pattern));
+}
+
+TEST(RunBacktestFromConfigScriptTest, SkipBuildPassesMultiStrategyMainConfigPaths) {
+    const auto root = MakeTempDir("multi_strategy_passthrough");
+    const auto build_dir = root / "build-gcc";
+    const auto dataset_root = root / "parquet_v2";
+    const auto c_strategy_main = root / "main_sim_trade_candidate_c.yaml";
+    const auto rb_strategy_main = root / "main_sim_trade_candidate_rb.yaml";
+    const auto config_path = root / "backtest_run_multi.yaml";
+    const auto args_log = root / "captured_args.txt";
+    const auto output_root_dir = root / "backtest_runs";
+    const auto fake_cli = build_dir / "backtest_cli";
+
+    std::filesystem::create_directories(build_dir);
+    std::filesystem::create_directories(dataset_root);
+    WriteFile(c_strategy_main, "run_type: backtest\n");
+    WriteFile(rb_strategy_main, "run_type: backtest\n");
+
+    WriteFile(fake_cli,
+              "#!/usr/bin/env bash\n"
+              "set -euo pipefail\n"
+              "args_file='" +
+                  args_log.string() +
+                  "'\n"
+                  ": >\"${args_file}\"\n"
+                  "for arg in \"$@\"; do\n"
+                  "  printf '%s\\n' \"${arg}\" >>\"${args_file}\"\n"
+                  "done\n");
+    std::filesystem::permissions(
+        fake_cli,
+        std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec |
+            std::filesystem::perms::others_exec | std::filesystem::perms::owner_read |
+            std::filesystem::perms::group_read | std::filesystem::perms::others_read |
+            std::filesystem::perms::owner_write,
+        std::filesystem::perm_options::replace);
+
+    const std::string multi_paths = c_strategy_main.string() + "," + rb_strategy_main.string();
+    WriteFile(config_path, "build_dir: " + build_dir.string() +
+                               "\n"
+                               "engine_mode: parquet\n"
+                               "dataset_root: " +
+                               dataset_root.string() +
+                               "\n"
+                               "strategy_main_config_paths: " +
+                               multi_paths +
+                               "\n"
+                               "strategy_ids: candidate_c,candidate_rb\n"
+                               "output_root_dir: " +
+                               output_root_dir.string() +
+                               "\n"
+                               "timestamp_timezone: utc\n"
+                               "output_json: result.json\n"
+                               "output_md: result.md\n"
+                               "run_id: multi-strategy\n");
+
+    const std::string command = "bash scripts/build/run_backtest_from_config.sh --config '" +
+                                EscapePathForShell(config_path) + "' --skip-build";
+    const int rc = RunCommand(command);
+    EXPECT_EQ(rc, 0);
+
+    const std::vector<std::string> args = ReadLines(args_log);
+    EXPECT_EQ(FindArgValue(args, "--strategy_main_config_path"), nullptr);
+    ASSERT_NE(FindArgValue(args, "--strategy_main_config_paths"), nullptr);
+    EXPECT_EQ(*FindArgValue(args, "--strategy_main_config_paths"), multi_paths);
+    ASSERT_NE(FindArgValue(args, "--strategy_ids"), nullptr);
+    EXPECT_EQ(*FindArgValue(args, "--strategy_ids"), "candidate_c,candidate_rb");
+}
+
+TEST(RunBacktestFromConfigScriptTest, SkipBuildExpandsProductIdsIntoStrategyConfigs) {
+    const auto root = MakeTempDir("product_ids_passthrough");
+    const auto build_dir = root / "build-gcc";
+    const auto dataset_root = root / "parquet_v2";
+    const auto c_strategy_main = root / "main_sim_trade_candidate_c.yaml";
+    const auto rb_strategy_main = root / "main_sim_trade_candidate_rb.yaml";
+    const auto config_path = root / "backtest_run_product_ids.yaml";
+    const auto args_log = root / "captured_args.txt";
+    const auto fake_cli = build_dir / "backtest_cli";
+
+    std::filesystem::create_directories(build_dir);
+    std::filesystem::create_directories(dataset_root);
+    WriteFile(c_strategy_main, "run_type: backtest\n");
+    WriteFile(rb_strategy_main, "run_type: backtest\n");
+
+    WriteFile(fake_cli,
+              "#!/usr/bin/env bash\n"
+              "set -euo pipefail\n"
+              "args_file='" +
+                  args_log.string() +
+                  "'\n"
+                  ": >\"${args_file}\"\n"
+                  "for arg in \"$@\"; do\n"
+                  "  printf '%s\\n' \"${arg}\" >>\"${args_file}\"\n"
+                  "done\n");
+    std::filesystem::permissions(
+        fake_cli,
+        std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec |
+            std::filesystem::perms::others_exec | std::filesystem::perms::owner_read |
+            std::filesystem::perms::group_read | std::filesystem::perms::others_read |
+            std::filesystem::perms::owner_write,
+        std::filesystem::perm_options::replace);
+
+    WriteFile(config_path, "build_dir: " + build_dir.string() +
+                               "\n"
+                               "engine_mode: parquet\n"
+                               "dataset_root: " +
+                               dataset_root.string() +
+                               "\n"
+                               "product_ids: c,rb\n"
+                               "strategy_main_config_template: " +
+                               (root / "main_sim_trade_candidate_{product}.yaml").string() +
+                               "\n"
+                               "strategy_id_template: candidate_{product}\n"
+                               "output_json: result.json\n"
+                               "output_md: result.md\n");
+
+    const std::string command = "bash scripts/build/run_backtest_from_config.sh --config '" +
+                                EscapePathForShell(config_path) + "' --skip-build";
+    const int rc = RunCommand(command);
+    EXPECT_EQ(rc, 0);
+
+    const std::string expected_paths = c_strategy_main.string() + "," + rb_strategy_main.string();
+    const std::vector<std::string> args = ReadLines(args_log);
+    EXPECT_EQ(FindArgValue(args, "--strategy_main_config_path"), nullptr);
+    ASSERT_NE(FindArgValue(args, "--strategy_main_config_paths"), nullptr);
+    EXPECT_EQ(*FindArgValue(args, "--strategy_main_config_paths"), expected_paths);
+    ASSERT_NE(FindArgValue(args, "--strategy_ids"), nullptr);
+    EXPECT_EQ(*FindArgValue(args, "--strategy_ids"), "candidate_c,candidate_rb");
+}
+
+TEST(RunBacktestFromConfigScriptTest, SkipBuildExpandsSingleProductIdIntoStrategyConfig) {
+    const auto root = MakeTempDir("single_product_id_passthrough");
+    const auto build_dir = root / "build-gcc";
+    const auto dataset_root = root / "parquet_v2";
+    const auto hc_strategy_main = root / "main_sim_trade_candidate_hc.yaml";
+    const auto config_path = root / "backtest_run_product_id.yaml";
+    const auto args_log = root / "captured_args.txt";
+    const auto fake_cli = build_dir / "backtest_cli";
+
+    std::filesystem::create_directories(build_dir);
+    std::filesystem::create_directories(dataset_root);
+    WriteFile(hc_strategy_main, "run_type: backtest\n");
+
+    WriteFile(fake_cli,
+              "#!/usr/bin/env bash\n"
+              "set -euo pipefail\n"
+              "args_file='" +
+                  args_log.string() +
+                  "'\n"
+                  ": >\"${args_file}\"\n"
+                  "for arg in \"$@\"; do\n"
+                  "  printf '%s\\n' \"${arg}\" >>\"${args_file}\"\n"
+                  "done\n");
+    std::filesystem::permissions(
+        fake_cli,
+        std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec |
+            std::filesystem::perms::others_exec | std::filesystem::perms::owner_read |
+            std::filesystem::perms::group_read | std::filesystem::perms::others_read |
+            std::filesystem::perms::owner_write,
+        std::filesystem::perm_options::replace);
+
+    WriteFile(config_path, "build_dir: " + build_dir.string() +
+                               "\n"
+                               "engine_mode: parquet\n"
+                               "dataset_root: " +
+                               dataset_root.string() +
+                               "\n"
+                               "product_ids: hc\n"
+                               "strategy_main_config_template: " +
+                               (root / "main_sim_trade_candidate_{product}.yaml").string() +
+                               "\n"
+                               "strategy_id_template: candidate_{product}\n"
+                               "output_json: result.json\n"
+                               "output_md: result.md\n");
+
+    const std::string command = "bash scripts/build/run_backtest_from_config.sh --config '" +
+                                EscapePathForShell(config_path) + "' --skip-build";
+    const int rc = RunCommand(command);
+    EXPECT_EQ(rc, 0);
+
+    const std::vector<std::string> args = ReadLines(args_log);
+    EXPECT_EQ(FindArgValue(args, "--strategy_main_config_path"), nullptr);
+    ASSERT_NE(FindArgValue(args, "--strategy_main_config_paths"), nullptr);
+    EXPECT_EQ(*FindArgValue(args, "--strategy_main_config_paths"), hc_strategy_main.string());
+    ASSERT_NE(FindArgValue(args, "--strategy_ids"), nullptr);
+    EXPECT_EQ(*FindArgValue(args, "--strategy_ids"), "candidate_hc");
 }
 
 TEST(RunBacktestFromConfigScriptTest, SkipBuildRoutesAllArtifactsIntoSingleRunDir) {
@@ -789,32 +977,31 @@ TEST(RunBacktestFromConfigScriptTest, SkipBuildInvokesFormalAnalysisWhenEnabled)
             std::filesystem::perms::owner_write,
         std::filesystem::perm_options::replace);
 
-    WriteFile(config_path,
-              "build_dir: " + build_dir.string() +
-                  "\n"
-                  "engine_mode: parquet\n"
-                  "dataset_root: " +
-                  dataset_root.string() +
-                  "\n"
-                  "strategy_main_config_path: " +
-                  strategy_main.string() +
-                  "\n"
-                  "output_root_dir: " +
-                  output_root_dir.string() +
-                  "\n"
-                  "timestamp_timezone: utc\n"
-                  "output_json: result.json\n"
-                  "output_md: result.md\n"
-                  "run_id: formal-report-run\n"
-                  "emit_formal_analysis_report: true\n"
-                  "formal_analysis_report_path: formal_report.md\n"
-                  "formal_analysis_report_date: 20260420\n"
-                  "formal_analysis_sample_trades: 12\n");
+    WriteFile(config_path, "build_dir: " + build_dir.string() +
+                               "\n"
+                               "engine_mode: parquet\n"
+                               "dataset_root: " +
+                               dataset_root.string() +
+                               "\n"
+                               "strategy_main_config_path: " +
+                               strategy_main.string() +
+                               "\n"
+                               "output_root_dir: " +
+                               output_root_dir.string() +
+                               "\n"
+                               "timestamp_timezone: utc\n"
+                               "output_json: result.json\n"
+                               "output_md: result.md\n"
+                               "run_id: formal-report-run\n"
+                               "emit_formal_analysis_report: true\n"
+                               "formal_analysis_report_path: formal_report.md\n"
+                               "formal_analysis_report_date: 20260420\n"
+                               "formal_analysis_sample_trades: 12\n");
 
-    const std::string command =
-        "PATH='" + EscapePathForShell(fake_bin_dir) + "':\"$PATH\" bash "
-        "scripts/build/run_backtest_from_config.sh --config '" +
-        EscapePathForShell(config_path) + "' --skip-build";
+    const std::string command = "PATH='" + EscapePathForShell(fake_bin_dir) +
+                                "':\"$PATH\" bash "
+                                "scripts/build/run_backtest_from_config.sh --config '" +
+                                EscapePathForShell(config_path) + "' --skip-build";
     const int rc = RunCommand(command);
     EXPECT_EQ(rc, 0);
 

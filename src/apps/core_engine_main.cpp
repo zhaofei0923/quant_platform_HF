@@ -1578,25 +1578,54 @@ int main(int argc, char** argv) {
                           {{"strategy_factory", "composite"}, {"error", strategy_register_error}});
         return 7;
     }
-    StrategyContext strategy_context;
-    strategy_context.account_id = account_id;
-    strategy_context.metadata["run_type"] = run_type;
-    strategy_context.metadata["strategy_factory"] = strategy_factory;
-    strategy_context.metadata["log_level"] = config.log_level;
-    strategy_context.metadata["log_sink"] = config.log_sink;
-    if (strategy_factory == "composite") {
-        strategy_context.metadata["composite_config_path"] = file_config.strategy_composite_config;
+    StrategyContext base_strategy_context;
+    base_strategy_context.account_id = account_id;
+    base_strategy_context.metadata["run_type"] = run_type;
+    base_strategy_context.metadata["strategy_factory"] = strategy_factory;
+    base_strategy_context.metadata["log_level"] = config.log_level;
+    base_strategy_context.metadata["log_sink"] = config.log_sink;
+
+    std::vector<StrategyEngine::StrategyLaunchSpec> launch_specs;
+    launch_specs.reserve(strategy_ids.size());
+    for (const std::string& strategy_id : strategy_ids) {
+        StrategyContext strategy_context = base_strategy_context;
+        strategy_context.strategy_id = strategy_id;
+        if (strategy_factory == "composite") {
+            std::string composite_config_path = file_config.strategy_composite_config;
+            const auto mapped_config = file_config.strategy_composite_config_map.find(strategy_id);
+            if (mapped_config != file_config.strategy_composite_config_map.end()) {
+                composite_config_path = mapped_config->second;
+            }
+            if (composite_config_path.empty()) {
+                strategy_register_error = "missing composite config for strategy_id=" + strategy_id;
+                break;
+            }
+            strategy_context.metadata["composite_config_path"] = composite_config_path;
+        }
+
+        StrategyEngine::StrategyLaunchSpec spec;
+        spec.strategy_id = strategy_id;
+        spec.strategy_factory = strategy_factory;
+        spec.context = std::move(strategy_context);
+        launch_specs.push_back(std::move(spec));
     }
-    if (strategy_engine == nullptr ||
-        !strategy_engine->Start(strategy_ids, strategy_factory, strategy_context,
-                                &strategy_register_error)) {
+    if (strategy_engine == nullptr || !strategy_register_error.empty() ||
+        !strategy_engine->Start(launch_specs, &strategy_register_error)) {
         EmitStructuredLog(
             &config, "core_engine", "error", "strategy_engine_start_failed",
             {{"strategy_factory", strategy_factory}, {"error", strategy_register_error}});
         return 7;
     }
-    if (strategy_factory == "composite" && !file_config.strategy_composite_config.empty()) {
-        EmitCompositeStrategyInitLogs(config, file_config.strategy_composite_config, run_type);
+    if (strategy_factory == "composite") {
+        std::unordered_set<std::string> logged_composite_configs;
+        for (const StrategyEngine::StrategyLaunchSpec& spec : launch_specs) {
+            const auto config_it = spec.context.metadata.find("composite_config_path");
+            if (config_it == spec.context.metadata.end() || config_it->second.empty() ||
+                !logged_composite_configs.insert(config_it->second).second) {
+                continue;
+            }
+            EmitCompositeStrategyInitLogs(config, config_it->second, run_type);
+        }
     }
 
     MarketDataConnectConfig connect_cfg;

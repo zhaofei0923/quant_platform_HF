@@ -811,6 +811,24 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* confi
             return false;
         }
     }
+    loaded.market_data_recording.partition_by_product = false;
+    if (const auto it = kv.find("market_data_recording_partition_by_product"); it != kv.end()) {
+        if (!ParseBoolValue(it->second, &loaded.market_data_recording.partition_by_product)) {
+            if (error != nullptr) {
+                *error = "market_data_recording_partition_by_product must be bool";
+            }
+            return false;
+        }
+    }
+    loaded.market_data_recording.write_global_copy = false;
+    if (const auto it = kv.find("market_data_recording_write_global_copy"); it != kv.end()) {
+        if (!ParseBoolValue(it->second, &loaded.market_data_recording.write_global_copy)) {
+            if (error != nullptr) {
+                *error = "market_data_recording_write_global_copy must be bool";
+            }
+            return false;
+        }
+    }
     if (loaded.market_data_recording.enabled && loaded.market_data_recording.output_dir.empty()) {
         if (error != nullptr) {
             *error = "market_data_recording_dir must not be empty when enabled";
@@ -1015,8 +1033,8 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* confi
     loaded.strategy_composite_config = strategy_composite_config_it == kv.end()
                                            ? std::string()
                                            : Trim(strategy_composite_config_it->second);
-    if (!loaded.strategy_composite_config.empty()) {
-        std::filesystem::path composite_path(loaded.strategy_composite_config);
+    const auto resolve_composite_path = [&](const std::string& raw_path) -> std::string {
+        std::filesystem::path composite_path(raw_path);
         if (composite_path.is_relative()) {
             if (!std::filesystem::exists(composite_path)) {
                 const auto quant_root = GetEnvOrDefault("QUANT_ROOT", "");
@@ -1033,12 +1051,35 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* confi
                 composite_path = config_dir / composite_path;
             }
         }
-        loaded.strategy_composite_config = composite_path.lexically_normal().string();
+        return composite_path.lexically_normal().string();
+    };
+    if (!loaded.strategy_composite_config.empty()) {
+        loaded.strategy_composite_config = resolve_composite_path(loaded.strategy_composite_config);
+    }
+    loaded.strategy_composite_config_map.clear();
+    constexpr const char* kCompositeMapPrefix = "strategy_composite_config_map.";
+    for (const auto& [key, value] : kv) {
+        if (key.rfind(kCompositeMapPrefix, 0) != 0) {
+            continue;
+        }
+        const std::string strategy_id =
+            Trim(key.substr(std::char_traits<char>::length(kCompositeMapPrefix)));
+        const std::string config_path = Trim(value);
+        if (strategy_id.empty() || config_path.empty()) {
+            if (error != nullptr) {
+                *error =
+                    "strategy_composite_config_map entries require non-empty strategy id and path";
+            }
+            return false;
+        }
+        loaded.strategy_composite_config_map[strategy_id] = resolve_composite_path(config_path);
     }
     if (Lowercase(loaded.strategy_factory) == "composite" &&
-        loaded.strategy_composite_config.empty()) {
+        loaded.strategy_composite_config.empty() && loaded.strategy_composite_config_map.empty()) {
         if (error != nullptr) {
-            *error = "strategy_composite_config is required when strategy_factory=composite";
+            *error =
+                "strategy_composite_config or strategy_composite_config_map is required when "
+                "strategy_factory=composite";
         }
         return false;
     }

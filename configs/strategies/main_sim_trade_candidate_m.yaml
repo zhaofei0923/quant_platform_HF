@@ -1,0 +1,32 @@
+# CONFIG DOC
+# Purpose: Shared backtest/SimNow Composite entry for the m KAMA simulation trade candidate.
+# Source: docs/ops/sim_trade_candidate_params.md (`m KAMA / CompositeStrategy`).
+
+run_type: backtest
+market_state_mode: true
+
+backtest:
+  initial_equity: 200000
+  product_series_mode: raw
+  symbols: [m]
+  start_date: 20230101
+  end_date: 20241231
+  product_config_path: ./instrument_info.json
+  contract_expiry_calendar_path: ./contract_expiry_calendar.yaml
+
+risk_management:
+  enabled: true
+  risk_per_trade_pct: 0.005
+  max_risk_per_trade: 2000.0
+
+composite:
+  product_id: m
+  merge_rule: kPriority
+  enable_non_backtest: true
+  sub_strategies:
+    - id: kama_candidate_m
+      enabled: true
+      timeframe_minutes: 5
+      type: KamaTrendStrategy
+      config_path: ./sub/kama_sim_trade_candidate_m.yaml
+      entry_market_regimes: [kStrongTrend, kWeakTrend]

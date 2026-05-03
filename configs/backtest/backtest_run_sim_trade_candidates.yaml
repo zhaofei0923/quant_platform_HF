@@ -1,0 +1,50 @@
+# CONFIG DOC
+# Purpose: Full-period parquet portfolio backtest for the c/rb/m/hc simulation trade candidates.
+# Usage: bash scripts/build/run_backtest_from_config.sh --config configs/backtest/backtest_run_sim_trade_candidates.yaml
+
+build_dir: build-gcc
+cmake_build_type: Release
+build_tests: false
+enable_arrow_parquet: true
+auto_install_arrow_parquet_deps: true
+
+engine_mode: parquet
+dataset_root: backtest_data/parquet_v2
+product_ids: "c,rb,m"
+#product_ids: "c,rb,m,hc"
+strategy_main_config_template: configs/strategies/main_sim_trade_candidate_{product}.yaml
+strategy_id_template: kama_candidate_{product}
+detector_config: configs/sim/ctp.yaml
+
+output_json: backtest_sim_trade_candidates.json
+output_md: backtest_sim_trade_candidates.md
+output_root_dir: docs/results/backtest_runs
+timestamp_timezone: local
+export_csv_dir:
+run_id: sim_trade_candidates
+max_ticks:
+start_date: 20230101
+end_date: 20241231
+
+deterministic_fills: true
+strict_parquet: true
+rollover_mode: expiry_close
+rollover_price_mode: bbo
+rollover_slippage_bps: 0
+
+emit_trades: true
+emit_orders: true
+emit_position_history: true
+emit_per_variety_outputs: true
+trace_output_format: csv
+emit_indicator_trace: true
+indicator_trace_path: indicator_trace_candidates.csv
+emit_sub_strategy_indicator_trace: true
+sub_strategy_indicator_trace_path: sub_strategy_indicator_trace_candidates.csv
+emit_formal_analysis_report: false
+formal_analysis_report_path:
+formal_analysis_report_date:
+formal_analysis_sample_trades: 10
+quiet_backtest_stdout: true
+progress_only: true
+show_steps: true

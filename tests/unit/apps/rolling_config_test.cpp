@@ -65,6 +65,7 @@ TEST(RollingConfigTest, LoadsValidConfigAndResolvesPaths) {
                   "  test_length_days: 1\n"
                   "  step_days: 1\n"
                   "  min_train_days: 2\n"
+                  "  require_single_contract_test: true\n"
                   "  start_date: 20230101\n"
                   "  end_date: 20230131\n"
                   "output:\n"
@@ -87,6 +88,7 @@ TEST(RollingConfigTest, LoadsValidConfigAndResolvesPaths) {
     EXPECT_EQ(config.backtest_base.contract_expiry_calendar_path, calendar.string());
     EXPECT_EQ(config.output.report_json, (report_dir / "r.json").string());
     EXPECT_EQ(config.output.report_md, (report_dir / "r.md").string());
+    EXPECT_TRUE(config.window.require_single_contract_test);
 
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);

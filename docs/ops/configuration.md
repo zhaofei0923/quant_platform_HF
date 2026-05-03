@@ -49,7 +49,8 @@ ctp:
 
 - `ctp.run_type`: `live|sim|backtest`。`core_engine` 仅允许 `live|sim`，`backtest` 仅用于回测链路。
 - `ctp.strategy_factory`: 选择策略工厂。默认 `demo`。
-- `ctp.strategy_composite_config`: 仅当 `strategy_factory: composite` 时必填。
+- `ctp.strategy_composite_config`: 全局 Composite 配置。`strategy_factory: composite` 时需配置该字段或下面的 per-strategy map。
+- `ctp.strategy_composite_config_map.<strategy_id>`: 为指定策略实例选择独立 Composite 配置，适合多品种一策略实例一参数文件的仿真。
 - 路径解析规则：相对路径按 `ctp.yaml` 所在目录解析，启动时会转换为规范路径。
 
 示例：
@@ -58,7 +59,10 @@ ctp:
 ctp:
   run_type: "sim"
   strategy_factory: "composite"
-  strategy_composite_config: "../strategies/composite_strategy.yaml"
+  strategy_ids: "kama_c,kama_rb"
+  strategy_composite_config_map:
+    kama_c: "../strategies/composite_c.yaml"
+    kama_rb: "../strategies/composite_rb.yaml"
 ```
 
 ### 策略状态持久化与指标采集
@@ -208,7 +212,7 @@ JSON 形态支持两种写法：
 ## 配置驱动一键编译+回测脚本
 
 新增脚本：`scripts/build/run_backtest_from_config.sh`  
-新增配置：`configs/ops/backtest_run.yaml`
+新增配置：`configs/backtest/backtest_run.yaml`
 
 脚本能力：
 
@@ -226,20 +230,20 @@ JSON 形态支持两种写法：
 
 ```bash
 bash scripts/build/run_backtest_from_config.sh \
-  --config configs/ops/backtest_run.yaml
+  --config configs/backtest/backtest_run.yaml
 ```
 
 调试模式：
 
 ```bash
 bash scripts/build/run_backtest_from_config.sh \
-  --config configs/ops/backtest_run.yaml \
+  --config configs/backtest/backtest_run.yaml \
   --dry-run
 ```
 
 常用开关：
 
-- `--config <path>`：指定运行配置文件（默认 `configs/ops/backtest_run.yaml`）。
+- `--config <path>`：指定运行配置文件（默认 `configs/backtest/backtest_run.yaml`）。
 - `--dry-run`：仅打印将执行的命令。
 - `--skip-build`：跳过 cmake 构建，直接运行已有 `backtest_cli`。
 
@@ -266,6 +270,7 @@ docs/results/backtest_runs/
 - 归档字段：`output_root_dir`、`timestamp_timezone`
 - 输出必填：`output_json`、`output_md`（仅取 basename，落到 run_dir）
 - 可选透传：`max_ticks`、`start_date`、`end_date`、`run_id`、`export_csv_dir`、`emit_*`、`trace_output_format`、trace 路径字段
+- 多品种分区：`emit_per_variety_outputs=true` 时，CSV 目录下会额外写入 `varieties/<product>/backtest/{trades,orders,position_history}.csv`。
 
 `backtest_cli` 输出 `hf_standard` 的补充说明：
 
@@ -278,7 +283,7 @@ docs/results/backtest_runs/
 入口：
 
 ```bash
-./build-gcc/rolling_backtest_cli --config configs/ops/rolling_backtest.yaml
+./build-gcc/rolling_backtest_cli --config configs/backtest/rolling_backtest.yaml
 ```
 
 关键行为：

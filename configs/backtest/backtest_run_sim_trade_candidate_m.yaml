@@ -1,0 +1,47 @@
+# CONFIG DOC
+# Purpose: Full-period parquet backtest for the m simulation trade candidate.
+# Usage: bash scripts/build/run_backtest_from_config.sh --config configs/backtest/backtest_run_sim_trade_candidate_m.yaml
+
+build_dir: build-gcc
+cmake_build_type: Release
+build_tests: false
+enable_arrow_parquet: true
+auto_install_arrow_parquet_deps: true
+
+engine_mode: parquet
+dataset_root: backtest_data/parquet_v2
+strategy_main_config_path: configs/strategies/main_sim_trade_candidate_m.yaml
+detector_config: configs/sim/ctp.yaml
+
+output_json: backtest_sim_trade_candidate_m.json
+output_md: backtest_sim_trade_candidate_m.md
+output_root_dir: docs/results/backtest_runs
+timestamp_timezone: local
+export_csv_dir:
+run_id: sim_trade_candidate_m_kama_kf110_sl4125_rp0005
+max_ticks:
+start_date: 20230101
+end_date: 20241231
+
+deterministic_fills: true
+strict_parquet: true
+rollover_mode: expiry_close
+rollover_price_mode: bbo
+rollover_slippage_bps: 0
+
+emit_trades: true
+emit_orders: true
+emit_position_history: true
+emit_per_variety_outputs: true
+trace_output_format: csv
+emit_indicator_trace: true
+indicator_trace_path: indicator_trace_m.csv
+emit_sub_strategy_indicator_trace: true
+sub_strategy_indicator_trace_path: sub_strategy_indicator_trace_m.csv
+emit_formal_analysis_report: false
+formal_analysis_report_path:
+formal_analysis_report_date:
+formal_analysis_sample_trades: 10
+quiet_backtest_stdout: true
+progress_only: true
+show_steps: true

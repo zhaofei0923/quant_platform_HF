@@ -183,7 +183,7 @@ optimization:
 
 ### 约束 DSL
 
-约束用于先过滤不合格 trial，再在剩余 trial 中按目标函数排序。可参考 [configs/ops/parameter_optim_constraints_acceptance.yaml](../../configs/ops/parameter_optim_constraints_acceptance.yaml)：
+约束用于先过滤不合格 trial，再在剩余 trial 中按目标函数排序。当前不再保留专用 acceptance YAML；需要验证时，从 [configs/ops/parameter_optim.yaml](../../configs/ops/parameter_optim.yaml) 复制运行配置并加入约束：
 
 ```yaml
 optimization:
@@ -513,12 +513,12 @@ composite:
 
 ### 固定参数 rolling 验证
 
-参考 [configs/ops/rolling_backtest.yaml](../../configs/ops/rolling_backtest.yaml)，复制一份候选验证配置，并将 `backtest_base.strategy_composite_config` 指向带 overrides 的验证专用主策略配置。执行：
+参考 [configs/backtest/rolling_backtest.yaml](../../configs/backtest/rolling_backtest.yaml)，复制一份候选验证配置，并将 `backtest_base.strategy_composite_config` 指向带 overrides 的验证专用主策略配置。执行：
 
 ```bash
 scripts/build/run_rolling_backtest.sh \
   --build-dir build-gcc \
-  --config configs/ops/rolling_backtest_candidate.yaml
+  --config configs/backtest/rolling_backtest_candidate.yaml
 ```
 
 检查各窗口 success、OOS 指标、成交笔数、回撤、收益分布和窗口间稳定性。
@@ -527,18 +527,18 @@ scripts/build/run_rolling_backtest.sh \
 
 ### 全周期回测与验证报告
 
-参考 [configs/ops/backtest_run.yaml](../../configs/ops/backtest_run.yaml)，复制为候选配置并指向验证专用主策略配置。执行：
+参考 [configs/backtest/backtest_run.yaml](../../configs/backtest/backtest_run.yaml)，复制为候选配置并指向验证专用主策略配置。执行：
 
 ```bash
 bash scripts/build/run_backtest_with_validation.sh \
-  --config configs/ops/backtest_run_candidate.yaml
+  --config configs/backtest/backtest_run_candidate.yaml
 ```
 
 快速试跑可使用：
 
 ```bash
 bash scripts/build/run_backtest_with_validation.sh \
-  --config configs/ops/backtest_run_candidate.yaml \
+  --config configs/backtest/backtest_run_candidate.yaml \
   --fast \
   --fast-start-date 20240101 \
   --fast-end-date 20240331 \

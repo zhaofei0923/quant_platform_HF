@@ -496,6 +496,8 @@ TEST(CtpConfigLoaderTest, LoadsExecutionAndRiskRuleConfigs) {
         "  market_data_recording_dir: \"runtime/test_market_data\"\n"
         "  market_data_recording_run_id: \"unit-run\"\n"
         "  market_data_recording_flush_each_write: true\n"
+        "  market_data_recording_partition_by_product: true\n"
+        "  market_data_recording_write_global_copy: true\n"
         "  risk_default_max_order_volume: 12\n"
         "  risk_default_max_order_notional: 200000\n"
         "  risk_default_max_active_orders: 4\n"
@@ -552,6 +554,8 @@ TEST(CtpConfigLoaderTest, LoadsExecutionAndRiskRuleConfigs) {
     EXPECT_EQ(config.market_data_recording.output_dir, "runtime/test_market_data");
     EXPECT_EQ(config.market_data_recording.run_id, "unit-run");
     EXPECT_TRUE(config.market_data_recording.flush_each_write);
+    EXPECT_TRUE(config.market_data_recording.partition_by_product);
+    EXPECT_TRUE(config.market_data_recording.write_global_copy);
 
     EXPECT_EQ(config.risk.default_max_order_volume, 12);
     EXPECT_DOUBLE_EQ(config.risk.default_max_order_notional, 200000.0);
@@ -589,6 +593,37 @@ TEST(CtpConfigLoaderTest, LoadsExecutionAndRiskRuleConfigs) {
     EXPECT_EQ(config.risk.rules[1].policy_id, "policy.global");
     EXPECT_EQ(config.risk.rules[1].max_cancel_count, 8);
     EXPECT_DOUBLE_EQ(config.risk.rules[1].max_cancel_ratio, 0.45);
+
+    std::filesystem::remove(config_path);
+}
+
+TEST(CtpConfigLoaderTest, LoadsPerStrategyCompositeConfigMap) {
+    const auto config_path = WriteTempConfig(
+        "ctp:\n"
+        "  environment: sim\n"
+        "  is_production_mode: false\n"
+        "  broker_id: \"9999\"\n"
+        "  user_id: \"191202\"\n"
+        "  investor_id: \"191202\"\n"
+        "  market_front: \"tcp://127.0.0.1:40011\"\n"
+        "  trader_front: \"tcp://127.0.0.1:40001\"\n"
+        "  password: \"plain-secret\"\n"
+        "  strategy_factory: \"composite\"\n"
+        "  strategy_ids: \"c_alpha, rb_alpha\"\n"
+        "  strategy_composite_config_map:\n"
+        "    c_alpha: \"./composites/c.yaml\"\n"
+        "    rb_alpha: \"./composites/rb.yaml\"\n");
+
+    CtpFileConfig config;
+    std::string error;
+    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error)) << error;
+
+    ASSERT_EQ(config.strategy_composite_config_map.size(), 2U);
+    const std::filesystem::path config_dir = config_path.parent_path();
+    EXPECT_EQ(config.strategy_composite_config_map.at("c_alpha"),
+              (config_dir / "composites/c.yaml").lexically_normal().string());
+    EXPECT_EQ(config.strategy_composite_config_map.at("rb_alpha"),
+              (config_dir / "composites/rb.yaml").lexically_normal().string());
 
     std::filesystem::remove(config_path);
 }

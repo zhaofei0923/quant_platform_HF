@@ -478,6 +478,14 @@ bool LoadRollingConfig(const std::string& yaml_path, RollingConfig* out, std::st
             return false;
         }
     }
+    if (const auto raw = GetString(values, "window.require_single_contract_test"); raw.has_value()) {
+        if (!ParseBool(*raw, &config.window.require_single_contract_test)) {
+            if (error != nullptr) {
+                *error = "invalid window.require_single_contract_test";
+            }
+            return false;
+        }
+    }
 
     config.optimization.algorithm =
         ToLower(GetStringOr(values, "optimization.algorithm", config.optimization.algorithm));

@@ -81,7 +81,7 @@ TEST(RunRollingBacktestScriptTest, DryRunUsesDefaultConfigWithoutArgs) {
 
     const std::string payload = ReadFile(log_file);
     EXPECT_NE(payload.find("rolling_backtest_cli"), std::string::npos);
-    EXPECT_NE(payload.find("configs/ops/rolling_backtest.yaml"), std::string::npos);
+    EXPECT_NE(payload.find("configs/backtest/rolling_backtest.yaml"), std::string::npos);
     EXPECT_NE(payload.find("cmake --build"), std::string::npos);
 }
 

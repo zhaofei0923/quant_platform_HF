@@ -65,7 +65,7 @@ ctp:
 
   # --- strategy/runtime pipeline ---
   instruments: ""
-  product_ids: "c,rb,m,hc"
+  product_ids: "c,hc"
   active_contract_mode: "dominant_open_interest"   # static | dominant_open_interest
   dominant_contract_wait_ms: 5000
   dominant_contract_recheck_interval_ms: 60000
@@ -73,12 +73,10 @@ ctp:
   dominant_contract_min_lead_windows: 3
   dominant_contract_min_hold_ms: 900000
   dominant_contract_switch_mode: "flat_only"   # startup_only | dry_run | flat_only
-  strategy_ids: "kama_candidate_c,kama_candidate_rb,kama_candidate_m,kama_candidate_hc"
+  strategy_ids: "kama_candidate_c,kama_candidate_hc"
   strategy_factory: "composite"
   strategy_composite_config_map:
     kama_candidate_c: "configs/strategies/main_sim_trade_candidate_c.yaml"
-    kama_candidate_rb: "configs/strategies/main_sim_trade_candidate_rb.yaml"
-    kama_candidate_m: "configs/strategies/main_sim_trade_candidate_m.yaml"
     kama_candidate_hc: "configs/strategies/main_sim_trade_candidate_hc.yaml"
   strategy_queue_capacity: 8192
   account_id: "${CTP_SIM_INVESTOR_ID}"

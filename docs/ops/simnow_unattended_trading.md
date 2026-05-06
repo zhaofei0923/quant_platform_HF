@@ -215,6 +215,8 @@ infra/systemd/quant-hft-simnow-trading.service
 常用监控命令：
 
 ```bash
+scripts/ops/monitor_simnow_trading.sh --config configs/sim/ctp_sim_trade_candidates.yaml
+scripts/ops/monitor_simnow_trading.sh --config configs/sim/ctp_sim_trade_candidates.yaml --watch-seconds 30
 systemctl --user status quant-hft-simnow-trading.service
 journalctl --user -u quant-hft-simnow-trading.service -f
 tail -f runtime/simnow_trading/supervisor.log
@@ -263,6 +265,8 @@ runtime/market_data/simnow/**/bars_1m.csv
 SIMNOW_TICK_STALE_SECONDS=180
 SIMNOW_BAR_STALE_SECONDS=240
 ```
+
+手工监控脚本会额外比较最新主力 tick 的交易分钟和最新 bar 分钟。若 tick 文件仍在刷新，但交易所时间停在休盘边界或尚未进入下一根可闭合 bar，`bars_1m.csv` 的文件更新时间超过阈值时会显示 `status=waiting_next_trade_minute`，不计为 unhealthy。若 tick 交易分钟已经推进而 bar 仍未更新，才显示 `status=stale` 并返回非零状态。
 
 手动查看最新 tick 和 bar 文件：
 
@@ -412,6 +416,24 @@ find runtime/market_data/simnow -type f \( -name 'ticks.csv' -o -name 'bars_1m.c
 ```
 
 ## 停止与重启
+
+推荐使用停止脚本结束当前手动后台仿真：
+
+```bash
+scripts/ops/stop_simnow_trading.sh
+```
+
+如果当前由 supervisor 或 systemd 管理，先停止自动恢复，再停止 `core_engine`：
+
+```bash
+scripts/ops/stop_simnow_trading.sh --all
+```
+
+停止脚本默认读取 `runtime/simnow_trading/current_core_engine.pid`，先发送 `TERM`，等待 `SIMNOW_STOP_TIMEOUT_SECONDS` 秒后再发送 `KILL`。如只想发送 `TERM` 而不强杀：
+
+```bash
+scripts/ops/stop_simnow_trading.sh --no-kill
+```
 
 停止 systemd 管理的 supervisor：
 

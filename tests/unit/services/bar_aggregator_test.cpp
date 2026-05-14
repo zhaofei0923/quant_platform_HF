@@ -11,13 +11,9 @@
 namespace quant_hft {
 namespace {
 
-MarketSnapshot MakeSnapshot(const std::string& instrument_id,
-                            const std::string& trading_day,
-                            const std::string& action_day,
-                            const std::string& update_time,
-                            std::int32_t update_millisec,
-                            double last_price,
-                            std::int64_t volume,
+MarketSnapshot MakeSnapshot(const std::string& instrument_id, const std::string& trading_day,
+                            const std::string& action_day, const std::string& update_time,
+                            std::int32_t update_millisec, double last_price, std::int64_t volume,
                             EpochNanos ts_ns = 0) {
     MarketSnapshot snapshot;
     snapshot.instrument_id = instrument_id;
@@ -34,23 +30,13 @@ MarketSnapshot MakeSnapshot(const std::string& instrument_id,
 TEST(BarAggregatorTest, EmitsClosedMinuteBarWhenMinuteRolls) {
     BarAggregator aggregator;
 
-    EXPECT_TRUE(aggregator.OnMarketSnapshot(
-                            MakeSnapshot("SHFE.ag2406",
-                                         "20260211",
-                                         "20260211",
-                                         "09:00:01",
-                                         100,
-                                         10.0,
-                                         100))
+    EXPECT_TRUE(aggregator
+                    .OnMarketSnapshot(MakeSnapshot("SHFE.ag2406", "20260211", "20260211",
+                                                   "09:00:01", 100, 10.0, 100))
                     .empty());
-    EXPECT_TRUE(aggregator.OnMarketSnapshot(
-                            MakeSnapshot("SHFE.ag2406",
-                                         "20260211",
-                                         "20260211",
-                                         "09:00:45",
-                                         200,
-                                         12.0,
-                                         108))
+    EXPECT_TRUE(aggregator
+                    .OnMarketSnapshot(MakeSnapshot("SHFE.ag2406", "20260211", "20260211",
+                                                   "09:00:45", 200, 12.0, 108))
                     .empty());
 
     const auto bars = aggregator.OnMarketSnapshot(
@@ -87,14 +73,9 @@ TEST(BarAggregatorTest, FiltersNonTradingSessionByDefault) {
 TEST(BarAggregatorTest, NightSessionUsesTradingDayAndKeepsActionDay) {
     BarAggregator aggregator;
 
-    EXPECT_TRUE(aggregator.OnMarketSnapshot(
-                            MakeSnapshot("DCE.i2409",
-                                         "20260212",
-                                         "20260211",
-                                         "21:01:01",
-                                         0,
-                                         100.0,
-                                         200))
+    EXPECT_TRUE(aggregator
+                    .OnMarketSnapshot(MakeSnapshot("DCE.i2409", "20260212", "20260211", "21:01:01",
+                                                   0, 100.0, 200))
                     .empty());
     const auto bars = aggregator.OnMarketSnapshot(
         MakeSnapshot("DCE.i2409", "20260212", "20260211", "21:02:01", 0, 101.0, 205));
@@ -102,6 +83,30 @@ TEST(BarAggregatorTest, NightSessionUsesTradingDayAndKeepsActionDay) {
     EXPECT_EQ(bars[0].minute, "20260212 21:01");
     EXPECT_EQ(bars[0].trading_day, "20260212");
     EXPECT_EQ(bars[0].action_day, "20260211");
+}
+
+TEST(BarAggregatorTest, EmitsSessionEndMinuteBarWithoutNextTick) {
+    BarAggregator aggregator;
+
+    EXPECT_TRUE(aggregator
+                    .OnMarketSnapshot(MakeSnapshot("DCE.c2607", "20260515", "20260514", "22:59:30",
+                                                   0, 2367.0, 100))
+                    .empty());
+
+    const auto bars = aggregator.OnMarketSnapshot(
+        MakeSnapshot("DCE.c2607", "20260515", "20260514", "23:00:00", 500, 2368.0, 101));
+    ASSERT_EQ(bars.size(), 2U);
+    EXPECT_EQ(bars[0].minute, "20260515 22:59");
+    EXPECT_DOUBLE_EQ(bars[0].close, 2367.0);
+    EXPECT_EQ(bars[1].minute, "20260515 23:00");
+    EXPECT_DOUBLE_EQ(bars[1].open, 2368.0);
+    EXPECT_DOUBLE_EQ(bars[1].close, 2368.0);
+
+    EXPECT_TRUE(aggregator
+                    .OnMarketSnapshot(MakeSnapshot("DCE.c2607", "20260515", "20260514", "23:00:01",
+                                                   500, 2369.0, 102))
+                    .empty());
+    EXPECT_TRUE(aggregator.Flush().empty());
 }
 
 TEST(BarAggregatorTest, TradingSessionMatcherHandlesDayAndNightWindowsByExchange) {
@@ -114,6 +119,8 @@ TEST(BarAggregatorTest, TradingSessionMatcherHandlesDayAndNightWindowsByExchange
     EXPECT_FALSE(aggregator.IsInTradingSession("SHFE", "03:10:00"));
     EXPECT_FALSE(aggregator.IsInTradingSession("CFFEX", "21:10:00"));
     EXPECT_FALSE(aggregator.IsInTradingSession("DCE", "23:10:00"));
+    EXPECT_TRUE(aggregator.IsSessionEndMinute("DCE", "DCE.c2607", "23:00:00"));
+    EXPECT_FALSE(aggregator.IsSessionEndMinute("DCE", "DCE.c2607", "22:59:59"));
 }
 
 TEST(BarAggregatorTest, ResolveTimestampUsesExchangeTimeInBacktestMode) {
@@ -134,26 +141,16 @@ TEST(BarAggregatorTest, ResolveTimestampUsesExchangeTimeInBacktestMode) {
 TEST(BarAggregatorTest, ResetInstrumentClearsActiveBucket) {
     BarAggregator aggregator;
 
-    EXPECT_TRUE(aggregator.OnMarketSnapshot(
-                            MakeSnapshot("SHFE.ag2406",
-                                         "20260211",
-                                         "20260211",
-                                         "09:00:01",
-                                         0,
-                                         10.0,
-                                         100))
+    EXPECT_TRUE(aggregator
+                    .OnMarketSnapshot(MakeSnapshot("SHFE.ag2406", "20260211", "20260211",
+                                                   "09:00:01", 0, 10.0, 100))
                     .empty());
 
     aggregator.ResetInstrument("SHFE.ag2406");
 
-    EXPECT_TRUE(aggregator.OnMarketSnapshot(
-                            MakeSnapshot("SHFE.ag2406",
-                                         "20260211",
-                                         "20260211",
-                                         "09:01:01",
-                                         0,
-                                         11.0,
-                                         101))
+    EXPECT_TRUE(aggregator
+                    .OnMarketSnapshot(MakeSnapshot("SHFE.ag2406", "20260211", "20260211",
+                                                   "09:01:01", 0, 11.0, 101))
                     .empty());
     const auto bars = aggregator.Flush();
     ASSERT_EQ(bars.size(), 1U);
@@ -276,12 +273,9 @@ TEST(BarAggregatorTest, InferExchangeIdSupportsDotPrefixAndLongestSessionPrefixM
 
 TEST(BarAggregatorTest, RepositoryTradingSessionsInferDceForCornSymbol) {
     namespace fs = std::filesystem;
-    const fs::path config_path = fs::path(__FILE__)
-                                     .parent_path()
-                                     .parent_path()
-                                     .parent_path()
-                                     .parent_path() /
-                                 "configs" / "trading_sessions.yaml";
+    const fs::path config_path =
+        fs::path(__FILE__).parent_path().parent_path().parent_path().parent_path() / "configs" /
+        "trading_sessions.yaml";
     ASSERT_TRUE(fs::exists(config_path));
 
     BarAggregatorConfig config;
@@ -304,12 +298,9 @@ TEST(BarAggregatorTest, RepositoryTradingSessionsInferDceForCornSymbol) {
 
 TEST(BarAggregatorTest, RepositoryTradingSessionsFilterPostClosePlainDceSymbolWithoutExchange) {
     namespace fs = std::filesystem;
-    const fs::path config_path = fs::path(__FILE__)
-                                     .parent_path()
-                                     .parent_path()
-                                     .parent_path()
-                                     .parent_path() /
-                                 "configs" / "trading_sessions.yaml";
+    const fs::path config_path =
+        fs::path(__FILE__).parent_path().parent_path().parent_path().parent_path() / "configs" /
+        "trading_sessions.yaml";
     ASSERT_TRUE(fs::exists(config_path));
 
     BarAggregatorConfig config;
@@ -384,6 +375,53 @@ TEST(BarAggregatorTest, AggregatesOneMinuteBarsToHigherTimeframe) {
     EXPECT_DOUBLE_EQ(bars[1].open, 12.0);
     EXPECT_DOUBLE_EQ(bars[1].close, 13.0);
     EXPECT_EQ(bars[1].volume, 6);
+}
+
+TEST(BarAggregatorTest, AggregateFromOneMinuteKeepsSessionEndPartialFiveMinuteBar) {
+    std::vector<BarSnapshot> one_minute;
+    for (int minute = 56; minute <= 59; ++minute) {
+        BarSnapshot bar;
+        bar.instrument_id = "DCE.c2607";
+        bar.exchange_id = "DCE";
+        bar.trading_day = "20260515";
+        bar.action_day = "20260514";
+        char minute_key[32];
+        std::snprintf(minute_key, sizeof(minute_key), "20260515 22:%02d", minute);
+        bar.minute = minute_key;
+        bar.open = 2300.0 + minute;
+        bar.high = bar.open;
+        bar.low = bar.open;
+        bar.close = bar.open;
+        bar.analysis_open = bar.open;
+        bar.analysis_high = bar.high;
+        bar.analysis_low = bar.low;
+        bar.analysis_close = bar.close;
+        bar.volume = 1;
+        one_minute.push_back(bar);
+    }
+
+    BarSnapshot close_bar = one_minute.back();
+    close_bar.minute = "20260515 23:00";
+    close_bar.open = 2368.0;
+    close_bar.high = 2368.0;
+    close_bar.low = 2368.0;
+    close_bar.close = 2368.0;
+    close_bar.analysis_open = 2368.0;
+    close_bar.analysis_high = 2368.0;
+    close_bar.analysis_low = 2368.0;
+    close_bar.analysis_close = 2368.0;
+    close_bar.volume = 0;
+    one_minute.push_back(close_bar);
+
+    const auto bars = BarAggregator::AggregateFromOneMinute(one_minute, 5);
+    ASSERT_EQ(bars.size(), 2U);
+    EXPECT_EQ(bars[0].minute, "20260515 22:55");
+    EXPECT_DOUBLE_EQ(bars[0].open, 2356.0);
+    EXPECT_DOUBLE_EQ(bars[0].close, 2359.0);
+    EXPECT_EQ(bars[0].volume, 4);
+    EXPECT_EQ(bars[1].minute, "20260515 23:00");
+    EXPECT_DOUBLE_EQ(bars[1].open, 2368.0);
+    EXPECT_DOUBLE_EQ(bars[1].close, 2368.0);
 }
 
 }  // namespace

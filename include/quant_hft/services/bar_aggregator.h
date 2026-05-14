@@ -4,6 +4,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "quant_hft/contracts/types.h"
@@ -37,7 +38,7 @@ struct BarAggregatorConfig {
 };
 
 class BarAggregator {
-public:
+   public:
     struct SessionInterval {
         int start_minute{0};
         int end_minute{0};
@@ -60,17 +61,16 @@ public:
     void ResetInstrument(const std::string& instrument_id);
     std::string InferExchangeId(const std::string& instrument_id) const;
     bool IsInTradingSession(const std::string& exchange_id, const std::string& update_time) const;
-    std::string ResolveSessionKey(const std::string& exchange_id,
-                                  const std::string& instrument_id,
+    bool IsSessionEndMinute(const std::string& exchange_id, const std::string& instrument_id,
+                            const std::string& update_time) const;
+    std::string ResolveSessionKey(const std::string& exchange_id, const std::string& instrument_id,
                                   const std::string& update_time) const;
-    int ResolveSessionOrder(const std::string& exchange_id,
-                            const std::string& instrument_id,
+    int ResolveSessionOrder(const std::string& exchange_id, const std::string& instrument_id,
                             const std::string& update_time) const;
     static std::vector<BarSnapshot> AggregateFromOneMinute(
-        const std::vector<BarSnapshot>& one_minute_bars,
-        std::int32_t timeframe_minutes);
+        const std::vector<BarSnapshot>& one_minute_bars, std::int32_t timeframe_minutes);
 
-private:
+   private:
     struct MinuteBucket {
         bool initialized{false};
         std::string minute_key;
@@ -83,29 +83,27 @@ private:
     static std::string ResolveProductCode(const MarketSnapshot& snapshot);
     static std::string ResolveTradingDay(const MarketSnapshot& snapshot);
     static std::string ResolveActionDay(const MarketSnapshot& snapshot);
-    static std::string BuildMinuteKey(const std::string& trading_day, const std::string& update_time);
+    static std::string BuildMinuteKey(const std::string& trading_day,
+                                      const std::string& update_time);
     EpochNanos ResolveTimestamp(const MarketSnapshot& snapshot) const;
-    bool IsInTradingSession(const std::string& exchange_id,
-                            const std::string& instrument_id,
-                            const std::string& product,
-                            const std::string& update_time) const;
-    bool ResolveSessionInterval(const std::string& exchange_id,
-                                const std::string& instrument_id,
-                                const std::string& product,
-                                const std::string& update_time,
+    bool IsInTradingSession(const std::string& exchange_id, const std::string& instrument_id,
+                            const std::string& product, const std::string& update_time) const;
+    bool ResolveSessionInterval(const std::string& exchange_id, const std::string& instrument_id,
+                                const std::string& product, const std::string& update_time,
                                 SessionInterval* interval) const;
     void LoadTradingSessions();
 
-    void ResetBucketLocked(MinuteBucket* bucket,
-                           const MarketSnapshot& snapshot,
-                           const std::string& exchange_id,
-                           const std::string& trading_day,
-                           const std::string& action_day,
-                           const std::string& minute_key);
+    void ResetBucketLocked(MinuteBucket* bucket, const MarketSnapshot& snapshot,
+                           const std::string& exchange_id, const std::string& trading_day,
+                           const std::string& action_day, const std::string& minute_key);
+    void PruneClosedBoundaryMinutesLocked(const std::string& instrument_id,
+                                          const std::string& trading_day);
+    void EraseClosedBoundaryMinutesLocked(const std::string& instrument_id);
 
     BarAggregatorConfig config_;
     mutable std::mutex mutex_;
     std::unordered_map<std::string, MinuteBucket> buckets_;
+    std::unordered_set<std::string> closed_session_boundary_minutes_;
     std::unordered_map<std::string, std::vector<SessionRule>> session_rules_by_exchange_;
 };
 

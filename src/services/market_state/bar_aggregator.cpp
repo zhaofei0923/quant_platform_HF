@@ -3,8 +3,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
-#include <cstdlib>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <limits>
 #include <unordered_map>
@@ -12,9 +12,7 @@
 namespace quant_hft {
 namespace {
 
-bool IsFinitePositive(double value) {
-    return std::isfinite(value) && value > 0.0;
-}
+bool IsFinitePositive(double value) { return std::isfinite(value) && value > 0.0; }
 
 std::string InferExchangeIdFromDottedInstrument(const std::string& instrument_id) {
     const auto dot_pos = instrument_id.find('.');
@@ -33,22 +31,18 @@ std::string ExtractInstrumentSymbol(const std::string& instrument_id) {
 }
 
 std::string ToUpperAscii(std::string value) {
-    std::transform(value.begin(),
-                   value.end(),
-                   value.begin(),
+    std::transform(value.begin(), value.end(), value.begin(),
                    [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
     return value;
 }
 
 std::string Trim(const std::string& value) {
     std::size_t start = 0;
-    while (start < value.size() &&
-           std::isspace(static_cast<unsigned char>(value[start])) != 0) {
+    while (start < value.size() && std::isspace(static_cast<unsigned char>(value[start])) != 0) {
         ++start;
     }
     std::size_t end = value.size();
-    while (end > start &&
-           std::isspace(static_cast<unsigned char>(value[end - 1])) != 0) {
+    while (end > start && std::isspace(static_cast<unsigned char>(value[end - 1])) != 0) {
         --end;
     }
     return value.substr(start, end - start);
@@ -119,8 +113,7 @@ bool ParseSessionTimeToMinute(const std::string& raw, int* minute_of_day) {
     return true;
 }
 
-bool ParseSessionRange(const std::string& raw,
-                       BarAggregator::SessionInterval* interval) {
+bool ParseSessionRange(const std::string& raw, BarAggregator::SessionInterval* interval) {
     if (interval == nullptr || raw.empty()) {
         return false;
     }
@@ -175,25 +168,19 @@ std::unordered_map<std::string, std::vector<BarAggregator::SessionRule>> BuildDe
     std::unordered_map<std::string, std::vector<SessionRule>> rules;
     rules["SHFE"].push_back(
         with_intervals({SessionInterval{9 * 60, 15 * 60}, SessionInterval{21 * 60, 1 * 60}}));
-    rules["DCE"].push_back(with_intervals(
-        {SessionInterval{9 * 60, 15 * 60}, SessionInterval{21 * 60, 23 * 60}}));
+    rules["DCE"].push_back(
+        with_intervals({SessionInterval{9 * 60, 15 * 60}, SessionInterval{21 * 60, 23 * 60}}));
     rules["CFFEX"].push_back(with_intervals({SessionInterval{9 * 60 + 30, 15 * 60}}));
-    rules["CFFEX"].push_back(
-        with_intervals({SessionInterval{9 * 60 + 30, 15 * 60 + 15}}, "T"));
-    rules["CFFEX"].push_back(
-        with_intervals({SessionInterval{9 * 60 + 30, 15 * 60 + 15}}, "TF"));
-    rules["CFFEX"].push_back(
-        with_intervals({SessionInterval{9 * 60 + 30, 15 * 60 + 15}}, "TS"));
-    rules["CFFEX"].push_back(
-        with_intervals({SessionInterval{9 * 60 + 30, 15 * 60 + 15}}, "TL"));
+    rules["CFFEX"].push_back(with_intervals({SessionInterval{9 * 60 + 30, 15 * 60 + 15}}, "T"));
+    rules["CFFEX"].push_back(with_intervals({SessionInterval{9 * 60 + 30, 15 * 60 + 15}}, "TF"));
+    rules["CFFEX"].push_back(with_intervals({SessionInterval{9 * 60 + 30, 15 * 60 + 15}}, "TS"));
+    rules["CFFEX"].push_back(with_intervals({SessionInterval{9 * 60 + 30, 15 * 60 + 15}}, "TL"));
     rules["*"].push_back(with_intervals(
         {SessionInterval{9 * 60, 15 * 60 + 15}, SessionInterval{21 * 60, 2 * 60 + 30}}));
     return rules;
 }
 
-bool ParseMinuteValue(const std::string& minute_key,
-                      std::string* trading_day,
-                      int* minute_of_day) {
+bool ParseMinuteValue(const std::string& minute_key, std::string* trading_day, int* minute_of_day) {
     if (trading_day == nullptr || minute_of_day == nullptr || minute_key.size() < 14) {
         return false;
     }
@@ -230,22 +217,26 @@ std::string FormatMinuteValue(const std::string& trading_day, int minute_of_day)
     const int hour = minute_of_day / 60;
     const int minute = minute_of_day % 60;
     char buffer[32];
-    std::snprintf(buffer,
-                  sizeof(buffer),
-                  "%s %02d:%02d",
-                  trading_day.c_str(),
-                  hour,
-                  minute);
+    std::snprintf(buffer, sizeof(buffer), "%s %02d:%02d", trading_day.c_str(), hour, minute);
     return std::string(buffer);
+}
+
+std::string BuildClosedBoundaryMinuteKey(const std::string& instrument_id,
+                                         const std::string& minute_key) {
+    if (instrument_id.empty() || minute_key.empty()) {
+        return "";
+    }
+    return instrument_id + "|" + minute_key;
 }
 
 }  // namespace
 
 BarAggregator::BarAggregator(BarAggregatorConfig config)
     : config_(std::move(config)),
-      session_rules_by_exchange_(config_.use_default_session_fallback
-                                     ? BuildDefaultRules()
-                                     : std::unordered_map<std::string, std::vector<SessionRule>>{}) {
+      session_rules_by_exchange_(
+          config_.use_default_session_fallback
+              ? BuildDefaultRules()
+              : std::unordered_map<std::string, std::vector<SessionRule>>{}) {
     LoadTradingSessions();
 }
 
@@ -261,10 +252,8 @@ bool BarAggregator::ShouldProcessSnapshot(const MarketSnapshot& snapshot) const 
     }
 
     if (config_.filter_non_trading_ticks &&
-        !IsInTradingSession(ResolveExchangeId(snapshot),
-                            snapshot.instrument_id,
-                            ResolveProductCode(snapshot),
-                            snapshot.update_time)) {
+        !IsInTradingSession(ResolveExchangeId(snapshot), snapshot.instrument_id,
+                            ResolveProductCode(snapshot), snapshot.update_time)) {
         return false;
     }
 
@@ -284,26 +273,48 @@ std::vector<BarSnapshot> BarAggregator::OnMarketSnapshot(const MarketSnapshot& s
     if (minute_key.empty()) {
         return emitted;
     }
+    const bool is_session_end_minute =
+        IsSessionEndMinute(exchange_id, snapshot.instrument_id, snapshot.update_time);
+    const std::string closed_boundary_key =
+        BuildClosedBoundaryMinuteKey(snapshot.instrument_id, minute_key);
 
     std::lock_guard<std::mutex> lock(mutex_);
+    PruneClosedBoundaryMinutesLocked(snapshot.instrument_id, trading_day);
+    if (!closed_boundary_key.empty() &&
+        closed_session_boundary_minutes_.find(closed_boundary_key) !=
+            closed_session_boundary_minutes_.end()) {
+        return emitted;
+    }
+
     auto& bucket = buckets_[snapshot.instrument_id];
+    auto emit_session_end_bucket = [&]() {
+        if (!is_session_end_minute || !bucket.initialized) {
+            return false;
+        }
+        emitted.push_back(bucket.bar);
+        if (!closed_boundary_key.empty()) {
+            closed_session_boundary_minutes_.insert(closed_boundary_key);
+        }
+        buckets_.erase(snapshot.instrument_id);
+        return true;
+    };
+
     if (!bucket.initialized) {
-        ResetBucketLocked(
-            &bucket, snapshot, exchange_id, trading_day, action_day, minute_key);
+        ResetBucketLocked(&bucket, snapshot, exchange_id, trading_day, action_day, minute_key);
+        (void)emit_session_end_bucket();
         return emitted;
     }
 
     const auto normalized_volume = std::max<std::int64_t>(0, snapshot.volume);
-    const auto volume_delta =
-        normalized_volume >= bucket.last_cumulative_volume
-            ? normalized_volume - bucket.last_cumulative_volume
-            : 0;
+    const auto volume_delta = normalized_volume >= bucket.last_cumulative_volume
+                                  ? normalized_volume - bucket.last_cumulative_volume
+                                  : 0;
     bucket.last_cumulative_volume = normalized_volume;
 
     if (bucket.minute_key != minute_key) {
         emitted.push_back(bucket.bar);
-        ResetBucketLocked(
-            &bucket, snapshot, exchange_id, trading_day, action_day, minute_key);
+        ResetBucketLocked(&bucket, snapshot, exchange_id, trading_day, action_day, minute_key);
+        (void)emit_session_end_bucket();
         return emitted;
     }
 
@@ -319,6 +330,7 @@ std::vector<BarSnapshot> BarAggregator::OnMarketSnapshot(const MarketSnapshot& s
     bucket.bar.analysis_price_offset = 0.0;
     bucket.bar.volume += volume_delta;
     bucket.bar.ts_ns = ResolveTimestamp(snapshot);
+    (void)emit_session_end_bucket();
     return emitted;
 }
 
@@ -333,16 +345,14 @@ std::vector<BarSnapshot> BarAggregator::Flush() {
             }
         }
         buckets_.clear();
+        closed_session_boundary_minutes_.clear();
     }
-    std::sort(
-        bars.begin(),
-        bars.end(),
-        [](const BarSnapshot& lhs, const BarSnapshot& rhs) {
-            if (lhs.instrument_id != rhs.instrument_id) {
-                return lhs.instrument_id < rhs.instrument_id;
-            }
-            return lhs.minute < rhs.minute;
-        });
+    std::sort(bars.begin(), bars.end(), [](const BarSnapshot& lhs, const BarSnapshot& rhs) {
+        if (lhs.instrument_id != rhs.instrument_id) {
+            return lhs.instrument_id < rhs.instrument_id;
+        }
+        return lhs.minute < rhs.minute;
+    });
     return bars;
 }
 
@@ -367,15 +377,12 @@ std::vector<BarSnapshot> BarAggregator::FlushFinished(
             it = buckets_.erase(it);
         }
     }
-    std::sort(
-        bars.begin(),
-        bars.end(),
-        [](const BarSnapshot& lhs, const BarSnapshot& rhs) {
-            if (lhs.instrument_id != rhs.instrument_id) {
-                return lhs.instrument_id < rhs.instrument_id;
-            }
-            return lhs.minute < rhs.minute;
-        });
+    std::sort(bars.begin(), bars.end(), [](const BarSnapshot& lhs, const BarSnapshot& rhs) {
+        if (lhs.instrument_id != rhs.instrument_id) {
+            return lhs.instrument_id < rhs.instrument_id;
+        }
+        return lhs.minute < rhs.minute;
+    });
     return bars;
 }
 
@@ -385,25 +392,22 @@ void BarAggregator::ResetInstrument(const std::string& instrument_id) {
     }
     std::lock_guard<std::mutex> lock(mutex_);
     buckets_.erase(instrument_id);
+    EraseClosedBoundaryMinutesLocked(instrument_id);
 }
 
 std::vector<BarSnapshot> BarAggregator::AggregateFromOneMinute(
-    const std::vector<BarSnapshot>& one_minute_bars,
-    std::int32_t timeframe_minutes) {
+    const std::vector<BarSnapshot>& one_minute_bars, std::int32_t timeframe_minutes) {
     if (timeframe_minutes <= 0 || one_minute_bars.empty()) {
         return {};
     }
 
     std::vector<BarSnapshot> sorted = one_minute_bars;
-    std::sort(
-        sorted.begin(),
-        sorted.end(),
-        [](const BarSnapshot& lhs, const BarSnapshot& rhs) {
-            if (lhs.instrument_id != rhs.instrument_id) {
-                return lhs.instrument_id < rhs.instrument_id;
-            }
-            return lhs.minute < rhs.minute;
-        });
+    std::sort(sorted.begin(), sorted.end(), [](const BarSnapshot& lhs, const BarSnapshot& rhs) {
+        if (lhs.instrument_id != rhs.instrument_id) {
+            return lhs.instrument_id < rhs.instrument_id;
+        }
+        return lhs.minute < rhs.minute;
+    });
 
     if (timeframe_minutes == 1) {
         return sorted;
@@ -464,6 +468,27 @@ bool BarAggregator::IsInTradingSession(const std::string& exchange_id,
     return IsInTradingSession(exchange_id, "", "", update_time);
 }
 
+bool BarAggregator::IsSessionEndMinute(const std::string& exchange_id,
+                                       const std::string& instrument_id,
+                                       const std::string& update_time) const {
+    int minute_of_day = 0;
+    if (!ParseMinuteOfDay(update_time, &minute_of_day)) {
+        return false;
+    }
+
+    MarketSnapshot snapshot;
+    snapshot.instrument_id = instrument_id;
+
+    SessionInterval interval;
+    const std::string resolved_exchange =
+        exchange_id.empty() ? InferExchangeId(instrument_id) : exchange_id;
+    if (!ResolveSessionInterval(resolved_exchange, instrument_id, ResolveProductCode(snapshot),
+                                update_time, &interval)) {
+        return false;
+    }
+    return minute_of_day == interval.end_minute;
+}
+
 std::string BarAggregator::ResolveSessionKey(const std::string& exchange_id,
                                              const std::string& instrument_id,
                                              const std::string& update_time) const {
@@ -473,11 +498,8 @@ std::string BarAggregator::ResolveSessionKey(const std::string& exchange_id,
     SessionInterval interval;
     const std::string resolved_exchange =
         exchange_id.empty() ? InferExchangeId(instrument_id) : exchange_id;
-    if (!ResolveSessionInterval(resolved_exchange,
-                                instrument_id,
-                                ResolveProductCode(snapshot),
-                                update_time,
-                                &interval)) {
+    if (!ResolveSessionInterval(resolved_exchange, instrument_id, ResolveProductCode(snapshot),
+                                update_time, &interval)) {
         return "";
     }
     return FormatSessionKey(interval);
@@ -492,11 +514,8 @@ int BarAggregator::ResolveSessionOrder(const std::string& exchange_id,
     SessionInterval interval;
     const std::string resolved_exchange =
         exchange_id.empty() ? InferExchangeId(instrument_id) : exchange_id;
-    if (!ResolveSessionInterval(resolved_exchange,
-                                instrument_id,
-                                ResolveProductCode(snapshot),
-                                update_time,
-                                &interval)) {
+    if (!ResolveSessionInterval(resolved_exchange, instrument_id, ResolveProductCode(snapshot),
+                                update_time, &interval)) {
         int minute_of_day = 24 * 60;
         if (ParseMinuteOfDay(update_time, &minute_of_day)) {
             return minute_of_day;
@@ -569,7 +588,7 @@ std::string BarAggregator::InferExchangeId(const std::string& instrument_id) con
 std::string BarAggregator::ResolveProductCode(const MarketSnapshot& snapshot) {
     const auto dot_pos = snapshot.instrument_id.find('.');
     const auto symbol = dot_pos == std::string::npos ? snapshot.instrument_id
-                                                      : snapshot.instrument_id.substr(dot_pos + 1);
+                                                     : snapshot.instrument_id.substr(dot_pos + 1);
     std::string product;
     for (char ch : symbol) {
         if (!std::isalpha(static_cast<unsigned char>(ch))) {
@@ -622,8 +641,7 @@ EpochNanos BarAggregator::ResolveTimestamp(const MarketSnapshot& snapshot) const
 }
 
 bool BarAggregator::IsInTradingSession(const std::string& exchange_id,
-                                       const std::string& instrument_id,
-                                       const std::string& product,
+                                       const std::string& instrument_id, const std::string& product,
                                        const std::string& update_time) const {
     SessionInterval interval;
     return ResolveSessionInterval(exchange_id, instrument_id, product, update_time, &interval);
@@ -665,7 +683,8 @@ bool BarAggregator::ResolveSessionInterval(const std::string& exchange_id,
 
             const auto prefix_upper = ToUpperAscii(rule.instrument_prefix);
             const auto product_upper = ToUpperAscii(rule.product);
-            const bool prefix_match = prefix_upper.empty() || StartsWith(symbol_upper, prefix_upper);
+            const bool prefix_match =
+                prefix_upper.empty() || StartsWith(symbol_upper, prefix_upper);
             const bool product_match = product_upper.empty() || product_upper == current_product;
             if (!prefix_match || !product_match) {
                 continue;
@@ -734,8 +753,7 @@ void BarAggregator::LoadTradingSessions() {
         std::string night;
     };
 
-    auto to_rule = [](const PendingSession& pending,
-                      std::string* exchange,
+    auto to_rule = [](const PendingSession& pending, std::string* exchange,
                       SessionRule* rule) -> bool {
         if (exchange == nullptr || rule == nullptr || pending.exchange.empty()) {
             return false;
@@ -820,11 +838,41 @@ void BarAggregator::LoadTradingSessions() {
     }
 }
 
-void BarAggregator::ResetBucketLocked(MinuteBucket* bucket,
-                                      const MarketSnapshot& snapshot,
+void BarAggregator::PruneClosedBoundaryMinutesLocked(const std::string& instrument_id,
+                                                     const std::string& trading_day) {
+    if (instrument_id.empty() || trading_day.empty() || closed_session_boundary_minutes_.empty()) {
+        return;
+    }
+    const std::string instrument_prefix = instrument_id + "|";
+    const std::string current_day_prefix = instrument_prefix + trading_day + " ";
+    for (auto it = closed_session_boundary_minutes_.begin();
+         it != closed_session_boundary_minutes_.end();) {
+        if (it->rfind(instrument_prefix, 0) == 0 && it->rfind(current_day_prefix, 0) != 0) {
+            it = closed_session_boundary_minutes_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void BarAggregator::EraseClosedBoundaryMinutesLocked(const std::string& instrument_id) {
+    if (instrument_id.empty() || closed_session_boundary_minutes_.empty()) {
+        return;
+    }
+    const std::string instrument_prefix = instrument_id + "|";
+    for (auto it = closed_session_boundary_minutes_.begin();
+         it != closed_session_boundary_minutes_.end();) {
+        if (it->rfind(instrument_prefix, 0) == 0) {
+            it = closed_session_boundary_minutes_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void BarAggregator::ResetBucketLocked(MinuteBucket* bucket, const MarketSnapshot& snapshot,
                                       const std::string& exchange_id,
-                                      const std::string& trading_day,
-                                      const std::string& action_day,
+                                      const std::string& trading_day, const std::string& action_day,
                                       const std::string& minute_key) {
     bucket->initialized = true;
     bucket->minute_key = minute_key;

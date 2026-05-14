@@ -1383,6 +1383,7 @@ class ReplayTimeframeFanout {
         if (!ParseReplayMinuteValue(one_minute_bar.minute, &trading_day, &minute_of_day)) {
             return emitted;
         }
+        const bool is_session_end_minute = IsSessionEndMinute(one_minute_bar);
 
         for (const std::int32_t timeframe : timeframes_) {
             if (timeframe == 1) {
@@ -1404,8 +1405,25 @@ class ReplayTimeframeFanout {
                 one_minute_bar.instrument_id + "|" + std::to_string(timeframe);
             const std::string bucket_key = one_minute_bar.instrument_id + "|" + bucket_minute;
             auto& bucket = buckets_[slot_key];
+            auto emit_session_end_bucket = [&]() {
+                if (!is_session_end_minute) {
+                    return;
+                }
+                auto bucket_it = buckets_.find(slot_key);
+                if (bucket_it == buckets_.end() || !bucket_it->second.initialized ||
+                    !bucket_it->second.context.initialized) {
+                    return;
+                }
+                ReplayAggregatedBar output;
+                output.bar = bucket_it->second.bar;
+                output.context = bucket_it->second.context;
+                output.timeframe_minutes = bucket_it->second.timeframe_minutes;
+                emitted.push_back(output);
+                buckets_.erase(bucket_it);
+            };
             if (!bucket.initialized) {
                 ResetBucket(&bucket, one_minute_bar, context, timeframe, bucket_key, bucket_minute);
+                emit_session_end_bucket();
                 continue;
             }
             if (bucket.bucket_key != bucket_key) {
@@ -1415,6 +1433,7 @@ class ReplayTimeframeFanout {
                 output.timeframe_minutes = bucket.timeframe_minutes;
                 emitted.push_back(output);
                 ResetBucket(&bucket, one_minute_bar, context, timeframe, bucket_key, bucket_minute);
+                emit_session_end_bucket();
                 continue;
             }
 
@@ -1433,6 +1452,7 @@ class ReplayTimeframeFanout {
                 bucket.bar.action_day = one_minute_bar.action_day;
             }
             bucket.context.last_tick = context.last_tick;
+            emit_session_end_bucket();
         }
 
         return emitted;
@@ -1538,6 +1558,22 @@ class ReplayTimeframeFanout {
                       }
                       return left.bar.minute < right.bar.minute;
                   });
+    }
+
+    static bool IsSessionEndMinute(const BarSnapshot& bar) {
+        const std::string update_time = UpdateTimeFromMinuteKey(bar.minute);
+        if (update_time.empty()) {
+            return false;
+        }
+        return SharedSessionResolver().IsSessionEndMinute(bar.exchange_id, bar.instrument_id,
+                                                          update_time);
+    }
+
+    static std::string UpdateTimeFromMinuteKey(const std::string& minute_key) {
+        if (minute_key.size() < 14 || minute_key[8] != ' ') {
+            return "";
+        }
+        return minute_key.substr(9, 5);
     }
 
     std::vector<std::int32_t> timeframes_;

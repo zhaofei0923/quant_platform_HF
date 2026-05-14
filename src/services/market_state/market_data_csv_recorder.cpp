@@ -152,6 +152,29 @@ bool MarketDataCsvRecorder::Open(MarketDataRecordingConfig config, std::string* 
     return true;
 }
 
+void MarketDataCsvRecorder::SetAllowedInstrumentIds(
+    const std::vector<std::string>& instrument_ids) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    allowed_instrument_ids_.clear();
+    for (const auto& instrument_id : instrument_ids) {
+        if (!instrument_id.empty()) {
+            allowed_instrument_ids_.insert(instrument_id);
+        }
+    }
+    restrict_to_allowed_instruments_ = true;
+}
+
+void MarketDataCsvRecorder::ClearAllowedInstrumentIds() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    allowed_instrument_ids_.clear();
+    restrict_to_allowed_instruments_ = false;
+}
+
+bool MarketDataCsvRecorder::ShouldRecordInstrumentLocked(const std::string& instrument_id) const {
+    return !restrict_to_allowed_instruments_ ||
+           allowed_instrument_ids_.find(instrument_id) != allowed_instrument_ids_.end();
+}
+
 MarketDataCsvRecorder::ProductStreams* MarketDataCsvRecorder::EnsureProductStreams(
     const std::string& instrument_id, std::string* error) {
     std::string product_id = ExtractProductIdFromInstrumentId(instrument_id);
@@ -208,6 +231,9 @@ bool MarketDataCsvRecorder::AppendTick(const MarketSnapshot& snapshot, std::stri
     if (snapshot.instrument_id.empty()) {
         return SetError("market tick instrument_id is empty", error);
     }
+    if (!ShouldRecordInstrumentLocked(snapshot.instrument_id)) {
+        return true;
+    }
 
     if (config_.partition_by_product) {
         ProductStreams* streams = EnsureProductStreams(snapshot.instrument_id, error);
@@ -252,6 +278,9 @@ bool MarketDataCsvRecorder::AppendBar(const BarSnapshot& bar, std::string* error
     }
     if (bar.instrument_id.empty()) {
         return SetError("market bar instrument_id is empty", error);
+    }
+    if (!ShouldRecordInstrumentLocked(bar.instrument_id)) {
+        return true;
     }
 
     if (config_.partition_by_product) {

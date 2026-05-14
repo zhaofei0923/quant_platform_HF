@@ -1,7 +1,7 @@
 # CONFIG DOC
 # Purpose: SimNow multi-product run config for candidates in docs/ops/sim_trade_candidate_params.md.
-# Consumer: core_engine / simnow_compare_cli
-# Usage: ./build/core_engine --config configs/sim/ctp_sim_trade_candidates.yaml
+# Consumer: start_simnow_trading.sh / supervise_simnow_trading.sh / core_engine / simnow_compare_cli
+# Usage: scripts/ops/start_simnow_trading.sh --config configs/sim/ctp_sim_trade_candidates.yaml
 
 ctp:
   # --- identity & runtime mode ---
@@ -19,6 +19,7 @@ ctp:
   investor_id: "${CTP_SIM_INVESTOR_ID}"
   market_front: "${CTP_SIM_MARKET_FRONT}"
   trader_front: "${CTP_SIM_TRADER_FRONT}"
+  flow_path: "./ctp_flow"
   password_env: "CTP_SIM_PASSWORD"
   auth_code: "${CTP_SIM_AUTH_CODE}"
   app_id: "${CTP_SIM_APP_ID}"
@@ -35,7 +36,9 @@ ctp:
   cancel_retry_base_ms: 1000
   cancel_retry_max_delay_ms: 5000
   cancel_wait_ack_timeout_ms: 1200
-  settlement_confirm_required: true
+  # SimNow can hang on repeated same-day settlement confirmations after an earlier success.
+  # This candidate trading profile is started after the operator has confirmed settlement state.
+  settlement_confirm_required: false
 
   # --- observability & breaker ---
   metrics_enabled: false

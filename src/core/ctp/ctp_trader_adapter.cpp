@@ -15,6 +15,9 @@ namespace quant_hft {
 namespace {
 
 constexpr std::int64_t kNanosPerMilli = 1'000'000;
+constexpr int kInitialAdapterRequestId = 1000;
+constexpr auto kSettlementConfirmTimeout = std::chrono::seconds(30);
+constexpr auto kSettlementTimeoutAccountProbe = std::chrono::seconds(12);
 
 std::string BuildOrderRefString(const std::string& strategy_id, std::uint64_t seq) {
     const auto unix_ms = NowEpochNanos() / kNanosPerMilli;
@@ -326,7 +329,7 @@ bool CTPTraderAdapter::Connect(const MarketDataConnectConfig& config) {
         last_connect_config_ = config;
         has_connect_config_ = true;
     }
-    next_request_id_.store(1, std::memory_order_relaxed);
+    next_request_id_.store(kInitialAdapterRequestId, std::memory_order_relaxed);
     need_reconnect_.store(false, std::memory_order_relaxed);
     reconnect_attempts_.store(0, std::memory_order_relaxed);
     {
@@ -409,18 +412,48 @@ bool CTPTraderAdapter::ConfirmSettlement() {
         settlement_promises_[request_id] = promise;
     }
     if (!gateway_->RequestSettlementInfoConfirm(request_id)) {
+        EmitStructuredLog(nullptr, "ctp_trader_adapter", "error", "settlement_confirm_error",
+                          {{"error", "ReqSettlementInfoConfirm failed to submit"}});
         RejectSettlementPromise(request_id, "ReqSettlementInfoConfirm failed to submit");
         return false;
     }
 
     auto future = promise->get_future();
-    if (future.wait_for(std::chrono::seconds(3)) != std::future_status::ready) {
+    if (future.wait_for(kSettlementConfirmTimeout) != std::future_status::ready) {
+        EmitStructuredLog(nullptr, "ctp_trader_adapter", "error", "settlement_confirm_error",
+                          {{"error", "confirm settlement timeout"}});
+        const auto before_snapshot = gateway_->GetLastTradingAccountSnapshot();
+        const int account_request_id = AllocateRequestId();
+        if (gateway_->EnqueueTradingAccountQuery(account_request_id)) {
+            const auto deadline = std::chrono::steady_clock::now() + kSettlementTimeoutAccountProbe;
+            while (std::chrono::steady_clock::now() < deadline) {
+                const auto snapshot = gateway_->GetLastTradingAccountSnapshot();
+                if (snapshot.ts_ns > 0 && snapshot.ts_ns != before_snapshot.ts_ns) {
+                    ResolveSettlementPromise(request_id);
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    settlement_confirmed_ = true;
+                    state_ = TraderSessionState::kReady;
+                    EmitStructuredLog(nullptr,
+                                      "ctp_trader_adapter",
+                                      "warn",
+                                      "settlement_confirm_timeout_account_probe_ready");
+                    return true;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+        }
         RejectSettlementPromise(request_id, "confirm settlement timeout");
         return false;
     }
     try {
         future.get();
+    } catch (const std::exception& ex) {
+        EmitStructuredLog(nullptr, "ctp_trader_adapter", "error", "settlement_confirm_error",
+                          {{"error", ex.what()}});
+        return false;
     } catch (...) {
+        EmitStructuredLog(nullptr, "ctp_trader_adapter", "error", "settlement_confirm_error",
+                          {{"error", "unknown exception"}});
         return false;
     }
 

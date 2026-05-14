@@ -6,7 +6,7 @@ QUANT_ROOT="${QUANT_ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 export QUANT_ROOT
 
 ENV_FILE="${ENV_FILE:-${QUANT_ROOT}/.env}"
-CONFIG_PATH="${CTP_CONFIG_PATH:-${QUANT_ROOT}/configs/sim/ctp.yaml}"
+CONFIG_PATH="${QUANT_ROOT}/configs/sim/ctp_sim_trade_candidates.yaml"
 BUILD_DIR="${BUILD_DIR:-${QUANT_ROOT}/build}"
 CORE_ENGINE_BIN="${CORE_ENGINE_BIN:-${BUILD_DIR}/core_engine}"
 SIMNOW_PROBE_BIN="${SIMNOW_PROBE_BIN:-${BUILD_DIR}/simnow_probe}"

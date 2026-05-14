@@ -234,7 +234,7 @@
 ## `configs/sim/ctp.yaml`
 
 - Purpose: SimNow 7x24 回归/联调配置。
-- Consumer: `core_engine` / `simnow_compare_cli`。
+- Consumer: `start_simnow_trading.sh` / `supervise_simnow_trading.sh` / `core_engine` / `simnow_compare_cli`。
 - 常见错误: `risk_rule_groups` 与对应 `risk_rule_<group>_*` 键不匹配。
 - 最小运行: `./build/core_engine configs/sim/ctp.yaml`。
 - 字段说明: 见“CTP 通用字段字典”；本文件重点字段：
@@ -244,7 +244,7 @@
 
 ## `configs/sim/ctp_sim_trade_candidates.yaml`
 
-- Purpose: SimNow 多品种候选参数联调配置，运行 `c/rb/m/hc` 四个独立 Composite 实例。
+- Purpose: SimNow 多品种候选参数联调配置，当前运行 `c/hc` 两个独立 Composite 实例。
 - Consumer: `core_engine` / `simnow_compare_cli`。
 - 字段说明: 见“CTP 通用字段字典”；重点字段为 `strategy_composite_config_map.<strategy_id>`、`product_ids` 与行情按品种分区开关。
 

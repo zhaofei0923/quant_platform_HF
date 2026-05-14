@@ -6,7 +6,7 @@ QUANT_ROOT="${QUANT_ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 export QUANT_ROOT
 
 ENV_FILE="${ENV_FILE:-${QUANT_ROOT}/.env}"
-CONFIG_PATH="${CTP_CONFIG_PATH:-${QUANT_ROOT}/configs/sim/ctp.yaml}"
+CONFIG_PATH="${QUANT_ROOT}/configs/sim/ctp_sim_trade_candidates.yaml"
 BUILD_DIR="${BUILD_DIR:-${QUANT_ROOT}/build}"
 START_SCRIPT="${SIMNOW_START_SCRIPT:-${SCRIPT_DIR}/start_simnow_trading.sh}"
 DAILY_SETTLEMENT_SCRIPT="${SIMNOW_DAILY_SETTLEMENT_SCRIPT:-${SCRIPT_DIR}/run_daily_settlement.sh}"

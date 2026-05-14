@@ -6,6 +6,7 @@
 #include <cmath>
 #include <condition_variable>
 #include <csignal>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -740,6 +741,10 @@ bool IsTerminalStatus(quant_hft::OrderStatus status) {
 int main(int argc, char** argv) {
     using namespace quant_hft;
 
+    g_stop_requested.store(false);
+    std::signal(SIGINT, OnSignal);
+    std::signal(SIGTERM, OnSignal);
+
     CtpRuntimeConfig bootstrap_runtime;
 
     std::string config_path;
@@ -1005,6 +1010,9 @@ int main(int argc, char** argv) {
                           {{"output_dir", market_data_recorder.output_dir()},
                            {"tick_path", market_data_recorder.tick_path()},
                            {"bar_path", market_data_recorder.bar_path()}});
+    }
+    if (dominant_contract_mode) {
+        market_data_recorder.SetAllowedInstrumentIds({});
     }
 
     const auto replay_stats =
@@ -1937,6 +1945,9 @@ int main(int argc, char** argv) {
         active_instrument_ids.clear();
         active_instrument_ids.insert(instruments.begin(), instruments.end());
     }
+    if (dominant_contract_mode) {
+        market_data_recorder.SetAllowedInstrumentIds(instruments);
+    }
 
     for (const auto& instrument_id : instruments) {
         bar_aggregator.ResetInstrument(instrument_id);
@@ -1981,10 +1992,6 @@ int main(int argc, char** argv) {
                               {{"instrument_id", instrument_id}});
         }
     }
-
-    std::signal(SIGINT, OnSignal);
-    std::signal(SIGTERM, OnSignal);
-    g_stop_requested.store(false);
 
     std::atomic<bool> query_loop_stop{false};
     std::atomic<bool> execution_loop_stop{false};
@@ -2361,6 +2368,7 @@ int main(int argc, char** argv) {
                         continue;
                     }
 
+                    std::vector<std::string> updated_active_instruments;
                     {
                         std::lock_guard<std::mutex> lock(active_instrument_state_mutex);
                         auto current_binding_it = active_instrument_by_product.find(product_id);
@@ -2378,7 +2386,9 @@ int main(int argc, char** argv) {
                         if (instrument_it != instruments.end()) {
                             *instrument_it = best_it->instrument_id;
                         }
+                        updated_active_instruments = instruments;
                     }
+                    market_data_recorder.SetAllowedInstrumentIds(updated_active_instruments);
                     {
                         std::lock_guard<std::mutex> lock(latest_market_snapshot_mutex);
                         latest_market_snapshots[best_it->instrument_id] = *best_it;
@@ -2561,6 +2571,10 @@ int main(int argc, char** argv) {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
 
+    const bool signal_stop_requested = g_stop_requested.load();
+    EmitStructuredLog(&config, "core_engine", "info", "shutdown_started",
+                      {{"signal_stop", signal_stop_requested ? "true" : "false"}});
+
     execution_loop_stop.store(true);
     if (execution_maintenance_thread.joinable()) {
         execution_maintenance_thread.join();
@@ -2580,8 +2594,6 @@ int main(int argc, char** argv) {
     if (strategy_engine != nullptr) {
         strategy_engine->Stop();
     }
-    ctp_md->Disconnect();
-    ctp_trader->Disconnect();
     metrics_exporter.Stop();
     record_market_bars(bar_aggregator.Flush());
     std::string market_data_close_error;
@@ -2591,6 +2603,18 @@ int main(int argc, char** argv) {
     }
     timeseries_store.Flush();
     wal_sink.Flush();
+
+    if (signal_stop_requested && config.enable_real_api) {
+        EmitStructuredLog(&config, "core_engine", "info", "shutdown_fast_exit",
+                          {{"reason", "signal_stop_skip_ctp_release"}});
+        std::cout << "core_engine stopped cleanly" << '\n';
+        std::cout.flush();
+        std::cerr.flush();
+        std::_Exit(0);
+    }
+
+    ctp_md->Disconnect();
+    ctp_trader->Disconnect();
 
     std::cout << "core_engine stopped cleanly" << '\n';
     return 0;

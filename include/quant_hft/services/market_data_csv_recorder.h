@@ -6,6 +6,8 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 #include "quant_hft/core/ctp_config.h"
 #include "quant_hft/services/bar_aggregator.h"
@@ -21,6 +23,8 @@ class MarketDataCsvRecorder {
     MarketDataCsvRecorder& operator=(const MarketDataCsvRecorder&) = delete;
 
     bool Open(MarketDataRecordingConfig config, std::string* error);
+    void SetAllowedInstrumentIds(const std::vector<std::string>& instrument_ids);
+    void ClearAllowedInstrumentIds();
     bool AppendTick(const MarketSnapshot& snapshot, std::string* error);
     bool AppendBar(const BarSnapshot& bar, std::string* error);
     bool Close(std::string* error);
@@ -42,6 +46,7 @@ class MarketDataCsvRecorder {
     };
 
     ProductStreams* EnsureProductStreams(const std::string& instrument_id, std::string* error);
+    bool ShouldRecordInstrumentLocked(const std::string& instrument_id) const;
 
     bool is_open_{false};
     std::int64_t ticks_written_{0};
@@ -54,6 +59,8 @@ class MarketDataCsvRecorder {
     std::ofstream tick_out_;
     std::ofstream bar_out_;
     std::unordered_map<std::string, std::unique_ptr<ProductStreams>> product_streams_;
+    bool restrict_to_allowed_instruments_{false};
+    std::unordered_set<std::string> allowed_instrument_ids_;
 };
 
 }  // namespace quant_hft

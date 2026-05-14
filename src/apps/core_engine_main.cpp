@@ -994,7 +994,13 @@ int main(int argc, char** argv) {
     execution_engine.SetRiskManager(risk_manager);
     RuleMarketStateEngine market_state(32, file_config.market_state_detector);
     MarketBusProducer market_bus_producer(config.kafka_bootstrap_servers, config.kafka_topic_ticks);
-    LocalWalRegulatorySink wal_sink("runtime_events.wal");
+    const auto quant_root = quant_hft::GetEnvOrDefault("QUANT_ROOT", "");
+    const auto default_wal_path = quant_root.empty()
+                                      ? std::string("runtime/trading/wal/simnow/events.wal")
+                                      : quant_root + "/runtime/trading/wal/simnow/events.wal";
+    const auto wal_path = quant_hft::GetEnvOrDefault(
+        "SIMNOW_WAL_FILE", quant_hft::GetEnvOrDefault("QUANT_HFT_WAL_FILE", default_wal_path));
+    LocalWalRegulatorySink wal_sink(wal_path);
     std::atomic<std::uint64_t> wal_write_failures{0};
     std::atomic<std::uint64_t> trading_write_failures{0};
     std::atomic<std::uint64_t> market_data_recording_failures{0};
@@ -1015,8 +1021,7 @@ int main(int argc, char** argv) {
         market_data_recorder.SetAllowedInstrumentIds({});
     }
 
-    const auto replay_stats =
-        replay_loader.Replay("runtime_events.wal", &order_state_machine, &ledger);
+    const auto replay_stats = replay_loader.Replay(wal_path, &order_state_machine, &ledger);
     if (replay_stats.lines_total > 0 || replay_stats.parse_errors > 0) {
         std::cout << "WAL replay lines=" << replay_stats.lines_total
                   << " events=" << replay_stats.events_loaded
@@ -1112,6 +1117,19 @@ int main(int argc, char** argv) {
             const auto failure_count = wal_write_failures.fetch_add(1) + 1;
             EmitStructuredLog(&config, "core_engine", "error", "wal_append_order_event_failed",
                               {{"client_order_id", event.client_order_id},
+                               {"failure_count", std::to_string(failure_count)}});
+        }
+
+        const bool trade_fill_event = (event.status == OrderStatus::kPartiallyFilled ||
+                                       event.status == OrderStatus::kFilled) &&
+                                      event.filled_volume > 0 &&
+                                      (event.last_trade_volume > 0 || !event.trade_id.empty() ||
+                                       event.event_source == "OnRtnTrade");
+        if (trade_fill_event && !wal_sink.AppendTradeEvent(event)) {
+            const auto failure_count = wal_write_failures.fetch_add(1) + 1;
+            EmitStructuredLog(&config, "core_engine", "error", "wal_append_trade_event_failed",
+                              {{"client_order_id", event.client_order_id},
+                               {"trade_id", event.trade_id},
                                {"failure_count", std::to_string(failure_count)}});
         }
 
@@ -1725,12 +1743,15 @@ int main(int argc, char** argv) {
 
             {
                 std::unique_lock<std::mutex> lock(instrument_meta_mutex);
-                if (!instrument_meta_cv.wait_for(lock, std::chrono::seconds(15),
-                                                 [&]() { return instrument_meta_ready; })) {
+                constexpr int kInstrumentMetaQueryTimeoutSeconds = 120;
+                if (!instrument_meta_cv.wait_for(
+                        lock, std::chrono::seconds(kInstrumentMetaQueryTimeoutSeconds),
+                        [&]() { return instrument_meta_ready; })) {
                     EmitStructuredLog(
                         &config, "core_engine", "error",
                         "dominant_contract_instrument_query_timeout",
-                        {{"request_id", std::to_string(instrument_query_request_id)}});
+                        {{"request_id", std::to_string(instrument_query_request_id)},
+                         {"timeout_seconds", std::to_string(kInstrumentMetaQueryTimeoutSeconds)}});
                     return 2;
                 }
                 received_instrument_meta = instrument_meta_snapshots;

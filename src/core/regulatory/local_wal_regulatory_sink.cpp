@@ -1,5 +1,8 @@
 #include "quant_hft/core/local_wal_regulatory_sink.h"
 
+#include <cctype>
+#include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -8,7 +11,12 @@
 namespace quant_hft {
 
 LocalWalRegulatorySink::LocalWalRegulatorySink(std::string wal_path)
-    : wal_path_(std::move(wal_path)), stream_(wal_path_, std::ios::app) {
+    : wal_path_(std::move(wal_path)), run_id_(GetEnvOrEmpty("SIMNOW_RUN_ID")) {
+    const std::filesystem::path path(wal_path_);
+    if (const auto parent = path.parent_path(); !parent.empty()) {
+        std::filesystem::create_directories(parent);
+    }
+    stream_.open(wal_path_, std::ios::app);
     seq_ = ComputeNextSeq();
 }
 
@@ -20,11 +28,11 @@ LocalWalRegulatorySink::~LocalWalRegulatorySink() {
 }
 
 bool LocalWalRegulatorySink::AppendOrderEvent(const OrderEvent& event) {
-    return Append("order", event);
+    return Append("order", "order_update", event);
 }
 
 bool LocalWalRegulatorySink::AppendTradeEvent(const OrderEvent& event) {
-    return Append("trade", event);
+    return Append("trade", "trade_fill", event);
 }
 
 bool LocalWalRegulatorySink::Flush() {
@@ -36,7 +44,8 @@ bool LocalWalRegulatorySink::Flush() {
     return stream_.good();
 }
 
-bool LocalWalRegulatorySink::Append(const char* kind, const OrderEvent& event) {
+bool LocalWalRegulatorySink::Append(const char* kind, const char* event_type,
+                                    const OrderEvent& event) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!stream_.is_open()) {
         return false;
@@ -45,7 +54,10 @@ bool LocalWalRegulatorySink::Append(const char* kind, const OrderEvent& event) {
     std::ostringstream oss;
     oss << "{"
         << "\"seq\":" << seq_++ << ","
+        << "\"schema_version\":2,"
         << "\"kind\":\"" << kind << "\","
+        << "\"event_type\":\"" << event_type << "\","
+        << "\"run_id\":\"" << EscapeJsonString(run_id_) << "\","
         << "\"exchange_ts_ns\":" << event.exchange_ts_ns << ","
         << "\"recv_ts_ns\":" << event.recv_ts_ns << ","
         << "\"ts_ns\":" << event.ts_ns << ","
@@ -54,18 +66,32 @@ bool LocalWalRegulatorySink::Append(const char* kind, const OrderEvent& event) {
         << "\"client_order_id\":\"" << EscapeJsonString(event.client_order_id) << "\","
         << "\"exchange_order_id\":\"" << EscapeJsonString(event.exchange_order_id) << "\","
         << "\"instrument_id\":\"" << EscapeJsonString(event.instrument_id) << "\","
+        << "\"exchange_id\":\"" << EscapeJsonString(event.exchange_id) << "\","
         << "\"trade_id\":\"" << EscapeJsonString(event.trade_id) << "\","
         << "\"event_source\":\"" << EscapeJsonString(event.event_source) << "\","
+        << "\"side\":" << static_cast<int>(event.side) << ","
+        << "\"offset\":" << static_cast<int>(event.offset) << ","
         << "\"status\":" << static_cast<int>(event.status) << ","
         << "\"total_volume\":" << event.total_volume << ","
         << "\"filled_volume\":" << event.filled_volume << ","
+        << "\"last_trade_volume\":" << event.last_trade_volume << ","
         << "\"avg_fill_price\":" << event.avg_fill_price << ","
         << "\"reason\":\"" << EscapeJsonString(event.reason) << "\","
+        << "\"status_msg\":\"" << EscapeJsonString(event.status_msg) << "\","
+        << "\"order_submit_status\":\"" << EscapeJsonString(event.order_submit_status) << "\","
+        << "\"order_ref\":\"" << EscapeJsonString(event.order_ref) << "\","
+        << "\"front_id\":" << event.front_id << ","
+        << "\"session_id\":" << event.session_id << ","
         << "\"trace_id\":\"" << EscapeJsonString(event.trace_id) << "\""
         << "}\n";
 
     stream_ << oss.str();
     return stream_.good();
+}
+
+std::string LocalWalRegulatorySink::GetEnvOrEmpty(const char* name) {
+    const char* value = std::getenv(name);
+    return value == nullptr ? std::string() : std::string(value);
 }
 
 std::string LocalWalRegulatorySink::EscapeJsonString(const std::string& input) {
@@ -118,8 +144,8 @@ std::uint64_t LocalWalRegulatorySink::ComputeNextSeq() const {
             continue;
         }
         try {
-            const auto parsed = static_cast<std::uint64_t>(
-                std::stoull(line.substr(pos, end - pos)));
+            const auto parsed =
+                static_cast<std::uint64_t>(std::stoull(line.substr(pos, end - pos)));
             if (parsed >= max_seq) {
                 max_seq = parsed + 1;
             }

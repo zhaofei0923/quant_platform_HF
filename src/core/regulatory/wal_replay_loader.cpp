@@ -10,21 +10,17 @@ namespace {
 
 std::string Trim(const std::string& text) {
     std::size_t begin = 0;
-    while (begin < text.size() &&
-           std::isspace(static_cast<unsigned char>(text[begin])) != 0) {
+    while (begin < text.size() && std::isspace(static_cast<unsigned char>(text[begin])) != 0) {
         ++begin;
     }
     std::size_t end = text.size();
-    while (end > begin &&
-           std::isspace(static_cast<unsigned char>(text[end - 1])) != 0) {
+    while (end > begin && std::isspace(static_cast<unsigned char>(text[end - 1])) != 0) {
         --end;
     }
     return text.substr(begin, end - begin);
 }
 
-bool ExtractRawValue(const std::string& line,
-                     const std::string& key,
-                     std::string* raw_value) {
+bool ExtractRawValue(const std::string& line, const std::string& key, std::string* raw_value) {
     const std::string marker = "\"" + key + "\":";
     const auto marker_pos = line.find(marker);
     if (marker_pos == std::string::npos) {
@@ -32,8 +28,7 @@ bool ExtractRawValue(const std::string& line,
     }
 
     std::size_t pos = marker_pos + marker.size();
-    while (pos < line.size() &&
-           std::isspace(static_cast<unsigned char>(line[pos])) != 0) {
+    while (pos < line.size() && std::isspace(static_cast<unsigned char>(line[pos])) != 0) {
         ++pos;
     }
     if (pos >= line.size()) {
@@ -112,9 +107,7 @@ std::string UnescapeJsonString(const std::string& raw) {
     return out;
 }
 
-bool ParseInt64Field(const std::string& line,
-                     const std::string& key,
-                     std::int64_t* value) {
+bool ParseInt64Field(const std::string& line, const std::string& key, std::int64_t* value) {
     std::string raw;
     if (!ExtractRawValue(line, key, &raw)) {
         return false;
@@ -132,9 +125,7 @@ bool ParseInt64Field(const std::string& line,
     }
 }
 
-bool ParseIntField(const std::string& line,
-                   const std::string& key,
-                   int* value) {
+bool ParseIntField(const std::string& line, const std::string& key, int* value) {
     std::int64_t parsed = 0;
     if (!ParseInt64Field(line, key, &parsed)) {
         return false;
@@ -143,9 +134,7 @@ bool ParseIntField(const std::string& line,
     return true;
 }
 
-bool ParseDoubleField(const std::string& line,
-                      const std::string& key,
-                      double* value) {
+bool ParseDoubleField(const std::string& line, const std::string& key, double* value) {
     std::string raw;
     if (!ExtractRawValue(line, key, &raw)) {
         return false;
@@ -163,9 +152,7 @@ bool ParseDoubleField(const std::string& line,
     }
 }
 
-bool ParseStringField(const std::string& line,
-                      const std::string& key,
-                      std::string* value) {
+bool ParseStringField(const std::string& line, const std::string& key, std::string* value) {
     std::string raw;
     if (!ExtractRawValue(line, key, &raw)) {
         return false;
@@ -204,6 +191,11 @@ bool IsReplayableWalKind(const std::string& line, bool* replayable) {
     if (!ParseStringField(line, "kind", &kind)) {
         return false;
     }
+    std::string event_type;
+    if (ParseStringField(line, "event_type", &event_type) && event_type == "trade_fill") {
+        *replayable = false;
+        return true;
+    }
     *replayable = (kind == "order" || kind == "trade");
     return true;
 }
@@ -215,8 +207,7 @@ bool ParseWalLine(const std::string& line, OrderEvent* event) {
     }
 
     int raw_status = 0;
-    if (!ParseIntField(line, "status", &raw_status) ||
-        !ParseStatus(raw_status, &event->status)) {
+    if (!ParseIntField(line, "status", &raw_status) || !ParseStatus(raw_status, &event->status)) {
         return false;
     }
 
@@ -312,8 +303,7 @@ WalReplayStats WalReplayLoader::Replay(const std::string& wal_path,
         ++stats.events_loaded;
 
         bool apply_to_ledger = true;
-        if (order_state_machine != nullptr &&
-            !order_state_machine->RecoverFromOrderEvent(event)) {
+        if (order_state_machine != nullptr && !order_state_machine->RecoverFromOrderEvent(event)) {
             ++stats.state_rejected;
             apply_to_ledger = false;
         }

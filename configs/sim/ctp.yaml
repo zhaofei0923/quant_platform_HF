@@ -73,7 +73,7 @@ ctp:
 
   # --- strategy/runtime pipeline ---
   instruments: ""
-  product_ids: "c"
+  product_ids: "c,hc"
   active_contract_mode: "dominant_open_interest"   # static | dominant_open_interest
   dominant_contract_wait_ms: 5000
   dominant_contract_recheck_interval_ms: 60000

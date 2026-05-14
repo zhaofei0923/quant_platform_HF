@@ -1,12 +1,13 @@
+#include "quant_hft/core/wal_replay_loader.h"
+
+#include <gtest/gtest.h>
+
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
 
-#include <gtest/gtest.h>
-
 #include "quant_hft/core/local_wal_regulatory_sink.h"
-#include "quant_hft/core/wal_replay_loader.h"
 #include "quant_hft/services/in_memory_portfolio_ledger.h"
 #include "quant_hft/services/order_state_machine.h"
 
@@ -20,12 +21,8 @@ std::filesystem::path NewTempWalPath(const std::string& tag) {
            ("quant_hft_" + tag + "_" + std::to_string(now) + ".wal");
 }
 
-OrderEvent BuildEvent(const std::string& client_order_id,
-                      OrderStatus status,
-                      int total_volume,
-                      int filled_volume,
-                      double avg_fill_price,
-                      EpochNanos ts_ns) {
+OrderEvent BuildEvent(const std::string& client_order_id, OrderStatus status, int total_volume,
+                      int filled_volume, double avg_fill_price, EpochNanos ts_ns) {
     OrderEvent event;
     event.account_id = "a1";
     event.client_order_id = client_order_id;
@@ -48,12 +45,10 @@ TEST(WalReplayLoaderTest, RebuildsOrderStateAndLedgerFromWal) {
 
     {
         LocalWalRegulatorySink sink(wal_path.string());
-        sink.AppendOrderEvent(
-            BuildEvent("ord-1", OrderStatus::kAccepted, 2, 0, 0.0, 1));
-        sink.AppendTradeEvent(
-            BuildEvent("ord-1", OrderStatus::kPartiallyFilled, 2, 1, 4500.0, 2));
-        sink.AppendTradeEvent(
-            BuildEvent("ord-1", OrderStatus::kFilled, 2, 2, 4510.0, 3));
+        sink.AppendOrderEvent(BuildEvent("ord-1", OrderStatus::kAccepted, 2, 0, 0.0, 1));
+        sink.AppendOrderEvent(BuildEvent("ord-1", OrderStatus::kPartiallyFilled, 2, 1, 4500.0, 2));
+        sink.AppendOrderEvent(BuildEvent("ord-1", OrderStatus::kFilled, 2, 2, 4510.0, 3));
+        sink.AppendTradeEvent(BuildEvent("ord-1", OrderStatus::kFilled, 2, 2, 4510.0, 3));
         sink.Flush();
     }
 
@@ -62,8 +57,9 @@ TEST(WalReplayLoaderTest, RebuildsOrderStateAndLedgerFromWal) {
     WalReplayLoader loader;
     const auto stats = loader.Replay(wal_path.string(), &order_state_machine, &ledger);
 
-    EXPECT_EQ(stats.lines_total, 3);
+    EXPECT_EQ(stats.lines_total, 4);
     EXPECT_EQ(stats.events_loaded, 3);
+    EXPECT_EQ(stats.ignored_lines, 1);
     EXPECT_EQ(stats.parse_errors, 0);
     EXPECT_EQ(stats.state_rejected, 0);
     EXPECT_EQ(stats.ledger_applied, 3);
@@ -73,10 +69,35 @@ TEST(WalReplayLoaderTest, RebuildsOrderStateAndLedgerFromWal) {
     EXPECT_EQ(snapshot.filled_volume, 2);
     EXPECT_TRUE(snapshot.is_terminal);
 
-    const auto position =
-        ledger.GetPositionSnapshot("a1", "SHFE.ag2406", PositionDirection::kLong);
+    const auto position = ledger.GetPositionSnapshot("a1", "SHFE.ag2406", PositionDirection::kLong);
     EXPECT_EQ(position.volume, 2);
     EXPECT_NEAR(position.avg_price, 4505.0, 1e-6);
+
+    std::filesystem::remove(wal_path);
+}
+
+TEST(WalReplayLoaderTest, ReplaysLegacyTradeKindWithoutEventType) {
+    const auto wal_path = NewTempWalPath("legacy_trade");
+    {
+        std::ofstream out(wal_path);
+        out << "{\"seq\":1,\"kind\":\"trade\",\"ts_ns\":10,"
+               "\"account_id\":\"a1\",\"client_order_id\":\"ord-legacy-trade\","
+               "\"instrument_id\":\"SHFE.ag2406\",\"status\":3,"
+               "\"total_volume\":1,\"filled_volume\":1,\"avg_fill_price\":4500.0}\n";
+    }
+
+    OrderStateMachine order_state_machine;
+    InMemoryPortfolioLedger ledger;
+    WalReplayLoader loader;
+    const auto stats = loader.Replay(wal_path.string(), &order_state_machine, &ledger);
+
+    EXPECT_EQ(stats.lines_total, 1);
+    EXPECT_EQ(stats.events_loaded, 1);
+    EXPECT_EQ(stats.ignored_lines, 0);
+    EXPECT_EQ(stats.parse_errors, 0);
+
+    const auto snapshot = order_state_machine.GetOrderSnapshot("ord-legacy-trade");
+    EXPECT_EQ(snapshot.status, OrderStatus::kFilled);
 
     std::filesystem::remove(wal_path);
 }

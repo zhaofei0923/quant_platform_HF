@@ -5,9 +5,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 QUANT_ROOT="${QUANT_ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 export QUANT_ROOT
 
-RUN_ROOT="${SIMNOW_RUN_ROOT:-${QUANT_ROOT}/runtime/simnow_trading}"
+DEFAULT_RUN_ROOT="${QUANT_ROOT}/runtime/trading/runs/simnow"
+LEGACY_RUN_ROOT="${QUANT_ROOT}/runtime/simnow_trading"
+RUN_ROOT="${SIMNOW_RUN_ROOT:-${DEFAULT_RUN_ROOT}}"
+if [[ -z "${SIMNOW_RUN_ROOT:-}" && ! -f "${RUN_ROOT}/current_core_engine.pid" && \
+      -f "${LEGACY_RUN_ROOT}/current_core_engine.pid" ]]; then
+  RUN_ROOT="${LEGACY_RUN_ROOT}"
+fi
 CONFIG_PATH="${CTP_CONFIG_PATH:-}"
-CORE_ENGINE_BIN="${CORE_ENGINE_BIN:-${QUANT_ROOT}/build/core_engine}"
+CORE_ENGINE_BIN="${CORE_ENGINE_BIN:-${QUANT_ROOT}/build-gcc/core_engine}"
 SYSTEMD_UNIT="${SIMNOW_SYSTEMD_UNIT:-quant-hft-simnow-trading.service}"
 STOP_TIMEOUT_SECONDS="${SIMNOW_STOP_TIMEOUT_SECONDS:-30}"
 TARGET_PID=""

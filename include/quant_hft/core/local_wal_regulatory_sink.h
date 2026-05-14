@@ -9,7 +9,7 @@
 namespace quant_hft {
 
 class LocalWalRegulatorySink : public IRegulatorySink {
-public:
+   public:
     explicit LocalWalRegulatorySink(std::string wal_path);
     ~LocalWalRegulatorySink() override;
 
@@ -17,12 +17,14 @@ public:
     bool AppendTradeEvent(const OrderEvent& event) override;
     bool Flush() override;
 
-private:
+   private:
     static std::string EscapeJsonString(const std::string& input);
+    static std::string GetEnvOrEmpty(const char* name);
     std::uint64_t ComputeNextSeq() const;
-    bool Append(const char* kind, const OrderEvent& event);
+    bool Append(const char* kind, const char* event_type, const OrderEvent& event);
 
     std::string wal_path_;
+    std::string run_id_;
     mutable std::mutex mutex_;
     std::ofstream stream_;
     std::uint64_t seq_{0};

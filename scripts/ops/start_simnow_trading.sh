@@ -7,11 +7,12 @@ export QUANT_ROOT
 
 ENV_FILE="${ENV_FILE:-${QUANT_ROOT}/.env}"
 CONFIG_PATH="${QUANT_ROOT}/configs/sim/ctp_sim_trade_candidates.yaml"
-BUILD_DIR="${BUILD_DIR:-${QUANT_ROOT}/build}"
+BUILD_DIR="${BUILD_DIR:-${QUANT_ROOT}/build-gcc}"
 CORE_ENGINE_BIN="${CORE_ENGINE_BIN:-${BUILD_DIR}/core_engine}"
 SIMNOW_PROBE_BIN="${SIMNOW_PROBE_BIN:-${BUILD_DIR}/simnow_probe}"
 RUN_ID="${SIMNOW_RUN_ID:-simnow-$(date +%Y%m%dT%H%M%S)}"
-RUN_ROOT="${SIMNOW_RUN_ROOT:-${QUANT_ROOT}/runtime/simnow_trading}"
+RUN_ROOT="${SIMNOW_RUN_ROOT:-${QUANT_ROOT}/runtime/trading/runs/simnow}"
+WAL_FILE="${SIMNOW_WAL_FILE:-${QUANT_ROOT}/runtime/trading/wal/simnow/events.wal}"
 RUN_SECONDS="${SIMNOW_RUN_SECONDS:-0}"
 PROBE_SECONDS="${SIMNOW_PROBE_SECONDS:-5}"
 PROBE_TIMEOUT_SECONDS="${SIMNOW_PROBE_TIMEOUT_SECONDS:-120}"
@@ -27,6 +28,11 @@ PROBE_ONLY=0
 DRY_RUN=0
 ALLOW_EXISTING=0
 STOP_EXISTING=0
+RUN_ROOT_SET_BY_CLI=0
+WAL_FILE_SET_BY_CLI=0
+PROBE_SECONDS_SET_BY_CLI=0
+PROBE_TIMEOUT_SECONDS_SET_BY_CLI=0
+INSTRUMENT_TIMEOUT_SECONDS_SET_BY_CLI=0
 
 usage() {
   cat <<USAGE
@@ -42,6 +48,7 @@ Options:
   --simnow-probe-bin <path>      simnow_probe binary (default: ${SIMNOW_PROBE_BIN})
   --run-id <value>               Run id for logs/PID (default: ${RUN_ID})
   --run-root <path>              Run output root (default: ${RUN_ROOT})
+  --wal-file <path>              WAL output path (default: ${WAL_FILE})
   --run-seconds <int>            Stop core_engine after N seconds; 0 means unlimited (default: ${RUN_SECONDS})
   --probe-seconds <int>          simnow_probe monitor seconds before trading (default: ${PROBE_SECONDS})
   --probe-timeout-seconds <int>  Hard timeout for simnow_probe (default: ${PROBE_TIMEOUT_SECONDS})
@@ -215,12 +222,13 @@ while [[ $# -gt 0 ]]; do
     --core-engine-bin|--core-bin) require_value "$1" "${2:-}"; CORE_ENGINE_BIN="$2"; shift 2 ;;
     --simnow-probe-bin|--probe-bin) require_value "$1" "${2:-}"; SIMNOW_PROBE_BIN="$2"; shift 2 ;;
     --run-id) require_value "$1" "${2:-}"; RUN_ID="$2"; shift 2 ;;
-    --run-root) require_value "$1" "${2:-}"; RUN_ROOT="$2"; shift 2 ;;
+    --run-root) require_value "$1" "${2:-}"; RUN_ROOT="$2"; RUN_ROOT_SET_BY_CLI=1; shift 2 ;;
+    --wal-file) require_value "$1" "${2:-}"; WAL_FILE="$2"; WAL_FILE_SET_BY_CLI=1; shift 2 ;;
     --run-seconds) require_value "$1" "${2:-}"; RUN_SECONDS="$2"; shift 2 ;;
-    --probe-seconds) require_value "$1" "${2:-}"; PROBE_SECONDS="$2"; shift 2 ;;
-    --probe-timeout-seconds) require_value "$1" "${2:-}"; PROBE_TIMEOUT_SECONDS="$2"; shift 2 ;;
+    --probe-seconds) require_value "$1" "${2:-}"; PROBE_SECONDS="$2"; PROBE_SECONDS_SET_BY_CLI=1; shift 2 ;;
+    --probe-timeout-seconds) require_value "$1" "${2:-}"; PROBE_TIMEOUT_SECONDS="$2"; PROBE_TIMEOUT_SECONDS_SET_BY_CLI=1; shift 2 ;;
     --health-interval-ms) require_value "$1" "${2:-}"; HEALTH_INTERVAL_MS="$2"; shift 2 ;;
-    --instrument-timeout-seconds) require_value "$1" "${2:-}"; INSTRUMENT_TIMEOUT_SECONDS="$2"; shift 2 ;;
+    --instrument-timeout-seconds) require_value "$1" "${2:-}"; INSTRUMENT_TIMEOUT_SECONDS="$2"; INSTRUMENT_TIMEOUT_SECONDS_SET_BY_CLI=1; shift 2 ;;
     --min-free-mb) require_value "$1" "${2:-}"; MIN_FREE_MB="$2"; shift 2 ;;
     --log-max-bytes) require_value "$1" "${2:-}"; LOG_MAX_BYTES="$2"; shift 2 ;;
     --log-retention-days) require_value "$1" "${2:-}"; LOG_RETENTION_DAYS="$2"; shift 2 ;;
@@ -257,7 +265,30 @@ set -a
 source "${ENV_FILE}"
 set +a
 
+if [[ ${PROBE_SECONDS_SET_BY_CLI} -eq 0 ]]; then
+  PROBE_SECONDS="${SIMNOW_PROBE_SECONDS:-${PROBE_SECONDS}}"
+fi
+if [[ ${RUN_ROOT_SET_BY_CLI} -eq 0 ]]; then
+  RUN_ROOT="${SIMNOW_RUN_ROOT:-${RUN_ROOT}}"
+fi
+if [[ ${WAL_FILE_SET_BY_CLI} -eq 0 ]]; then
+  WAL_FILE="${SIMNOW_WAL_FILE:-${WAL_FILE}}"
+fi
+if [[ ${PROBE_TIMEOUT_SECONDS_SET_BY_CLI} -eq 0 ]]; then
+  PROBE_TIMEOUT_SECONDS="${SIMNOW_PROBE_TIMEOUT_SECONDS:-${PROBE_TIMEOUT_SECONDS}}"
+fi
+if [[ ${INSTRUMENT_TIMEOUT_SECONDS_SET_BY_CLI} -eq 0 ]]; then
+  INSTRUMENT_TIMEOUT_SECONDS="${SIMNOW_INSTRUMENT_TIMEOUT_SECONDS:-${INSTRUMENT_TIMEOUT_SECONDS}}"
+fi
+is_positive_int "${PROBE_SECONDS}" || die "SIMNOW_PROBE_SECONDS must be a positive integer"
+is_positive_int "${PROBE_TIMEOUT_SECONDS}" || die "SIMNOW_PROBE_TIMEOUT_SECONDS must be a positive integer"
+is_positive_int "${INSTRUMENT_TIMEOUT_SECONDS}" || die "SIMNOW_INSTRUMENT_TIMEOUT_SECONDS must be a positive integer"
+[[ -n "${RUN_ROOT}" ]] || die "SIMNOW_RUN_ROOT must not be empty"
+[[ -n "${WAL_FILE}" ]] || die "SIMNOW_WAL_FILE must not be empty"
+
 export CTP_CONFIG_PATH="${CONFIG_PATH}"
+export SIMNOW_RUN_ID="${RUN_ID}"
+export SIMNOW_WAL_FILE="${WAL_FILE}"
 export CTP_SIM_MARKET_FRONT="${CTP_SIM_MARKET_FRONT:-tcp://182.254.243.31:30011}"
 export CTP_SIM_TRADER_FRONT="${CTP_SIM_TRADER_FRONT:-tcp://182.254.243.31:30001}"
 export CTP_SIM_IS_PRODUCTION_MODE="${CTP_SIM_IS_PRODUCTION_MODE:-true}"
@@ -345,6 +376,7 @@ cat > "${SUMMARY_FILE}" <<EOF
 run_id=${RUN_ID}
 run_dir=${RUN_DIR}
 config_path=${CONFIG_PATH}
+wal_file=${WAL_FILE}
 market_front=${CTP_SIM_MARKET_FRONT}
 trader_front=${CTP_SIM_TRADER_FRONT}
 production_mode=${CTP_SIM_IS_PRODUCTION_MODE}
@@ -369,12 +401,14 @@ fi
 
 echo "[info] SimNow trading run id: ${RUN_ID}"
 echo "[info] run dir: ${RUN_DIR}"
+echo "[info] wal file: ${WAL_FILE}"
 echo "[info] primary front: md=${CTP_SIM_MARKET_FRONT} td=${CTP_SIM_TRADER_FRONT}"
 echo "[info] automatic candidates: group1 -> group2 -> group3"
 
 if [[ ${DRY_RUN} -eq 1 ]]; then
   echo "[dry-run] disk check: ${RUN_ROOT} free >= ${MIN_FREE_MB}MB"
   echo "[dry-run] duplicate check: no live core_engine detected"
+  echo "[dry-run] wal file: ${WAL_FILE}"
   echo "[dry-run] probe: timeout ${PROBE_TIMEOUT_SECONDS}s ${SIMNOW_PROBE_BIN} ${CONFIG_PATH} --monitor-seconds ${PROBE_SECONDS} --health-interval-ms ${HEALTH_INTERVAL_MS} --instrument-timeout-seconds ${INSTRUMENT_TIMEOUT_SECONDS}"
   printf '[dry-run] core_engine:'
   printf ' %q' "${core_cmd[@]}"

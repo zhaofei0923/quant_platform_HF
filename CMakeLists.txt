@@ -267,6 +267,9 @@ target_link_libraries(csv_to_parquet_cli PRIVATE quant_hft_core)
 add_executable(simnow_compare_cli src/apps/simnow_compare_cli_main.cpp)
 target_link_libraries(simnow_compare_cli PRIVATE quant_hft_core)
 
+add_executable(simnow_wal_export_cli src/apps/simnow_wal_export_cli_main.cpp)
+target_link_libraries(simnow_wal_export_cli PRIVATE quant_hft_core)
+
 add_executable(simnow_weekly_stress_cli src/apps/simnow_weekly_stress_cli_main.cpp)
 target_link_libraries(simnow_weekly_stress_cli PRIVATE quant_hft_core)
 

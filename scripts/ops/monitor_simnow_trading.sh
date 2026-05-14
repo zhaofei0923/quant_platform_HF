@@ -5,9 +5,26 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 QUANT_ROOT="${QUANT_ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 export QUANT_ROOT
 
-RUN_ROOT="${SIMNOW_RUN_ROOT:-${QUANT_ROOT}/runtime/simnow_trading}"
+DEFAULT_RUN_ROOT="${QUANT_ROOT}/runtime/trading/runs/simnow"
+LEGACY_RUN_ROOT="${QUANT_ROOT}/runtime/simnow_trading"
+RUN_ROOT="${SIMNOW_RUN_ROOT:-${DEFAULT_RUN_ROOT}}"
+RUN_ROOT_HAS_STATE=0
+if [[ -f "${RUN_ROOT}/current_run_dir" || -f "${RUN_ROOT}/supervisor.log" || \
+      -f "${RUN_ROOT}/locks/supervisor.lock" || -d "${RUN_ROOT}/eod" ]]; then
+  RUN_ROOT_HAS_STATE=1
+fi
+if [[ -z "${SIMNOW_RUN_ROOT:-}" && ${RUN_ROOT_HAS_STATE} -eq 0 && \
+      -f "${LEGACY_RUN_ROOT}/current_run_dir" ]]; then
+  RUN_ROOT="${LEGACY_RUN_ROOT}"
+fi
 MARKET_DATA_DIR="${SIMNOW_MARKET_DATA_DIR:-${QUANT_ROOT}/runtime/market_data/simnow}"
-WAL_FILE="${SIMNOW_WAL_FILE:-${QUANT_ROOT}/runtime_events.wal}"
+DEFAULT_WAL_FILE="${QUANT_ROOT}/runtime/trading/wal/simnow/events.wal"
+LEGACY_WAL_FILE="${QUANT_ROOT}/runtime_events.wal"
+WAL_FILE="${SIMNOW_WAL_FILE:-${DEFAULT_WAL_FILE}}"
+if [[ -z "${SIMNOW_WAL_FILE:-}" && ! -f "${WAL_FILE}" && ${RUN_ROOT_HAS_STATE} -eq 0 && \
+      -f "${LEGACY_WAL_FILE}" ]]; then
+  WAL_FILE="${LEGACY_WAL_FILE}"
+fi
 CONFIG_PATH="${CTP_CONFIG_PATH:-${QUANT_ROOT}/configs/sim/ctp_sim_trade_candidates.yaml}"
 TICK_STALE_SECONDS="${SIMNOW_TICK_STALE_SECONDS:-180}"
 BAR_STALE_SECONDS="${SIMNOW_BAR_STALE_SECONDS:-240}"
@@ -15,6 +32,7 @@ HEALTH_GRACE_SECONDS="${SIMNOW_HEALTH_GRACE_SECONDS:-180}"
 TAIL_LINES=30
 WATCH_SECONDS=0
 PRODUCTS="${SIMNOW_PRODUCTS:-}"
+STRICT_EXIT="${SIMNOW_MONITOR_STRICT_EXIT:-0}"
 
 usage() {
   cat <<USAGE
@@ -35,6 +53,8 @@ Options:
   --health-grace-seconds <int>  Startup grace before missing data is unhealthy (default: ${HEALTH_GRACE_SECONDS})
   --tail-lines <int>            Recent alert log lines to show (default: ${TAIL_LINES})
   --watch-seconds <int>         Repeat every N seconds; 0 means one-shot (default: ${WATCH_SECONDS})
+  --strict-exit                 Return non-zero when the report is unhealthy
+  --warn-only                   Always exit zero after printing the report (default)
   -h, --help                    Show this help
 USAGE
 }
@@ -52,6 +72,10 @@ require_value() {
 
 is_non_negative_int() {
   [[ "${1:-}" =~ ^[0-9]+$ ]]
+}
+
+is_zero_or_one() {
+  [[ "${1:-}" == "0" || "${1:-}" == "1" ]]
 }
 
 pid_is_alive() {
@@ -294,6 +318,7 @@ print_once() {
   local active_instrument_id
   local order_events=0
   local trade_events=0
+  local supervised_idle=0
 
   unhealthy_count=0
   checked_at="$(date -Is)"
@@ -301,6 +326,9 @@ print_once() {
   run_dir="$(read_state_file "${RUN_ROOT}/current_run_dir" || true)"
   core_log="$(read_state_file "${RUN_ROOT}/current_core_engine_log" || true)"
   supervisor_pids="$(find_supervisor_pids | sort -u | tr '\n' ' ' | sed 's/[[:space:]]*$//' || true)"
+  if [[ -n "${supervisor_pids}" && -z "${core_pid}" && -z "${run_dir}" ]]; then
+    supervised_idle=1
+  fi
 
   echo "[status] checked_at=${checked_at}"
   echo "[paths] run_root=${RUN_ROOT}"
@@ -312,6 +340,8 @@ print_once() {
     elapsed_seconds="$(process_elapsed_seconds "${core_pid}")"
     [[ -n "${elapsed_seconds}" ]] || elapsed_seconds=0
     echo "[process] core_engine=alive pid=${core_pid} elapsed=${elapsed_seconds}s"
+  elif (( supervised_idle == 1 )); then
+    echo "[process] core_engine=waiting_for_trading_window"
   elif [[ -n "${core_pid}" ]]; then
     echo "[process] core_engine=dead pid=${core_pid}"
     unhealthy_count=$((unhealthy_count + 1))
@@ -348,7 +378,9 @@ print_once() {
   fi
 
   echo "[market_data]"
-  if [[ -n "${product_csv}" ]]; then
+  if (( supervised_idle == 1 )); then
+    echo "status=waiting_for_trading_window"
+  elif [[ -n "${product_csv}" ]]; then
     IFS=',' read -r -a product_array <<< "${product_csv}"
     for product in "${product_array[@]}"; do
       [[ -n "${product}" ]] || continue
@@ -369,8 +401,8 @@ print_once() {
 
   echo "[wal]"
   if [[ -f "${WAL_FILE}" ]]; then
-    order_events="$(grep -c 'client_order_id' "${WAL_FILE}" || true)"
-    trade_events="$(grep -Ec 'filled_volume[^0-9]*[1-9]|trade_id' "${WAL_FILE}" || true)"
+    order_events="$(grep -Ec '"event_type":"order_update"|"kind":"order"' "${WAL_FILE}" || true)"
+    trade_events="$(grep -Ec '"event_type":"trade_fill"|"kind":"trade"' "${WAL_FILE}" || true)"
     echo "wal_file=${WAL_FILE} order_events=${order_events} trade_or_fill_events=${trade_events}"
   else
     echo "wal_file=${WAL_FILE} status=missing"
@@ -380,13 +412,19 @@ print_once() {
   if [[ -n "${core_log}" && -f "${core_log}" ]]; then
     grep -Ein 'level=(warn|error)|reject|timeout|disconnect|critical|client_order_id|order_(insert|event|intent)|OnRtnTrade|filled_volume|trade_id|PARTIALLY_FILLED|FILLED' "${core_log}" |
       sanitize_log | tail -n "${TAIL_LINES}" || true
+  elif (( supervised_idle == 1 )); then
+    echo "core log is unavailable until the next trading window starts"
   else
     echo "core log is unavailable"
   fi
 
   if (( unhealthy_count > 0 )); then
-    echo "[result] unhealthy count=${unhealthy_count}"
-    return 2
+    if (( STRICT_EXIT == 1 )); then
+      echo "[result] unhealthy count=${unhealthy_count}"
+      return 2
+    fi
+    echo "[result] unhealthy count=${unhealthy_count} exit=warn_only"
+    return 0
   fi
   echo "[result] healthy"
 }
@@ -403,6 +441,8 @@ while [[ $# -gt 0 ]]; do
     --health-grace-seconds) require_value "$1" "${2:-}"; HEALTH_GRACE_SECONDS="$2"; shift 2 ;;
     --tail-lines) require_value "$1" "${2:-}"; TAIL_LINES="$2"; shift 2 ;;
     --watch-seconds) require_value "$1" "${2:-}"; WATCH_SECONDS="$2"; shift 2 ;;
+    --strict-exit) STRICT_EXIT=1; shift ;;
+    --warn-only) STRICT_EXIT=0; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "error: unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -413,6 +453,7 @@ is_non_negative_int "${BAR_STALE_SECONDS}" || die "--bar-stale-seconds must be a
 is_non_negative_int "${HEALTH_GRACE_SECONDS}" || die "--health-grace-seconds must be a non-negative integer"
 is_non_negative_int "${TAIL_LINES}" || die "--tail-lines must be a non-negative integer"
 is_non_negative_int "${WATCH_SECONDS}" || die "--watch-seconds must be a non-negative integer"
+is_zero_or_one "${STRICT_EXIT}" || die "SIMNOW_MONITOR_STRICT_EXIT must be 0 or 1"
 
 cd "${QUANT_ROOT}"
 

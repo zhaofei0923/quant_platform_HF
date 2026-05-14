@@ -7,18 +7,26 @@ export QUANT_ROOT
 
 ENV_FILE="${ENV_FILE:-${QUANT_ROOT}/.env}"
 CONFIG_PATH="${QUANT_ROOT}/configs/sim/ctp_sim_trade_candidates.yaml"
-BUILD_DIR="${BUILD_DIR:-${QUANT_ROOT}/build}"
+BUILD_DIR="${BUILD_DIR:-${QUANT_ROOT}/build-gcc}"
 START_SCRIPT="${SIMNOW_START_SCRIPT:-${SCRIPT_DIR}/start_simnow_trading.sh}"
 DAILY_SETTLEMENT_SCRIPT="${SIMNOW_DAILY_SETTLEMENT_SCRIPT:-${SCRIPT_DIR}/run_daily_settlement.sh}"
 OPS_HEALTH_BIN="${OPS_HEALTH_BIN:-${BUILD_DIR}/ops_health_report_cli}"
 OPS_ALERT_BIN="${OPS_ALERT_BIN:-${BUILD_DIR}/ops_alert_report_cli}"
-RUN_ROOT="${SIMNOW_RUN_ROOT:-${QUANT_ROOT}/runtime/simnow_trading}"
+EXPORT_SCRIPT="${SIMNOW_EXPORT_SCRIPT:-${SCRIPT_DIR}/export_simnow_trading_day.sh}"
+RUN_ROOT="${SIMNOW_RUN_ROOT:-${QUANT_ROOT}/runtime/trading/runs/simnow}"
 MARKET_DATA_DIR="${SIMNOW_MARKET_DATA_DIR:-${QUANT_ROOT}/runtime/market_data/simnow}"
-WAL_FILE="${SIMNOW_WAL_FILE:-${QUANT_ROOT}/runtime_events.wal}"
+WAL_FILE="${SIMNOW_WAL_FILE:-${QUANT_ROOT}/runtime/trading/wal/simnow/events.wal}"
+EXPORT_ROOT="${SIMNOW_EXPORT_ROOT:-${QUANT_ROOT}/runtime/trading/exports/simnow}"
+RECONCILE_ROOT="${SIMNOW_RECONCILE_ROOT:-${QUANT_ROOT}/runtime/trading/reconcile/simnow}"
+REPORT_ROOT="${SIMNOW_REPORT_ROOT:-${QUANT_ROOT}/runtime/trading/reports/simnow}"
 TRADING_WINDOWS="${SIMNOW_TRADING_WINDOWS:-night=20:55-02:35,day_am=08:55-11:35,day_pm=13:25-15:20}"
 TRADING_DAYS_FILE="${SIMNOW_TRADING_DAYS_FILE:-}"
 EOD_TIME="${SIMNOW_EOD_TIME:-15:25}"
 EOD_EXECUTE="${SIMNOW_EOD_EXECUTE:-1}"
+EOD_PROJECT_DB="${SIMNOW_EOD_PROJECT_DB:-0}"
+EOD_QUERY_DB="${SIMNOW_EOD_QUERY_DB:-${EOD_PROJECT_DB}}"
+STRICT_RECONCILE="${SIMNOW_STRICT_RECONCILE:-0}"
+CONVERT_MARKET_PARQUET="${SIMNOW_EOD_CONVERT_MARKET_PARQUET:-0}"
 CHECK_INTERVAL_SECONDS="${SIMNOW_CHECK_INTERVAL_SECONDS:-30}"
 RESTART_DELAY_SECONDS="${SIMNOW_RESTART_DELAY_SECONDS:-15}"
 MAX_RESTARTS_PER_WINDOW="${SIMNOW_MAX_RESTARTS_PER_WINDOW:-5}"
@@ -41,6 +49,13 @@ RUN_ONCE=0
 DRY_RUN=0
 NO_EOD=0
 NO_STOP_OUTSIDE=0
+WINDOWS_SET_BY_CLI=0
+RUN_ROOT_SET_BY_CLI=0
+MARKET_DATA_DIR_SET_BY_CLI=0
+WAL_FILE_SET_BY_CLI=0
+REPORT_ROOT_SET_BY_CLI=0
+EXPORT_ROOT_SET_BY_CLI=0
+RECONCILE_ROOT_SET_BY_CLI=0
 
 usage() {
   cat <<USAGE
@@ -56,6 +71,10 @@ Options:
   --build-dir <path>             Build directory (default: ${BUILD_DIR})
   --run-root <path>              Run output root (default: ${RUN_ROOT})
   --market-data-dir <path>       Market CSV root (default: ${MARKET_DATA_DIR})
+  --wal-file <path>              WAL path (default: ${WAL_FILE})
+  --report-root <path>           EOD report root (default: ${REPORT_ROOT})
+  --export-root <path>           EOD export root (default: ${EXPORT_ROOT})
+  --reconcile-root <path>        EOD reconcile root (default: ${RECONCILE_ROOT})
   --windows <spec>               Trading windows (default: ${TRADING_WINDOWS})
   --trading-days-file <path>     Optional calendar, one YYYYMMDD or YYYY-MM-DD per line
   --eod-time <HH:MM>             End-of-day chain trigger time (default: ${EOD_TIME})
@@ -463,6 +482,7 @@ start_engine_for_session() {
     --env-file "${ENV_FILE}"
     --config "${CONFIG_PATH}"
     --run-root "${RUN_ROOT}"
+    --wal-file "${WAL_FILE}"
     --run-id "${run_id}"
     --probe-seconds "${PROBE_SECONDS}"
     --probe-timeout-seconds "${PROBE_TIMEOUT_SECONDS}"
@@ -519,12 +539,12 @@ write_daily_report() {
   tick_rows="$(count_market_rows_by_trading_day ticks.csv "${trading_day}")"
   bar_rows="$(count_market_rows_by_trading_day bars_1m.csv "${trading_day}")"
   if [[ -f "${WAL_FILE}" ]]; then
-    wal_order_events="$(grep -c 'client_order_id' "${WAL_FILE}" || true)"
-    wal_trade_events="$(grep -Ec 'filled_volume[^0-9]*[1-9]|trade_id' "${WAL_FILE}" || true)"
+    wal_order_events="$(grep -Ec '"event_type":"order_update"|"kind":"order"' "${WAL_FILE}" || true)"
+    wal_trade_events="$(grep -Ec '"event_type":"trade_fill"|"kind":"trade"' "${WAL_FILE}" || true)"
   fi
 
   cat > "${report_json}" <<EOF
-{"trading_day":"${trading_day}","tick_rows":${tick_rows},"bar_rows":${bar_rows},"wal_order_events":${wal_order_events},"wal_trade_events":${wal_trade_events},"market_data_dir":"${MARKET_DATA_DIR}","wal_file":"${WAL_FILE}"}
+{"trading_day":"${trading_day}","tick_rows":${tick_rows},"bar_rows":${bar_rows},"wal_order_events":${wal_order_events},"wal_trade_events":${wal_trade_events},"market_data_dir":"${MARKET_DATA_DIR}","wal_file":"${WAL_FILE}","export_dir":"${EXPORT_ROOT}/${trading_day}","reconcile_dir":"${RECONCILE_ROOT}/${trading_day}"}
 EOF
 
   cat > "${report_md}" <<EOF
@@ -537,10 +557,14 @@ EOF
 - WAL trade/fill events: ${wal_trade_events}
 - Market data dir: ${MARKET_DATA_DIR}
 - WAL file: ${WAL_FILE}
+- Export dir: ${EXPORT_ROOT}/${trading_day}
+- Reconcile dir: ${RECONCILE_ROOT}/${trading_day}
 
 Linked artifacts in this directory:
 - daily_settlement_evidence.json
 - settlement_diff.json
+- simnow_export.log
+- simnow_export_manifest.env
 - ops_health_report.json / ops_health_report.md
 - ops_alert_report.json / ops_alert_report.md
 EOF
@@ -561,9 +585,10 @@ run_optional_analysis_command() {
 
 run_end_of_day_chain() {
   local trading_day="$1"
-  local output_dir="${EOD_STATE_DIR}/${trading_day}"
+  local output_dir="${REPORT_ROOT}/${trading_day}"
   local marker_file="${EOD_STATE_DIR}/${trading_day}.done"
   local settlement_cmd
+  local export_cmd
 
   [[ -f "${marker_file}" ]] && return 0
   mkdir -p "${output_dir}"
@@ -588,6 +613,37 @@ run_end_of_day_chain() {
     fi
   else
     send_alert_once "settlement_missing" "warning" "daily settlement script is not executable: ${DAILY_SETTLEMENT_SCRIPT}"
+  fi
+
+  if [[ -x "${EXPORT_SCRIPT}" ]]; then
+    export_cmd=(
+      "${EXPORT_SCRIPT}"
+      --trading-day "${trading_day}"
+      --wal-file "${WAL_FILE}"
+      --export-root "${EXPORT_ROOT}"
+      --reconcile-root "${RECONCILE_ROOT}"
+      --report-root "${REPORT_ROOT}"
+    )
+    if [[ "${EOD_PROJECT_DB}" == "1" ]]; then
+      export_cmd+=(--project-db)
+    elif [[ "${EOD_QUERY_DB}" == "1" ]]; then
+      export_cmd+=(--query-db)
+    fi
+    if [[ "${STRICT_RECONCILE}" == "1" ]]; then
+      export_cmd+=(--strict-reconcile)
+    fi
+    if [[ "${CONVERT_MARKET_PARQUET}" == "1" ]]; then
+      export_cmd+=(--convert-market-parquet)
+    fi
+    if ! "${export_cmd[@]}" > "${output_dir}/simnow_export.log" 2>&1; then
+      if [[ "${STRICT_RECONCILE}" == "1" ]]; then
+        send_alert_once "simnow_export_failed" "critical" "SimNow WAL export/reconcile failed for trading_day=${trading_day}"
+        return 1
+      fi
+      send_alert_once "simnow_export_failed" "warning" "SimNow WAL export/reconcile failed for trading_day=${trading_day}"
+    fi
+  else
+    send_alert_once "simnow_export_missing" "warning" "SimNow export script is not executable: ${EXPORT_SCRIPT}"
   fi
 
   if [[ -x "${OPS_HEALTH_BIN}" ]]; then
@@ -628,7 +684,13 @@ print_dry_run_decision() {
   echo "[dry-run] config=${CONFIG_PATH}"
   echo "[dry-run] windows=${TRADING_WINDOWS}"
   echo "[dry-run] eod_time=${EOD_TIME} eod_execute=${EOD_EXECUTE}"
+  echo "[dry-run] run_root=${RUN_ROOT}"
   echo "[dry-run] market_data_dir=${MARKET_DATA_DIR}"
+  echo "[dry-run] wal_file=${WAL_FILE}"
+  echo "[dry-run] report_root=${REPORT_ROOT}"
+  echo "[dry-run] export_root=${EXPORT_ROOT}"
+  echo "[dry-run] reconcile_root=${RECONCILE_ROOT}"
+  echo "[dry-run] eod_project_db=${EOD_PROJECT_DB} eod_query_db=${EOD_QUERY_DB} strict_reconcile=${STRICT_RECONCILE} convert_market_parquet=${CONVERT_MARKET_PARQUET}"
   if session_info="$(current_session_info)"; then
     IFS='|' read -r session_label trading_day session_range <<< "${session_info}"
     echo "[dry-run] decision=start_or_keep_alive session=${session_label} trading_day=${trading_day} range=${session_range}"
@@ -654,9 +716,13 @@ while [[ $# -gt 0 ]]; do
       OPS_ALERT_BIN="${BUILD_DIR}/ops_alert_report_cli"
       shift 2
       ;;
-    --run-root) require_value "$1" "${2:-}"; RUN_ROOT="$2"; shift 2 ;;
-    --market-data-dir) require_value "$1" "${2:-}"; MARKET_DATA_DIR="$2"; shift 2 ;;
-    --windows) require_value "$1" "${2:-}"; TRADING_WINDOWS="$2"; shift 2 ;;
+    --run-root) require_value "$1" "${2:-}"; RUN_ROOT="$2"; RUN_ROOT_SET_BY_CLI=1; shift 2 ;;
+    --market-data-dir) require_value "$1" "${2:-}"; MARKET_DATA_DIR="$2"; MARKET_DATA_DIR_SET_BY_CLI=1; shift 2 ;;
+    --wal-file) require_value "$1" "${2:-}"; WAL_FILE="$2"; WAL_FILE_SET_BY_CLI=1; shift 2 ;;
+    --report-root) require_value "$1" "${2:-}"; REPORT_ROOT="$2"; REPORT_ROOT_SET_BY_CLI=1; shift 2 ;;
+    --export-root) require_value "$1" "${2:-}"; EXPORT_ROOT="$2"; EXPORT_ROOT_SET_BY_CLI=1; shift 2 ;;
+    --reconcile-root) require_value "$1" "${2:-}"; RECONCILE_ROOT="$2"; RECONCILE_ROOT_SET_BY_CLI=1; shift 2 ;;
+    --windows) require_value "$1" "${2:-}"; TRADING_WINDOWS="$2"; WINDOWS_SET_BY_CLI=1; shift 2 ;;
     --trading-days-file) require_value "$1" "${2:-}"; TRADING_DAYS_FILE="$2"; shift 2 ;;
     --eod-time) require_value "$1" "${2:-}"; EOD_TIME="$2"; shift 2 ;;
     --check-interval-seconds) require_value "$1" "${2:-}"; CHECK_INTERVAL_SECONDS="$2"; shift 2 ;;
@@ -687,6 +753,10 @@ is_positive_int "${BAR_STALE_SECONDS}" || die "--bar-stale-seconds must be posit
 is_positive_int "${FILL_STALE_SECONDS}" || die "--fill-stale-seconds must be positive"
 is_bool_flag "${REQUIRE_FILL_HEARTBEAT}" || die "SIMNOW_REQUIRE_FILL_HEARTBEAT must be 0 or 1"
 is_bool_flag "${EOD_EXECUTE}" || die "SIMNOW_EOD_EXECUTE must be 0 or 1"
+is_bool_flag "${EOD_PROJECT_DB}" || die "SIMNOW_EOD_PROJECT_DB must be 0 or 1"
+is_bool_flag "${EOD_QUERY_DB}" || die "SIMNOW_EOD_QUERY_DB must be 0 or 1"
+is_bool_flag "${STRICT_RECONCILE}" || die "SIMNOW_STRICT_RECONCILE must be 0 or 1"
+is_bool_flag "${CONVERT_MARKET_PARQUET}" || die "SIMNOW_EOD_CONVERT_MARKET_PARQUET must be 0 or 1"
 is_positive_int "${INSTRUMENT_TIMEOUT_SECONDS}" || die "SIMNOW_INSTRUMENT_TIMEOUT_SECONDS must be positive"
 
 cd "${QUANT_ROOT}"
@@ -696,7 +766,52 @@ set -a
 source "${ENV_FILE}"
 set +a
 
-mkdir -p "${RUN_ROOT}"
+if [[ ${WINDOWS_SET_BY_CLI} -eq 0 ]]; then
+  TRADING_WINDOWS="${SIMNOW_TRADING_WINDOWS:-${TRADING_WINDOWS}}"
+fi
+if [[ ${RUN_ROOT_SET_BY_CLI} -eq 0 ]]; then
+  RUN_ROOT="${SIMNOW_RUN_ROOT:-${RUN_ROOT}}"
+fi
+if [[ ${MARKET_DATA_DIR_SET_BY_CLI} -eq 0 ]]; then
+  MARKET_DATA_DIR="${SIMNOW_MARKET_DATA_DIR:-${MARKET_DATA_DIR}}"
+fi
+if [[ ${WAL_FILE_SET_BY_CLI} -eq 0 ]]; then
+  WAL_FILE="${SIMNOW_WAL_FILE:-${WAL_FILE}}"
+fi
+if [[ ${REPORT_ROOT_SET_BY_CLI} -eq 0 ]]; then
+  REPORT_ROOT="${SIMNOW_REPORT_ROOT:-${REPORT_ROOT}}"
+fi
+if [[ ${EXPORT_ROOT_SET_BY_CLI} -eq 0 ]]; then
+  EXPORT_ROOT="${SIMNOW_EXPORT_ROOT:-${EXPORT_ROOT}}"
+fi
+if [[ ${RECONCILE_ROOT_SET_BY_CLI} -eq 0 ]]; then
+  RECONCILE_ROOT="${SIMNOW_RECONCILE_ROOT:-${RECONCILE_ROOT}}"
+fi
+EOD_TIME="${SIMNOW_EOD_TIME:-${EOD_TIME}}"
+EOD_EXECUTE="${SIMNOW_EOD_EXECUTE:-${EOD_EXECUTE}}"
+EOD_PROJECT_DB="${SIMNOW_EOD_PROJECT_DB:-${EOD_PROJECT_DB}}"
+EOD_QUERY_DB="${SIMNOW_EOD_QUERY_DB:-${EOD_QUERY_DB}}"
+STRICT_RECONCILE="${SIMNOW_STRICT_RECONCILE:-${STRICT_RECONCILE}}"
+CONVERT_MARKET_PARQUET="${SIMNOW_EOD_CONVERT_MARKET_PARQUET:-${CONVERT_MARKET_PARQUET}}"
+PROBE_SECONDS="${SIMNOW_PROBE_SECONDS:-${PROBE_SECONDS}}"
+PROBE_TIMEOUT_SECONDS="${SIMNOW_PROBE_TIMEOUT_SECONDS:-${PROBE_TIMEOUT_SECONDS}}"
+INSTRUMENT_TIMEOUT_SECONDS="${SIMNOW_INSTRUMENT_TIMEOUT_SECONDS:-${INSTRUMENT_TIMEOUT_SECONDS}}"
+is_bool_flag "${EOD_EXECUTE}" || die "SIMNOW_EOD_EXECUTE must be 0 or 1"
+is_bool_flag "${EOD_PROJECT_DB}" || die "SIMNOW_EOD_PROJECT_DB must be 0 or 1"
+is_bool_flag "${EOD_QUERY_DB}" || die "SIMNOW_EOD_QUERY_DB must be 0 or 1"
+is_bool_flag "${STRICT_RECONCILE}" || die "SIMNOW_STRICT_RECONCILE must be 0 or 1"
+is_bool_flag "${CONVERT_MARKET_PARQUET}" || die "SIMNOW_EOD_CONVERT_MARKET_PARQUET must be 0 or 1"
+is_positive_int "${PROBE_SECONDS}" || die "SIMNOW_PROBE_SECONDS must be positive"
+is_positive_int "${PROBE_TIMEOUT_SECONDS}" || die "SIMNOW_PROBE_TIMEOUT_SECONDS must be positive"
+is_positive_int "${INSTRUMENT_TIMEOUT_SECONDS}" || die "SIMNOW_INSTRUMENT_TIMEOUT_SECONDS must be positive"
+[[ -n "${RUN_ROOT}" ]] || die "SIMNOW_RUN_ROOT must not be empty"
+[[ -n "${MARKET_DATA_DIR}" ]] || die "SIMNOW_MARKET_DATA_DIR must not be empty"
+[[ -n "${WAL_FILE}" ]] || die "SIMNOW_WAL_FILE must not be empty"
+[[ -n "${REPORT_ROOT}" ]] || die "SIMNOW_REPORT_ROOT must not be empty"
+[[ -n "${EXPORT_ROOT}" ]] || die "SIMNOW_EXPORT_ROOT must not be empty"
+[[ -n "${RECONCILE_ROOT}" ]] || die "SIMNOW_RECONCILE_ROOT must not be empty"
+
+mkdir -p "${RUN_ROOT}" "${REPORT_ROOT}" "${EXPORT_ROOT}" "${RECONCILE_ROOT}" "$(dirname "${WAL_FILE}")"
 LOCK_DIR="${SIMNOW_LOCK_DIR:-${RUN_ROOT}/locks}"
 LOCK_FILE="${LOCK_DIR}/supervisor.lock"
 CURRENT_PID_FILE="${SIMNOW_CURRENT_PID_FILE:-${RUN_ROOT}/current_core_engine.pid}"

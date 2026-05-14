@@ -519,7 +519,8 @@ int main(int argc, char** argv) {
 
     TradingAccountSnapshot trading_account;
     bool has_trading_account_snapshot = false;
-    for (int attempt = 0; attempt < 30; ++attempt) {
+    const int trading_account_wait_attempts = std::max(1, instrument_timeout_seconds * 10);
+    for (int attempt = 0; attempt < trading_account_wait_attempts; ++attempt) {
         trading_account = trader.GetLastTradingAccountSnapshot();
         if (trading_account.ts_ns > 0) {
             has_trading_account_snapshot = true;

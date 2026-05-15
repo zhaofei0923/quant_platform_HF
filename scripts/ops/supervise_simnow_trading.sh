@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 QUANT_ROOT="${QUANT_ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 export QUANT_ROOT
 
-ENV_FILE="${ENV_FILE:-${QUANT_ROOT}/.env}"
+ENV_FILE="${ENV_FILE:-${QUANT_ROOT}/runtime/simnow.env}"
 CONFIG_PATH="${QUANT_ROOT}/configs/sim/ctp_sim_trade_candidates.yaml"
 BUILD_DIR="${BUILD_DIR:-${QUANT_ROOT}/build-gcc}"
 START_SCRIPT="${SIMNOW_START_SCRIPT:-${SCRIPT_DIR}/start_simnow_trading.sh}"

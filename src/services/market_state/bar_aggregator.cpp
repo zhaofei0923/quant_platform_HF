@@ -95,7 +95,7 @@ bool ParseYamlKeyValue(const std::string& line, std::string* key, std::string* v
 }
 
 bool ParseSessionTimeToMinute(const std::string& raw, int* minute_of_day) {
-    if (minute_of_day == nullptr || raw.size() != 5 || raw[2] != ':') {
+    if (minute_of_day == nullptr || (raw.size() != 5 && raw.size() != 8) || raw[2] != ':') {
         return false;
     }
     if (!std::isdigit(static_cast<unsigned char>(raw[0])) ||
@@ -104,9 +104,14 @@ bool ParseSessionTimeToMinute(const std::string& raw, int* minute_of_day) {
         !std::isdigit(static_cast<unsigned char>(raw[4]))) {
         return false;
     }
+    if (raw.size() == 8 && (raw[5] != ':' || !std::isdigit(static_cast<unsigned char>(raw[6])) ||
+                            !std::isdigit(static_cast<unsigned char>(raw[7])))) {
+        return false;
+    }
     const int hour = (raw[0] - '0') * 10 + (raw[1] - '0');
     const int minute = (raw[3] - '0') * 10 + (raw[4] - '0');
-    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    const int second = raw.size() == 8 ? (raw[6] - '0') * 10 + (raw[7] - '0') : 0;
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59) {
         return false;
     }
     *minute_of_day = hour * 60 + minute;
@@ -130,6 +135,36 @@ bool ParseSessionRange(const std::string& raw, BarAggregator::SessionInterval* i
     }
     interval->start_minute = start;
     interval->end_minute = end;
+    return true;
+}
+
+bool ParseSessionRanges(const std::string& raw,
+                        std::vector<BarAggregator::SessionInterval>* intervals) {
+    if (intervals == nullptr || raw.empty()) {
+        return false;
+    }
+    std::vector<BarAggregator::SessionInterval> parsed;
+    std::size_t start = 0;
+    while (start <= raw.size()) {
+        const auto comma_pos = raw.find(',', start);
+        const auto token = Trim(raw.substr(
+            start, comma_pos == std::string::npos ? std::string::npos : comma_pos - start));
+        if (!token.empty()) {
+            BarAggregator::SessionInterval interval;
+            if (!ParseSessionRange(token, &interval)) {
+                return false;
+            }
+            parsed.push_back(interval);
+        }
+        if (comma_pos == std::string::npos) {
+            break;
+        }
+        start = comma_pos + 1;
+    }
+    if (parsed.empty()) {
+        return false;
+    }
+    intervals->insert(intervals->end(), parsed.begin(), parsed.end());
     return true;
 }
 
@@ -165,18 +200,28 @@ std::unordered_map<std::string, std::vector<BarAggregator::SessionRule>> BuildDe
         return rule;
     };
 
+    const SessionInterval commodity_morning_1{9 * 60, 10 * 60 + 15};
+    const SessionInterval commodity_morning_2{10 * 60 + 30, 11 * 60 + 30};
+    const SessionInterval commodity_afternoon{13 * 60 + 30, 15 * 60};
+    const SessionInterval cffex_morning{9 * 60 + 30, 11 * 60 + 30};
+    const SessionInterval cffex_afternoon{13 * 60, 15 * 60};
+    const SessionInterval cffex_treasury_afternoon{13 * 60, 15 * 60 + 15};
+
     std::unordered_map<std::string, std::vector<SessionRule>> rules;
     rules["SHFE"].push_back(
-        with_intervals({SessionInterval{9 * 60, 15 * 60}, SessionInterval{21 * 60, 1 * 60}}));
+        with_intervals({commodity_morning_1, commodity_morning_2, commodity_afternoon,
+                        SessionInterval{21 * 60, 1 * 60}}));
     rules["DCE"].push_back(
-        with_intervals({SessionInterval{9 * 60, 15 * 60}, SessionInterval{21 * 60, 23 * 60}}));
-    rules["CFFEX"].push_back(with_intervals({SessionInterval{9 * 60 + 30, 15 * 60}}));
-    rules["CFFEX"].push_back(with_intervals({SessionInterval{9 * 60 + 30, 15 * 60 + 15}}, "T"));
-    rules["CFFEX"].push_back(with_intervals({SessionInterval{9 * 60 + 30, 15 * 60 + 15}}, "TF"));
-    rules["CFFEX"].push_back(with_intervals({SessionInterval{9 * 60 + 30, 15 * 60 + 15}}, "TS"));
-    rules["CFFEX"].push_back(with_intervals({SessionInterval{9 * 60 + 30, 15 * 60 + 15}}, "TL"));
-    rules["*"].push_back(with_intervals(
-        {SessionInterval{9 * 60, 15 * 60 + 15}, SessionInterval{21 * 60, 2 * 60 + 30}}));
+        with_intervals({commodity_morning_1, commodity_morning_2, commodity_afternoon,
+                        SessionInterval{21 * 60, 23 * 60}}));
+    rules["CFFEX"].push_back(with_intervals({cffex_morning, cffex_afternoon}));
+    rules["CFFEX"].push_back(with_intervals({cffex_morning, cffex_treasury_afternoon}, "T"));
+    rules["CFFEX"].push_back(with_intervals({cffex_morning, cffex_treasury_afternoon}, "TF"));
+    rules["CFFEX"].push_back(with_intervals({cffex_morning, cffex_treasury_afternoon}, "TS"));
+    rules["CFFEX"].push_back(with_intervals({cffex_morning, cffex_treasury_afternoon}, "TL"));
+    rules["*"].push_back(with_intervals({commodity_morning_1, commodity_morning_2,
+                                         SessionInterval{13 * 60 + 30, 15 * 60 + 15},
+                                         SessionInterval{21 * 60, 2 * 60 + 30}}));
     return rules;
 }
 
@@ -218,6 +263,17 @@ std::string FormatMinuteValue(const std::string& trading_day, int minute_of_day)
     const int minute = minute_of_day % 60;
     char buffer[32];
     std::snprintf(buffer, sizeof(buffer), "%s %02d:%02d", trading_day.c_str(), hour, minute);
+    return std::string(buffer);
+}
+
+std::string FormatTimeOfDay(int minute_of_day) {
+    if (minute_of_day < 0 || minute_of_day >= 24 * 60) {
+        return "";
+    }
+    const int hour = minute_of_day / 60;
+    const int minute = minute_of_day % 60;
+    char buffer[8];
+    std::snprintf(buffer, sizeof(buffer), "%02d:%02d", hour, minute);
     return std::string(buffer);
 }
 
@@ -374,6 +430,43 @@ std::vector<BarSnapshot> BarAggregator::FlushFinished(
                 continue;
             }
             bars.push_back(it->second.bar);
+            it = buckets_.erase(it);
+        }
+    }
+    std::sort(bars.begin(), bars.end(), [](const BarSnapshot& lhs, const BarSnapshot& rhs) {
+        if (lhs.instrument_id != rhs.instrument_id) {
+            return lhs.instrument_id < rhs.instrument_id;
+        }
+        return lhs.minute < rhs.minute;
+    });
+    return bars;
+}
+
+std::vector<BarSnapshot> BarAggregator::FlushSessionEndBars(
+    const std::unordered_map<std::string, EpochNanos>& instrument_last_tick_ts_ns,
+    EpochNanos cutoff_ts_ns) {
+    std::vector<BarSnapshot> bars;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto it = buckets_.begin(); it != buckets_.end();) {
+            if (!it->second.initialized) {
+                it = buckets_.erase(it);
+                continue;
+            }
+            const auto last_tick_it = instrument_last_tick_ts_ns.find(it->first);
+            if (last_tick_it == instrument_last_tick_ts_ns.end() ||
+                last_tick_it->second > cutoff_ts_ns ||
+                !IsSessionEndMinuteKey(it->second.bar.exchange_id, it->second.bar.instrument_id,
+                                       it->second.bar.minute)) {
+                ++it;
+                continue;
+            }
+            bars.push_back(it->second.bar);
+            const std::string closed_boundary_key =
+                BuildClosedBoundaryMinuteKey(it->second.bar.instrument_id, it->second.bar.minute);
+            if (!closed_boundary_key.empty()) {
+                closed_session_boundary_minutes_.insert(closed_boundary_key);
+            }
             it = buckets_.erase(it);
         }
     }
@@ -731,6 +824,17 @@ bool BarAggregator::ResolveSessionInterval(const std::string& exchange_id,
     return false;
 }
 
+bool BarAggregator::IsSessionEndMinuteKey(const std::string& exchange_id,
+                                          const std::string& instrument_id,
+                                          const std::string& minute_key) const {
+    std::string trading_day;
+    int minute_of_day = 0;
+    if (!ParseMinuteValue(minute_key, &trading_day, &minute_of_day)) {
+        return false;
+    }
+    return IsSessionEndMinute(exchange_id, instrument_id, FormatTimeOfDay(minute_of_day));
+}
+
 void BarAggregator::LoadTradingSessions() {
     const char* env_path = std::getenv("TRADING_SESSIONS_CONFIG_PATH");
     const std::string config_path = env_path != nullptr && std::string(env_path).size() > 0
@@ -762,14 +866,8 @@ void BarAggregator::LoadTradingSessions() {
         rule->product = pending.product;
         rule->intervals.clear();
 
-        SessionInterval day_interval;
-        if (ParseSessionRange(pending.day, &day_interval)) {
-            rule->intervals.push_back(day_interval);
-        }
-        SessionInterval night_interval;
-        if (ParseSessionRange(pending.night, &night_interval)) {
-            rule->intervals.push_back(night_interval);
-        }
+        (void)ParseSessionRanges(pending.day, &rule->intervals);
+        (void)ParseSessionRanges(pending.night, &rule->intervals);
         if (rule->intervals.empty()) {
             return false;
         }

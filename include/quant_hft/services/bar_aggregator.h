@@ -57,6 +57,9 @@ class BarAggregator {
     std::vector<BarSnapshot> FlushFinished(
         const std::unordered_map<std::string, EpochNanos>& instrument_last_tick_ts_ns,
         EpochNanos cutoff_ts_ns);
+    std::vector<BarSnapshot> FlushSessionEndBars(
+        const std::unordered_map<std::string, EpochNanos>& instrument_last_tick_ts_ns,
+        EpochNanos cutoff_ts_ns);
     std::vector<BarSnapshot> Flush();
     void ResetInstrument(const std::string& instrument_id);
     std::string InferExchangeId(const std::string& instrument_id) const;
@@ -91,6 +94,8 @@ class BarAggregator {
     bool ResolveSessionInterval(const std::string& exchange_id, const std::string& instrument_id,
                                 const std::string& product, const std::string& update_time,
                                 SessionInterval* interval) const;
+    bool IsSessionEndMinuteKey(const std::string& exchange_id, const std::string& instrument_id,
+                               const std::string& minute_key) const;
     void LoadTradingSessions();
 
     void ResetBucketLocked(MinuteBucket* bucket, const MarketSnapshot& snapshot,

@@ -1,12 +1,13 @@
+#include "quant_hft/services/bar_aggregator.h"
+
+#include <gtest/gtest.h>
+
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <unordered_map>
 #include <vector>
-
-#include <gtest/gtest.h>
-
-#include "quant_hft/services/bar_aggregator.h"
 
 namespace quant_hft {
 namespace {
@@ -191,6 +192,79 @@ TEST(BarAggregatorTest, SessionConfigSupportsProductSpecificRules) {
     std::remove(config_path.c_str());
 }
 
+TEST(BarAggregatorTest, SessionConfigSupportsCommaSeparatedDaySegments) {
+    const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto config_path =
+        std::string("/tmp/trading_sessions_segments_test_") + std::to_string(now) + ".yaml";
+    {
+        std::ofstream out(config_path);
+        ASSERT_TRUE(out.is_open());
+        out << "sessions:\n"
+            << "  - exchange: DCE\n"
+            << "    instrument_prefix: \"c\"\n"
+            << "    day: \"09:00-10:15,10:30-11:30,13:30-15:00\"\n"
+            << "    night: null\n";
+    }
+
+    BarAggregatorConfig config;
+    config.trading_sessions_config_path = config_path;
+    config.use_default_session_fallback = false;
+    BarAggregator aggregator(config);
+
+    EXPECT_TRUE(aggregator.ShouldProcessSnapshot(
+        MakeSnapshot("DCE.c2405", "20260211", "20260211", "11:30:00", 0, 2400.0, 1)));
+    EXPECT_FALSE(aggregator.ShouldProcessSnapshot(
+        MakeSnapshot("DCE.c2405", "20260211", "20260211", "11:45:00", 0, 2400.0, 1)));
+    EXPECT_TRUE(aggregator.ShouldProcessSnapshot(
+        MakeSnapshot("DCE.c2405", "20260211", "20260211", "13:30:00", 0, 2400.0, 1)));
+
+    std::remove(config_path.c_str());
+}
+
+TEST(BarAggregatorTest, SessionEndFlushDoesNotDuplicateAlreadyClosedSegmentMinute) {
+    const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto config_path =
+        std::string("/tmp/trading_sessions_end_flush_test_") + std::to_string(now) + ".yaml";
+    {
+        std::ofstream out(config_path);
+        ASSERT_TRUE(out.is_open());
+        out << "sessions:\n"
+            << "  - exchange: DCE\n"
+            << "    instrument_prefix: \"c\"\n"
+            << "    day: \"09:00-10:15,10:30-11:30,13:30-15:00\"\n"
+            << "    night: null\n";
+    }
+
+    BarAggregatorConfig config;
+    config.trading_sessions_config_path = config_path;
+    config.use_default_session_fallback = false;
+    BarAggregator aggregator(config);
+
+    const std::string instrument_id = "DCE.c2405";
+    EXPECT_TRUE(aggregator
+                    .OnMarketSnapshot(MakeSnapshot(instrument_id, "20260211", "20260211",
+                                                   "11:29:30", 0, 2400.0, 100, 1'000'000'000))
+                    .empty());
+    EXPECT_TRUE(
+        aggregator.FlushSessionEndBars({{instrument_id, 1'000'000'000}}, 1'000'000'000).empty());
+
+    const auto rolled_bars = aggregator.OnMarketSnapshot(MakeSnapshot(
+        instrument_id, "20260211", "20260211", "11:30:00", 0, 2401.0, 101, 2'000'000'000));
+    ASSERT_EQ(rolled_bars.size(), 2U);
+    EXPECT_EQ(rolled_bars[0].minute, "20260211 11:29");
+    EXPECT_EQ(rolled_bars[1].minute, "20260211 11:30");
+    EXPECT_DOUBLE_EQ(rolled_bars[1].open, 2401.0);
+    EXPECT_DOUBLE_EQ(rolled_bars[1].close, 2401.0);
+
+    EXPECT_TRUE(
+        aggregator.FlushSessionEndBars({{instrument_id, 2'000'000'000}}, 1'999'999'999).empty());
+    EXPECT_TRUE(
+        aggregator.FlushSessionEndBars({{instrument_id, 2'000'000'000}}, 2'000'000'000).empty());
+    EXPECT_TRUE(aggregator.Flush().empty());
+
+    std::remove(config_path.c_str());
+}
+
 TEST(BarAggregatorTest, SessionConfigPrefixMatchesInstrumentSymbolAfterDot) {
     const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto config_path =
@@ -294,6 +368,12 @@ TEST(BarAggregatorTest, RepositoryTradingSessionsInferDceForCornSymbol) {
     auto late_snapshot = MakeSnapshot("c2405", "20240102", "20240102", "15:02:00", 0, 2424.0, 1);
     late_snapshot.exchange_id = aggregator.InferExchangeId(late_snapshot.instrument_id);
     EXPECT_FALSE(aggregator.ShouldProcessSnapshot(late_snapshot));
+
+    auto midday_break_snapshot =
+        MakeSnapshot("c2405", "20240102", "20240102", "11:45:00", 0, 2424.0, 1);
+    midday_break_snapshot.exchange_id =
+        aggregator.InferExchangeId(midday_break_snapshot.instrument_id);
+    EXPECT_FALSE(aggregator.ShouldProcessSnapshot(midday_break_snapshot));
 }
 
 TEST(BarAggregatorTest, RepositoryTradingSessionsFilterPostClosePlainDceSymbolWithoutExchange) {

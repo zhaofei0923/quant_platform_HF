@@ -83,6 +83,7 @@ struct BarSnapshot {
 
 struct MarketFileStatus {
     std::string product;
+    std::string trading_day;
     std::string tick_file;
     std::string bar_file;
     std::optional<std::int64_t> tick_age_seconds;
@@ -443,6 +444,57 @@ std::string ProductFromMarketPath(const fs::path& path) {
     return "";
 }
 
+std::string TradingDayFromPath(const fs::path& path) {
+    constexpr const char* kPrefix = "trading_day=";
+    for (const auto& part : path) {
+        const std::string value = part.string();
+        if (value.rfind(kPrefix, 0) == 0) {
+            return value.substr(std::string(kPrefix).size());
+        }
+    }
+    return "";
+}
+
+int TradingDayRank(const std::string& trading_day) {
+    return trading_day.size() == 8 &&
+                   std::all_of(
+                       trading_day.begin(), trading_day.end(),
+                       [](char ch) { return std::isdigit(static_cast<unsigned char>(ch)) != 0; })
+               ? 1
+               : 0;
+}
+
+fs::path LatestTradingDayDirectory(const fs::path& root) {
+    std::error_code ec;
+    if (!fs::exists(root, ec)) {
+        return {};
+    }
+    fs::path latest;
+    std::string latest_day;
+    int latest_rank = -1;
+    for (const auto& entry :
+         fs::directory_iterator(root, fs::directory_options::skip_permission_denied, ec)) {
+        if (ec) {
+            break;
+        }
+        if (!entry.is_directory(ec)) {
+            continue;
+        }
+        const std::string trading_day = TradingDayFromPath(entry.path());
+        if (trading_day.empty()) {
+            continue;
+        }
+        const int rank = TradingDayRank(trading_day);
+        if (latest.empty() || rank > latest_rank ||
+            (rank == latest_rank && trading_day > latest_day)) {
+            latest = entry.path();
+            latest_day = trading_day;
+            latest_rank = rank;
+        }
+    }
+    return latest;
+}
+
 void MaybeSetLatest(const fs::path& candidate, std::string* target_path) {
     if (target_path == nullptr) {
         return;
@@ -470,8 +522,13 @@ std::map<std::string, MarketFileStatus> DiscoverMarketFiles(const std::string& m
     if (!fs::exists(root, ec)) {
         return markets;
     }
+    const fs::path latest_day_dir = LatestTradingDayDirectory(root);
+    if (latest_day_dir.empty()) {
+        return markets;
+    }
+    const std::string trading_day = TradingDayFromPath(latest_day_dir);
     for (const auto& entry : fs::recursive_directory_iterator(
-             root, fs::directory_options::skip_permission_denied, ec)) {
+             latest_day_dir, fs::directory_options::skip_permission_denied, ec)) {
         if (ec) {
             break;
         }
@@ -488,6 +545,7 @@ std::map<std::string, MarketFileStatus> DiscoverMarketFiles(const std::string& m
         }
         MarketFileStatus& status = markets[product];
         status.product = product;
+        status.trading_day = trading_day;
         if (filename == "ticks.csv") {
             MaybeSetLatest(entry.path(), &status.tick_file);
         } else {
@@ -938,6 +996,7 @@ std::string RenderStateJson(const DashboardState& state) {
         const auto& item = state.markets[i];
         out << "    {\n";
         out << "      \"product\": " << JsonString(item.product) << ",\n";
+        out << "      \"trading_day\": " << JsonString(item.trading_day) << ",\n";
         out << "      \"healthy\": " << (item.healthy ? "true" : "false") << ",\n";
         out << "      \"tick_status\": " << JsonString(item.tick_status) << ",\n";
         out << "      \"bar_status\": " << JsonString(item.bar_status) << ",\n";
@@ -1206,7 +1265,8 @@ std::string RenderHtml(const DashboardState& state) {
     html << "</div></section>\n";
 
     html << "<section class=\"panel span-7\"><h2>Market Freshness</h2>"
-            "<div class=\"section-note\">Latest partitioned CSV observations by product.</div>";
+            "<div class=\"section-note\">Latest trading_day partitioned CSV observations by "
+            "product.</div>";
     html << "<table><thead><tr><th>Product</th><th>Instrument</th><th>Tick</th><th>Bar</th>"
             "<th>Last</th><th>Bid / Ask</th><th>Bar Close</th></tr></thead><tbody>";
     if (state.markets.empty()) {

@@ -64,7 +64,6 @@ ctp:
   clickhouse_dsn: "${CLICKHOUSE_DSN}"
   market_data_recording_enabled: true
   market_data_recording_dir: "runtime/market_data/simnow"
-  market_data_recording_run_id: ""
   market_data_recording_flush_each_write: true
   market_data_recording_partition_by_product: false
   market_data_recording_write_global_copy: false

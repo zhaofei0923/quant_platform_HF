@@ -1,5 +1,6 @@
 #include "quant_hft/services/market_data_csv_recorder.h"
 
+#include <cctype>
 #include <exception>
 #include <filesystem>
 #include <iomanip>
@@ -16,6 +17,41 @@ bool SetError(const std::string& message, std::string* error) {
         *error = message;
     }
     return false;
+}
+
+std::string NormalizeTradingDayToken(const std::string& value) {
+    std::string normalized;
+    normalized.reserve(value.size());
+    for (const char ch : value) {
+        const auto uch = static_cast<unsigned char>(ch);
+        if (std::isalnum(uch) != 0 || ch == '_') {
+            normalized.push_back(ch);
+        } else if (ch == '-' || std::isspace(uch) != 0) {
+            continue;
+        } else {
+            normalized.push_back('_');
+        }
+    }
+    return normalized.empty() ? std::string("unknown") : normalized;
+}
+
+std::string ResolveTradingDay(const std::string& trading_day, const std::string& action_day) {
+    if (!trading_day.empty()) {
+        return NormalizeTradingDayToken(trading_day);
+    }
+    if (!action_day.empty()) {
+        return NormalizeTradingDayToken(action_day);
+    }
+    return "unknown";
+}
+
+std::filesystem::path TradingDayDir(const std::filesystem::path& root,
+                                    const std::string& trading_day) {
+    return root / ("trading_day=" + NormalizeTradingDayToken(trading_day));
+}
+
+std::string StreamKey(const std::string& trading_day, const std::string& product_id) {
+    return NormalizeTradingDayToken(trading_day) + "|" + product_id;
 }
 
 std::string FormatNumber(double value) {
@@ -45,13 +81,6 @@ std::string CsvEscape(std::string value) {
     return escaped;
 }
 
-std::string ResolveRunId(const std::string& configured_run_id) {
-    if (!configured_run_id.empty()) {
-        return configured_run_id;
-    }
-    return "run_" + std::to_string(NowEpochNanos());
-}
-
 void WriteTickHeader(std::ostream& out) {
     out << "instrument_id,exchange_id,trading_day,action_day,update_time,update_millisec,"
            "last_price,bid_price_1,ask_price_1,bid_volume_1,ask_volume_1,volume,"
@@ -67,6 +96,39 @@ void WriteBarHeader(std::ostream& out) {
 
 std::string TimeframeBarFilename(std::int32_t timeframe_minutes) {
     return "bars_" + std::to_string(timeframe_minutes) + "m.csv";
+}
+
+using HeaderWriter = void (*)(std::ostream&);
+
+bool OpenAppendCsv(const std::filesystem::path& path, HeaderWriter write_header,
+                   const std::string& description, std::ofstream* output, std::string* error) {
+    if (output == nullptr) {
+        return SetError("csv output pointer is null", error);
+    }
+    bool needs_header = true;
+    std::error_code ec;
+    if (std::filesystem::exists(path, ec) && !ec) {
+        const auto size = std::filesystem::file_size(path, ec);
+        needs_header = ec || size == 0;
+    }
+    try {
+        std::filesystem::create_directories(path.parent_path());
+    } catch (const std::exception& ex) {
+        return SetError("failed to prepare " + description + " csv dir: " + ex.what(), error);
+    }
+    output->open(path, std::ios::out | std::ios::app);
+    if (!output->is_open()) {
+        return SetError("failed to open " + description + " csv output: " + path.string(), error);
+    }
+    if (needs_header) {
+        write_header(*output);
+        if (!output->good()) {
+            output->close();
+            return SetError("failed to write " + description + " csv header: " + path.string(),
+                            error);
+        }
+    }
+    return true;
 }
 
 void WriteTickRow(std::ostream& out, const MarketSnapshot& snapshot) {
@@ -115,39 +177,13 @@ bool MarketDataCsvRecorder::Open(MarketDataRecordingConfig config, std::string* 
 
     try {
         const std::filesystem::path base_dir(config_.output_dir);
-        const auto run_dir = base_dir / ResolveRunId(config_.run_id);
-        std::filesystem::create_directories(run_dir);
-        output_dir_ = run_dir.string();
-        if (!config_.partition_by_product || config_.write_global_copy) {
-            tick_path_ = (run_dir / "ticks.csv").string();
-            bar_path_ = (run_dir / "bars_1m.csv").string();
-        } else {
-            tick_path_.clear();
-            bar_path_.clear();
-        }
+        std::filesystem::create_directories(base_dir);
+        output_dir_ = base_dir.string();
+        tick_path_.clear();
+        bar_path_.clear();
     } catch (const std::exception& ex) {
         return SetError(std::string("failed to prepare market data recording dir: ") + ex.what(),
                         error);
-    }
-
-    if (!tick_path_.empty()) {
-        tick_out_.open(tick_path_, std::ios::out | std::ios::trunc);
-        if (!tick_out_.is_open()) {
-            return SetError("failed to open tick csv output: " + tick_path_, error);
-        }
-        bar_out_.open(bar_path_, std::ios::out | std::ios::trunc);
-        if (!bar_out_.is_open()) {
-            tick_out_.close();
-            return SetError("failed to open bar csv output: " + bar_path_, error);
-        }
-
-        WriteTickHeader(tick_out_);
-        WriteBarHeader(bar_out_);
-        if (!tick_out_.good() || !bar_out_.good()) {
-            tick_out_.close();
-            bar_out_.close();
-            return SetError("failed to write market data csv headers", error);
-        }
     }
 
     ticks_written_ = 0;
@@ -179,22 +215,27 @@ bool MarketDataCsvRecorder::ShouldRecordInstrumentLocked(const std::string& inst
            allowed_instrument_ids_.find(instrument_id) != allowed_instrument_ids_.end();
 }
 
-MarketDataCsvRecorder::ProductStreams* MarketDataCsvRecorder::EnsureProductStreams(
-    const std::string& instrument_id, std::string* error) {
+MarketDataCsvRecorder::CsvStreams* MarketDataCsvRecorder::EnsureProductStreams(
+    const std::string& instrument_id, const std::string& trading_day, std::string* error) {
     std::string product_id = ExtractProductIdFromInstrumentId(instrument_id);
     if (product_id.empty()) {
         product_id = "unknown";
     }
-    const auto existing = product_streams_.find(product_id);
+    const std::string day = NormalizeTradingDayToken(trading_day);
+    const auto key = StreamKey(day, product_id);
+    const auto existing = product_streams_.find(key);
     if (existing != product_streams_.end()) {
         return existing->second.get();
     }
 
-    auto streams = std::make_unique<ProductStreams>();
+    auto streams = std::make_unique<CsvStreams>();
     try {
         const std::filesystem::path product_dir =
-            std::filesystem::path(output_dir_) / "varieties" / product_id / "market";
+            TradingDayDir(std::filesystem::path(output_dir_), day) / "varieties" / product_id /
+            "market";
         std::filesystem::create_directories(product_dir);
+        streams->trading_day = day;
+        streams->product_id = product_id;
         streams->tick_path = (product_dir / "ticks.csv").string();
         streams->bar_path = (product_dir / "bars_1m.csv").string();
     } catch (const std::exception& ex) {
@@ -202,31 +243,57 @@ MarketDataCsvRecorder::ProductStreams* MarketDataCsvRecorder::EnsureProductStrea
         return nullptr;
     }
 
-    streams->tick_out.open(streams->tick_path, std::ios::out | std::ios::trunc);
-    if (!streams->tick_out.is_open()) {
-        SetError("failed to open product tick csv output: " + streams->tick_path, error);
+    if (!OpenAppendCsv(streams->tick_path, WriteTickHeader, "product tick", &streams->tick_out,
+                       error)) {
         return nullptr;
     }
-    streams->bar_out.open(streams->bar_path, std::ios::out | std::ios::trunc);
-    if (!streams->bar_out.is_open()) {
+    if (!OpenAppendCsv(streams->bar_path, WriteBarHeader, "product bar", &streams->bar_out,
+                       error)) {
         streams->tick_out.close();
-        SetError("failed to open product bar csv output: " + streams->bar_path, error);
-        return nullptr;
-    }
-    WriteTickHeader(streams->tick_out);
-    WriteBarHeader(streams->bar_out);
-    if (!streams->tick_out.good() || !streams->bar_out.good()) {
-        SetError("failed to write product market data csv headers", error);
         return nullptr;
     }
 
-    auto [inserted, _] = product_streams_.emplace(product_id, std::move(streams));
+    auto [inserted, _] = product_streams_.emplace(key, std::move(streams));
+    return inserted->second.get();
+}
+
+MarketDataCsvRecorder::CsvStreams* MarketDataCsvRecorder::EnsureGlobalStreams(
+    const std::string& trading_day, std::string* error) {
+    const std::string day = NormalizeTradingDayToken(trading_day);
+    const auto existing = global_streams_.find(day);
+    if (existing != global_streams_.end()) {
+        return existing->second.get();
+    }
+
+    auto streams = std::make_unique<CsvStreams>();
+    try {
+        const std::filesystem::path day_dir =
+            TradingDayDir(std::filesystem::path(output_dir_), day);
+        std::filesystem::create_directories(day_dir);
+        streams->trading_day = day;
+        streams->product_id = "global";
+        streams->tick_path = (day_dir / "ticks.csv").string();
+        streams->bar_path = (day_dir / "bars_1m.csv").string();
+    } catch (const std::exception& ex) {
+        SetError(std::string("failed to prepare global market data dir: ") + ex.what(), error);
+        return nullptr;
+    }
+
+    if (!OpenAppendCsv(streams->tick_path, WriteTickHeader, "tick", &streams->tick_out, error)) {
+        return nullptr;
+    }
+    if (!OpenAppendCsv(streams->bar_path, WriteBarHeader, "bar", &streams->bar_out, error)) {
+        streams->tick_out.close();
+        return nullptr;
+    }
+    tick_path_ = streams->tick_path;
+    bar_path_ = streams->bar_path;
+    auto [inserted, _] = global_streams_.emplace(day, std::move(streams));
     return inserted->second.get();
 }
 
 std::ofstream* MarketDataCsvRecorder::EnsureProductTimeframeBarStream(
-    ProductStreams* streams, const std::string& instrument_id, std::int32_t timeframe_minutes,
-    std::string* error) {
+    CsvStreams* streams, std::int32_t timeframe_minutes, std::string* error) {
     if (streams == nullptr) {
         SetError("product streams are null", error);
         return nullptr;
@@ -236,14 +303,10 @@ std::ofstream* MarketDataCsvRecorder::EnsureProductTimeframeBarStream(
         return existing->second.get();
     }
 
-    std::string product_id = ExtractProductIdFromInstrumentId(instrument_id);
-    if (product_id.empty()) {
-        product_id = "unknown";
-    }
     std::string path;
     try {
         const std::filesystem::path product_dir =
-            std::filesystem::path(output_dir_) / "varieties" / product_id / "market";
+            std::filesystem::path(streams->tick_path).parent_path();
         std::filesystem::create_directories(product_dir);
         path = (product_dir / TimeframeBarFilename(timeframe_minutes)).string();
     } catch (const std::exception& ex) {
@@ -251,14 +314,8 @@ std::ofstream* MarketDataCsvRecorder::EnsureProductTimeframeBarStream(
         return nullptr;
     }
 
-    auto output = std::make_unique<std::ofstream>(path, std::ios::out | std::ios::trunc);
-    if (!output->is_open()) {
-        SetError("failed to open product timeframe bar csv output: " + path, error);
-        return nullptr;
-    }
-    WriteBarHeader(*output);
-    if (!output->good()) {
-        SetError("failed to write product timeframe bar csv header: " + path, error);
+    auto output = std::make_unique<std::ofstream>();
+    if (!OpenAppendCsv(path, WriteBarHeader, "product timeframe bar", output.get(), error)) {
         return nullptr;
     }
     streams->timeframe_bar_paths[timeframe_minutes] = path;
@@ -267,33 +324,33 @@ std::ofstream* MarketDataCsvRecorder::EnsureProductTimeframeBarStream(
 }
 
 std::ofstream* MarketDataCsvRecorder::EnsureGlobalTimeframeBarStream(std::int32_t timeframe_minutes,
+                                                                     const std::string& trading_day,
                                                                      std::string* error) {
-    const auto existing = timeframe_bar_outs_.find(timeframe_minutes);
-    if (existing != timeframe_bar_outs_.end()) {
+    CsvStreams* streams = EnsureGlobalStreams(trading_day, error);
+    if (streams == nullptr) {
+        return nullptr;
+    }
+    const auto existing = streams->timeframe_bar_outs.find(timeframe_minutes);
+    if (existing != streams->timeframe_bar_outs.end()) {
         return existing->second.get();
     }
 
     std::string path;
     try {
-        const std::filesystem::path run_dir(output_dir_);
-        std::filesystem::create_directories(run_dir);
-        path = (run_dir / TimeframeBarFilename(timeframe_minutes)).string();
+        const std::filesystem::path day_dir =
+            std::filesystem::path(streams->tick_path).parent_path();
+        std::filesystem::create_directories(day_dir);
+        path = (day_dir / TimeframeBarFilename(timeframe_minutes)).string();
     } catch (const std::exception& ex) {
         SetError(std::string("failed to prepare timeframe bar dir: ") + ex.what(), error);
         return nullptr;
     }
-    auto output = std::make_unique<std::ofstream>(path, std::ios::out | std::ios::trunc);
-    if (!output->is_open()) {
-        SetError("failed to open timeframe bar csv output: " + path, error);
+    auto output = std::make_unique<std::ofstream>();
+    if (!OpenAppendCsv(path, WriteBarHeader, "timeframe bar", output.get(), error)) {
         return nullptr;
     }
-    WriteBarHeader(*output);
-    if (!output->good()) {
-        SetError("failed to write timeframe bar csv header: " + path, error);
-        return nullptr;
-    }
-    timeframe_bar_paths_[timeframe_minutes] = path;
-    auto [inserted, _] = timeframe_bar_outs_.emplace(timeframe_minutes, std::move(output));
+    streams->timeframe_bar_paths[timeframe_minutes] = path;
+    auto [inserted, _] = streams->timeframe_bar_outs.emplace(timeframe_minutes, std::move(output));
     return inserted->second.get();
 }
 
@@ -311,9 +368,10 @@ bool MarketDataCsvRecorder::AppendTick(const MarketSnapshot& snapshot, std::stri
     if (!ShouldRecordInstrumentLocked(snapshot.instrument_id)) {
         return true;
     }
+    const std::string trading_day = ResolveTradingDay(snapshot.trading_day, snapshot.action_day);
 
     if (config_.partition_by_product) {
-        ProductStreams* streams = EnsureProductStreams(snapshot.instrument_id, error);
+        CsvStreams* streams = EnsureProductStreams(snapshot.instrument_id, trading_day, error);
         if (streams == nullptr) {
             return false;
         }
@@ -330,13 +388,17 @@ bool MarketDataCsvRecorder::AppendTick(const MarketSnapshot& snapshot, std::stri
     }
 
     if (!config_.partition_by_product || config_.write_global_copy) {
-        WriteTickRow(tick_out_, snapshot);
-        if (!tick_out_.good()) {
+        CsvStreams* streams = EnsureGlobalStreams(trading_day, error);
+        if (streams == nullptr) {
+            return false;
+        }
+        WriteTickRow(streams->tick_out, snapshot);
+        if (!streams->tick_out.good()) {
             return SetError("failed to append market tick csv row", error);
         }
         if (config_.flush_each_write) {
-            tick_out_.flush();
-            if (!tick_out_.good()) {
+            streams->tick_out.flush();
+            if (!streams->tick_out.good()) {
                 return SetError("failed to flush market tick csv output", error);
             }
         }
@@ -359,9 +421,10 @@ bool MarketDataCsvRecorder::AppendBar(const BarSnapshot& bar, std::string* error
     if (!ShouldRecordInstrumentLocked(bar.instrument_id)) {
         return true;
     }
+    const std::string trading_day = ResolveTradingDay(bar.trading_day, bar.action_day);
 
     if (config_.partition_by_product) {
-        ProductStreams* streams = EnsureProductStreams(bar.instrument_id, error);
+        CsvStreams* streams = EnsureProductStreams(bar.instrument_id, trading_day, error);
         if (streams == nullptr) {
             return false;
         }
@@ -378,13 +441,17 @@ bool MarketDataCsvRecorder::AppendBar(const BarSnapshot& bar, std::string* error
     }
 
     if (!config_.partition_by_product || config_.write_global_copy) {
-        WriteBarRow(bar_out_, bar);
-        if (!bar_out_.good()) {
+        CsvStreams* streams = EnsureGlobalStreams(trading_day, error);
+        if (streams == nullptr) {
+            return false;
+        }
+        WriteBarRow(streams->bar_out, bar);
+        if (!streams->bar_out.good()) {
             return SetError("failed to append market bar csv row", error);
         }
         if (config_.flush_each_write) {
-            bar_out_.flush();
-            if (!bar_out_.good()) {
+            streams->bar_out.flush();
+            if (!streams->bar_out.good()) {
                 return SetError("failed to flush market bar csv output", error);
             }
         }
@@ -412,14 +479,14 @@ bool MarketDataCsvRecorder::AppendTimeframeBar(const BarSnapshot& bar,
     if (!ShouldRecordInstrumentLocked(bar.instrument_id)) {
         return true;
     }
+    const std::string trading_day = ResolveTradingDay(bar.trading_day, bar.action_day);
 
     if (config_.partition_by_product) {
-        ProductStreams* streams = EnsureProductStreams(bar.instrument_id, error);
+        CsvStreams* streams = EnsureProductStreams(bar.instrument_id, trading_day, error);
         if (streams == nullptr) {
             return false;
         }
-        std::ofstream* output =
-            EnsureProductTimeframeBarStream(streams, bar.instrument_id, timeframe_minutes, error);
+        std::ofstream* output = EnsureProductTimeframeBarStream(streams, timeframe_minutes, error);
         if (output == nullptr) {
             return false;
         }
@@ -436,7 +503,8 @@ bool MarketDataCsvRecorder::AppendTimeframeBar(const BarSnapshot& bar,
     }
 
     if (!config_.partition_by_product || config_.write_global_copy) {
-        std::ofstream* output = EnsureGlobalTimeframeBarStream(timeframe_minutes, error);
+        std::ofstream* output =
+            EnsureGlobalTimeframeBarStream(timeframe_minutes, trading_day, error);
         if (output == nullptr) {
             return false;
         }
@@ -461,37 +529,20 @@ bool MarketDataCsvRecorder::Close(std::string* error) {
         return true;
     }
     bool ok = true;
-    if (tick_out_.is_open()) {
-        tick_out_.flush();
-        ok = ok && tick_out_.good();
-        tick_out_.close();
-    }
-    if (bar_out_.is_open()) {
-        bar_out_.flush();
-        ok = ok && bar_out_.good();
-        bar_out_.close();
-    }
-    for (auto& [timeframe_minutes, output] : timeframe_bar_outs_) {
-        (void)timeframe_minutes;
-        if (output == nullptr) {
-            continue;
-        }
-        output->flush();
-        ok = ok && output->good();
-        output->close();
-    }
-    timeframe_bar_outs_.clear();
-    timeframe_bar_paths_.clear();
-    for (auto& [product_id, streams] : product_streams_) {
-        (void)product_id;
+    auto close_streams = [&ok](CsvStreams* streams) {
         if (streams == nullptr) {
-            continue;
+            return;
         }
-        streams->tick_out.flush();
-        streams->bar_out.flush();
-        ok = ok && streams->tick_out.good() && streams->bar_out.good();
-        streams->tick_out.close();
-        streams->bar_out.close();
+        if (streams->tick_out.is_open()) {
+            streams->tick_out.flush();
+            ok = ok && streams->tick_out.good();
+            streams->tick_out.close();
+        }
+        if (streams->bar_out.is_open()) {
+            streams->bar_out.flush();
+            ok = ok && streams->bar_out.good();
+            streams->bar_out.close();
+        }
         for (auto& [timeframe_minutes, output] : streams->timeframe_bar_outs) {
             (void)timeframe_minutes;
             if (output == nullptr) {
@@ -501,6 +552,15 @@ bool MarketDataCsvRecorder::Close(std::string* error) {
             ok = ok && output->good();
             output->close();
         }
+    };
+    for (auto& [trading_day, streams] : global_streams_) {
+        (void)trading_day;
+        close_streams(streams.get());
+    }
+    global_streams_.clear();
+    for (auto& [key, streams] : product_streams_) {
+        (void)key;
+        close_streams(streams.get());
     }
     product_streams_.clear();
     is_open_ = false;

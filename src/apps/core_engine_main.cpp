@@ -682,6 +682,78 @@ std::string OptionalIntToCsv(const std::optional<int>& value) {
     return value.has_value() ? std::to_string(*value) : std::string();
 }
 
+std::string NormalizeTradingDayToken(const std::string& value) {
+    std::string normalized;
+    normalized.reserve(value.size());
+    for (const char ch : value) {
+        const auto uch = static_cast<unsigned char>(ch);
+        if (std::isalnum(uch) != 0 || ch == '_') {
+            normalized.push_back(ch);
+        } else if (ch == '-' || std::isspace(uch) != 0) {
+            continue;
+        } else {
+            normalized.push_back('_');
+        }
+    }
+    return normalized.empty() ? std::string("unknown") : normalized;
+}
+
+std::string TradingDayFromMinute(const std::string& minute) {
+    if (minute.size() >= 8 && std::all_of(minute.begin(), minute.begin() + 8, [](char ch) {
+            return std::isdigit(static_cast<unsigned char>(ch)) != 0;
+        })) {
+        return minute.substr(0, 8);
+    }
+    return "unknown";
+}
+
+std::filesystem::path TradingDayDir(const std::filesystem::path& root,
+                                    const std::string& trading_day) {
+    return root / ("trading_day=" + NormalizeTradingDayToken(trading_day));
+}
+
+bool OpenAppendCsv(const std::filesystem::path& path, const std::string& header,
+                   const std::string& description, std::ofstream* output, std::string* error) {
+    if (output == nullptr) {
+        if (error != nullptr) {
+            *error = "csv output pointer is null";
+        }
+        return false;
+    }
+    bool needs_header = true;
+    std::error_code ec;
+    if (std::filesystem::exists(path, ec) && !ec) {
+        const auto size = std::filesystem::file_size(path, ec);
+        needs_header = ec || size == 0;
+    }
+    try {
+        std::filesystem::create_directories(path.parent_path());
+    } catch (const std::exception& ex) {
+        if (error != nullptr) {
+            *error = std::string("failed to prepare ") + description + " dir: " + ex.what();
+        }
+        return false;
+    }
+    output->open(path, std::ios::out | std::ios::app);
+    if (!output->is_open()) {
+        if (error != nullptr) {
+            *error = "failed to open " + description + " csv: " + path.string();
+        }
+        return false;
+    }
+    if (needs_header) {
+        *output << header;
+        if (!output->good()) {
+            output->close();
+            if (error != nullptr) {
+                *error = "failed to write " + description + " csv header: " + path.string();
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
 class KamaTraceCsvWriter {
    public:
     void SetOutputDir(std::string output_dir) {
@@ -699,7 +771,8 @@ class KamaTraceCsvWriter {
         if (row.strategy_type != "KamaTrendStrategy") {
             return true;
         }
-        std::ofstream* out = EnsureStreamLocked(state.instrument_id, error);
+        const std::string trading_day = TradingDayFromMinute(minute);
+        std::ofstream* out = EnsureStreamLocked(state.instrument_id, trading_day, error);
         if (out == nullptr) {
             return false;
         }
@@ -725,12 +798,15 @@ class KamaTraceCsvWriter {
     }
 
    private:
-    std::ofstream* EnsureStreamLocked(const std::string& instrument_id, std::string* error) {
+    std::ofstream* EnsureStreamLocked(const std::string& instrument_id,
+                                      const std::string& trading_day, std::string* error) {
         std::string product_id = ExtractProductId(instrument_id);
         if (product_id.empty()) {
             product_id = "unknown";
         }
-        const auto existing = streams_.find(product_id);
+        const std::string day = NormalizeTradingDayToken(trading_day);
+        const std::string key = day + "|" + product_id;
+        const auto existing = streams_.find(key);
         if (existing != streams_.end()) {
             return existing->second.get();
         }
@@ -738,7 +814,8 @@ class KamaTraceCsvWriter {
         std::filesystem::path path;
         try {
             const std::filesystem::path strategy_dir =
-                std::filesystem::path(output_dir_) / "varieties" / product_id / "strategy";
+                TradingDayDir(std::filesystem::path(output_dir_), day) / "varieties" / product_id /
+                "strategy";
             std::filesystem::create_directories(strategy_dir);
             path = strategy_dir / "kama_5m.csv";
         } catch (const std::exception& ex) {
@@ -748,17 +825,15 @@ class KamaTraceCsvWriter {
             return nullptr;
         }
 
-        auto stream = std::make_unique<std::ofstream>(path, std::ios::out | std::ios::trunc);
-        if (!stream->is_open()) {
-            if (error != nullptr) {
-                *error = "failed to open KAMA trace csv: " + path.string();
-            }
+        auto stream = std::make_unique<std::ofstream>();
+        const std::string header =
+            "minute,instrument,engine_strategy_id,sub_strategy_id,close,kama,er,adx,atr,"
+            "threshold,diff_1,diff_2,diff_3,diff_class_1,diff_class_2,diff_class_3,"
+            "trend_sum,raw_signal,regime,blocked_reason,ts_ns\n";
+        if (!OpenAppendCsv(path, header, "KAMA trace", stream.get(), error)) {
             return nullptr;
         }
-        *stream << "minute,instrument,engine_strategy_id,sub_strategy_id,close,kama,er,adx,atr,"
-                   "threshold,diff_1,diff_2,diff_3,diff_class_1,diff_class_2,diff_class_3,"
-                   "trend_sum,raw_signal,regime,blocked_reason,ts_ns\n";
-        auto [inserted, _] = streams_.emplace(product_id, std::move(stream));
+        auto [inserted, _] = streams_.emplace(key, std::move(stream));
         return inserted->second.get();
     }
 

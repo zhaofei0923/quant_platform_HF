@@ -40,7 +40,9 @@ class MarketDataCsvRecorder {
     const std::string& output_dir() const noexcept { return output_dir_; }
 
    private:
-    struct ProductStreams {
+    struct CsvStreams {
+        std::string trading_day;
+        std::string product_id;
         std::string tick_path;
         std::string bar_path;
         std::ofstream tick_out;
@@ -49,12 +51,14 @@ class MarketDataCsvRecorder {
         std::unordered_map<std::int32_t, std::unique_ptr<std::ofstream>> timeframe_bar_outs;
     };
 
-    ProductStreams* EnsureProductStreams(const std::string& instrument_id, std::string* error);
-    std::ofstream* EnsureProductTimeframeBarStream(ProductStreams* streams,
-                                                   const std::string& instrument_id,
+    CsvStreams* EnsureProductStreams(const std::string& instrument_id,
+                                     const std::string& trading_day, std::string* error);
+    CsvStreams* EnsureGlobalStreams(const std::string& trading_day, std::string* error);
+    std::ofstream* EnsureProductTimeframeBarStream(CsvStreams* streams,
                                                    std::int32_t timeframe_minutes,
                                                    std::string* error);
     std::ofstream* EnsureGlobalTimeframeBarStream(std::int32_t timeframe_minutes,
+                                                  const std::string& trading_day,
                                                   std::string* error);
     bool ShouldRecordInstrumentLocked(const std::string& instrument_id) const;
 
@@ -66,11 +70,8 @@ class MarketDataCsvRecorder {
     std::string bar_path_;
     MarketDataRecordingConfig config_;
     mutable std::mutex mutex_;
-    std::ofstream tick_out_;
-    std::ofstream bar_out_;
-    std::unordered_map<std::int32_t, std::string> timeframe_bar_paths_;
-    std::unordered_map<std::int32_t, std::unique_ptr<std::ofstream>> timeframe_bar_outs_;
-    std::unordered_map<std::string, std::unique_ptr<ProductStreams>> product_streams_;
+    std::unordered_map<std::string, std::unique_ptr<CsvStreams>> global_streams_;
+    std::unordered_map<std::string, std::unique_ptr<CsvStreams>> product_streams_;
     bool restrict_to_allowed_instruments_{false};
     std::unordered_set<std::string> allowed_instrument_ids_;
 };

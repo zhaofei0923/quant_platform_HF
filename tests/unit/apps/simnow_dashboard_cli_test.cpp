@@ -66,19 +66,20 @@ std::string DashboardCommand(const std::filesystem::path& root,
 }
 
 void WriteSampleMarketData(const std::filesystem::path& root) {
-    WriteFile(root / "market" / "run_1" / "varieties" / "c" / "market" / "ticks.csv",
+    WriteFile(root / "market" / "trading_day=20260515" / "varieties" / "c" / "market" / "ticks.csv",
               "instrument_id,exchange_id,trading_day,action_day,update_time,update_millisec,"
               "last_price,bid_price_1,ask_price_1,bid_volume_1,ask_volume_1,volume,"
               "open_interest,settlement_price,average_price_raw,average_price_norm,"
               "is_valid_settlement,exchange_ts_ns,recv_ts_ns\n"
               "c2607,DCE,20260515,20260514,21:00:01,0,2365,2364,2365,91,14,2821,"
               "1223500,0,23658,23658,0,0,1778763619820649828\n");
-    WriteFile(root / "market" / "run_1" / "varieties" / "c" / "market" / "bars_1m.csv",
-              "instrument_id,exchange_id,trading_day,action_day,minute,open,high,low,close,"
-              "analysis_open,analysis_high,analysis_low,analysis_close,analysis_price_offset,"
-              "volume,ts_ns\n"
-              "c2607,DCE,20260515,20260514,20260515 21:00,2365,2366,2363,2365,"
-              "2365,2366,2363,2365,0,16655,1778763659736134827\n");
+    WriteFile(
+        root / "market" / "trading_day=20260515" / "varieties" / "c" / "market" / "bars_1m.csv",
+        "instrument_id,exchange_id,trading_day,action_day,minute,open,high,low,close,"
+        "analysis_open,analysis_high,analysis_low,analysis_close,analysis_price_offset,"
+        "volume,ts_ns\n"
+        "c2607,DCE,20260515,20260514,20260515 21:00,2365,2366,2363,2365,"
+        "2365,2366,2363,2365,0,16655,1778763659736134827\n");
 }
 
 void WriteSampleReports(const std::filesystem::path& root) {

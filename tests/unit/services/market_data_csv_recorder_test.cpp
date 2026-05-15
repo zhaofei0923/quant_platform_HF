@@ -18,6 +18,16 @@ std::string ReadTextFile(const std::filesystem::path& path) {
     return out.str();
 }
 
+std::size_t CountOccurrences(const std::string& text, const std::string& needle) {
+    std::size_t count = 0;
+    std::size_t pos = 0;
+    while ((pos = text.find(needle, pos)) != std::string::npos) {
+        ++count;
+        pos += needle.size();
+    }
+    return count;
+}
+
 TEST(MarketDataCsvRecorderTest, WritesTickAndBarCsvFiles) {
     const auto token = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     const auto root = std::filesystem::temp_directory_path() / ("quant_hft_market_data_" + token);
@@ -25,7 +35,7 @@ TEST(MarketDataCsvRecorderTest, WritesTickAndBarCsvFiles) {
     MarketDataRecordingConfig config;
     config.enabled = true;
     config.output_dir = root.string();
-    config.run_id = "unit-run";
+    config.run_id = "ignored-run";
     config.flush_each_write = true;
 
     MarketDataCsvRecorder recorder;
@@ -71,13 +81,137 @@ TEST(MarketDataCsvRecorderTest, WritesTickAndBarCsvFiles) {
 
     EXPECT_EQ(recorder.ticks_written(), 1);
     EXPECT_EQ(recorder.bars_written(), 1);
-    const auto tick_text = ReadTextFile(root / "unit-run" / "ticks.csv");
-    const auto bar_text = ReadTextFile(root / "unit-run" / "bars_1m.csv");
+    EXPECT_FALSE(std::filesystem::exists(root / "ignored-run"));
+    const auto tick_text = ReadTextFile(root / "trading_day=20260429" / "ticks.csv");
+    const auto bar_text = ReadTextFile(root / "trading_day=20260429" / "bars_1m.csv");
     EXPECT_NE(tick_text.find("instrument_id,exchange_id,trading_day"), std::string::npos);
     EXPECT_NE(tick_text.find("SHFE.ag2406,SHFE,20260429,20260429,09:30:01"), std::string::npos);
     EXPECT_NE(bar_text.find("instrument_id,exchange_id,trading_day"), std::string::npos);
     EXPECT_NE(bar_text.find("SHFE.ag2406,SHFE,20260429,20260429,20260429 09:30"),
               std::string::npos);
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(MarketDataCsvRecorderTest, AppendsSameTradingDayWithoutDuplicateHeaders) {
+    const auto token = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto root =
+        std::filesystem::temp_directory_path() / ("quant_hft_market_data_append_" + token);
+
+    MarketDataRecordingConfig config;
+    config.enabled = true;
+    config.output_dir = root.string();
+    config.flush_each_write = true;
+    config.partition_by_product = true;
+
+    MarketSnapshot tick;
+    tick.instrument_id = "SHFE.rb2405";
+    tick.exchange_id = "SHFE";
+    tick.trading_day = "20260429";
+    tick.action_day = "20260429";
+    tick.update_time = "09:30:01";
+    tick.last_price = 3500.0;
+
+    std::string error;
+    {
+        MarketDataCsvRecorder recorder;
+        ASSERT_TRUE(recorder.Open(config, &error)) << error;
+        ASSERT_TRUE(recorder.AppendTick(tick, &error)) << error;
+        ASSERT_TRUE(recorder.Close(&error)) << error;
+    }
+    {
+        MarketDataCsvRecorder recorder;
+        tick.update_time = "09:30:02";
+        tick.last_price = 3501.0;
+        ASSERT_TRUE(recorder.Open(config, &error)) << error;
+        ASSERT_TRUE(recorder.AppendTick(tick, &error)) << error;
+        ASSERT_TRUE(recorder.Close(&error)) << error;
+    }
+
+    const auto tick_text =
+        ReadTextFile(root / "trading_day=20260429" / "varieties" / "rb" / "market" / "ticks.csv");
+    EXPECT_EQ(CountOccurrences(tick_text, "instrument_id,exchange_id,trading_day"), 1U);
+    EXPECT_NE(tick_text.find("09:30:01"), std::string::npos);
+    EXPECT_NE(tick_text.find("09:30:02"), std::string::npos);
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(MarketDataCsvRecorderTest, WritesDifferentTradingDaysToSeparateDirectories) {
+    const auto token = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto root =
+        std::filesystem::temp_directory_path() / ("quant_hft_market_data_days_" + token);
+
+    MarketDataRecordingConfig config;
+    config.enabled = true;
+    config.output_dir = root.string();
+    config.flush_each_write = true;
+    config.partition_by_product = true;
+
+    MarketDataCsvRecorder recorder;
+    std::string error;
+    ASSERT_TRUE(recorder.Open(config, &error)) << error;
+
+    MarketSnapshot tick;
+    tick.instrument_id = "DCE.c2607";
+    tick.exchange_id = "DCE";
+    tick.trading_day = "20260429";
+    tick.action_day = "20260429";
+    tick.update_time = "09:30:01";
+    tick.last_price = 2300.0;
+    ASSERT_TRUE(recorder.AppendTick(tick, &error)) << error;
+
+    tick.trading_day = "20260430";
+    tick.action_day = "20260430";
+    tick.update_time = "09:30:02";
+    tick.last_price = 2301.0;
+    ASSERT_TRUE(recorder.AppendTick(tick, &error)) << error;
+    ASSERT_TRUE(recorder.Close(&error)) << error;
+
+    EXPECT_NE(
+        ReadTextFile(root / "trading_day=20260429" / "varieties" / "c" / "market" / "ticks.csv")
+            .find("09:30:01"),
+        std::string::npos);
+    EXPECT_NE(
+        ReadTextFile(root / "trading_day=20260430" / "varieties" / "c" / "market" / "ticks.csv")
+            .find("09:30:02"),
+        std::string::npos);
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(MarketDataCsvRecorderTest, WritesHeaderWhenExistingFileIsEmpty) {
+    const auto token = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto root =
+        std::filesystem::temp_directory_path() / ("quant_hft_market_data_empty_" + token);
+    const auto tick_path =
+        root / "trading_day=20260429" / "varieties" / "rb" / "market" / "ticks.csv";
+    std::filesystem::create_directories(tick_path.parent_path());
+    std::ofstream(tick_path).close();
+
+    MarketDataRecordingConfig config;
+    config.enabled = true;
+    config.output_dir = root.string();
+    config.flush_each_write = true;
+    config.partition_by_product = true;
+
+    MarketDataCsvRecorder recorder;
+    std::string error;
+    ASSERT_TRUE(recorder.Open(config, &error)) << error;
+
+    MarketSnapshot tick;
+    tick.instrument_id = "SHFE.rb2405";
+    tick.exchange_id = "SHFE";
+    tick.trading_day = "20260429";
+    tick.action_day = "20260429";
+    tick.update_time = "09:30:01";
+    tick.last_price = 3500.0;
+    ASSERT_TRUE(recorder.AppendTick(tick, &error)) << error;
+    ASSERT_TRUE(recorder.Close(&error)) << error;
+
+    const auto tick_text = ReadTextFile(tick_path);
+    EXPECT_EQ(CountOccurrences(tick_text, "instrument_id,exchange_id,trading_day"), 1U);
+    EXPECT_NE(tick_text.find("SHFE.rb2405,SHFE,20260429"), std::string::npos);
 
     std::filesystem::remove_all(root);
 }
@@ -90,7 +224,7 @@ TEST(MarketDataCsvRecorderTest, WritesPartitionedTickAndBarCsvFilesByProduct) {
     MarketDataRecordingConfig config;
     config.enabled = true;
     config.output_dir = root.string();
-    config.run_id = "unit-run";
+    config.run_id = "ignored-run";
     config.flush_each_write = true;
     config.partition_by_product = true;
 
@@ -124,12 +258,12 @@ TEST(MarketDataCsvRecorderTest, WritesPartitionedTickAndBarCsvFilesByProduct) {
     ASSERT_TRUE(recorder.AppendBar(bar, &error)) << error;
     ASSERT_TRUE(recorder.Close(&error)) << error;
 
-    EXPECT_FALSE(std::filesystem::exists(root / "unit-run" / "ticks.csv"));
-    EXPECT_FALSE(std::filesystem::exists(root / "unit-run" / "bars_1m.csv"));
+    EXPECT_FALSE(std::filesystem::exists(root / "trading_day=20260429" / "ticks.csv"));
+    EXPECT_FALSE(std::filesystem::exists(root / "trading_day=20260429" / "bars_1m.csv"));
     const auto tick_text =
-        ReadTextFile(root / "unit-run" / "varieties" / "rb" / "market" / "ticks.csv");
+        ReadTextFile(root / "trading_day=20260429" / "varieties" / "rb" / "market" / "ticks.csv");
     const auto bar_text =
-        ReadTextFile(root / "unit-run" / "varieties" / "rb" / "market" / "bars_1m.csv");
+        ReadTextFile(root / "trading_day=20260429" / "varieties" / "rb" / "market" / "bars_1m.csv");
     EXPECT_NE(tick_text.find("SHFE.rb2405,SHFE,20260429"), std::string::npos);
     EXPECT_NE(bar_text.find("SHFE.rb2405,SHFE,20260429"), std::string::npos);
 
@@ -144,7 +278,7 @@ TEST(MarketDataCsvRecorderTest, WritesPartitionedTimeframeBarCsvFile) {
     MarketDataRecordingConfig config;
     config.enabled = true;
     config.output_dir = root.string();
-    config.run_id = "unit-run";
+    config.run_id = "ignored-run";
     config.flush_each_write = true;
     config.partition_by_product = true;
 
@@ -172,7 +306,7 @@ TEST(MarketDataCsvRecorderTest, WritesPartitionedTimeframeBarCsvFile) {
     ASSERT_TRUE(recorder.Close(&error)) << error;
 
     const auto bar_text =
-        ReadTextFile(root / "unit-run" / "varieties" / "hc" / "market" / "bars_5m.csv");
+        ReadTextFile(root / "trading_day=20260429" / "varieties" / "hc" / "market" / "bars_5m.csv");
     EXPECT_NE(bar_text.find("instrument_id,exchange_id,trading_day"), std::string::npos);
     EXPECT_NE(bar_text.find("SHFE.hc2405,SHFE,20260429,20260429,20260429 09:00"),
               std::string::npos);
@@ -188,7 +322,7 @@ TEST(MarketDataCsvRecorderTest, FiltersTicksAndBarsToAllowedInstruments) {
     MarketDataRecordingConfig config;
     config.enabled = true;
     config.output_dir = root.string();
-    config.run_id = "unit-run";
+    config.run_id = "ignored-run";
     config.flush_each_write = true;
     config.partition_by_product = true;
 
@@ -236,9 +370,9 @@ TEST(MarketDataCsvRecorderTest, FiltersTicksAndBarsToAllowedInstruments) {
     EXPECT_EQ(recorder.ticks_written(), 1);
     EXPECT_EQ(recorder.bars_written(), 1);
     const auto tick_text =
-        ReadTextFile(root / "unit-run" / "varieties" / "rb" / "market" / "ticks.csv");
+        ReadTextFile(root / "trading_day=20260429" / "varieties" / "rb" / "market" / "ticks.csv");
     const auto bar_text =
-        ReadTextFile(root / "unit-run" / "varieties" / "rb" / "market" / "bars_1m.csv");
+        ReadTextFile(root / "trading_day=20260429" / "varieties" / "rb" / "market" / "bars_1m.csv");
     EXPECT_NE(tick_text.find("SHFE.rb2405,SHFE,20260429"), std::string::npos);
     EXPECT_EQ(tick_text.find("SHFE.rb2406"), std::string::npos);
     EXPECT_NE(bar_text.find("SHFE.rb2405,SHFE,20260429"), std::string::npos);

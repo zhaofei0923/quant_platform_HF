@@ -116,6 +116,7 @@ if [[ "${CONVERT_MARKET_PARQUET}" == "1" ]]; then
   if [[ ! -x "${CSV_TO_PARQUET_BIN}" ]]; then
     echo "[warn] csv_to_parquet_cli is not executable: ${CSV_TO_PARQUET_BIN}" >&2
   else
+    market_trading_day_dir="${MARKET_DATA_DIR}/trading_day=${TRADING_DAY}"
     while IFS= read -r tick_csv; do
       [[ -n "${tick_csv}" ]] || continue
       rel="${tick_csv#${MARKET_DATA_DIR}/}"
@@ -134,7 +135,7 @@ if [[ "${CONVERT_MARKET_PARQUET}" == "1" ]]; then
       else
         "${parquet_cmd[@]}" || echo "[warn] market parquet conversion failed: ${tick_csv}" >&2
       fi
-    done < <(find "${MARKET_DATA_DIR}" -type f -path '*/market/ticks.csv' -print 2>/dev/null | sort)
+    done < <(find "${market_trading_day_dir}" -type f -path '*/market/ticks.csv' -print 2>/dev/null | sort)
   fi
 fi
 

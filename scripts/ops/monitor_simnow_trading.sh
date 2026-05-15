@@ -126,15 +126,34 @@ file_age_seconds() {
   printf '%s\n' $((now_epoch - modified_epoch))
 }
 
+latest_trading_day_dir() {
+  find "${MARKET_DATA_DIR}" -mindepth 1 -maxdepth 1 -type d -name 'trading_day=*' -print 2>/dev/null |
+    while IFS= read -r day_dir; do
+      local day_name="${day_dir##*/trading_day=}"
+      if [[ "${day_name}" =~ ^[0-9]{8}$ ]]; then
+        printf '1 %s %s\n' "${day_name}" "${day_dir}"
+      else
+        printf '0 %s %s\n' "${day_name}" "${day_dir}"
+      fi
+    done |
+    sort -k1,1nr -k2,2r | head -n 1 | cut -d' ' -f3-
+}
+
 latest_file_by_path() {
   local path_pattern="$1"
-  find "${MARKET_DATA_DIR}" -type f -path "${path_pattern}" -printf '%T@ %p\n' 2>/dev/null |
+  local day_dir
+  day_dir="$(latest_trading_day_dir || true)"
+  [[ -n "${day_dir}" ]] || return 0
+  find "${day_dir}" -type f -path "${path_pattern}" -printf '%T@ %p\n' 2>/dev/null |
     sort -nr | head -n 1 | sed 's/^[^ ]* //'
 }
 
 latest_file_by_name() {
   local file_name="$1"
-  find "${MARKET_DATA_DIR}" -type f -name "${file_name}" -printf '%T@ %p\n' 2>/dev/null |
+  local day_dir
+  day_dir="$(latest_trading_day_dir || true)"
+  [[ -n "${day_dir}" ]] || return 0
+  find "${day_dir}" -type f -name "${file_name}" -printf '%T@ %p\n' 2>/dev/null |
     sort -nr | head -n 1 | sed 's/^[^ ]* //'
 }
 

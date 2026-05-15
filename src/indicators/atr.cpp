@@ -59,4 +59,37 @@ void ATR::Reset() {
     atr_ = 0.0;
 }
 
+ATR::State ATR::ExportState() const {
+    State state;
+    state.initialized = initialized_;
+    state.has_prev_close = has_prev_close_;
+    state.prev_close = prev_close_;
+    state.tr_seed.assign(tr_seed_.begin(), tr_seed_.end());
+    state.tr_seed_sum = tr_seed_sum_;
+    state.atr = atr_;
+    return state;
+}
+
+bool ATR::ImportState(const State& state) {
+    if (!std::isfinite(state.prev_close) || !std::isfinite(state.tr_seed_sum) ||
+        !std::isfinite(state.atr) || state.tr_seed.size() > static_cast<std::size_t>(period_)) {
+        return false;
+    }
+    for (const double tr : state.tr_seed) {
+        if (!std::isfinite(tr) || tr < 0.0) {
+            return false;
+        }
+    }
+    initialized_ = state.initialized;
+    has_prev_close_ = state.has_prev_close;
+    prev_close_ = state.prev_close;
+    tr_seed_.assign(state.tr_seed.begin(), state.tr_seed.end());
+    tr_seed_sum_ = std::max(0.0, state.tr_seed_sum);
+    atr_ = state.atr;
+    if (initialized_ && tr_seed_.size() < static_cast<std::size_t>(period_)) {
+        return false;
+    }
+    return true;
+}
+
 }  // namespace quant_hft

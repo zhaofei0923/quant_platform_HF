@@ -136,6 +136,54 @@ TEST(AtomicStrategiesTest, KamaTrendStrategyFallsBackToDefaultVolumeWhenMultipli
     EXPECT_EQ(signals.front().volume, 3);
 }
 
+TEST(AtomicStrategiesTest, KamaTrendStrategyStateRestoreContinuesIndicators) {
+    KamaTrendStrategy continuous;
+    continuous.Init(MakeKamaParams());
+
+    AtomicStrategyContext ctx = MakeContext("acct");
+    ctx.account_equity = 100000.0;
+    ctx.contract_multipliers["IF2406"] = 10.0;
+
+    for (double close : {100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0}) {
+        (void)continuous.OnState(
+            MakeBarState("IF2406", close + 1.0, close - 1.0, close, static_cast<EpochNanos>(close)),
+            ctx);
+    }
+
+    AtomicState saved;
+    std::string error;
+    ASSERT_TRUE(continuous.SaveState(&saved, &error)) << error;
+
+    KamaTrendStrategy restored;
+    restored.Init(MakeKamaParams());
+    ASSERT_TRUE(restored.LoadState(saved, &error)) << error;
+
+    const StateSnapshot7D next = MakeBarState("IF2406", 109.0, 107.0, 108.0, 108);
+    const std::vector<SignalIntent> continuous_signals = continuous.OnState(next, ctx);
+    const std::vector<SignalIntent> restored_signals = restored.OnState(next, ctx);
+    ASSERT_EQ(restored_signals.size(), continuous_signals.size());
+    if (!continuous_signals.empty()) {
+        EXPECT_EQ(restored_signals.front().signal_type, continuous_signals.front().signal_type);
+        EXPECT_EQ(restored_signals.front().side, continuous_signals.front().side);
+        EXPECT_EQ(restored_signals.front().volume, continuous_signals.front().volume);
+    }
+
+    const auto continuous_snapshot = continuous.IndicatorSnapshot();
+    const auto restored_snapshot = restored.IndicatorSnapshot();
+    ASSERT_TRUE(continuous_snapshot.has_value());
+    ASSERT_TRUE(restored_snapshot.has_value());
+    ASSERT_TRUE(continuous_snapshot->kama.has_value());
+    ASSERT_TRUE(restored_snapshot->kama.has_value());
+    ASSERT_TRUE(continuous_snapshot->adx.has_value());
+    ASSERT_TRUE(restored_snapshot->adx.has_value());
+    ASSERT_TRUE(continuous_snapshot->atr.has_value());
+    ASSERT_TRUE(restored_snapshot->atr.has_value());
+    EXPECT_NEAR(*restored_snapshot->kama, *continuous_snapshot->kama, 1e-12);
+    EXPECT_NEAR(*restored_snapshot->adx, *continuous_snapshot->adx, 1e-12);
+    EXPECT_NEAR(*restored_snapshot->atr, *continuous_snapshot->atr, 1e-12);
+    EXPECT_EQ(restored_snapshot->trend_sum, continuous_snapshot->trend_sum);
+}
+
 TEST(AtomicStrategiesTest, KamaTrendStrategyUsesMinimumVolumeWhenRiskBudgetTooSmall) {
     KamaTrendStrategy strategy;
     strategy.Init(MakeKamaParams());

@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "quant_hft/contracts/types.h"
+#include "quant_hft/strategy/composite_strategy.h"
 #include "quant_hft/strategy/live_strategy.h"
 #include "quant_hft/strategy/state_persistence.h"
 
@@ -21,6 +22,8 @@ struct StrategyEngineConfig {
     std::size_t queue_capacity{8192};
     EpochNanos timer_interval_ns{100'000'000};  // 100ms
     std::shared_ptr<IStrategyStatePersistence> state_persistence;
+    std::function<void(const StateSnapshot7D&, const std::string&, const CompositeAtomicTraceRow&)>
+        indicator_trace_sink;
     bool load_state_on_start{false};
     EpochNanos state_snapshot_interval_ns{0};
     EpochNanos metrics_collect_interval_ns{1'000'000'000};
@@ -90,6 +93,7 @@ class StrategyEngine {
     void DispatchAccountSnapshot(const TradingAccountSnapshot& snapshot);
     void DispatchTimer(EpochNanos now_ns);
     void MaybeSnapshotStates(EpochNanos now_ns);
+    void SnapshotStates(EpochNanos now_ns);
     void MaybeCollectMetrics(EpochNanos now_ns);
     void EmitIntents(const std::string& strategy_id, std::vector<SignalIntent> intents);
 

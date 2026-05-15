@@ -82,6 +82,10 @@ ctp:
     kama_candidate_c: "configs/strategies/main_sim_trade_candidate_c.yaml"
     kama_candidate_hc: "configs/strategies/main_sim_trade_candidate_hc.yaml"
   strategy_queue_capacity: 8192
+  strategy_state_persist_enabled: true
+  strategy_state_backend: "file"
+  strategy_state_snapshot_interval_ms: 5000
+  strategy_state_file_dir: "runtime/trading/state/simnow"
   account_id: "${CTP_SIM_INVESTOR_ID}"
 
   # --- execution params ---

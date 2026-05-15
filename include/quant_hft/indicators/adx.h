@@ -8,6 +8,28 @@ namespace quant_hft {
 
 class ADX : public Indicator {
    public:
+    struct State {
+        bool has_prev_bar{false};
+        double prev_high{0.0};
+        double prev_low{0.0};
+        double prev_close{0.0};
+        int seed_count{0};
+        double tr_seed_sum{0.0};
+        double plus_dm_seed_sum{0.0};
+        double minus_dm_seed_sum{0.0};
+        bool di_ready{false};
+        double tr_smoothed{0.0};
+        double plus_dm_smoothed{0.0};
+        double minus_dm_smoothed{0.0};
+        double plus_di{0.0};
+        double minus_di{0.0};
+        double dx{0.0};
+        int dx_seed_count{0};
+        double dx_seed_sum{0.0};
+        bool adx_ready{false};
+        double adx{0.0};
+    };
+
     explicit ADX(int period = 14);
 
     void Update(double high, double low, double close, double volume = 0.0) override;
@@ -18,6 +40,8 @@ class ADX : public Indicator {
     std::optional<double> PlusDI() const;
     std::optional<double> MinusDI() const;
     std::optional<double> Dx() const;
+    State ExportState() const;
+    bool ImportState(const State& state);
 
    private:
     void UpdateDirectionalValues(double tr, double plus_dm, double minus_dm);

@@ -35,4 +35,21 @@ class RedisStrategyStatePersistence final : public IStrategyStatePersistence {
     int ttl_seconds_{0};
 };
 
+class FileStrategyStatePersistence final : public IStrategyStatePersistence {
+   public:
+    FileStrategyStatePersistence(std::string state_dir, std::string key_prefix, int ttl_seconds);
+
+    bool SaveStrategyState(const std::string& account_id, const std::string& strategy_id,
+                           const StrategyState& state, std::string* error) override;
+    bool LoadStrategyState(const std::string& account_id, const std::string& strategy_id,
+                           StrategyState* state, std::string* error) const override;
+
+   private:
+    std::string BuildPath(const std::string& account_id, const std::string& strategy_id) const;
+
+    std::string state_dir_;
+    std::string key_prefix_;
+    int ttl_seconds_{0};
+};
+
 }  // namespace quant_hft

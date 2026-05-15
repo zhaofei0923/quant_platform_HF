@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <filesystem>
 #include <memory>
 #include <thread>
 
@@ -39,6 +40,26 @@ TEST(StatePersistenceTest, ExpiresWhenTtlElapsed) {
 
     StrategyState loaded;
     EXPECT_FALSE(persistence.LoadStrategyState("acct", "beta", &loaded, &error));
+}
+
+TEST(StatePersistenceTest, FileBackendSavesAndLoadsStrategyState) {
+    const auto token = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto root = std::filesystem::temp_directory_path() / ("quant_hft_state_" + token);
+    FileStrategyStatePersistence persistence(root.string(), "strategy_state", 60);
+
+    StrategyState state;
+    state["kama.initialized"] = "true";
+    state["raw"] = "buy";
+
+    std::string error;
+    ASSERT_TRUE(persistence.SaveStrategyState("acct/demo", "kama:alpha", state, &error)) << error;
+
+    StrategyState loaded;
+    ASSERT_TRUE(persistence.LoadStrategyState("acct/demo", "kama:alpha", &loaded, &error)) << error;
+    EXPECT_EQ(loaded.at("kama.initialized"), "true");
+    EXPECT_EQ(loaded.at("raw"), "buy");
+
+    std::filesystem::remove_all(root);
 }
 
 }  // namespace

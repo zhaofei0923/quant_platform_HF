@@ -49,8 +49,18 @@ struct CompositeAtomicTraceRow {
     std::optional<double> atr;
     std::optional<double> adx;
     std::optional<double> er;
+    std::optional<double> threshold;
+    std::optional<double> diff_1;
+    std::optional<double> diff_2;
+    std::optional<double> diff_3;
+    std::optional<int> diff_class_1;
+    std::optional<int> diff_class_2;
+    std::optional<int> diff_class_3;
+    std::optional<int> trend_sum;
     std::optional<double> stop_loss_price;
     std::optional<double> take_profit_price;
+    std::string raw_signal;
+    std::string blocked_reason;
 };
 
 class CompositeStrategy : public ILiveStrategy {
@@ -170,6 +180,8 @@ class CompositeStrategy : public ILiveStrategy {
     std::unordered_map<std::string, std::string> position_owner_by_instrument_;
     std::unordered_map<std::string, std::string> active_force_close_window_by_instrument_;
     std::unordered_map<std::string, StrategyRiskGuardState> risk_guard_state_by_strategy_;
+    std::unordered_map<std::string, std::string> last_blocked_reason_by_strategy_;
+    bool last_state_matched_for_trace_{false};
 };
 
 bool RegisterCompositeStrategy(std::string* error = nullptr);

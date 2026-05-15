@@ -16,7 +16,8 @@ namespace quant_hft {
 
 class KamaTrendStrategy final : public ISubStrategy,
                                 public IAtomicBacktestTickAware,
-                                public IAtomicIndicatorTraceProvider {
+                                public IAtomicIndicatorTraceProvider,
+                                public IAtomicStateSerializable {
    public:
     KamaTrendStrategy() = default;
 
@@ -28,6 +29,8 @@ class KamaTrendStrategy final : public ISubStrategy,
     std::vector<SignalIntent> OnBacktestTick(const AtomicTickSnapshot& tick,
                                              const AtomicStrategyContext& ctx) override;
     std::optional<AtomicIndicatorSnapshot> IndicatorSnapshot() const override;
+    bool SaveState(AtomicState* out, std::string* error) const override;
+    bool LoadState(const AtomicState& state, std::string* error) override;
 
    private:
     int ClassifyDiff(double diff, double threshold) const;
@@ -76,8 +79,17 @@ class KamaTrendStrategy final : public ISubStrategy,
     std::optional<double> last_adx_;
     std::optional<double> last_stop_atr_;
     std::optional<double> last_take_atr_;
+    std::optional<double> last_threshold_;
+    std::optional<double> last_diff_1_;
+    std::optional<double> last_diff_2_;
+    std::optional<double> last_diff_3_;
+    std::optional<int> last_diff_class_1_;
+    std::optional<int> last_diff_class_2_;
+    std::optional<int> last_diff_class_3_;
+    std::optional<int> last_trend_sum_;
     std::optional<double> last_stop_loss_price_;
     std::optional<double> last_take_profit_price_;
+    std::string last_raw_signal_;
 };
 
 }  // namespace quant_hft

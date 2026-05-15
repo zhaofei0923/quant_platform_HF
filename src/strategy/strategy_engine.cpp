@@ -170,6 +170,8 @@ void StrategyEngine::Stop() {
         worker_thread_.join();
     }
 
+    SnapshotStates(NowEpochNanos());
+
     std::vector<StrategyEntry> strategies_to_shutdown;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -280,6 +282,21 @@ void StrategyEngine::DispatchState(const StateSnapshot7D& state) {
     for (auto& entry : strategies_) {
         try {
             intents = entry.strategy->OnState(state);
+            if (config_.indicator_trace_sink) {
+                auto* composite = dynamic_cast<CompositeStrategy*>(entry.strategy.get());
+                if (composite != nullptr) {
+                    const std::vector<CompositeAtomicTraceRow> rows =
+                        composite->CollectAtomicIndicatorTrace();
+                    for (const CompositeAtomicTraceRow& row : rows) {
+                        try {
+                            config_.indicator_trace_sink(state, entry.strategy_id, row);
+                        } catch (...) {
+                            std::lock_guard<std::mutex> lock(mutex_);
+                            ++stats_.strategy_callback_exceptions;
+                        }
+                    }
+                }
+            }
             EmitIntents(entry.strategy_id, std::move(intents));
         } catch (...) {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -357,6 +374,14 @@ void StrategyEngine::MaybeSnapshotStates(EpochNanos now_ns) {
         return;
     }
     last_state_snapshot_ns_ = now_ns;
+    SnapshotStates(now_ns);
+}
+
+void StrategyEngine::SnapshotStates(EpochNanos now_ns) {
+    (void)now_ns;
+    if (config_.state_persistence == nullptr) {
+        return;
+    }
     {
         std::lock_guard<std::mutex> lock(mutex_);
         ++stats_.state_snapshot_runs;

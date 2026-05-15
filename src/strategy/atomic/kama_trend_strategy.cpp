@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <iomanip>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -33,6 +34,320 @@ std::string FormatDouble(double value) {
     std::ostringstream out;
     out << value;
     return out.str();
+}
+
+std::string FormatStateDouble(double value) {
+    std::ostringstream out;
+    out << std::setprecision(17) << value;
+    return out.str();
+}
+
+std::string FormatStateBool(bool value) { return value ? "true" : "false"; }
+
+void SetError(std::string* error, const std::string& message) {
+    if (error != nullptr) {
+        *error = message;
+    }
+}
+
+const std::string* FindStateValue(const AtomicState& state, const std::string& key,
+                                  std::string* error) {
+    const auto it = state.find(key);
+    if (it == state.end()) {
+        SetError(error, "missing state key: " + key);
+        return nullptr;
+    }
+    return &it->second;
+}
+
+bool ParseStateBool(const std::string& text, bool* out) {
+    if (text == "true" || text == "1") {
+        *out = true;
+        return true;
+    }
+    if (text == "false" || text == "0") {
+        *out = false;
+        return true;
+    }
+    return false;
+}
+
+bool ParseStateDoubleValue(const std::string& text, double* out) {
+    try {
+        std::size_t consumed = 0;
+        const double value = std::stod(text, &consumed);
+        if (consumed != text.size() || !std::isfinite(value)) {
+            return false;
+        }
+        *out = value;
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+bool ParseStateIntValue(const std::string& text, int* out) {
+    try {
+        std::size_t consumed = 0;
+        const int value = std::stoi(text, &consumed);
+        if (consumed != text.size()) {
+            return false;
+        }
+        *out = value;
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+bool ParseStateSizeValue(const std::string& text, std::size_t* out) {
+    try {
+        std::size_t consumed = 0;
+        const unsigned long long value = std::stoull(text, &consumed);
+        if (consumed != text.size()) {
+            return false;
+        }
+        *out = static_cast<std::size_t>(value);
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+bool ReadStateBool(const AtomicState& state, const std::string& key, bool* out,
+                   std::string* error) {
+    const std::string* value = FindStateValue(state, key, error);
+    if (value == nullptr) {
+        return false;
+    }
+    if (!ParseStateBool(*value, out)) {
+        SetError(error, "invalid bool state key: " + key);
+        return false;
+    }
+    return true;
+}
+
+bool ReadStateDouble(const AtomicState& state, const std::string& key, double* out,
+                     std::string* error) {
+    const std::string* value = FindStateValue(state, key, error);
+    if (value == nullptr) {
+        return false;
+    }
+    if (!ParseStateDoubleValue(*value, out)) {
+        SetError(error, "invalid double state key: " + key);
+        return false;
+    }
+    return true;
+}
+
+bool ReadStateInt(const AtomicState& state, const std::string& key, int* out, std::string* error) {
+    const std::string* value = FindStateValue(state, key, error);
+    if (value == nullptr) {
+        return false;
+    }
+    if (!ParseStateIntValue(*value, out)) {
+        SetError(error, "invalid int state key: " + key);
+        return false;
+    }
+    return true;
+}
+
+bool ReadStateSize(const AtomicState& state, const std::string& key, std::size_t* out,
+                   std::string* error) {
+    const std::string* value = FindStateValue(state, key, error);
+    if (value == nullptr) {
+        return false;
+    }
+    if (!ParseStateSizeValue(*value, out)) {
+        SetError(error, "invalid size state key: " + key);
+        return false;
+    }
+    return true;
+}
+
+void WriteOptionalDouble(AtomicState* out, const std::string& key,
+                         const std::optional<double>& value) {
+    (*out)[key + ".has"] = FormatStateBool(value.has_value());
+    if (value.has_value()) {
+        (*out)[key + ".value"] = FormatStateDouble(*value);
+    }
+}
+
+void WriteOptionalInt(AtomicState* out, const std::string& key, const std::optional<int>& value) {
+    (*out)[key + ".has"] = FormatStateBool(value.has_value());
+    if (value.has_value()) {
+        (*out)[key + ".value"] = std::to_string(*value);
+    }
+}
+
+bool ReadOptionalDouble(const AtomicState& state, const std::string& key,
+                        std::optional<double>* out, std::string* error) {
+    bool has_value = false;
+    if (!ReadStateBool(state, key + ".has", &has_value, error)) {
+        return false;
+    }
+    if (!has_value) {
+        out->reset();
+        return true;
+    }
+    double value = 0.0;
+    if (!ReadStateDouble(state, key + ".value", &value, error)) {
+        return false;
+    }
+    *out = value;
+    return true;
+}
+
+bool ReadOptionalInt(const AtomicState& state, const std::string& key, std::optional<int>* out,
+                     std::string* error) {
+    bool has_value = false;
+    if (!ReadStateBool(state, key + ".has", &has_value, error)) {
+        return false;
+    }
+    if (!has_value) {
+        out->reset();
+        return true;
+    }
+    int value = 0;
+    if (!ReadStateInt(state, key + ".value", &value, error)) {
+        return false;
+    }
+    *out = value;
+    return true;
+}
+
+void WriteDoubleVector(AtomicState* out, const std::string& prefix,
+                       const std::vector<double>& values) {
+    (*out)[prefix + ".count"] = std::to_string(values.size());
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        (*out)[prefix + "." + std::to_string(i)] = FormatStateDouble(values[i]);
+    }
+}
+
+bool ReadDoubleVector(const AtomicState& state, const std::string& prefix,
+                      std::vector<double>* values, std::string* error) {
+    std::size_t count = 0;
+    if (!ReadStateSize(state, prefix + ".count", &count, error)) {
+        return false;
+    }
+    values->clear();
+    values->reserve(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        double value = 0.0;
+        if (!ReadStateDouble(state, prefix + "." + std::to_string(i), &value, error)) {
+            return false;
+        }
+        values->push_back(value);
+    }
+    return true;
+}
+
+void WriteKamaState(AtomicState* out, const std::string& prefix, const KAMA::State& state) {
+    (*out)[prefix + ".initialized"] = FormatStateBool(state.initialized);
+    WriteDoubleVector(out, prefix + ".closes", state.closes);
+    (*out)[prefix + ".volatility_sum"] = FormatStateDouble(state.volatility_sum);
+    (*out)[prefix + ".has_efficiency_ratio"] = FormatStateBool(state.has_efficiency_ratio);
+    (*out)[prefix + ".efficiency_ratio"] = FormatStateDouble(state.efficiency_ratio);
+    (*out)[prefix + ".kama"] = FormatStateDouble(state.kama);
+}
+
+bool ReadKamaState(const AtomicState& state, const std::string& prefix, KAMA::State* out,
+                   std::string* error) {
+    return ReadStateBool(state, prefix + ".initialized", &out->initialized, error) &&
+           ReadDoubleVector(state, prefix + ".closes", &out->closes, error) &&
+           ReadStateDouble(state, prefix + ".volatility_sum", &out->volatility_sum, error) &&
+           ReadStateBool(state, prefix + ".has_efficiency_ratio", &out->has_efficiency_ratio,
+                         error) &&
+           ReadStateDouble(state, prefix + ".efficiency_ratio", &out->efficiency_ratio, error) &&
+           ReadStateDouble(state, prefix + ".kama", &out->kama, error);
+}
+
+void WriteAtrState(AtomicState* out, const std::string& prefix, const ATR::State& state) {
+    (*out)[prefix + ".initialized"] = FormatStateBool(state.initialized);
+    (*out)[prefix + ".has_prev_close"] = FormatStateBool(state.has_prev_close);
+    (*out)[prefix + ".prev_close"] = FormatStateDouble(state.prev_close);
+    WriteDoubleVector(out, prefix + ".tr_seed", state.tr_seed);
+    (*out)[prefix + ".tr_seed_sum"] = FormatStateDouble(state.tr_seed_sum);
+    (*out)[prefix + ".atr"] = FormatStateDouble(state.atr);
+}
+
+bool ReadAtrState(const AtomicState& state, const std::string& prefix, ATR::State* out,
+                  std::string* error) {
+    return ReadStateBool(state, prefix + ".initialized", &out->initialized, error) &&
+           ReadStateBool(state, prefix + ".has_prev_close", &out->has_prev_close, error) &&
+           ReadStateDouble(state, prefix + ".prev_close", &out->prev_close, error) &&
+           ReadDoubleVector(state, prefix + ".tr_seed", &out->tr_seed, error) &&
+           ReadStateDouble(state, prefix + ".tr_seed_sum", &out->tr_seed_sum, error) &&
+           ReadStateDouble(state, prefix + ".atr", &out->atr, error);
+}
+
+void WriteAdxState(AtomicState* out, const std::string& prefix, const ADX::State& state) {
+    (*out)[prefix + ".has_prev_bar"] = FormatStateBool(state.has_prev_bar);
+    (*out)[prefix + ".prev_high"] = FormatStateDouble(state.prev_high);
+    (*out)[prefix + ".prev_low"] = FormatStateDouble(state.prev_low);
+    (*out)[prefix + ".prev_close"] = FormatStateDouble(state.prev_close);
+    (*out)[prefix + ".seed_count"] = std::to_string(state.seed_count);
+    (*out)[prefix + ".tr_seed_sum"] = FormatStateDouble(state.tr_seed_sum);
+    (*out)[prefix + ".plus_dm_seed_sum"] = FormatStateDouble(state.plus_dm_seed_sum);
+    (*out)[prefix + ".minus_dm_seed_sum"] = FormatStateDouble(state.minus_dm_seed_sum);
+    (*out)[prefix + ".di_ready"] = FormatStateBool(state.di_ready);
+    (*out)[prefix + ".tr_smoothed"] = FormatStateDouble(state.tr_smoothed);
+    (*out)[prefix + ".plus_dm_smoothed"] = FormatStateDouble(state.plus_dm_smoothed);
+    (*out)[prefix + ".minus_dm_smoothed"] = FormatStateDouble(state.minus_dm_smoothed);
+    (*out)[prefix + ".plus_di"] = FormatStateDouble(state.plus_di);
+    (*out)[prefix + ".minus_di"] = FormatStateDouble(state.minus_di);
+    (*out)[prefix + ".dx"] = FormatStateDouble(state.dx);
+    (*out)[prefix + ".dx_seed_count"] = std::to_string(state.dx_seed_count);
+    (*out)[prefix + ".dx_seed_sum"] = FormatStateDouble(state.dx_seed_sum);
+    (*out)[prefix + ".adx_ready"] = FormatStateBool(state.adx_ready);
+    (*out)[prefix + ".adx"] = FormatStateDouble(state.adx);
+}
+
+bool ReadAdxState(const AtomicState& state, const std::string& prefix, ADX::State* out,
+                  std::string* error) {
+    return ReadStateBool(state, prefix + ".has_prev_bar", &out->has_prev_bar, error) &&
+           ReadStateDouble(state, prefix + ".prev_high", &out->prev_high, error) &&
+           ReadStateDouble(state, prefix + ".prev_low", &out->prev_low, error) &&
+           ReadStateDouble(state, prefix + ".prev_close", &out->prev_close, error) &&
+           ReadStateInt(state, prefix + ".seed_count", &out->seed_count, error) &&
+           ReadStateDouble(state, prefix + ".tr_seed_sum", &out->tr_seed_sum, error) &&
+           ReadStateDouble(state, prefix + ".plus_dm_seed_sum", &out->plus_dm_seed_sum, error) &&
+           ReadStateDouble(state, prefix + ".minus_dm_seed_sum", &out->minus_dm_seed_sum, error) &&
+           ReadStateBool(state, prefix + ".di_ready", &out->di_ready, error) &&
+           ReadStateDouble(state, prefix + ".tr_smoothed", &out->tr_smoothed, error) &&
+           ReadStateDouble(state, prefix + ".plus_dm_smoothed", &out->plus_dm_smoothed, error) &&
+           ReadStateDouble(state, prefix + ".minus_dm_smoothed", &out->minus_dm_smoothed, error) &&
+           ReadStateDouble(state, prefix + ".plus_di", &out->plus_di, error) &&
+           ReadStateDouble(state, prefix + ".minus_di", &out->minus_di, error) &&
+           ReadStateDouble(state, prefix + ".dx", &out->dx, error) &&
+           ReadStateInt(state, prefix + ".dx_seed_count", &out->dx_seed_count, error) &&
+           ReadStateDouble(state, prefix + ".dx_seed_sum", &out->dx_seed_sum, error) &&
+           ReadStateBool(state, prefix + ".adx_ready", &out->adx_ready, error) &&
+           ReadStateDouble(state, prefix + ".adx", &out->adx, error);
+}
+
+void WriteDeque(AtomicState* out, const std::string& prefix, const std::deque<double>& values) {
+    (*out)[prefix + ".count"] = std::to_string(values.size());
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        (*out)[prefix + "." + std::to_string(i)] = FormatStateDouble(values[i]);
+    }
+}
+
+bool ReadDeque(const AtomicState& state, const std::string& prefix, std::deque<double>* out,
+               std::string* error) {
+    std::size_t count = 0;
+    if (!ReadStateSize(state, prefix + ".count", &count, error)) {
+        return false;
+    }
+    out->clear();
+    for (std::size_t i = 0; i < count; ++i) {
+        double value = 0.0;
+        if (!ReadStateDouble(state, prefix + "." + std::to_string(i), &value, error)) {
+            return false;
+        }
+        out->push_back(value);
+    }
+    return true;
 }
 
 std::string SideToString(Side side) { return side == Side::kBuy ? "buy" : "sell"; }
@@ -197,8 +512,17 @@ void KamaTrendStrategy::Init(const AtomicParams& params) {
     last_adx_.reset();
     last_stop_atr_.reset();
     last_take_atr_.reset();
+    last_threshold_.reset();
+    last_diff_1_.reset();
+    last_diff_2_.reset();
+    last_diff_3_.reset();
+    last_diff_class_1_.reset();
+    last_diff_class_2_.reset();
+    last_diff_class_3_.reset();
+    last_trend_sum_.reset();
     last_stop_loss_price_.reset();
     last_take_profit_price_.reset();
+    last_raw_signal_.clear();
 }
 
 std::string KamaTrendStrategy::GetId() const { return id_; }
@@ -227,8 +551,17 @@ void KamaTrendStrategy::Reset() {
     last_adx_.reset();
     last_stop_atr_.reset();
     last_take_atr_.reset();
+    last_threshold_.reset();
+    last_diff_1_.reset();
+    last_diff_2_.reset();
+    last_diff_3_.reset();
+    last_diff_class_1_.reset();
+    last_diff_class_2_.reset();
+    last_diff_class_3_.reset();
+    last_trend_sum_.reset();
     last_stop_loss_price_.reset();
     last_take_profit_price_.reset();
+    last_raw_signal_.clear();
 }
 
 std::vector<SignalIntent> KamaTrendStrategy::OnState(const StateSnapshot7D& state,
@@ -238,8 +571,17 @@ std::vector<SignalIntent> KamaTrendStrategy::OnState(const StateSnapshot7D& stat
     last_adx_.reset();
     last_stop_atr_.reset();
     last_take_atr_.reset();
+    last_threshold_.reset();
+    last_diff_1_.reset();
+    last_diff_2_.reset();
+    last_diff_3_.reset();
+    last_diff_class_1_.reset();
+    last_diff_class_2_.reset();
+    last_diff_class_3_.reset();
+    last_trend_sum_.reset();
     last_stop_loss_price_.reset();
     last_take_profit_price_.reset();
+    last_raw_signal_.clear();
 
     const double analysis_high = state.effective_bar_high();
     const double analysis_low = state.effective_bar_low();
@@ -296,10 +638,21 @@ std::vector<SignalIntent> KamaTrendStrategy::OnState(const StateSnapshot7D& stat
     if (kama_recent_.size() >= 4 && kama_window_.size() >= static_cast<std::size_t>(std_period_)) {
         const double threshold = kama_filter_ * ComputeStdKama();
         const double kama_t = kama_recent_[3];
-        const int diff_1st = ClassifyDiff(kama_t - kama_recent_[2], threshold);
-        const int diff_2nd = ClassifyDiff(kama_t - kama_recent_[1], threshold);
-        const int diff_3rd = ClassifyDiff(kama_t - kama_recent_[0], threshold);
+        const double diff_1 = kama_t - kama_recent_[2];
+        const double diff_2 = kama_t - kama_recent_[1];
+        const double diff_3 = kama_t - kama_recent_[0];
+        const int diff_1st = ClassifyDiff(diff_1, threshold);
+        const int diff_2nd = ClassifyDiff(diff_2, threshold);
+        const int diff_3rd = ClassifyDiff(diff_3, threshold);
         const int trend_sum = diff_1st + diff_2nd + diff_3rd;
+        last_threshold_ = threshold;
+        last_diff_1_ = diff_1;
+        last_diff_2_ = diff_2;
+        last_diff_3_ = diff_3;
+        last_diff_class_1_ = diff_1st;
+        last_diff_class_2_ = diff_2nd;
+        last_diff_class_3_ = diff_3rd;
+        last_trend_sum_ = trend_sum;
         const bool price_on_kama_side = (trend_sum == 3 && analysis_close > kama_t) ||
                                         (trend_sum == -3 && analysis_close < kama_t);
         if (price_on_kama_side) {
@@ -310,6 +663,7 @@ std::vector<SignalIntent> KamaTrendStrategy::OnState(const StateSnapshot7D& stat
                 entry_signal.instrument_id = state.instrument_id;
                 entry_signal.signal_type = SignalType::kOpen;
                 entry_signal.side = trend_sum > 0 ? Side::kBuy : Side::kSell;
+                last_raw_signal_ = SideToString(entry_signal.side);
                 entry_signal.offset = OffsetFlag::kOpen;
                 entry_signal.volume = volume;
                 entry_signal.limit_price = state.bar_close;
@@ -406,7 +760,8 @@ std::vector<SignalIntent> KamaTrendStrategy::OnBacktestTick(const AtomicTickSnap
 std::optional<AtomicIndicatorSnapshot> KamaTrendStrategy::IndicatorSnapshot() const {
     if (!last_kama_.has_value() && !last_er_.has_value() && !last_adx_.has_value() &&
         !last_stop_atr_.has_value() && !last_take_atr_.has_value() &&
-        !last_stop_loss_price_.has_value() && !last_take_profit_price_.has_value()) {
+        !last_threshold_.has_value() && !last_stop_loss_price_.has_value() &&
+        !last_take_profit_price_.has_value() && last_raw_signal_.empty()) {
         return std::nullopt;
     }
     AtomicIndicatorSnapshot snapshot;
@@ -414,9 +769,262 @@ std::optional<AtomicIndicatorSnapshot> KamaTrendStrategy::IndicatorSnapshot() co
     snapshot.er = last_er_;
     snapshot.adx = last_adx_;
     snapshot.atr = last_stop_atr_.has_value() ? last_stop_atr_ : last_take_atr_;
+    snapshot.threshold = last_threshold_;
+    snapshot.diff_1 = last_diff_1_;
+    snapshot.diff_2 = last_diff_2_;
+    snapshot.diff_3 = last_diff_3_;
+    snapshot.diff_class_1 = last_diff_class_1_;
+    snapshot.diff_class_2 = last_diff_class_2_;
+    snapshot.diff_class_3 = last_diff_class_3_;
+    snapshot.trend_sum = last_trend_sum_;
     snapshot.stop_loss_price = last_stop_loss_price_;
     snapshot.take_profit_price = last_take_profit_price_;
+    snapshot.raw_signal = last_raw_signal_;
     return snapshot;
+}
+
+bool KamaTrendStrategy::SaveState(AtomicState* out, std::string* error) const {
+    if (out == nullptr) {
+        SetError(error, "KamaTrendStrategy SaveState output must not be null");
+        return false;
+    }
+    if (kama_ == nullptr || adx_ == nullptr) {
+        SetError(error, "KamaTrendStrategy is not initialized");
+        return false;
+    }
+
+    out->clear();
+    (*out)["version"] = "1";
+    (*out)["id"] = id_;
+    WriteKamaState(out, "kama", kama_->ExportState());
+    WriteAdxState(out, "adx", adx_->ExportState());
+    (*out)["stop_atr.enabled"] = FormatStateBool(stop_loss_atr_ != nullptr);
+    if (stop_loss_atr_ != nullptr) {
+        WriteAtrState(out, "stop_atr", stop_loss_atr_->ExportState());
+    }
+    (*out)["take_atr.enabled"] = FormatStateBool(take_profit_atr_ != nullptr);
+    if (take_profit_atr_ != nullptr) {
+        WriteAtrState(out, "take_atr", take_profit_atr_->ExportState());
+    }
+
+    WriteDeque(out, "kama_recent", kama_recent_);
+    WriteDeque(out, "kama_window", kama_window_);
+    (*out)["kama_window_sum"] = FormatStateDouble(kama_window_sum_);
+    (*out)["kama_window_sum_sq"] = FormatStateDouble(kama_window_sum_sq_);
+
+    (*out)["trailing_stop.count"] = std::to_string(trailing_stop_by_instrument_.size());
+    std::size_t stop_index = 0;
+    for (const auto& [instrument_id, stop_price] : trailing_stop_by_instrument_) {
+        const std::string prefix = "trailing_stop." + std::to_string(stop_index);
+        (*out)[prefix + ".instrument"] = instrument_id;
+        (*out)[prefix + ".price"] = FormatStateDouble(stop_price);
+        ++stop_index;
+    }
+    (*out)["trailing_direction.count"] = std::to_string(trailing_direction_by_instrument_.size());
+    std::size_t direction_index = 0;
+    for (const auto& [instrument_id, direction] : trailing_direction_by_instrument_) {
+        const std::string prefix = "trailing_direction." + std::to_string(direction_index);
+        (*out)[prefix + ".instrument"] = instrument_id;
+        (*out)[prefix + ".direction"] = std::to_string(direction);
+        ++direction_index;
+    }
+
+    WriteOptionalDouble(out, "last_kama", last_kama_);
+    WriteOptionalDouble(out, "last_er", last_er_);
+    WriteOptionalDouble(out, "last_adx", last_adx_);
+    WriteOptionalDouble(out, "last_stop_atr", last_stop_atr_);
+    WriteOptionalDouble(out, "last_take_atr", last_take_atr_);
+    WriteOptionalDouble(out, "last_threshold", last_threshold_);
+    WriteOptionalDouble(out, "last_diff_1", last_diff_1_);
+    WriteOptionalDouble(out, "last_diff_2", last_diff_2_);
+    WriteOptionalDouble(out, "last_diff_3", last_diff_3_);
+    WriteOptionalInt(out, "last_diff_class_1", last_diff_class_1_);
+    WriteOptionalInt(out, "last_diff_class_2", last_diff_class_2_);
+    WriteOptionalInt(out, "last_diff_class_3", last_diff_class_3_);
+    WriteOptionalInt(out, "last_trend_sum", last_trend_sum_);
+    WriteOptionalDouble(out, "last_stop_loss_price", last_stop_loss_price_);
+    WriteOptionalDouble(out, "last_take_profit_price", last_take_profit_price_);
+    (*out)["last_raw_signal"] = last_raw_signal_;
+    return true;
+}
+
+bool KamaTrendStrategy::LoadState(const AtomicState& state, std::string* error) {
+    if (kama_ == nullptr || adx_ == nullptr) {
+        SetError(error, "KamaTrendStrategy is not initialized");
+        return false;
+    }
+
+    KAMA::State kama_state;
+    ADX::State adx_state;
+    if (!ReadKamaState(state, "kama", &kama_state, error) ||
+        !ReadAdxState(state, "adx", &adx_state, error)) {
+        return false;
+    }
+
+    bool stop_atr_enabled = false;
+    if (!ReadStateBool(state, "stop_atr.enabled", &stop_atr_enabled, error)) {
+        return false;
+    }
+    ATR::State stop_atr_state;
+    if (stop_atr_enabled && !ReadAtrState(state, "stop_atr", &stop_atr_state, error)) {
+        return false;
+    }
+
+    bool take_atr_enabled = false;
+    if (!ReadStateBool(state, "take_atr.enabled", &take_atr_enabled, error)) {
+        return false;
+    }
+    ATR::State take_atr_state;
+    if (take_atr_enabled && !ReadAtrState(state, "take_atr", &take_atr_state, error)) {
+        return false;
+    }
+
+    std::deque<double> kama_recent;
+    std::deque<double> kama_window;
+    if (!ReadDeque(state, "kama_recent", &kama_recent, error) ||
+        !ReadDeque(state, "kama_window", &kama_window, error)) {
+        return false;
+    }
+    if (kama_recent.size() > 4 || kama_window.size() > static_cast<std::size_t>(std_period_)) {
+        SetError(error, "invalid KamaTrendStrategy KAMA window sizes");
+        return false;
+    }
+
+    double loaded_window_sum = 0.0;
+    double loaded_window_sum_sq = 0.0;
+    for (const double value : kama_window) {
+        if (!std::isfinite(value)) {
+            SetError(error, "invalid KamaTrendStrategy KAMA window value");
+            return false;
+        }
+        loaded_window_sum += value;
+        loaded_window_sum_sq += value * value;
+    }
+    for (const double value : kama_recent) {
+        if (!std::isfinite(value)) {
+            SetError(error, "invalid KamaTrendStrategy recent KAMA value");
+            return false;
+        }
+    }
+
+    std::unordered_map<std::string, double> trailing_stop_by_instrument;
+    std::size_t trailing_stop_count = 0;
+    if (!ReadStateSize(state, "trailing_stop.count", &trailing_stop_count, error)) {
+        return false;
+    }
+    for (std::size_t i = 0; i < trailing_stop_count; ++i) {
+        const std::string prefix = "trailing_stop." + std::to_string(i);
+        const std::string* instrument = FindStateValue(state, prefix + ".instrument", error);
+        if (instrument == nullptr || instrument->empty()) {
+            return false;
+        }
+        double price = 0.0;
+        if (!ReadStateDouble(state, prefix + ".price", &price, error)) {
+            return false;
+        }
+        trailing_stop_by_instrument[*instrument] = price;
+    }
+
+    std::unordered_map<std::string, int> trailing_direction_by_instrument;
+    std::size_t trailing_direction_count = 0;
+    if (!ReadStateSize(state, "trailing_direction.count", &trailing_direction_count, error)) {
+        return false;
+    }
+    for (std::size_t i = 0; i < trailing_direction_count; ++i) {
+        const std::string prefix = "trailing_direction." + std::to_string(i);
+        const std::string* instrument = FindStateValue(state, prefix + ".instrument", error);
+        if (instrument == nullptr || instrument->empty()) {
+            return false;
+        }
+        int direction = 0;
+        if (!ReadStateInt(state, prefix + ".direction", &direction, error)) {
+            return false;
+        }
+        if (direction != 1 && direction != -1) {
+            SetError(error, "invalid trailing direction for instrument: " + *instrument);
+            return false;
+        }
+        trailing_direction_by_instrument[*instrument] = direction;
+    }
+
+    std::optional<double> last_kama;
+    std::optional<double> last_er;
+    std::optional<double> last_adx;
+    std::optional<double> last_stop_atr;
+    std::optional<double> last_take_atr;
+    std::optional<double> last_threshold;
+    std::optional<double> last_diff_1;
+    std::optional<double> last_diff_2;
+    std::optional<double> last_diff_3;
+    std::optional<int> last_diff_class_1;
+    std::optional<int> last_diff_class_2;
+    std::optional<int> last_diff_class_3;
+    std::optional<int> last_trend_sum;
+    std::optional<double> last_stop_loss_price;
+    std::optional<double> last_take_profit_price;
+    if (!ReadOptionalDouble(state, "last_kama", &last_kama, error) ||
+        !ReadOptionalDouble(state, "last_er", &last_er, error) ||
+        !ReadOptionalDouble(state, "last_adx", &last_adx, error) ||
+        !ReadOptionalDouble(state, "last_stop_atr", &last_stop_atr, error) ||
+        !ReadOptionalDouble(state, "last_take_atr", &last_take_atr, error) ||
+        !ReadOptionalDouble(state, "last_threshold", &last_threshold, error) ||
+        !ReadOptionalDouble(state, "last_diff_1", &last_diff_1, error) ||
+        !ReadOptionalDouble(state, "last_diff_2", &last_diff_2, error) ||
+        !ReadOptionalDouble(state, "last_diff_3", &last_diff_3, error) ||
+        !ReadOptionalInt(state, "last_diff_class_1", &last_diff_class_1, error) ||
+        !ReadOptionalInt(state, "last_diff_class_2", &last_diff_class_2, error) ||
+        !ReadOptionalInt(state, "last_diff_class_3", &last_diff_class_3, error) ||
+        !ReadOptionalInt(state, "last_trend_sum", &last_trend_sum, error) ||
+        !ReadOptionalDouble(state, "last_stop_loss_price", &last_stop_loss_price, error) ||
+        !ReadOptionalDouble(state, "last_take_profit_price", &last_take_profit_price, error)) {
+        return false;
+    }
+
+    const std::string* raw_signal = FindStateValue(state, "last_raw_signal", error);
+    if (raw_signal == nullptr) {
+        return false;
+    }
+
+    if (!kama_->ImportState(kama_state) || !adx_->ImportState(adx_state)) {
+        SetError(error, "failed to import KAMA or ADX state");
+        return false;
+    }
+    if (stop_loss_atr_ != nullptr) {
+        if (!stop_atr_enabled || !stop_loss_atr_->ImportState(stop_atr_state)) {
+            SetError(error, "failed to import stop ATR state");
+            return false;
+        }
+    }
+    if (take_profit_atr_ != nullptr) {
+        if (!take_atr_enabled || !take_profit_atr_->ImportState(take_atr_state)) {
+            SetError(error, "failed to import take ATR state");
+            return false;
+        }
+    }
+
+    kama_recent_ = std::move(kama_recent);
+    kama_window_ = std::move(kama_window);
+    kama_window_sum_ = loaded_window_sum;
+    kama_window_sum_sq_ = loaded_window_sum_sq;
+    trailing_stop_by_instrument_ = std::move(trailing_stop_by_instrument);
+    trailing_direction_by_instrument_ = std::move(trailing_direction_by_instrument);
+    last_kama_ = last_kama;
+    last_er_ = last_er;
+    last_adx_ = last_adx;
+    last_stop_atr_ = last_stop_atr;
+    last_take_atr_ = last_take_atr;
+    last_threshold_ = last_threshold;
+    last_diff_1_ = last_diff_1;
+    last_diff_2_ = last_diff_2;
+    last_diff_3_ = last_diff_3;
+    last_diff_class_1_ = last_diff_class_1;
+    last_diff_class_2_ = last_diff_class_2;
+    last_diff_class_3_ = last_diff_class_3;
+    last_trend_sum_ = last_trend_sum;
+    last_stop_loss_price_ = last_stop_loss_price;
+    last_take_profit_price_ = last_take_profit_price;
+    last_raw_signal_ = *raw_signal;
+    return true;
 }
 
 int KamaTrendStrategy::ClassifyDiff(double diff, double threshold) const {

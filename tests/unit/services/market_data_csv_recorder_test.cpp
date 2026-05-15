@@ -136,6 +136,50 @@ TEST(MarketDataCsvRecorderTest, WritesPartitionedTickAndBarCsvFilesByProduct) {
     std::filesystem::remove_all(root);
 }
 
+TEST(MarketDataCsvRecorderTest, WritesPartitionedTimeframeBarCsvFile) {
+    const auto token = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto root =
+        std::filesystem::temp_directory_path() / ("quant_hft_market_data_5m_" + token);
+
+    MarketDataRecordingConfig config;
+    config.enabled = true;
+    config.output_dir = root.string();
+    config.run_id = "unit-run";
+    config.flush_each_write = true;
+    config.partition_by_product = true;
+
+    MarketDataCsvRecorder recorder;
+    std::string error;
+    ASSERT_TRUE(recorder.Open(config, &error)) << error;
+
+    BarSnapshot bar;
+    bar.instrument_id = "SHFE.hc2405";
+    bar.exchange_id = "SHFE";
+    bar.trading_day = "20260429";
+    bar.action_day = "20260429";
+    bar.minute = "20260429 09:00";
+    bar.open = 3600.0;
+    bar.high = 3610.0;
+    bar.low = 3595.0;
+    bar.close = 3608.0;
+    bar.analysis_open = bar.open;
+    bar.analysis_high = bar.high;
+    bar.analysis_low = bar.low;
+    bar.analysis_close = bar.close;
+    bar.volume = 50;
+    bar.ts_ns = 12345;
+    ASSERT_TRUE(recorder.AppendTimeframeBar(bar, 5, &error)) << error;
+    ASSERT_TRUE(recorder.Close(&error)) << error;
+
+    const auto bar_text =
+        ReadTextFile(root / "unit-run" / "varieties" / "hc" / "market" / "bars_5m.csv");
+    EXPECT_NE(bar_text.find("instrument_id,exchange_id,trading_day"), std::string::npos);
+    EXPECT_NE(bar_text.find("SHFE.hc2405,SHFE,20260429,20260429,20260429 09:00"),
+              std::string::npos);
+
+    std::filesystem::remove_all(root);
+}
+
 TEST(MarketDataCsvRecorderTest, FiltersTicksAndBarsToAllowedInstruments) {
     const auto token = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     const auto root =

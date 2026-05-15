@@ -13,6 +13,7 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -54,6 +55,7 @@
 #include "quant_hft/services/order_state_machine.h"
 #include "quant_hft/services/position_manager.h"
 #include "quant_hft/services/rule_market_state_engine.h"
+#include "quant_hft/services/timeframe_state_fanout.h"
 #include "quant_hft/strategy/composite_config_loader.h"
 #include "quant_hft/strategy/composite_strategy.h"
 #include "quant_hft/strategy/demo_live_strategy.h"
@@ -607,6 +609,164 @@ std::vector<std::string> ResolveStrategyIds(const quant_hft::CtpFileConfig& conf
     return {"demo"};
 }
 
+std::vector<std::int32_t> ResolveStrategyTimeframes(const quant_hft::CtpFileConfig& config,
+                                                    const std::vector<std::string>& strategy_ids,
+                                                    std::string* error) {
+    std::vector<std::int32_t> timeframes;
+    if (config.strategy_factory != "composite") {
+        return timeframes;
+    }
+
+    for (const std::string& strategy_id : strategy_ids) {
+        std::string composite_config_path = config.strategy_composite_config;
+        const auto mapped = config.strategy_composite_config_map.find(strategy_id);
+        if (mapped != config.strategy_composite_config_map.end()) {
+            composite_config_path = mapped->second;
+        }
+        if (composite_config_path.empty()) {
+            if (error != nullptr) {
+                *error = "missing composite config for strategy_id=" + strategy_id;
+            }
+            return {};
+        }
+        quant_hft::CompositeStrategyDefinition definition;
+        std::string load_error;
+        if (!quant_hft::LoadCompositeStrategyDefinition(composite_config_path, &definition,
+                                                        &load_error)) {
+            if (error != nullptr) {
+                *error = "failed to load composite config `" + composite_config_path +
+                         "`: " + load_error;
+            }
+            return {};
+        }
+        for (const auto& sub_strategy : definition.sub_strategies) {
+            if (sub_strategy.enabled && sub_strategy.timeframe_minutes > 1) {
+                timeframes.push_back(sub_strategy.timeframe_minutes);
+            }
+        }
+    }
+    std::sort(timeframes.begin(), timeframes.end());
+    timeframes.erase(std::unique(timeframes.begin(), timeframes.end()), timeframes.end());
+    return timeframes;
+}
+
+std::string CsvEscape(std::string value) {
+    const bool requires_quotes =
+        value.find(',') != std::string::npos || value.find('"') != std::string::npos ||
+        value.find('\n') != std::string::npos || value.find('\r') != std::string::npos;
+    if (!requires_quotes) {
+        return value;
+    }
+    std::string escaped;
+    escaped.reserve(value.size() + 8);
+    escaped.push_back('"');
+    for (const char ch : value) {
+        if (ch == '"') {
+            escaped += "\"\"";
+        } else {
+            escaped.push_back(ch);
+        }
+    }
+    escaped.push_back('"');
+    return escaped;
+}
+
+std::string OptionalDoubleToCsv(const std::optional<double>& value) {
+    if (!value.has_value()) {
+        return "";
+    }
+    return FormatDouble(*value);
+}
+
+std::string OptionalIntToCsv(const std::optional<int>& value) {
+    return value.has_value() ? std::to_string(*value) : std::string();
+}
+
+class KamaTraceCsvWriter {
+   public:
+    void SetOutputDir(std::string output_dir) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        output_dir_ = std::move(output_dir);
+    }
+
+    bool Append(const std::string& minute, const quant_hft::StateSnapshot7D& state,
+                const std::string& engine_strategy_id,
+                const quant_hft::CompositeAtomicTraceRow& row, std::string* error) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (output_dir_.empty() || state.timeframe_minutes != 5 || row.strategy_type.empty()) {
+            return true;
+        }
+        if (row.strategy_type != "KamaTrendStrategy") {
+            return true;
+        }
+        std::ofstream* out = EnsureStreamLocked(state.instrument_id, error);
+        if (out == nullptr) {
+            return false;
+        }
+        *out << CsvEscape(minute) << ',' << CsvEscape(state.instrument_id) << ','
+             << CsvEscape(engine_strategy_id) << ',' << CsvEscape(row.strategy_id) << ','
+             << FormatDouble(state.effective_bar_close()) << ',' << OptionalDoubleToCsv(row.kama)
+             << ',' << OptionalDoubleToCsv(row.er) << ',' << OptionalDoubleToCsv(row.adx) << ','
+             << OptionalDoubleToCsv(row.atr) << ',' << OptionalDoubleToCsv(row.threshold) << ','
+             << OptionalDoubleToCsv(row.diff_1) << ',' << OptionalDoubleToCsv(row.diff_2) << ','
+             << OptionalDoubleToCsv(row.diff_3) << ',' << OptionalIntToCsv(row.diff_class_1) << ','
+             << OptionalIntToCsv(row.diff_class_2) << ',' << OptionalIntToCsv(row.diff_class_3)
+             << ',' << OptionalIntToCsv(row.trend_sum) << ',' << CsvEscape(row.raw_signal) << ','
+             << CsvEscape(MarketRegimeToString(state.market_regime)) << ','
+             << CsvEscape(row.blocked_reason) << ',' << state.ts_ns << '\n';
+        if (!out->good()) {
+            if (error != nullptr) {
+                *error = "failed to write KAMA trace row";
+            }
+            return false;
+        }
+        out->flush();
+        return out->good();
+    }
+
+   private:
+    std::ofstream* EnsureStreamLocked(const std::string& instrument_id, std::string* error) {
+        std::string product_id = ExtractProductId(instrument_id);
+        if (product_id.empty()) {
+            product_id = "unknown";
+        }
+        const auto existing = streams_.find(product_id);
+        if (existing != streams_.end()) {
+            return existing->second.get();
+        }
+
+        std::filesystem::path path;
+        try {
+            const std::filesystem::path strategy_dir =
+                std::filesystem::path(output_dir_) / "varieties" / product_id / "strategy";
+            std::filesystem::create_directories(strategy_dir);
+            path = strategy_dir / "kama_5m.csv";
+        } catch (const std::exception& ex) {
+            if (error != nullptr) {
+                *error = std::string("failed to prepare KAMA trace dir: ") + ex.what();
+            }
+            return nullptr;
+        }
+
+        auto stream = std::make_unique<std::ofstream>(path, std::ios::out | std::ios::trunc);
+        if (!stream->is_open()) {
+            if (error != nullptr) {
+                *error = "failed to open KAMA trace csv: " + path.string();
+            }
+            return nullptr;
+        }
+        *stream << "minute,instrument,engine_strategy_id,sub_strategy_id,close,kama,er,adx,atr,"
+                   "threshold,diff_1,diff_2,diff_3,diff_class_1,diff_class_2,diff_class_3,"
+                   "trend_sum,raw_signal,regime,blocked_reason,ts_ns\n";
+        auto [inserted, _] = streams_.emplace(product_id, std::move(stream));
+        return inserted->second.get();
+    }
+
+    std::mutex mutex_;
+    std::string output_dir_;
+    std::unordered_map<std::string, std::unique_ptr<std::ofstream>> streams_;
+};
+
 struct ExecutionMetadata {
     std::string strategy_id;
     std::string execution_algo_id;
@@ -792,6 +952,13 @@ int main(int argc, char** argv) {
         static_cast<std::size_t>(std::max(1, file_config.strategy_queue_capacity));
     const std::string account_id =
         file_config.account_id.empty() ? config.user_id : file_config.account_id;
+    std::string strategy_timeframe_error;
+    const std::vector<std::int32_t> strategy_timeframes =
+        ResolveStrategyTimeframes(file_config, strategy_ids, &strategy_timeframe_error);
+    if (!strategy_timeframe_error.empty()) {
+        EmitStructuredLog(&config, "core_engine", "warn", "strategy_timeframe_resolve_failed",
+                          {{"error", strategy_timeframe_error}});
+    }
     const ExecutionConfig execution_config = file_config.execution;
     MetricsExporter metrics_exporter;
     if (config.metrics_enabled) {
@@ -886,6 +1053,9 @@ int main(int argc, char** argv) {
     std::unordered_set<std::string> cancel_pending_orders;
     std::function<void(const SignalIntent&)> process_signal_intent;
     std::unique_ptr<StrategyEngine> strategy_engine;
+    KamaTraceCsvWriter kama_trace_writer;
+    std::mutex timeframe_trace_mutex;
+    std::unordered_map<std::string, std::string> timeframe_trace_minute_by_key;
     WalReplayLoader replay_loader;
     StorageRetryPolicy storage_retry_policy;
     storage_retry_policy.max_attempts = 3;
@@ -911,13 +1081,43 @@ int main(int argc, char** argv) {
 
     std::shared_ptr<IStrategyStatePersistence> strategy_state_persistence;
     if (file_config.strategy_state_persist_enabled) {
-        strategy_state_persistence = std::make_shared<RedisStrategyStatePersistence>(
-            pooled_redis, file_config.strategy_state_key_prefix,
-            file_config.strategy_state_ttl_seconds);
+        if (file_config.strategy_state_backend == "file") {
+            strategy_state_persistence = std::make_shared<FileStrategyStatePersistence>(
+                file_config.strategy_state_file_dir, file_config.strategy_state_key_prefix,
+                file_config.strategy_state_ttl_seconds);
+        } else {
+            strategy_state_persistence = std::make_shared<RedisStrategyStatePersistence>(
+                pooled_redis, file_config.strategy_state_key_prefix,
+                file_config.strategy_state_ttl_seconds);
+        }
     }
+    auto build_timeframe_trace_key = [](const StateSnapshot7D& state) {
+        return state.instrument_id + "|" + std::to_string(state.timeframe_minutes) + "|" +
+               std::to_string(state.ts_ns);
+    };
     StrategyEngineConfig strategy_engine_config;
     strategy_engine_config.queue_capacity = strategy_queue_capacity;
     strategy_engine_config.state_persistence = strategy_state_persistence;
+    strategy_engine_config.indicator_trace_sink = [&](const StateSnapshot7D& state,
+                                                      const std::string& engine_strategy_id,
+                                                      const CompositeAtomicTraceRow& row) {
+        std::string minute;
+        {
+            std::lock_guard<std::mutex> lock(timeframe_trace_mutex);
+            const auto it = timeframe_trace_minute_by_key.find(build_timeframe_trace_key(state));
+            if (it != timeframe_trace_minute_by_key.end()) {
+                minute = it->second;
+            }
+        }
+        std::string trace_error;
+        if (!kama_trace_writer.Append(minute, state, engine_strategy_id, row, &trace_error)) {
+            EmitStructuredLog(&config, "core_engine", "error", "kama_trace_write_failed",
+                              {{"instrument_id", state.instrument_id},
+                               {"strategy_id", engine_strategy_id},
+                               {"sub_strategy_id", row.strategy_id},
+                               {"error", trace_error}});
+        }
+    };
     strategy_engine_config.load_state_on_start = file_config.strategy_state_persist_enabled;
     strategy_engine_config.state_snapshot_interval_ns =
         static_cast<EpochNanos>(file_config.strategy_state_snapshot_interval_ms) * 1'000'000;
@@ -995,6 +1195,26 @@ int main(int argc, char** argv) {
     (void)risk_manager->Initialize(risk_manager_config);
     execution_engine.SetRiskManager(risk_manager);
     RuleMarketStateEngine market_state(32, file_config.market_state_detector);
+    TimeframeStateFanout timeframe_state_fanout(strategy_timeframes,
+                                                file_config.market_state_detector);
+    std::mutex timeframe_fanout_mutex;
+    const std::string timeframe_fanout_state_id = "__timeframe_state_fanout";
+    if (strategy_state_persistence != nullptr && file_config.strategy_state_persist_enabled) {
+        StrategyState loaded_fanout_state;
+        std::string load_error;
+        if (strategy_state_persistence->LoadStrategyState(account_id, timeframe_fanout_state_id,
+                                                          &loaded_fanout_state, &load_error)) {
+            std::string apply_error;
+            if (!timeframe_state_fanout.LoadState(loaded_fanout_state, &apply_error)) {
+                EmitStructuredLog(&config, "core_engine", "warn",
+                                  "timeframe_fanout_state_load_failed", {{"error", apply_error}});
+            } else {
+                EmitStructuredLog(&config, "core_engine", "info", "timeframe_fanout_state_loaded",
+                                  {{"timeframe_count",
+                                    std::to_string(timeframe_state_fanout.timeframes().size())}});
+            }
+        }
+    }
     MarketBusProducer market_bus_producer(config.kafka_bootstrap_servers, config.kafka_topic_ticks);
     const auto quant_root = quant_hft::GetEnvOrDefault("QUANT_ROOT", "");
     const auto default_wal_path = quant_root.empty()
@@ -1013,6 +1233,7 @@ int main(int argc, char** argv) {
                           {{"error", error}});
         return 7;
     }
+    kama_trace_writer.SetOutputDir(market_data_recorder.output_dir());
     if (market_data_recorder.enabled()) {
         EmitStructuredLog(&config, "core_engine", "info", "market_data_recorder_started",
                           {{"output_dir", market_data_recorder.output_dir()},
@@ -1356,9 +1577,92 @@ int main(int argc, char** argv) {
         }
     };
 
+    auto record_timeframe_bar = [&](const BarSnapshot& bar, std::int32_t timeframe_minutes) {
+        std::string record_error;
+        if (!market_data_recorder.AppendTimeframeBar(bar, timeframe_minutes, &record_error)) {
+            const auto failure_count = market_data_recording_failures.fetch_add(1) + 1;
+            EmitStructuredLog(&config, "core_engine", "error", "market_timeframe_bar_record_failed",
+                              {{"instrument_id", bar.instrument_id},
+                               {"minute", bar.minute},
+                               {"timeframe_minutes", std::to_string(timeframe_minutes)},
+                               {"error", record_error},
+                               {"failure_count", std::to_string(failure_count)}});
+        }
+    };
+
+    auto persist_timeframe_fanout_state = [&](const StrategyState& state) {
+        if (strategy_state_persistence == nullptr || !file_config.strategy_state_persist_enabled) {
+            return;
+        }
+        std::string save_error;
+        if (!strategy_state_persistence->SaveStrategyState(account_id, timeframe_fanout_state_id,
+                                                           state, &save_error)) {
+            EmitStructuredLog(&config, "core_engine", "warn", "timeframe_fanout_state_save_failed",
+                              {{"error", save_error}});
+        }
+    };
+
+    auto handle_timeframe_emissions = [&](const std::vector<TimeframeStateEmission>& emissions) {
+        for (const auto& emission : emissions) {
+            record_timeframe_bar(emission.bar, emission.timeframe_minutes);
+            {
+                std::lock_guard<std::mutex> lock(timeframe_trace_mutex);
+                timeframe_trace_minute_by_key[build_timeframe_trace_key(emission.state)] =
+                    emission.bar.minute;
+                if (timeframe_trace_minute_by_key.size() > 4096) {
+                    timeframe_trace_minute_by_key.erase(timeframe_trace_minute_by_key.begin());
+                }
+            }
+            realtime_cache.UpsertStateSnapshot7D(emission.state);
+            if (strategy_engine != nullptr) {
+                strategy_engine->EnqueueState(emission.state);
+            }
+        }
+    };
+
+    auto flush_timeframe_fanout = [&]() {
+        std::vector<TimeframeStateEmission> emissions;
+        StrategyState fanout_state;
+        bool has_fanout_state = false;
+        {
+            std::lock_guard<std::mutex> lock(timeframe_fanout_mutex);
+            emissions = timeframe_state_fanout.Flush();
+            std::string state_error;
+            if (timeframe_state_fanout.SaveState(&fanout_state, &state_error)) {
+                has_fanout_state = true;
+            } else {
+                EmitStructuredLog(&config, "core_engine", "warn",
+                                  "timeframe_fanout_state_build_failed", {{"error", state_error}});
+            }
+        }
+        handle_timeframe_emissions(emissions);
+        if (has_fanout_state) {
+            persist_timeframe_fanout_state(fanout_state);
+        }
+    };
+
     auto record_market_bars = [&](const std::vector<BarSnapshot>& bars) {
         for (const auto& bar : bars) {
             record_market_bar(bar);
+            std::vector<TimeframeStateEmission> emissions;
+            StrategyState fanout_state;
+            bool has_fanout_state = false;
+            {
+                std::lock_guard<std::mutex> lock(timeframe_fanout_mutex);
+                emissions = timeframe_state_fanout.OnOneMinuteBar(bar);
+                std::string state_error;
+                if (timeframe_state_fanout.SaveState(&fanout_state, &state_error)) {
+                    has_fanout_state = true;
+                } else {
+                    EmitStructuredLog(&config, "core_engine", "warn",
+                                      "timeframe_fanout_state_build_failed",
+                                      {{"error", state_error}});
+                }
+            }
+            handle_timeframe_emissions(emissions);
+            if (has_fanout_state) {
+                persist_timeframe_fanout_state(fanout_state);
+            }
         }
     };
 
@@ -1381,6 +1685,9 @@ int main(int argc, char** argv) {
                 instrument_last_tick_ts_ns, NowEpochNanos() - session_end_bar_flush_grace_ns);
         }
         record_market_bars(bars);
+        if (!bars.empty()) {
+            flush_timeframe_fanout();
+        }
     };
 
     auto process_market_snapshot = [&](const MarketSnapshot& raw_snapshot) {
@@ -1617,7 +1924,7 @@ int main(int argc, char** argv) {
     };
     market_state.RegisterStateCallback([&](const StateSnapshot7D& state) {
         realtime_cache.UpsertStateSnapshot7D(state);
-        if (strategy_engine != nullptr) {
+        if (strategy_factory != "composite" && strategy_engine != nullptr) {
             strategy_engine->EnqueueState(state);
         }
     });
@@ -2004,6 +2311,12 @@ int main(int argc, char** argv) {
         for (const auto& instrument_id : instruments) {
             bar_aggregator.ResetInstrument(instrument_id);
             instrument_last_tick_ts_ns.erase(instrument_id);
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(timeframe_fanout_mutex);
+        for (const auto& instrument_id : instruments) {
+            timeframe_state_fanout.ResetInstrument(instrument_id);
         }
     }
     dominant_contract_selection_active.store(false);
@@ -2452,6 +2765,10 @@ int main(int argc, char** argv) {
                         bar_aggregator.ResetInstrument(best_it->instrument_id);
                         instrument_last_tick_ts_ns.erase(best_it->instrument_id);
                     }
+                    {
+                        std::lock_guard<std::mutex> lock(timeframe_fanout_mutex);
+                        timeframe_state_fanout.ResetInstrument(best_it->instrument_id);
+                    }
                     retained_candidate_ids.push_back(best_it->instrument_id);
                     switched_out_instrument_ids.push_back(current_instrument_id);
                     lead_candidate_by_product.erase(product_id);
@@ -2656,10 +2973,6 @@ int main(int argc, char** argv) {
         query_poll_thread.join();
     }
 
-    if (strategy_engine != nullptr) {
-        strategy_engine->Stop();
-    }
-    metrics_exporter.Stop();
     std::vector<BarSnapshot> remaining_bars;
     {
         std::lock_guard<std::mutex> lock(bar_aggregation_mutex);
@@ -2667,6 +2980,11 @@ int main(int argc, char** argv) {
         instrument_last_tick_ts_ns.clear();
     }
     record_market_bars(remaining_bars);
+    flush_timeframe_fanout();
+    if (strategy_engine != nullptr) {
+        strategy_engine->Stop();
+    }
+    metrics_exporter.Stop();
     std::string market_data_close_error;
     if (!market_data_recorder.Close(&market_data_close_error)) {
         EmitStructuredLog(&config, "core_engine", "error", "market_data_recorder_close_failed",

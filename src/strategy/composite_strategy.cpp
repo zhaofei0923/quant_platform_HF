@@ -390,6 +390,9 @@ void CompositeStrategy::Initialize(const StrategyContext& ctx) {
     position_owner_by_instrument_.clear();
     active_force_close_window_by_instrument_.clear();
     risk_guard_state_by_strategy_.clear();
+    last_blocked_reason_by_strategy_.clear();
+    last_state_matched_for_trace_ = false;
+    last_blocked_reason_by_strategy_.clear();
 
     if (const auto log_level_it = strategy_context_.metadata.find("log_level");
         log_level_it != strategy_context_.metadata.end() && !log_level_it->second.empty()) {
@@ -439,9 +442,11 @@ void CompositeStrategy::Initialize(const StrategyContext& ctx) {
 }
 
 std::vector<SignalIntent> CompositeStrategy::OnState(const StateSnapshot7D& state) {
+    last_state_matched_for_trace_ = false;
     if (!MatchesProduct(state.instrument_id)) {
         return {};
     }
+    last_state_matched_for_trace_ = true;
     atomic_context_.market_regime = state.market_regime;
     std::vector<SignalIntent> non_open_signals;
     std::vector<SignalIntent> opening_signals;
@@ -462,25 +467,32 @@ std::vector<SignalIntent> CompositeStrategy::OnState(const StateSnapshot7D& stat
         if (slot.strategy == nullptr || slot.timeframe_minutes != state_timeframe_minutes) {
             continue;
         }
+        last_blocked_reason_by_strategy_[slot.strategy_id] = "no_raw_signal";
         std::vector<SignalIntent> signals = slot.strategy->OnState(state, atomic_context_);
         for (const SignalIntent& signal : signals) {
             if (signal.instrument_id.empty()) {
                 continue;
             }
             if (signal.signal_type == SignalType::kOpen) {
+                last_blocked_reason_by_strategy_[slot.strategy_id] = "raw_signal";
                 if (definition_.market_state_mode &&
                     !IsOpenSignalAllowedByRegime(slot, state.market_regime)) {
+                    last_blocked_reason_by_strategy_[slot.strategy_id] = "market_regime";
                     continue;
                 }
                 if (!allow_opening_by_time_filter) {
+                    last_blocked_reason_by_strategy_[slot.strategy_id] = "time_filter";
                     continue;
                 }
                 if (IsOpenSignalBlockedByStrategyWindows(slot, state.ts_ns)) {
+                    last_blocked_reason_by_strategy_[slot.strategy_id] = "forbid_open_window";
                     continue;
                 }
                 if (IsOpenSignalBlockedByRiskGuards(slot, state.ts_ns)) {
+                    last_blocked_reason_by_strategy_[slot.strategy_id] = "risk_guard";
                     continue;
                 }
+                last_blocked_reason_by_strategy_[slot.strategy_id] = "pending_opening_gate";
                 opening_signals.push_back(signal);
                 continue;
             }
@@ -894,6 +906,9 @@ bool CompositeStrategy::LoadState(const StrategyState& state, std::string* error
 }
 
 std::vector<CompositeAtomicTraceRow> CompositeStrategy::CollectAtomicIndicatorTrace() const {
+    if (!last_state_matched_for_trace_) {
+        return {};
+    }
     std::vector<CompositeAtomicTraceRow> rows;
     rows.reserve(trace_providers_.size());
     for (const auto& slot : trace_providers_) {
@@ -909,9 +924,21 @@ std::vector<CompositeAtomicTraceRow> CompositeStrategy::CollectAtomicIndicatorTr
             row.atr = snapshot->atr;
             row.adx = snapshot->adx;
             row.er = snapshot->er;
+            row.threshold = snapshot->threshold;
+            row.diff_1 = snapshot->diff_1;
+            row.diff_2 = snapshot->diff_2;
+            row.diff_3 = snapshot->diff_3;
+            row.diff_class_1 = snapshot->diff_class_1;
+            row.diff_class_2 = snapshot->diff_class_2;
+            row.diff_class_3 = snapshot->diff_class_3;
+            row.trend_sum = snapshot->trend_sum;
             row.stop_loss_price = snapshot->stop_loss_price;
             row.take_profit_price = snapshot->take_profit_price;
+            row.raw_signal = snapshot->raw_signal;
         }
+        const auto reason_it = last_blocked_reason_by_strategy_.find(slot.strategy_id);
+        row.blocked_reason =
+            reason_it == last_blocked_reason_by_strategy_.end() ? "" : reason_it->second;
         rows.push_back(std::move(row));
     }
     return rows;
@@ -1027,6 +1054,8 @@ void CompositeStrategy::Shutdown() {
     position_owner_by_instrument_.clear();
     active_force_close_window_by_instrument_.clear();
     risk_guard_state_by_strategy_.clear();
+    last_blocked_reason_by_strategy_.clear();
+    last_state_matched_for_trace_ = false;
 }
 
 bool CompositeStrategy::IsOpenSignalAllowedByRegime(const SubStrategySlot& slot,
@@ -1241,21 +1270,25 @@ CompositeStrategy::OpeningGateResult CompositeStrategy::ApplyOpeningGate(
             owner_it != position_owner_by_instrument_.end() && !owner_it->second.empty();
 
         if (position == 0) {
+            last_blocked_reason_by_strategy_[signal.strategy_id] = "none";
             gated.immediate_open_signals.push_back(signal);
             continue;
         }
 
         if (has_owner && owner_it->second != signal.strategy_id) {
+            last_blocked_reason_by_strategy_[signal.strategy_id] = "position_owner_mismatch";
             continue;
         }
 
         const Side position_side = position > 0 ? Side::kBuy : Side::kSell;
         if (signal.side == position_side) {
+            last_blocked_reason_by_strategy_[signal.strategy_id] = "existing_same_direction";
             continue;
         }
         const SubStrategySlot* slot = FindSubStrategySlot(signal.strategy_id);
         const bool allow_reverse_open = slot == nullptr ? true : slot->allow_reverse_open;
         if (!allow_reverse_open) {
+            last_blocked_reason_by_strategy_[signal.strategy_id] = "reverse_open_disabled";
             continue;
         }
 
@@ -1277,6 +1310,7 @@ CompositeStrategy::OpeningGateResult CompositeStrategy::ApplyOpeningGate(
                                     : (signal.trace_id + "-reverse-close");
         gated.reverse_open_by_close_trace.emplace(close_signal.trace_id, signal);
         gated.reverse_close_signals.push_back(std::move(close_signal));
+        last_blocked_reason_by_strategy_[signal.strategy_id] = "reverse_open_pending_close";
     }
 
     return gated;

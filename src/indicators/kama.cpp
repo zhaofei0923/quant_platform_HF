@@ -86,4 +86,38 @@ void KAMA::Reset() {
     kama_ = 0.0;
 }
 
+KAMA::State KAMA::ExportState() const {
+    State state;
+    state.initialized = initialized_;
+    state.closes.assign(closes_.begin(), closes_.end());
+    state.volatility_sum = volatility_sum_;
+    state.has_efficiency_ratio = has_efficiency_ratio_;
+    state.efficiency_ratio = efficiency_ratio_;
+    state.kama = kama_;
+    return state;
+}
+
+bool KAMA::ImportState(const State& state) {
+    const std::size_t max_window_size = static_cast<std::size_t>(er_period_ + 1);
+    if (state.closes.size() > max_window_size || !std::isfinite(state.volatility_sum) ||
+        !std::isfinite(state.efficiency_ratio) || !std::isfinite(state.kama)) {
+        return false;
+    }
+    for (const double close : state.closes) {
+        if (!std::isfinite(close)) {
+            return false;
+        }
+    }
+    initialized_ = state.initialized;
+    closes_.assign(state.closes.begin(), state.closes.end());
+    volatility_sum_ = std::max(0.0, state.volatility_sum);
+    has_efficiency_ratio_ = state.has_efficiency_ratio;
+    efficiency_ratio_ = state.efficiency_ratio;
+    kama_ = state.kama;
+    if (initialized_ && closes_.size() < static_cast<std::size_t>(er_period_ + 1)) {
+        return false;
+    }
+    return true;
+}
+
 }  // namespace quant_hft

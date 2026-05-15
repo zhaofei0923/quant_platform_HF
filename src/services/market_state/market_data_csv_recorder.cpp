@@ -65,6 +65,10 @@ void WriteBarHeader(std::ostream& out) {
            "volume,ts_ns\n";
 }
 
+std::string TimeframeBarFilename(std::int32_t timeframe_minutes) {
+    return "bars_" + std::to_string(timeframe_minutes) + "m.csv";
+}
+
 void WriteTickRow(std::ostream& out, const MarketSnapshot& snapshot) {
     out << CsvEscape(snapshot.instrument_id) << ',' << CsvEscape(snapshot.exchange_id) << ','
         << CsvEscape(snapshot.trading_day) << ',' << CsvEscape(snapshot.action_day) << ','
@@ -220,6 +224,79 @@ MarketDataCsvRecorder::ProductStreams* MarketDataCsvRecorder::EnsureProductStrea
     return inserted->second.get();
 }
 
+std::ofstream* MarketDataCsvRecorder::EnsureProductTimeframeBarStream(
+    ProductStreams* streams, const std::string& instrument_id, std::int32_t timeframe_minutes,
+    std::string* error) {
+    if (streams == nullptr) {
+        SetError("product streams are null", error);
+        return nullptr;
+    }
+    const auto existing = streams->timeframe_bar_outs.find(timeframe_minutes);
+    if (existing != streams->timeframe_bar_outs.end()) {
+        return existing->second.get();
+    }
+
+    std::string product_id = ExtractProductIdFromInstrumentId(instrument_id);
+    if (product_id.empty()) {
+        product_id = "unknown";
+    }
+    std::string path;
+    try {
+        const std::filesystem::path product_dir =
+            std::filesystem::path(output_dir_) / "varieties" / product_id / "market";
+        std::filesystem::create_directories(product_dir);
+        path = (product_dir / TimeframeBarFilename(timeframe_minutes)).string();
+    } catch (const std::exception& ex) {
+        SetError(std::string("failed to prepare product timeframe bar dir: ") + ex.what(), error);
+        return nullptr;
+    }
+
+    auto output = std::make_unique<std::ofstream>(path, std::ios::out | std::ios::trunc);
+    if (!output->is_open()) {
+        SetError("failed to open product timeframe bar csv output: " + path, error);
+        return nullptr;
+    }
+    WriteBarHeader(*output);
+    if (!output->good()) {
+        SetError("failed to write product timeframe bar csv header: " + path, error);
+        return nullptr;
+    }
+    streams->timeframe_bar_paths[timeframe_minutes] = path;
+    auto [inserted, _] = streams->timeframe_bar_outs.emplace(timeframe_minutes, std::move(output));
+    return inserted->second.get();
+}
+
+std::ofstream* MarketDataCsvRecorder::EnsureGlobalTimeframeBarStream(std::int32_t timeframe_minutes,
+                                                                     std::string* error) {
+    const auto existing = timeframe_bar_outs_.find(timeframe_minutes);
+    if (existing != timeframe_bar_outs_.end()) {
+        return existing->second.get();
+    }
+
+    std::string path;
+    try {
+        const std::filesystem::path run_dir(output_dir_);
+        std::filesystem::create_directories(run_dir);
+        path = (run_dir / TimeframeBarFilename(timeframe_minutes)).string();
+    } catch (const std::exception& ex) {
+        SetError(std::string("failed to prepare timeframe bar dir: ") + ex.what(), error);
+        return nullptr;
+    }
+    auto output = std::make_unique<std::ofstream>(path, std::ios::out | std::ios::trunc);
+    if (!output->is_open()) {
+        SetError("failed to open timeframe bar csv output: " + path, error);
+        return nullptr;
+    }
+    WriteBarHeader(*output);
+    if (!output->good()) {
+        SetError("failed to write timeframe bar csv header: " + path, error);
+        return nullptr;
+    }
+    timeframe_bar_paths_[timeframe_minutes] = path;
+    auto [inserted, _] = timeframe_bar_outs_.emplace(timeframe_minutes, std::move(output));
+    return inserted->second.get();
+}
+
 bool MarketDataCsvRecorder::AppendTick(const MarketSnapshot& snapshot, std::string* error) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!config_.enabled) {
@@ -316,6 +393,68 @@ bool MarketDataCsvRecorder::AppendBar(const BarSnapshot& bar, std::string* error
     return true;
 }
 
+bool MarketDataCsvRecorder::AppendTimeframeBar(const BarSnapshot& bar,
+                                               std::int32_t timeframe_minutes, std::string* error) {
+    if (timeframe_minutes <= 1) {
+        return AppendBar(bar, error);
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!config_.enabled) {
+        return true;
+    }
+    if (!is_open_) {
+        return SetError("market data csv recorder is not open", error);
+    }
+    if (bar.instrument_id.empty()) {
+        return SetError("market timeframe bar instrument_id is empty", error);
+    }
+    if (!ShouldRecordInstrumentLocked(bar.instrument_id)) {
+        return true;
+    }
+
+    if (config_.partition_by_product) {
+        ProductStreams* streams = EnsureProductStreams(bar.instrument_id, error);
+        if (streams == nullptr) {
+            return false;
+        }
+        std::ofstream* output =
+            EnsureProductTimeframeBarStream(streams, bar.instrument_id, timeframe_minutes, error);
+        if (output == nullptr) {
+            return false;
+        }
+        WriteBarRow(*output, bar);
+        if (!output->good()) {
+            return SetError("failed to append product timeframe bar csv row", error);
+        }
+        if (config_.flush_each_write) {
+            output->flush();
+            if (!output->good()) {
+                return SetError("failed to flush product timeframe bar csv output", error);
+            }
+        }
+    }
+
+    if (!config_.partition_by_product || config_.write_global_copy) {
+        std::ofstream* output = EnsureGlobalTimeframeBarStream(timeframe_minutes, error);
+        if (output == nullptr) {
+            return false;
+        }
+        WriteBarRow(*output, bar);
+        if (!output->good()) {
+            return SetError("failed to append timeframe bar csv row", error);
+        }
+        if (config_.flush_each_write) {
+            output->flush();
+            if (!output->good()) {
+                return SetError("failed to flush timeframe bar csv output", error);
+            }
+        }
+    }
+    ++bars_written_;
+    return true;
+}
+
 bool MarketDataCsvRecorder::Close(std::string* error) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!is_open_) {
@@ -332,6 +471,17 @@ bool MarketDataCsvRecorder::Close(std::string* error) {
         ok = ok && bar_out_.good();
         bar_out_.close();
     }
+    for (auto& [timeframe_minutes, output] : timeframe_bar_outs_) {
+        (void)timeframe_minutes;
+        if (output == nullptr) {
+            continue;
+        }
+        output->flush();
+        ok = ok && output->good();
+        output->close();
+    }
+    timeframe_bar_outs_.clear();
+    timeframe_bar_paths_.clear();
     for (auto& [product_id, streams] : product_streams_) {
         (void)product_id;
         if (streams == nullptr) {
@@ -342,6 +492,15 @@ bool MarketDataCsvRecorder::Close(std::string* error) {
         ok = ok && streams->tick_out.good() && streams->bar_out.good();
         streams->tick_out.close();
         streams->bar_out.close();
+        for (auto& [timeframe_minutes, output] : streams->timeframe_bar_outs) {
+            (void)timeframe_minutes;
+            if (output == nullptr) {
+                continue;
+            }
+            output->flush();
+            ok = ok && output->good();
+            output->close();
+        }
     }
     product_streams_.clear();
     is_open_ = false;

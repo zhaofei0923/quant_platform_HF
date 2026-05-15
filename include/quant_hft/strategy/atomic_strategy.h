@@ -63,8 +63,17 @@ struct AtomicIndicatorSnapshot {
     std::optional<double> atr;
     std::optional<double> adx;
     std::optional<double> er;
+    std::optional<double> threshold;
+    std::optional<double> diff_1;
+    std::optional<double> diff_2;
+    std::optional<double> diff_3;
+    std::optional<int> diff_class_1;
+    std::optional<int> diff_class_2;
+    std::optional<int> diff_class_3;
+    std::optional<int> trend_sum;
     std::optional<double> stop_loss_price;
     std::optional<double> take_profit_price;
+    std::string raw_signal;
 };
 
 struct AtomicTickSnapshot {

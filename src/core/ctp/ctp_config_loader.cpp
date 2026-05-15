@@ -1112,6 +1112,16 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* confi
             return false;
         }
     }
+    loaded.strategy_state_backend = "redis";
+    if (const auto it = kv.find("strategy_state_backend"); it != kv.end()) {
+        loaded.strategy_state_backend = Lowercase(Trim(it->second));
+        if (loaded.strategy_state_backend != "redis" && loaded.strategy_state_backend != "file") {
+            if (error != nullptr) {
+                *error = "strategy_state_backend must be redis or file";
+            }
+            return false;
+        }
+    }
     loaded.strategy_state_snapshot_interval_ms = 60'000;
     SetOptionalInt(kv, "strategy_state_snapshot_interval_ms",
                    &loaded.strategy_state_snapshot_interval_ms, &load_error);
@@ -1148,6 +1158,16 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* confi
         if (loaded.strategy_state_key_prefix.empty()) {
             if (error != nullptr) {
                 *error = "strategy_state_key_prefix must not be empty";
+            }
+            return false;
+        }
+    }
+    loaded.strategy_state_file_dir = "runtime/trading/state";
+    if (const auto it = kv.find("strategy_state_file_dir"); it != kv.end()) {
+        loaded.strategy_state_file_dir = Trim(it->second);
+        if (loaded.strategy_state_file_dir.empty()) {
+            if (error != nullptr) {
+                *error = "strategy_state_file_dir must not be empty";
             }
             return false;
         }

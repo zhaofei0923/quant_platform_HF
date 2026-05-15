@@ -31,6 +31,16 @@ struct MarketStateDetectorConfig {
 
 class MarketStateDetector {
    public:
+    struct State {
+        ADX::State adx;
+        KAMA::State kama;
+        ATR::State atr;
+        double last_close{0.0};
+        bool has_last_close{false};
+        std::size_t bars_seen{0};
+        MarketRegime current_regime{MarketRegime::kUnknown};
+    };
+
     explicit MarketStateDetector(const MarketStateDetectorConfig& config = {});
 
     void Update(double high, double low, double close);
@@ -43,6 +53,8 @@ class MarketStateDetector {
     std::optional<double> GetATRRatio() const;
 
     void Reset();
+    State ExportState() const;
+    bool ImportState(const State& state);
 
    private:
     static void ValidateConfig(const MarketStateDetectorConfig& config);

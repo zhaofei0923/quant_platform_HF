@@ -27,6 +27,8 @@ class MarketDataCsvRecorder {
     void ClearAllowedInstrumentIds();
     bool AppendTick(const MarketSnapshot& snapshot, std::string* error);
     bool AppendBar(const BarSnapshot& bar, std::string* error);
+    bool AppendTimeframeBar(const BarSnapshot& bar, std::int32_t timeframe_minutes,
+                            std::string* error);
     bool Close(std::string* error);
 
     bool enabled() const noexcept { return config_.enabled; }
@@ -43,9 +45,17 @@ class MarketDataCsvRecorder {
         std::string bar_path;
         std::ofstream tick_out;
         std::ofstream bar_out;
+        std::unordered_map<std::int32_t, std::string> timeframe_bar_paths;
+        std::unordered_map<std::int32_t, std::unique_ptr<std::ofstream>> timeframe_bar_outs;
     };
 
     ProductStreams* EnsureProductStreams(const std::string& instrument_id, std::string* error);
+    std::ofstream* EnsureProductTimeframeBarStream(ProductStreams* streams,
+                                                   const std::string& instrument_id,
+                                                   std::int32_t timeframe_minutes,
+                                                   std::string* error);
+    std::ofstream* EnsureGlobalTimeframeBarStream(std::int32_t timeframe_minutes,
+                                                  std::string* error);
     bool ShouldRecordInstrumentLocked(const std::string& instrument_id) const;
 
     bool is_open_{false};
@@ -58,6 +68,8 @@ class MarketDataCsvRecorder {
     mutable std::mutex mutex_;
     std::ofstream tick_out_;
     std::ofstream bar_out_;
+    std::unordered_map<std::int32_t, std::string> timeframe_bar_paths_;
+    std::unordered_map<std::int32_t, std::unique_ptr<std::ofstream>> timeframe_bar_outs_;
     std::unordered_map<std::string, std::unique_ptr<ProductStreams>> product_streams_;
     bool restrict_to_allowed_instruments_{false};
     std::unordered_set<std::string> allowed_instrument_ids_;

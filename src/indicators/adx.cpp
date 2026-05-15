@@ -101,6 +101,69 @@ std::optional<double> ADX::Dx() const {
     return dx_;
 }
 
+ADX::State ADX::ExportState() const {
+    State state;
+    state.has_prev_bar = has_prev_bar_;
+    state.prev_high = prev_high_;
+    state.prev_low = prev_low_;
+    state.prev_close = prev_close_;
+    state.seed_count = seed_count_;
+    state.tr_seed_sum = tr_seed_sum_;
+    state.plus_dm_seed_sum = plus_dm_seed_sum_;
+    state.minus_dm_seed_sum = minus_dm_seed_sum_;
+    state.di_ready = di_ready_;
+    state.tr_smoothed = tr_smoothed_;
+    state.plus_dm_smoothed = plus_dm_smoothed_;
+    state.minus_dm_smoothed = minus_dm_smoothed_;
+    state.plus_di = plus_di_;
+    state.minus_di = minus_di_;
+    state.dx = dx_;
+    state.dx_seed_count = dx_seed_count_;
+    state.dx_seed_sum = dx_seed_sum_;
+    state.adx_ready = adx_ready_;
+    state.adx = adx_;
+    return state;
+}
+
+bool ADX::ImportState(const State& state) {
+    if (state.seed_count < 0 || state.seed_count > period_ || state.dx_seed_count < 0 ||
+        state.dx_seed_count > period_) {
+        return false;
+    }
+    const double values[] = {state.prev_high,         state.prev_low,
+                             state.prev_close,        state.tr_seed_sum,
+                             state.plus_dm_seed_sum,  state.minus_dm_seed_sum,
+                             state.tr_smoothed,       state.plus_dm_smoothed,
+                             state.minus_dm_smoothed, state.plus_di,
+                             state.minus_di,          state.dx,
+                             state.dx_seed_sum,       state.adx};
+    for (const double value : values) {
+        if (!std::isfinite(value)) {
+            return false;
+        }
+    }
+    has_prev_bar_ = state.has_prev_bar;
+    prev_high_ = state.prev_high;
+    prev_low_ = state.prev_low;
+    prev_close_ = state.prev_close;
+    seed_count_ = state.seed_count;
+    tr_seed_sum_ = state.tr_seed_sum;
+    plus_dm_seed_sum_ = state.plus_dm_seed_sum;
+    minus_dm_seed_sum_ = state.minus_dm_seed_sum;
+    di_ready_ = state.di_ready;
+    tr_smoothed_ = state.tr_smoothed;
+    plus_dm_smoothed_ = state.plus_dm_smoothed;
+    minus_dm_smoothed_ = state.minus_dm_smoothed;
+    plus_di_ = state.plus_di;
+    minus_di_ = state.minus_di;
+    dx_ = state.dx;
+    dx_seed_count_ = state.dx_seed_count;
+    dx_seed_sum_ = state.dx_seed_sum;
+    adx_ready_ = state.adx_ready;
+    adx_ = state.adx;
+    return true;
+}
+
 void ADX::UpdateDirectionalValues(double tr, double plus_dm, double minus_dm) {
     if (!di_ready_) {
         tr_seed_sum_ += tr;

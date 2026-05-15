@@ -51,6 +51,33 @@ void MarketStateDetector::Reset() {
     current_regime_ = MarketRegime::kUnknown;
 }
 
+MarketStateDetector::State MarketStateDetector::ExportState() const {
+    State state;
+    state.adx = adx_.ExportState();
+    state.kama = kama_.ExportState();
+    state.atr = atr_.ExportState();
+    state.last_close = last_close_;
+    state.has_last_close = has_last_close_;
+    state.bars_seen = bars_seen_;
+    state.current_regime = current_regime_;
+    return state;
+}
+
+bool MarketStateDetector::ImportState(const State& state) {
+    if (!std::isfinite(state.last_close)) {
+        return false;
+    }
+    if (!adx_.ImportState(state.adx) || !kama_.ImportState(state.kama) ||
+        !atr_.ImportState(state.atr)) {
+        return false;
+    }
+    last_close_ = state.last_close;
+    has_last_close_ = state.has_last_close;
+    bars_seen_ = state.bars_seen;
+    current_regime_ = state.current_regime;
+    return true;
+}
+
 void MarketStateDetector::ValidateConfig(const MarketStateDetectorConfig& config) {
     if (config.adx_period <= 0 || config.kama_er_period <= 0 || config.kama_fast_period <= 0 ||
         config.kama_slow_period <= 0 || config.atr_period <= 0 || config.min_bars_for_flat <= 0) {

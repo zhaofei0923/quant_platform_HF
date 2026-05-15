@@ -270,6 +270,9 @@ target_link_libraries(simnow_compare_cli PRIVATE quant_hft_core)
 add_executable(simnow_wal_export_cli src/apps/simnow_wal_export_cli_main.cpp)
 target_link_libraries(simnow_wal_export_cli PRIVATE quant_hft_core)
 
+add_executable(simnow_dashboard_cli src/apps/simnow_dashboard_cli_main.cpp)
+target_link_libraries(simnow_dashboard_cli PRIVATE quant_hft_core)
+
 add_executable(simnow_weekly_stress_cli src/apps/simnow_weekly_stress_cli_main.cpp)
 target_link_libraries(simnow_weekly_stress_cli PRIVATE quant_hft_core)
 
@@ -605,6 +608,11 @@ if(QUANT_HFT_BUILD_TESTS)
     target_link_libraries(ops_cli_test PRIVATE GTest::gtest_main)
     target_compile_definitions(ops_cli_test PRIVATE QUANT_HFT_BUILD_DIR="${CMAKE_BINARY_DIR}")
 
+    add_executable(simnow_dashboard_cli_test tests/unit/apps/simnow_dashboard_cli_test.cpp)
+    target_link_libraries(simnow_dashboard_cli_test PRIVATE GTest::gtest_main)
+    target_compile_definitions(simnow_dashboard_cli_test PRIVATE
+                               QUANT_HFT_BUILD_DIR="${CMAKE_BINARY_DIR}")
+
     add_executable(quality_gate_scripts_test tests/unit/build/quality_gate_scripts_test.cpp)
     target_link_libraries(quality_gate_scripts_test PRIVATE GTest::gtest_main)
 
@@ -731,6 +739,7 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(result_analyzer_test)
     gtest_discover_tests(temp_config_generator_test)
     gtest_discover_tests(ops_cli_test)
+    gtest_discover_tests(simnow_dashboard_cli_test)
     gtest_discover_tests(quality_gate_scripts_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(consistency_gate_script_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(preprod_rehearsal_gate_script_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

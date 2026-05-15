@@ -279,8 +279,8 @@
 | `sessions` | list | 是 | 无 | 非空数组 | 交易时段规则集合 | `- exchange: SHFE ...` |
 | `sessions[].exchange` | string | 是 | 无 | 交易所编码 | 规则所属交易所 | `SHFE` |
 | `sessions[].instrument_prefix` | string | 否 | 空 | 品种前缀 | 对某些品种做精细化覆盖 | `rb` |
-| `sessions[].day` | string | 是 | 无 | `HH:MM-HH:MM` | 日盘时段 | `09:00-15:00` |
-| `sessions[].night` | string/null | 否 | `null` | `HH:MM-HH:MM`/`null` | 夜盘时段 | `21:00-23:00` |
+| `sessions[].day` | string | 是 | 无 | `HH:MM-HH:MM[,HH:MM-HH:MM...]` | 日盘时段，可用逗号分隔小节 | `09:00-10:15,10:30-11:30,13:30-15:00` |
+| `sessions[].night` | string/null | 否 | `null` | `HH:MM-HH:MM[,HH:MM-HH:MM...]`/`null` | 夜盘时段 | `21:00-23:00` |
 
 ## `configs/risk_rules.yaml`
 

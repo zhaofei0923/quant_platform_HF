@@ -38,6 +38,7 @@ for bin in \
   csv_parquet_compare_cli \
   csv_to_parquet_cli \
   simnow_compare_cli \
+  simnow_dashboard_cli \
   simnow_weekly_stress_cli \
   reconnect_evidence_cli \
   ops_health_report_cli \

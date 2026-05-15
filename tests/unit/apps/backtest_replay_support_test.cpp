@@ -3533,6 +3533,69 @@ TEST(BacktestReplaySupportTest, ReplayBarContextTracksInterleavedInstrumentsWith
     EXPECT_NE(error.find("missing replay bar context"), std::string::npos);
 }
 
+TEST(BacktestReplaySupportTest, ReplayTimeframeFanoutFlushesFiveMinuteSessionEndBar) {
+    detail::ReplayTimeframeFanout fanout({5});
+
+    auto make_context = [](const std::string& update_time,
+                           double last_price) -> detail::ReplayBarTickContext {
+        ReplayTick tick;
+        tick.instrument_id = "c2405";
+        tick.exchange_id = "DCE";
+        tick.trading_day = "20240110";
+        tick.update_time = update_time;
+        tick.ts_ns = detail::ToEpochNs("20240110", update_time, 0);
+        tick.last_price = last_price;
+        tick.volume = 100;
+
+        detail::ReplayBarTickContext context;
+        context.first_tick = tick;
+        context.last_tick = tick;
+        context.initialized = true;
+        return context;
+    };
+
+    auto make_bar = [](const std::string& hhmm, double price) {
+        BarSnapshot bar;
+        bar.instrument_id = "c2405";
+        bar.exchange_id = "DCE";
+        bar.trading_day = "20240110";
+        bar.action_day = "20240109";
+        bar.minute = "20240110 " + hhmm;
+        bar.open = price;
+        bar.high = price;
+        bar.low = price;
+        bar.close = price;
+        bar.analysis_open = price;
+        bar.analysis_high = price;
+        bar.analysis_low = price;
+        bar.analysis_close = price;
+        bar.ts_ns = detail::ReplayMinuteStartEpochNs(bar.minute);
+        return bar;
+    };
+
+    EXPECT_TRUE(
+        fanout.OnOneMinuteBar(make_bar("22:56", 2356.0), make_context("22:56:00", 2356.0)).empty());
+    EXPECT_TRUE(
+        fanout.OnOneMinuteBar(make_bar("22:57", 2357.0), make_context("22:57:00", 2357.0)).empty());
+    EXPECT_TRUE(
+        fanout.OnOneMinuteBar(make_bar("22:58", 2358.0), make_context("22:58:00", 2358.0)).empty());
+    EXPECT_TRUE(
+        fanout.OnOneMinuteBar(make_bar("22:59", 2359.0), make_context("22:59:00", 2359.0)).empty());
+
+    const auto emitted =
+        fanout.OnOneMinuteBar(make_bar("23:00", 2368.0), make_context("23:00:00", 2368.0));
+    ASSERT_EQ(emitted.size(), 2U);
+    EXPECT_EQ(emitted[0].timeframe_minutes, 5);
+    EXPECT_EQ(emitted[0].bar.minute, "20240110 22:55");
+    EXPECT_DOUBLE_EQ(emitted[0].bar.open, 2356.0);
+    EXPECT_DOUBLE_EQ(emitted[0].bar.close, 2359.0);
+    EXPECT_EQ(emitted[1].timeframe_minutes, 5);
+    EXPECT_EQ(emitted[1].bar.minute, "20240110 23:00");
+    EXPECT_DOUBLE_EQ(emitted[1].bar.open, 2368.0);
+    EXPECT_DOUBLE_EQ(emitted[1].bar.close, 2368.0);
+    EXPECT_TRUE(fanout.Flush().empty());
+}
+
 TEST(BacktestReplaySupportTest, RequireParquetBacktestSpecRejectsUnsupportedEngineMode) {
     BacktestCliSpec spec;
     spec.engine_mode = "csv";

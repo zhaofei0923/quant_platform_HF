@@ -874,6 +874,8 @@ int main(int argc, char** argv) {
     CtpAccountLedger ctp_account_ledger;
     OrderStateMachine order_state_machine;
     BarAggregator bar_aggregator;
+    std::mutex bar_aggregation_mutex;
+    std::unordered_map<std::string, EpochNanos> instrument_last_tick_ts_ns;
     std::mutex ctp_ledger_mutex;
     std::mutex planner_mutex;
     std::mutex execution_metadata_mutex;
@@ -1360,12 +1362,39 @@ int main(int argc, char** argv) {
         }
     };
 
+    auto resolve_bar_flush_ts_ns = [](const MarketSnapshot& snapshot) {
+        if (snapshot.recv_ts_ns > 0) {
+            return snapshot.recv_ts_ns;
+        }
+        if (snapshot.exchange_ts_ns > 0) {
+            return snapshot.exchange_ts_ns;
+        }
+        return NowEpochNanos();
+    };
+
+    const EpochNanos session_end_bar_flush_grace_ns = 2'000'000'000;
+    auto flush_session_end_market_bars = [&]() {
+        std::vector<BarSnapshot> bars;
+        {
+            std::lock_guard<std::mutex> lock(bar_aggregation_mutex);
+            bars = bar_aggregator.FlushSessionEndBars(
+                instrument_last_tick_ts_ns, NowEpochNanos() - session_end_bar_flush_grace_ns);
+        }
+        record_market_bars(bars);
+    };
+
     auto process_market_snapshot = [&](const MarketSnapshot& raw_snapshot) {
         MarketSnapshot snapshot = raw_snapshot;
         if (!bar_aggregator.ShouldProcessSnapshot(snapshot)) {
             return;
         }
-        record_market_bars(bar_aggregator.OnMarketSnapshot(snapshot));
+        std::vector<BarSnapshot> bars;
+        {
+            std::lock_guard<std::mutex> lock(bar_aggregation_mutex);
+            bars = bar_aggregator.OnMarketSnapshot(snapshot);
+            instrument_last_tick_ts_ns[snapshot.instrument_id] = resolve_bar_flush_ts_ns(snapshot);
+        }
+        record_market_bars(bars);
         {
             std::lock_guard<std::mutex> lock(market_history_mutex);
             auto& history = recent_market_history[snapshot.instrument_id];
@@ -1970,8 +1999,12 @@ int main(int argc, char** argv) {
         market_data_recorder.SetAllowedInstrumentIds(instruments);
     }
 
-    for (const auto& instrument_id : instruments) {
-        bar_aggregator.ResetInstrument(instrument_id);
+    {
+        std::lock_guard<std::mutex> lock(bar_aggregation_mutex);
+        for (const auto& instrument_id : instruments) {
+            bar_aggregator.ResetInstrument(instrument_id);
+            instrument_last_tick_ts_ns.erase(instrument_id);
+        }
     }
     dominant_contract_selection_active.store(false);
 
@@ -2414,7 +2447,11 @@ int main(int argc, char** argv) {
                         std::lock_guard<std::mutex> lock(latest_market_snapshot_mutex);
                         latest_market_snapshots[best_it->instrument_id] = *best_it;
                     }
-                    bar_aggregator.ResetInstrument(best_it->instrument_id);
+                    {
+                        std::lock_guard<std::mutex> lock(bar_aggregation_mutex);
+                        bar_aggregator.ResetInstrument(best_it->instrument_id);
+                        instrument_last_tick_ts_ns.erase(best_it->instrument_id);
+                    }
                     retained_candidate_ids.push_back(best_it->instrument_id);
                     switched_out_instrument_ids.push_back(current_instrument_id);
                     lead_candidate_by_product.erase(product_id);
@@ -2527,6 +2564,7 @@ int main(int argc, char** argv) {
 
     const auto start = std::chrono::steady_clock::now();
     auto next_strategy_metrics_emit = std::chrono::steady_clock::now();
+    auto next_session_end_bar_flush = std::chrono::steady_clock::now();
     std::size_t synthetic_tick = 0;
     while (!g_stop_requested.load()) {
         if (run_seconds > 0) {
@@ -2589,6 +2627,12 @@ int main(int argc, char** argv) {
             ++synthetic_tick;
         }
 
+        if (std::chrono::steady_clock::now() >= next_session_end_bar_flush) {
+            flush_session_end_market_bars();
+            next_session_end_bar_flush =
+                std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+        }
+
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
 
@@ -2616,7 +2660,13 @@ int main(int argc, char** argv) {
         strategy_engine->Stop();
     }
     metrics_exporter.Stop();
-    record_market_bars(bar_aggregator.Flush());
+    std::vector<BarSnapshot> remaining_bars;
+    {
+        std::lock_guard<std::mutex> lock(bar_aggregation_mutex);
+        remaining_bars = bar_aggregator.Flush();
+        instrument_last_tick_ts_ns.clear();
+    }
+    record_market_bars(remaining_bars);
     std::string market_data_close_error;
     if (!market_data_recorder.Close(&market_data_close_error)) {
         EmitStructuredLog(&config, "core_engine", "error", "market_data_recorder_close_failed",

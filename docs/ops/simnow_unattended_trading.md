@@ -44,6 +44,34 @@ configs/sim/ctp.yaml
 
 生产化无人值守场景推荐使用 supervisor，并通过 systemd 管理。
 
+## 连续运行前程序检查
+
+连续运行测试前先执行自动化 preflight。默认会检查工作区、`build-gcc` 的真实 CTP API 构建、仓库门禁、聚焦回归、SimNow 环境变量、supervisor 调度 dry-run、启动脚本 dry-run，并运行一次 `probe-only` 安全探针：
+
+```bash
+scripts/ops/run_simnow_preflight_check.sh --test-date 20260518 --phase prestart
+```
+
+若只想验证本地脚本路径和调度，不连接 SimNow：
+
+```bash
+scripts/ops/run_simnow_preflight_check.sh --test-date 20260518 --phase prestart --skip-probe
+```
+
+启动后 15 分钟内运行首检：
+
+```bash
+scripts/ops/run_simnow_preflight_check.sh --test-date 20260518 --phase post-start
+```
+
+日终链路完成后检查 marker、结算证据、对账差异、健康报告、告警报告和日报：
+
+```bash
+scripts/ops/run_simnow_preflight_check.sh --test-date 20260518 --phase eod
+```
+
+preflight 产物只写入 `runtime/trading/reports/simnow/preflight/`，不会打印 CTP 密码、AuthCode 或 AppID。
+
 ## 单次启动脚本
 
 先 dry-run，确认配置和命令不会误启动：

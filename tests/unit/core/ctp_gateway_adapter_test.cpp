@@ -180,7 +180,7 @@ TEST(CtpGatewayAdapterTest, QuerySnapshotsInSimulatedMode) {
 
     EXPECT_EQ(account_callbacks.load(), 1);
     EXPECT_EQ(position_callbacks.load(), 1);
-    EXPECT_EQ(instrument_callbacks.load(), 1);
+    EXPECT_EQ(instrument_callbacks.load(), 2);
     EXPECT_EQ(broker_param_callbacks.load(), 1);
     EXPECT_EQ(margin_rate_callbacks.load(), 1);
     EXPECT_EQ(commission_rate_callbacks.load(), 1);

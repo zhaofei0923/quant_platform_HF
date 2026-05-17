@@ -625,6 +625,10 @@ if(QUANT_HFT_BUILD_TESTS)
     target_compile_definitions(consistency_gate_script_test PRIVATE
                                QUANT_HFT_BUILD_DIR="${CMAKE_BINARY_DIR}")
 
+    add_executable(simnow_supervisor_script_test
+                   tests/unit/build/simnow_supervisor_script_test.cpp)
+    target_link_libraries(simnow_supervisor_script_test PRIVATE GTest::gtest_main)
+
     add_executable(preprod_rehearsal_gate_script_test
                    tests/unit/build/preprod_rehearsal_gate_script_test.cpp)
     target_link_libraries(preprod_rehearsal_gate_script_test PRIVATE GTest::gtest_main)
@@ -747,6 +751,7 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(simnow_dashboard_cli_test)
     gtest_discover_tests(quality_gate_scripts_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(consistency_gate_script_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    gtest_discover_tests(simnow_supervisor_script_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(preprod_rehearsal_gate_script_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(run_backtest_from_config_script_test
                          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}

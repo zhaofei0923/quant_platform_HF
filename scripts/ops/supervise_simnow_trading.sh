@@ -268,11 +268,37 @@ is_trading_day_allowed() {
   [[ "${weekday}" =~ ^[1-5]$ ]]
 }
 
+now_date() {
+  if [[ -n "${SIMNOW_FAKE_NOW:-}" ]]; then
+    date -d "${SIMNOW_FAKE_NOW}" "$@"
+  else
+    date "$@"
+  fi
+}
+
+next_allowed_trading_day_from() {
+  local start_compact="$1"
+  local start_dash
+  local offset
+  local candidate
+
+  start_dash="$(date -d "${start_compact}" +%F)" || return 1
+  for offset in $(seq 0 30); do
+    candidate="$(date -d "${start_dash} +${offset} day" +%Y%m%d)" || return 1
+    if is_trading_day_allowed "${candidate}"; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+  return 1
+}
+
 current_session_info() {
   local now_minutes
   local today_dash
   local today_compact
   local next_compact
+  local previous_compact
   local window_index=0
   local window_specs
   local spec
@@ -283,11 +309,13 @@ current_session_info() {
   local start_minutes
   local end_minutes
   local candidate_day
+  local session_start_day
 
-  now_minutes="$(time_to_minutes "$(date +%H:%M)")"
-  today_dash="$(date +%F)"
-  today_compact="$(date +%Y%m%d)"
+  now_minutes="$(time_to_minutes "$(now_date +%H:%M)")"
+  today_dash="$(now_date +%F)"
+  today_compact="$(now_date +%Y%m%d)"
   next_compact="$(date -d "${today_dash} +1 day" +%Y%m%d)"
+  previous_compact="$(date -d "${today_dash} -1 day" +%Y%m%d)"
 
   IFS=',' read -r -a window_specs <<< "${TRADING_WINDOWS}"
   for spec in "${window_specs[@]}"; do
@@ -306,15 +334,22 @@ current_session_info() {
     end_minutes="$(time_to_minutes "${end_text}")" || die "invalid trading window end time: ${range}"
 
     candidate_day=""
+    session_start_day=""
     if (( start_minutes <= end_minutes )); then
       if (( now_minutes >= start_minutes && now_minutes < end_minutes )); then
         candidate_day="${today_compact}"
       fi
     else
       if (( now_minutes >= start_minutes )); then
-        candidate_day="${next_compact}"
+        session_start_day="${today_compact}"
+        if is_trading_day_allowed "${session_start_day}"; then
+          candidate_day="$(next_allowed_trading_day_from "${next_compact}" || true)"
+        fi
       elif (( now_minutes < end_minutes )); then
-        candidate_day="${today_compact}"
+        session_start_day="${previous_compact}"
+        if is_trading_day_allowed "${session_start_day}"; then
+          candidate_day="$(next_allowed_trading_day_from "${today_compact}" || true)"
+        fi
       fi
     fi
 
@@ -334,9 +369,9 @@ today_eod_due() {
   local marker_file
 
   [[ ${NO_EOD} -eq 0 ]] || return 1
-  today_compact="$(date +%Y%m%d)"
+  today_compact="$(now_date +%Y%m%d)"
   is_trading_day_allowed "${today_compact}" || return 1
-  now_minutes="$(time_to_minutes "$(date +%H:%M)")"
+  now_minutes="$(time_to_minutes "$(now_date +%H:%M)")"
   eod_minutes="$(time_to_minutes "${EOD_TIME}")" || die "invalid --eod-time: ${EOD_TIME}"
   (( now_minutes >= eod_minutes )) || return 1
   marker_file="${EOD_STATE_DIR}/${today_compact}.done"
@@ -698,7 +733,7 @@ print_dry_run_decision() {
   else
     echo "[dry-run] decision=outside_trading_window"
     if today_eod_due; then
-      echo "[dry-run] eod_due=true trading_day=$(date +%Y%m%d)"
+      echo "[dry-run] eod_due=true trading_day=$(now_date +%Y%m%d)"
     else
       echo "[dry-run] eod_due=false"
     fi

@@ -51,6 +51,46 @@ TEST(MarketStateDetectorTest, DetectsFlatRegimeWhenAtrRatioIsTiny) {
     EXPECT_NEAR(*detector.GetATRRatio(), 0.0, 1e-12);
 }
 
+TEST(MarketStateDetectorTest, CanDisableFlatOverrideForSimNowCanary) {
+    MarketStateDetectorConfig config;
+    config.adx_period = 3;
+    config.atr_period = 3;
+    config.kama_er_period = 3;
+    config.atr_flat_ratio = 0.0;
+    config.min_bars_for_flat = 3;
+    MarketStateDetector detector(config);
+
+    for (int i = 0; i < 10; ++i) {
+        detector.Update(100.0, 100.0, 100.0);
+    }
+
+    EXPECT_NE(detector.GetRegime(), MarketRegime::kFlat);
+    ASSERT_TRUE(detector.GetATRRatio().has_value());
+    EXPECT_NEAR(*detector.GetATRRatio(), 0.0, 1e-12);
+}
+
+TEST(MarketStateDetectorTest, CanUseKamaEfficiencyBeforeAdxForSimNowCanary) {
+    MarketStateDetectorConfig config;
+    config.adx_period = 14;
+    config.atr_period = 3;
+    config.kama_er_period = 3;
+    config.kama_er_strong = 0.6;
+    config.kama_er_weak_lower = 0.3;
+    config.atr_flat_ratio = 0.0;
+    config.require_adx_for_trend = false;
+    config.min_bars_for_flat = 1;
+    MarketStateDetector detector(config);
+
+    for (int i = 0; i < 8; ++i) {
+        const double close = 100.0 + static_cast<double>(i);
+        detector.Update(close + 1.0, close - 1.0, close);
+    }
+
+    EXPECT_FALSE(detector.GetADX().has_value());
+    ASSERT_TRUE(detector.GetKAMAER().has_value());
+    EXPECT_EQ(detector.GetRegime(), MarketRegime::kStrongTrend);
+}
+
 TEST(MarketStateDetectorTest, DetectsStrongTrendAndRanging) {
     MarketStateDetectorConfig strong_cfg;
     strong_cfg.adx_period = 3;

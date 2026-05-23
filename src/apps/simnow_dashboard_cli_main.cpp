@@ -1156,7 +1156,7 @@ std::string RenderHtml(const DashboardState& state) {
             "--ink:#201f1a;--muted:#675f55;--line:#d8cdbc;--line-strong:#292822;"
             "--ok:#28724f;--bad:#b24432;--warn:#8a5f16;--blue:#405f8d;--soft:#f7f1e8;}\n";
     html << "*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);"
-            "font:14px/1.45 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"
+            "font:13px/1.35 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"
             "\"Segoe UI\",sans-serif;}\n";
     html << ".topbar{height:58px;padding:0 28px;border-bottom:1px solid var(--line-strong);"
             "background:var(--paper);display:flex;align-items:center;justify-content:space-between;"
@@ -1167,28 +1167,29 @@ std::string RenderHtml(const DashboardState& state) {
             "box-shadow:6px 6px 0 var(--surface-2);}"
             ".nav{display:flex;gap:18px;align-items:center;color:var(--muted);font-size:12px;}"
             ".nav span{white-space:nowrap;}\n";
-    html << ".hero{border-bottom:1px solid var(--line-strong);padding:34px 0 "
-            "26px;margin-bottom:18px;"
+    html << ".hero{border-bottom:1px solid var(--line-strong);padding:24px 0 "
+            "18px;margin-bottom:14px;"
             "display:grid;grid-template-columns:minmax(0,1fr) auto;gap:24px;align-items:end;}"
             ".eyebrow{color:var(--muted);font:700 12px/1.2 "
             "ui-monospace,SFMono-Regular,Menlo,monospace;"
             "text-transform:uppercase;}"
             "h1{font-family:Georgia,\"Times New "
-            "Roman\",serif;font-size:48px;line-height:1.03;margin:8px 0 0;"
+            "Roman\",serif;font-size:40px;line-height:1.04;margin:7px 0 0;"
             "font-weight:500;letter-spacing:0;max-width:920px;}"
             "h2{font-size:13px;margin:0 0 "
-            "14px;font-weight:800;letter-spacing:0;text-transform:uppercase;"
+            "10px;font-weight:800;letter-spacing:0;text-transform:uppercase;"
             "font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);}\n";
-    html << "main{max-width:1460px;margin:0 auto;padding:0 28px 36px;}"
-            ".grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px;}"
+    html << "main{max-width:1520px;margin:0 auto;padding:0 20px 30px;}"
+            ".grid{display:grid;grid-template-columns:repeat(12,1fr);gap:10px;}"
             ".panel{background:var(--surface);border:1px solid var(--line-strong);border-radius:0;"
-            "padding:16px;min-width:0;box-shadow:4px 4px 0 var(--surface-2);}"
+            "padding:12px;min-width:0;box-shadow:4px 4px 0 var(--surface-2);}"
             ".span-3{grid-column:span 3}.span-4{grid-column:span 4}.span-5{grid-column:span 5}"
             ".span-6{grid-column:span 6}.span-7{grid-column:span 7}.span-8{grid-column:span 8}"
             ".span-12{grid-column:span 12}\n";
     html
-        << ".badge{display:inline-flex;align-items:center;min-height:24px;border-radius:0;"
-           "padding:2px 8px;font-weight:800;font-size:12px;border:1px solid currentColor;"
+        << ".badge{display:inline-flex;align-items:center;min-height:20px;border-radius:0;"
+           "padding:1px 7px;font-weight:800;font-size:10px;line-height:1.1;border:1px solid "
+           "currentColor;"
            "background:transparent;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}"
            ".badge.ok{color:var(--ok)}.badge.bad{color:var(--bad)}.badge.warn{color:var(--warn)}\n";
     html << ".metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;border-top:"
@@ -1196,36 +1197,40 @@ std::string RenderHtml(const DashboardState& state) {
             "var(--line);border-left:1px solid var(--line);}"
             ".metric{background:transparent;border-right:1px solid var(--line);border-bottom:1px "
             "solid var(--line);"
-            "padding:12px;min-height:74px;}"
-            ".metric-label{color:var(--muted);font:700 11px/1.2 "
+            "padding:9px 10px;min-height:58px;min-width:0;}"
+            ".metric-label{color:var(--muted);font:700 10px/1.15 "
             "ui-monospace,SFMono-Regular,Menlo,monospace;"
-            "text-transform:uppercase;margin-bottom:8px;}"
-            ".metric-value{font-size:20px;font-weight:750;overflow-wrap:anywhere;}\n";
+            "text-transform:uppercase;margin-bottom:6px;white-space:nowrap;overflow:hidden;"
+            "text-overflow:ellipsis;}"
+            ".metric-value{font-size:16px;line-height:1.18;font-weight:740;white-space:nowrap;"
+            "overflow:hidden;text-overflow:ellipsis;}\n";
     html << "table{width:100%;border-collapse:collapse;table-layout:fixed;border-top:1px solid "
             "var(--line);"
-            "border-left:1px solid var(--line);}th,td{padding:9px 10px;border-right:1px solid "
+            "border-left:1px solid var(--line);}th,td{padding:7px 8px;border-right:1px solid "
             "var(--line);"
             "border-bottom:1px solid "
-            "var(--line);text-align:left;vertical-align:top;overflow-wrap:anywhere;}"
-            "th{font:800 11px/1.2 "
+            "var(--line);text-align:left;vertical-align:top;white-space:nowrap;overflow:hidden;"
+            "text-overflow:ellipsis;}"
+            "th{font:800 10px/1.15 "
             "ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:uppercase;"
             "color:var(--muted);background:var(--soft);}"
             "td{background:#fffaf2;}"
-            "code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;}"
+            "code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;}"
             ".logs{margin:0;padding:0;list-style:none;display:grid;gap:7px;}"
             ".logs li{background:#fffaf2;border:1px solid var(--line);border-radius:0;padding:9px "
             "10px;"
             "font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;overflow-wrap:"
             "anywhere;}"
-            ".subtle{color:var(--muted)}.hero-meta{display:grid;gap:8px;justify-items:end;}"
+            ".subtle{color:var(--muted);white-space:nowrap}.hero-meta{display:grid;gap:8px;justify-"
+            "items:end;}"
             ".hero-meta .subtle{text-align:right;max-width:320px;}.section-note{color:var(--muted);"
-            "margin:-6px 0 12px;font-size:13px;}\n";
+            "margin:-4px 0 10px;font-size:12px;}\n";
     html
         << "@media(max-width:980px){.span-3,.span-4,.span-5,.span-6,.span-7,.span-8{grid-column:"
            "span 12}"
            ".metrics{grid-template-columns:repeat(2,minmax(0,1fr));}.topbar,main{padding-left:14px;"
            "padding-right:14px;}.hero{grid-template-columns:1fr;}.hero-meta{justify-items:start;}"
-           ".hero-meta .subtle{text-align:left;}h1{font-size:36px;}}"
+           ".hero-meta .subtle{text-align:left;}h1{font-size:32px;}}"
            "@media(max-width:560px){.metrics{grid-template-columns:1fr;}.nav{display:none;}}\n";
     html << "</style>\n</head>\n<body>\n";
 
@@ -1277,17 +1282,17 @@ std::string RenderHtml(const DashboardState& state) {
              << HtmlEscape(EmptyAsDash(item.tick.instrument_id.empty() ? item.bar.instrument_id
                                                                        : item.tick.instrument_id))
              << "</td><td>" << RenderBadge(item.tick_status, item.tick_status == "fresh")
-             << "<br><span class=\"subtle\">"
+             << " <span class=\"subtle\">"
              << (item.tick_age_seconds.has_value() ? std::to_string(*item.tick_age_seconds) + "s"
                                                    : "n/a")
              << "</span></td><td>" << RenderBadge(item.bar_status, item.bar_status == "fresh")
-             << "<br><span class=\"subtle\">"
+             << " <span class=\"subtle\">"
              << (item.bar_age_seconds.has_value() ? std::to_string(*item.bar_age_seconds) + "s"
                                                   : "n/a")
              << "</span></td><td>" << HtmlEscape(EmptyAsDash(item.tick.last_price)) << "</td><td>"
              << HtmlEscape(EmptyAsDash(item.tick.bid_price_1)) << " / "
              << HtmlEscape(EmptyAsDash(item.tick.ask_price_1)) << "</td><td>"
-             << HtmlEscape(EmptyAsDash(item.bar.close)) << "<br><span class=\"subtle\">"
+             << HtmlEscape(EmptyAsDash(item.bar.close)) << " <span class=\"subtle\">"
              << HtmlEscape(EmptyAsDash(item.bar.minute)) << "</span></td></tr>";
     }
     html << "</tbody></table></section>\n";

@@ -352,6 +352,28 @@ bool ReadDeque(const AtomicState& state, const std::string& prefix, std::deque<d
 
 std::string SideToString(Side side) { return side == Side::kBuy ? "buy" : "sell"; }
 
+std::string SignalTypeToTraceToken(SignalType signal_type) {
+    switch (signal_type) {
+        case SignalType::kOpen:
+            return "open";
+        case SignalType::kClose:
+            return "close";
+        case SignalType::kStopLoss:
+            return "stop_loss";
+        case SignalType::kTakeProfit:
+            return "take_profit";
+        case SignalType::kForceClose:
+            return "force_close";
+    }
+    return "signal";
+}
+
+std::string BuildSignalTraceId(const std::string& strategy_id, SignalType signal_type,
+                               const std::string& instrument_id, EpochNanos ts_ns) {
+    return strategy_id + "-" + SignalTypeToTraceToken(signal_type) + "-" + instrument_id + "-" +
+           std::to_string(ts_ns);
+}
+
 std::string ExtractSymbolPrefixLowerLocal(const std::string& instrument_id) {
     std::string prefix;
     for (unsigned char ch : instrument_id) {
@@ -668,11 +690,14 @@ std::vector<SignalIntent> KamaTrendStrategy::OnState(const StateSnapshot7D& stat
                 entry_signal.volume = volume;
                 entry_signal.limit_price = state.bar_close;
                 entry_signal.ts_ns = state.ts_ns;
+                entry_signal.trace_id = BuildSignalTraceId(id_, entry_signal.signal_type,
+                                                           state.instrument_id, state.ts_ns);
                 EmitKamaStrategyLog(
                     ctx, "info", "open_signal_emitted",
                     {{"strategy_id", id_},
                      {"event_type", "open_signal"},
                      {"event_ts_ns", std::to_string(state.ts_ns)},
+                     {"trace_id", entry_signal.trace_id},
                      {"instrument_id", state.instrument_id},
                      {"side", SideToString(entry_signal.side)},
                      {"volume", std::to_string(volume)},
@@ -1105,10 +1130,13 @@ std::vector<SignalIntent> KamaTrendStrategy::EvaluateRiskSignals(const AtomicStr
         if (stop_triggered) {
             const double pnl_amount = ComputePositionPnl(ctx, instrument_id, position, price);
             const Side close_side = position > 0 ? Side::kSell : Side::kBuy;
+            SignalIntent close_signal =
+                BuildCloseSignal(id_, instrument_id, SignalType::kStopLoss, position, price, ts_ns);
             EmitKamaStrategyLog(ctx, "warn", "stop_loss_triggered",
                                 {{"strategy_id", id_},
                                  {"event_type", "stop_loss_triggered"},
                                  {"event_ts_ns", std::to_string(ts_ns)},
+                                 {"trace_id", close_signal.trace_id},
                                  {"instrument_id", instrument_id},
                                  {"side", SideToString(close_side)},
                                  {"stop_loss_price", FormatDouble(*last_stop_loss_price_)},
@@ -1119,13 +1147,13 @@ std::vector<SignalIntent> KamaTrendStrategy::EvaluateRiskSignals(const AtomicStr
                                 {{"strategy_id", id_},
                                  {"event_type", "close_signal"},
                                  {"event_ts_ns", std::to_string(ts_ns)},
+                                 {"trace_id", close_signal.trace_id},
                                  {"instrument_id", instrument_id},
                                  {"side", SideToString(close_side)},
                                  {"close_price", FormatDouble(price)},
                                  {"pnl_amount", FormatDouble(pnl_amount)},
                                  {"close_reason", "stop_loss"}});
-            signals.push_back(BuildCloseSignal(id_, instrument_id, SignalType::kStopLoss, position,
-                                               price, ts_ns));
+            signals.push_back(std::move(close_signal));
         }
     }
 
@@ -1135,17 +1163,19 @@ std::vector<SignalIntent> KamaTrendStrategy::EvaluateRiskSignals(const AtomicStr
         if (take_triggered) {
             const double pnl_amount = ComputePositionPnl(ctx, instrument_id, position, price);
             const Side close_side = position > 0 ? Side::kSell : Side::kBuy;
+            SignalIntent close_signal = BuildCloseSignal(
+                id_, instrument_id, SignalType::kTakeProfit, position, price, ts_ns);
             EmitKamaStrategyLog(ctx, "info", "close_signal_emitted",
                                 {{"strategy_id", id_},
                                  {"event_type", "close_signal"},
                                  {"event_ts_ns", std::to_string(ts_ns)},
+                                 {"trace_id", close_signal.trace_id},
                                  {"instrument_id", instrument_id},
                                  {"side", SideToString(close_side)},
                                  {"close_price", FormatDouble(price)},
                                  {"pnl_amount", FormatDouble(pnl_amount)},
                                  {"close_reason", "take_profit"}});
-            signals.push_back(BuildCloseSignal(id_, instrument_id, SignalType::kTakeProfit,
-                                               position, price, ts_ns));
+            signals.push_back(std::move(close_signal));
         }
     }
 
@@ -1182,6 +1212,7 @@ SignalIntent KamaTrendStrategy::BuildCloseSignal(const std::string& strategy_id,
     signal.volume = std::abs(position);
     signal.limit_price = limit_price;
     signal.ts_ns = ts_ns;
+    signal.trace_id = BuildSignalTraceId(strategy_id, signal_type, instrument_id, ts_ns);
     return signal;
 }
 

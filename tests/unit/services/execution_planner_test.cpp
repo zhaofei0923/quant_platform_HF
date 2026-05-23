@@ -1,8 +1,8 @@
-#include <vector>
+#include "quant_hft/services/execution_planner.h"
 
 #include <gtest/gtest.h>
 
-#include "quant_hft/services/execution_planner.h"
+#include <vector>
 
 namespace quant_hft {
 namespace {
@@ -31,6 +31,17 @@ TEST(ExecutionPlannerTest, BuildsDirectPlanAsSingleOrder) {
     EXPECT_EQ(plan[0].execution_algo_id, "direct");
     EXPECT_EQ(plan[0].slice_index, 1);
     EXPECT_EQ(plan[0].slice_total, 1);
+    EXPECT_EQ(plan[0].intent.client_order_id, "trace-1");
+    EXPECT_EQ(plan[0].intent.trace_id, "trace-1");
+}
+
+TEST(ExecutionPlannerTest, ReturnsEmptyPlanWhenTraceIdIsMissing) {
+    ExecutionPlanner planner;
+    ExecutionConfig cfg;
+    cfg.algo = ExecutionAlgo::kDirect;
+
+    const auto plan = planner.BuildPlan(MakeSignal(5, ""), "acc-1", cfg, {});
+    EXPECT_TRUE(plan.empty());
 }
 
 TEST(ExecutionPlannerTest, BuildsSlicedPlanWithDeterministicIds) {

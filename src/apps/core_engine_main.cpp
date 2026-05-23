@@ -93,6 +93,22 @@ std::string SideToString(quant_hft::Side side) {
     return side == quant_hft::Side::kBuy ? "buy" : "sell";
 }
 
+std::string SignalTypeToString(quant_hft::SignalType signal_type) {
+    switch (signal_type) {
+        case quant_hft::SignalType::kOpen:
+            return "open";
+        case quant_hft::SignalType::kClose:
+            return "close";
+        case quant_hft::SignalType::kStopLoss:
+            return "stop_loss";
+        case quant_hft::SignalType::kTakeProfit:
+            return "take_profit";
+        case quant_hft::SignalType::kForceClose:
+            return "force_close";
+    }
+    return "unknown";
+}
+
 std::string OffsetToString(quant_hft::OffsetFlag offset) {
     switch (offset) {
         case quant_hft::OffsetFlag::kOpen:
@@ -920,6 +936,22 @@ void EmitOrderRejectedEventLog(const quant_hft::CtpRuntimeConfig& config,
                                   {"exchange_order_id", event.exchange_order_id}});
 }
 
+void EmitSignalPlanRejectedLog(const quant_hft::CtpRuntimeConfig& config,
+                               const quant_hft::SignalIntent& signal, const std::string& reason) {
+    quant_hft::EmitStructuredLog(&config, "core_engine", "error", "signal_plan_rejected",
+                                 {{"strategy_id", signal.strategy_id},
+                                  {"event_type", "signal_plan_rejected"},
+                                  {"event_ts_ns", std::to_string(signal.ts_ns)},
+                                  {"reason", reason},
+                                  {"instrument_id", signal.instrument_id},
+                                  {"signal_type", SignalTypeToString(signal.signal_type)},
+                                  {"side", SideToString(signal.side)},
+                                  {"offset", OffsetToString(signal.offset)},
+                                  {"volume", std::to_string(signal.volume)},
+                                  {"price", FormatDouble(signal.limit_price)},
+                                  {"trace_id", signal.trace_id}});
+}
+
 quant_hft::PositionDirection ResolveLedgerDirection(const quant_hft::OrderIntent& intent) {
     const bool is_close = intent.offset == quant_hft::OffsetFlag::kClose ||
                           intent.offset == quant_hft::OffsetFlag::kCloseToday ||
@@ -1467,6 +1499,11 @@ int main(int argc, char** argv) {
     };
 
     process_signal_intent = [&](const SignalIntent& signal) {
+        if (signal.trace_id.empty()) {
+            EmitSignalPlanRejectedLog(config, signal, "missing_trace_id");
+            return;
+        }
+
         std::vector<MarketSnapshot> recent_market;
         {
             std::lock_guard<std::mutex> lock(market_history_mutex);
@@ -1477,6 +1514,11 @@ int main(int argc, char** argv) {
         }
         const auto plans =
             execution_planner.BuildPlan(signal, account_id, execution_config, recent_market);
+        if (plans.empty()) {
+            EmitSignalPlanRejectedLog(config, signal, "empty_execution_plan");
+            return;
+        }
+
         for (const auto& planned : plans) {
             const auto& intent = planned.intent;
             ExecutionMetadata metadata;

@@ -107,6 +107,7 @@ TEST(AtomicStrategiesTest, KamaTrendStrategyEmitsOpenWithRiskSizingAndSnapshot) 
     EXPECT_EQ(signals.front().signal_type, SignalType::kOpen);
     EXPECT_EQ(signals.front().side, Side::kBuy);
     EXPECT_EQ(signals.front().volume, 25);
+    EXPECT_EQ(signals.front().trace_id, "kama_1-open-IF2406-8");
 
     auto* provider = dynamic_cast<IAtomicIndicatorTraceProvider*>(&strategy);
     ASSERT_NE(provider, nullptr);
@@ -277,6 +278,7 @@ TEST(AtomicStrategiesTest, KamaTrendStrategyTrailingStopTightensOnBarsAndTrigger
     EXPECT_EQ(trigger.front().side, Side::kSell);
     EXPECT_EQ(trigger.front().offset, OffsetFlag::kClose);
     EXPECT_EQ(trigger.front().volume, 1);
+    EXPECT_EQ(trigger.front().trace_id, "kama_1-stop_loss-IF2406-5");
 }
 
 TEST(AtomicStrategiesTest, TrendStrategyEmitsOpenAndTakeProfitSignalsOnTick) {

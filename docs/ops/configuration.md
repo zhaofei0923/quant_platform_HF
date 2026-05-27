@@ -21,8 +21,9 @@
 ## 市场状态检测器配置
 
 - 配置块：`ctp.market_state_detector`
-- 默认平缓阈值：`atr_flat_ratio: 0.001`（0.1%）
+- ATR 仅作为诊断输出使用，`market_regime` 不再使用 ATR flat 阈值覆盖为 `kFlat`。
 - 兼容策略：同时支持历史平铺键（如 `adx_period`），但若同时配置，嵌套键优先。
+- 可选品种覆盖：`ctp.market_state_detector_by_product.<product>` 继承全局配置后只覆盖显式字段，`product` 使用合约字母前缀（如 `c2607` -> `c`、`hc2610` -> `hc`）。
 
 示例：
 
@@ -39,10 +40,11 @@ ctp:
     kama_er_strong: 0.6
     kama_er_weak_lower: 0.3
     atr_period: 14
-    atr_flat_ratio: 0.001
     require_adx_for_trend: true
     use_kama_er: true
-    min_bars_for_flat: 20
+  market_state_detector_by_product:
+    hc:
+      require_adx_for_trend: false
 ```
 
 ## Composite 策略插件配置

@@ -21,12 +21,14 @@ class TimeframeStateFanout {
    public:
     using PersistenceState = std::unordered_map<std::string, std::string>;
 
-    explicit TimeframeStateFanout(std::vector<std::int32_t> timeframes,
-                                  MarketStateDetectorConfig detector_config = {});
+    explicit TimeframeStateFanout(
+        std::vector<std::int32_t> timeframes, MarketStateDetectorConfig detector_config = {},
+        MarketStateDetectorConfigByProduct detector_config_by_product = {});
 
     std::vector<TimeframeStateEmission> OnOneMinuteBar(const BarSnapshot& bar);
     std::vector<TimeframeStateEmission> Flush();
     void ResetInstrument(const std::string& instrument_id);
+    void ResetInstrumentBuckets(const std::string& instrument_id);
 
     bool SaveState(PersistenceState* out, std::string* error) const;
     bool LoadState(const PersistenceState& state, std::string* error);
@@ -49,10 +51,12 @@ class TimeframeStateFanout {
                                          std::int32_t timeframe_minutes);
     static void MergeBarIntoBucket(const BarSnapshot& bar, Bucket* bucket);
     TimeframeStateEmission BuildEmission(const BarSnapshot& bar, std::int32_t timeframe_minutes);
-    MarketStateDetector& DetectorFor(const std::string& key);
+    MarketStateDetector& DetectorFor(const std::string& instrument_id,
+                                     std::int32_t timeframe_minutes);
 
     std::vector<std::int32_t> timeframes_;
     MarketStateDetectorConfig detector_config_;
+    MarketStateDetectorConfigByProduct detector_config_by_product_;
     std::unordered_map<std::string, Bucket> buckets_;
     std::unordered_map<std::string, MarketStateDetector> detectors_;
 };

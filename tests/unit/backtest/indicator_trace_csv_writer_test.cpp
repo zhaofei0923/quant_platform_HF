@@ -13,8 +13,7 @@ namespace {
 
 std::filesystem::path UniqueTracePath(const std::string& stem) {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    return std::filesystem::temp_directory_path() /
-           (stem + "_" + std::to_string(stamp) + ".csv");
+    return std::filesystem::temp_directory_path() / (stem + "_" + std::to_string(stamp) + ".csv");
 }
 
 std::vector<std::string> ReadLines(const std::filesystem::path& path) {
@@ -79,6 +78,11 @@ TEST(IndicatorTraceCsvWriterTest, WritesHeaderAndNullableIndicatorColumns) {
     row1.adx = 25.4;
     row1.er = 0.55;
     row1.market_regime = MarketRegime::kWeakTrend;
+    row1.market_state_adx = 25.4;
+    row1.market_state_kama_er = 0.55;
+    row1.market_state_atr_ratio = 0.012;
+    row1.market_state_bars_seen = 8;
+    row1.market_state_decision_reason = "adx_weak";
     ASSERT_TRUE(writer.Append(row1, &error)) << error;
 
     ASSERT_TRUE(writer.Close(&error)) << error;
@@ -88,13 +92,15 @@ TEST(IndicatorTraceCsvWriterTest, WritesHeaderAndNullableIndicatorColumns) {
     EXPECT_EQ(lines[0],
               "instrument_id,ts_ns,dt_utc,timeframe_minutes,bar_open,bar_high,bar_low,bar_close,"
               "bar_volume,analysis_bar_open,analysis_bar_high,analysis_bar_low,"
-              "analysis_bar_close,analysis_price_offset,kama,atr,adx,er,market_regime");
+              "analysis_bar_close,analysis_price_offset,kama,atr,adx,er,market_regime,"
+              "market_state_adx,market_state_kama_er,market_state_atr_ratio,"
+              "market_state_bars_seen,market_state_decision_reason");
     EXPECT_EQ(lines[1],
               "rb2405,1700000000000000000,2023-11-14 22:13:20,1,100,101,99,100.5,10,100,101,99,"
-              "100.5,0,,,,,kUnknown");
+              "100.5,0,,,,,kUnknown,,,,0,");
     EXPECT_EQ(lines[2],
               "rb2405,1700000060000000000,2023-11-14 22:14:20,1,100,101,99,100.5,10,100,101,99,"
-              "100.5,0,100.8,1.2,25.4,0.55,kWeakTrend");
+              "100.5,0,100.8,1.2,25.4,0.55,kWeakTrend,25.4,0.55,0.012,8,adx_weak");
 
     std::filesystem::remove(path, ec);
 }

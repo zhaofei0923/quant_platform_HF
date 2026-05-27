@@ -201,11 +201,12 @@
 | `ctp.market_state_detector.kama_slow_period` | int | 否 | 程序默认 | `>0` | KAMA 慢线周期 | `30` |
 | `ctp.market_state_detector.kama_er_strong` | double | 否 | 程序默认 | `[0,1]` | ER 强趋势阈值 | `0.6` |
 | `ctp.market_state_detector.kama_er_weak_lower` | double | 否 | 程序默认 | `[0,1]` | ER 弱趋势下界 | `0.3` |
-| `ctp.market_state_detector.atr_period` | int | 否 | 程序默认 | `>0` | ATR 周期 | `14` |
-| `ctp.market_state_detector.atr_flat_ratio` | double | 否 | 程序默认 | `>=0` | 平缓波动阈值 | `0.001` |
+| `ctp.market_state_detector.atr_period` | int | 否 | 程序默认 | `>0` | ATR 诊断周期 | `14` |
 | `ctp.market_state_detector.require_adx_for_trend` | bool | 否 | 程序默认 | `true/false` | 趋势判断是否必须 ADX | `true` |
 | `ctp.market_state_detector.use_kama_er` | bool | 否 | 程序默认 | `true/false` | 是否启用 ER 辅助判断 | `true` |
-| `ctp.market_state_detector.min_bars_for_flat` | int | 否 | 程序默认 | `>0` | 平缓判定最少 bar | `20` |
+| `ctp.market_state_detector_by_product.<product>.*` | object | 否 | 全局 `market_state_detector` | product 必须为字母品种前缀，字段范围同全局配置 | 按品种覆盖市场状态检测器字段 | `ctp.market_state_detector_by_product.hc.require_adx_for_trend` |
+
+`market_state_detector_by_product` 先继承全局 `market_state_detector`，再覆盖配置块里显式写出的字段；未配置品种 override 时使用全局参数。品种按合约前缀识别，例如 `c2607` -> `c`、`hc2610` -> `hc`。
 
 ---
 

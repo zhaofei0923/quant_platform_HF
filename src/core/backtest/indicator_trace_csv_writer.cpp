@@ -95,7 +95,9 @@ bool IndicatorTraceCsvWriter::Open(const std::string& output_path, std::string* 
 
     out_ << "instrument_id,ts_ns,dt_utc,timeframe_minutes,bar_open,bar_high,bar_low,bar_close,"
             "bar_volume,analysis_bar_open,analysis_bar_high,analysis_bar_low,analysis_bar_close,"
-            "analysis_price_offset,kama,atr,adx,er,market_regime\n";
+            "analysis_price_offset,kama,atr,adx,er,market_regime,market_state_adx,"
+            "market_state_kama_er,market_state_atr_ratio,market_state_bars_seen,"
+            "market_state_decision_reason\n";
     if (!out_.good()) {
         out_.close();
         return SetError("failed to write indicator trace csv header", error);
@@ -120,12 +122,14 @@ bool IndicatorTraceCsvWriter::Append(const IndicatorTraceRow& row, std::string* 
          << FormatNumber(row.bar_open) << ',' << FormatNumber(row.bar_high) << ','
          << FormatNumber(row.bar_low) << ',' << FormatNumber(row.bar_close) << ','
          << FormatNumber(row.bar_volume) << ',' << FormatNumber(row.analysis_bar_open) << ','
-         << FormatNumber(row.analysis_bar_high) << ',' << FormatNumber(row.analysis_bar_low)
-         << ',' << FormatNumber(row.analysis_bar_close) << ','
-         << FormatNumber(row.analysis_price_offset) << ',' << FormatOptional(row.kama) << ','
-         << FormatOptional(row.atr) << ',' << FormatOptional(row.adx) << ','
-         << FormatOptional(row.er) << ',' << CsvEscape(MarketRegimeToLabel(row.market_regime))
-         << '\n';
+         << FormatNumber(row.analysis_bar_high) << ',' << FormatNumber(row.analysis_bar_low) << ','
+         << FormatNumber(row.analysis_bar_close) << ',' << FormatNumber(row.analysis_price_offset)
+         << ',' << FormatOptional(row.kama) << ',' << FormatOptional(row.atr) << ','
+         << FormatOptional(row.adx) << ',' << FormatOptional(row.er) << ','
+         << CsvEscape(MarketRegimeToLabel(row.market_regime)) << ','
+         << FormatOptional(row.market_state_adx) << ',' << FormatOptional(row.market_state_kama_er)
+         << ',' << FormatOptional(row.market_state_atr_ratio) << ',' << row.market_state_bars_seen
+         << ',' << CsvEscape(row.market_state_decision_reason) << '\n';
     if (!out_.good()) {
         return SetError("failed to append indicator trace csv row", error);
     }

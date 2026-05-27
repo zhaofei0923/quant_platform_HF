@@ -728,6 +728,47 @@ std::filesystem::path TradingDayDir(const std::filesystem::path& root,
     return root / ("trading_day=" + NormalizeTradingDayToken(trading_day));
 }
 
+bool RotateCsvWithMismatchedHeader(const std::filesystem::path& path, const std::string& header,
+                                   const std::string& description, std::string* error) {
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec) || ec) {
+        return true;
+    }
+    const auto size = std::filesystem::file_size(path, ec);
+    if (ec || size == 0) {
+        return true;
+    }
+
+    std::ifstream input(path);
+    std::string existing_header;
+    std::getline(input, existing_header);
+    if (!existing_header.empty() && existing_header.back() == '\r') {
+        existing_header.pop_back();
+    }
+    std::string expected_header = header;
+    if (!expected_header.empty() && expected_header.back() == '\n') {
+        expected_header.pop_back();
+    }
+    if (existing_header == expected_header) {
+        return true;
+    }
+
+    const auto suffix = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count();
+    std::filesystem::path rotated = path;
+    rotated += ".schema_mismatch." + std::to_string(suffix);
+    std::filesystem::rename(path, rotated, ec);
+    if (ec) {
+        if (error != nullptr) {
+            *error = "failed to rotate " + description + " csv with mismatched header: " +
+                     path.string() + " -> " + rotated.string() + ": " + ec.message();
+        }
+        return false;
+    }
+    return true;
+}
+
 bool OpenAppendCsv(const std::filesystem::path& path, const std::string& header,
                    const std::string& description, std::ofstream* output, std::string* error) {
     if (output == nullptr) {
@@ -802,6 +843,19 @@ class KamaTraceCsvWriter {
              << OptionalIntToCsv(row.diff_class_2) << ',' << OptionalIntToCsv(row.diff_class_3)
              << ',' << OptionalIntToCsv(row.trend_sum) << ',' << CsvEscape(row.raw_signal) << ','
              << CsvEscape(MarketRegimeToString(state.market_regime)) << ','
+             << OptionalDoubleToCsv(std::isfinite(state.market_state_adx)
+                                        ? std::optional<double>(state.market_state_adx)
+                                        : std::nullopt)
+             << ','
+             << OptionalDoubleToCsv(std::isfinite(state.market_state_kama_er)
+                                        ? std::optional<double>(state.market_state_kama_er)
+                                        : std::nullopt)
+             << ','
+             << OptionalDoubleToCsv(std::isfinite(state.market_state_atr_ratio)
+                                        ? std::optional<double>(state.market_state_atr_ratio)
+                                        : std::nullopt)
+             << ',' << state.market_state_bars_seen << ','
+             << CsvEscape(state.market_state_decision_reason) << ','
              << CsvEscape(row.blocked_reason) << ',' << state.ts_ns << '\n';
         if (!out->good()) {
             if (error != nullptr) {
@@ -845,7 +899,12 @@ class KamaTraceCsvWriter {
         const std::string header =
             "minute,instrument,engine_strategy_id,sub_strategy_id,close,kama,er,adx,atr,"
             "threshold,diff_1,diff_2,diff_3,diff_class_1,diff_class_2,diff_class_3,"
-            "trend_sum,raw_signal,regime,blocked_reason,ts_ns\n";
+            "trend_sum,raw_signal,regime,market_state_adx,market_state_kama_er,"
+            "market_state_atr_ratio,market_state_bars_seen,market_state_decision_reason,"
+            "blocked_reason,ts_ns\n";
+        if (!RotateCsvWithMismatchedHeader(path, header, "KAMA trace", error)) {
+            return nullptr;
+        }
         if (!OpenAppendCsv(path, header, "KAMA trace", stream.get(), error)) {
             return nullptr;
         }
@@ -904,20 +963,47 @@ quant_hft::OrderEvent BuildRejectedEvent(const quant_hft::OrderIntent& intent,
 
 void EmitOrderRejectedIntentLog(const quant_hft::CtpRuntimeConfig& config,
                                 const quant_hft::OrderIntent& intent, const std::string& reason,
-                                const ExecutionMetadata& metadata) {
-    quant_hft::EmitStructuredLog(&config, "core_engine", "error", "order_rejected",
+                                const ExecutionMetadata& metadata, const std::string& detail = "") {
+    quant_hft::LogFields fields{{"strategy_id", intent.strategy_id},
+                                {"event_type", "order_rejected"},
+                                {"event_ts_ns", std::to_string(intent.ts_ns)},
+                                {"reason", reason},
+                                {"instrument_id", intent.instrument_id},
+                                {"side", SideToString(intent.side)},
+                                {"offset", OffsetToString(intent.offset)},
+                                {"volume", std::to_string(intent.volume)},
+                                {"price", FormatDouble(intent.price)},
+                                {"client_order_id", intent.client_order_id},
+                                {"trace_id", intent.trace_id},
+                                {"execution_algo_id", metadata.execution_algo_id},
+                                {"route_id", metadata.route_id}};
+    if (!detail.empty()) {
+        fields.emplace_back("detail", detail);
+    }
+    quant_hft::EmitStructuredLog(&config, "core_engine", "error", "order_rejected", fields);
+}
+
+void EmitOrderSubmittedLog(const quant_hft::CtpRuntimeConfig& config,
+                           const quant_hft::OrderIntent& intent,
+                           const quant_hft::OrderResult& result,
+                           const ExecutionMetadata& metadata) {
+    const std::string client_order_id =
+        result.client_order_id.empty() ? intent.client_order_id : result.client_order_id;
+    quant_hft::EmitStructuredLog(&config, "core_engine", "info", "order_submitted",
                                  {{"strategy_id", intent.strategy_id},
-                                  {"event_type", "order_rejected"},
+                                  {"event_type", "order_submitted"},
                                   {"event_ts_ns", std::to_string(intent.ts_ns)},
-                                  {"reason", reason},
                                   {"instrument_id", intent.instrument_id},
                                   {"side", SideToString(intent.side)},
                                   {"offset", OffsetToString(intent.offset)},
                                   {"volume", std::to_string(intent.volume)},
                                   {"price", FormatDouble(intent.price)},
-                                  {"client_order_id", intent.client_order_id},
+                                  {"client_order_id", client_order_id},
+                                  {"trace_id", intent.trace_id},
                                   {"execution_algo_id", metadata.execution_algo_id},
-                                  {"route_id", metadata.route_id}});
+                                  {"venue", metadata.venue},
+                                  {"route_id", metadata.route_id},
+                                  {"message", result.message}});
 }
 
 void EmitOrderRejectedEventLog(const quant_hft::CtpRuntimeConfig& config,
@@ -1303,7 +1389,8 @@ int main(int argc, char** argv) {
     execution_engine.SetRiskManager(risk_manager);
     RuleMarketStateEngine market_state(32, file_config.market_state_detector);
     TimeframeStateFanout timeframe_state_fanout(strategy_timeframes,
-                                                file_config.market_state_detector);
+                                                file_config.market_state_detector,
+                                                file_config.market_state_detector_by_product);
     std::mutex timeframe_fanout_mutex;
     const std::string timeframe_fanout_state_id = "__timeframe_state_fanout";
     if (strategy_state_persistence != nullptr && file_config.strategy_state_persist_enabled) {
@@ -1650,13 +1737,16 @@ int main(int argc, char** argv) {
                         continue;
                     }
                 }
-                if (!execution_engine.PlaceOrderAsync(intent).get().success) {
+                const quant_hft::OrderResult order_result =
+                    execution_engine.PlaceOrderAsync(intent).get();
+                if (!order_result.success) {
                     EmitOrderRejectedIntentLog(config, intent, "gateway_reject:place_order_failed",
-                                               metadata);
+                                               metadata, order_result.message);
                     process_order_event(
                         BuildRejectedEvent(intent, "gateway_reject:place_order_failed", metadata));
                     continue;
                 }
+                EmitOrderSubmittedLog(config, intent, order_result, metadata);
                 std::lock_guard<std::mutex> lock(planner_mutex);
                 execution_planner.RecordOrderResult(false);
             }
@@ -2433,7 +2523,7 @@ int main(int argc, char** argv) {
     {
         std::lock_guard<std::mutex> lock(timeframe_fanout_mutex);
         for (const auto& instrument_id : instruments) {
-            timeframe_state_fanout.ResetInstrument(instrument_id);
+            timeframe_state_fanout.ResetInstrumentBuckets(instrument_id);
         }
     }
     dominant_contract_selection_active.store(false);
@@ -2884,7 +2974,7 @@ int main(int argc, char** argv) {
                     }
                     {
                         std::lock_guard<std::mutex> lock(timeframe_fanout_mutex);
-                        timeframe_state_fanout.ResetInstrument(best_it->instrument_id);
+                        timeframe_state_fanout.ResetInstrumentBuckets(best_it->instrument_id);
                     }
                     retained_candidate_ids.push_back(best_it->instrument_id);
                     switched_out_instrument_ids.push_back(current_instrument_id);

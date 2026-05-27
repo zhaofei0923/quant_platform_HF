@@ -161,6 +161,8 @@ message StateSnapshot7D {
   uint32 market_regime = 16;
   int32 timeframe_minutes = 17;
   double analysis_price_offset = 18;
+  uint64 market_state_bars_seen = 19;
+  string market_state_decision_reason = 20;
 }
 
 message SignalIntent {

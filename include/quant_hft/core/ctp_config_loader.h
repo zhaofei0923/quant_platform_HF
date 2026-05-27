@@ -42,6 +42,7 @@ struct CtpFileConfig {
     MarketDataRecordingConfig market_data_recording;
     RiskConfig risk;
     MarketStateDetectorConfig market_state_detector;
+    MarketStateDetectorConfigByProduct market_state_detector_by_product;
 };
 
 class CtpConfigLoader {

@@ -1,23 +1,23 @@
+#include "quant_hft/core/redis_realtime_store_client_adapter.h"
+
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <unordered_map>
 
-#include <gtest/gtest.h>
-
 #include "quant_hft/contracts/types.h"
 #include "quant_hft/core/redis_hash_client.h"
-#include "quant_hft/core/redis_realtime_store_client_adapter.h"
 
 namespace quant_hft {
 
 namespace {
 
 class FlakyRedisClient : public IRedisHashClient {
-public:
+   public:
     explicit FlakyRedisClient(int fail_times) : fail_times_(fail_times) {}
 
-    bool HSet(const std::string& key,
-              const std::unordered_map<std::string, std::string>& fields,
+    bool HSet(const std::string& key, const std::unordered_map<std::string, std::string>& fields,
               std::string* error) override {
         ++hset_calls_;
         if (hset_calls_ <= fail_times_) {
@@ -30,8 +30,7 @@ public:
         return true;
     }
 
-    bool HGetAll(const std::string& key,
-                 std::unordered_map<std::string, std::string>* out,
+    bool HGetAll(const std::string& key, std::unordered_map<std::string, std::string>* out,
                  std::string* error) const override {
         const auto it = storage_.find(key);
         if (it == storage_.end()) {
@@ -50,9 +49,7 @@ public:
         return true;
     }
 
-    bool HIncrBy(const std::string& key,
-                 const std::string& field,
-                 std::int64_t delta,
+    bool HIncrBy(const std::string& key, const std::string& field, std::int64_t delta,
                  std::string* error) override {
         auto& hash = storage_[key];
         std::int64_t current = 0;
@@ -97,13 +94,11 @@ public:
         return it->second;
     }
 
-private:
+   private:
     int fail_times_{0};
     int hset_calls_{0};
     std::unordered_map<std::string, int> expire_calls_;
-    std::unordered_map<std::string,
-                       std::unordered_map<std::string, std::string>>
-        storage_;
+    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> storage_;
 };
 
 }  // namespace
@@ -184,6 +179,11 @@ TEST(RedisRealtimeStoreClientAdapterTest, RoundTripsStateSnapshot7D) {
     state.timeframe_minutes = 5;
     state.has_bar = true;
     state.market_regime = MarketRegime::kWeakTrend;
+    state.market_state_adx = 25.4;
+    state.market_state_kama_er = 0.55;
+    state.market_state_atr_ratio = 0.012;
+    state.market_state_bars_seen = 8;
+    state.market_state_decision_reason = "adx_weak";
     state.ts_ns = 123;
 
     store.UpsertStateSnapshot7D(state);
@@ -201,6 +201,11 @@ TEST(RedisRealtimeStoreClientAdapterTest, RoundTripsStateSnapshot7D) {
     EXPECT_EQ(got.timeframe_minutes, 5);
     EXPECT_TRUE(got.has_bar);
     EXPECT_EQ(got.market_regime, MarketRegime::kWeakTrend);
+    EXPECT_DOUBLE_EQ(got.market_state_adx, 25.4);
+    EXPECT_DOUBLE_EQ(got.market_state_kama_er, 0.55);
+    EXPECT_DOUBLE_EQ(got.market_state_atr_ratio, 0.012);
+    EXPECT_EQ(got.market_state_bars_seen, 8U);
+    EXPECT_EQ(got.market_state_decision_reason, "adx_weak");
     EXPECT_EQ(got.ts_ns, 123);
 }
 
@@ -209,25 +214,24 @@ TEST(RedisRealtimeStoreClientAdapterTest, ReadsLegacyStateSnapshotWithoutBarFiel
     RedisRealtimeStoreClientAdapter store(client, StorageRetryPolicy{});
 
     std::string error;
-    ASSERT_TRUE(client->HSet(
-        RedisKeyBuilder::StateSnapshot7DLatest("SHFE.ag2406"),
-        {{"instrument_id", "SHFE.ag2406"},
-         {"trend_score", "0.1"},
-         {"trend_confidence", "0.9"},
-         {"volatility_score", "0.2"},
-         {"volatility_confidence", "0.8"},
-         {"liquidity_score", "0.3"},
-         {"liquidity_confidence", "0.7"},
-         {"sentiment_score", "0.4"},
-         {"sentiment_confidence", "0.6"},
-         {"seasonality_score", "0.0"},
-         {"seasonality_confidence", "0.2"},
-         {"pattern_score", "0.1"},
-         {"pattern_confidence", "0.3"},
-         {"event_drive_score", "0.0"},
-         {"event_drive_confidence", "0.2"},
-         {"ts_ns", "100"}},
-        &error))
+    ASSERT_TRUE(client->HSet(RedisKeyBuilder::StateSnapshot7DLatest("SHFE.ag2406"),
+                             {{"instrument_id", "SHFE.ag2406"},
+                              {"trend_score", "0.1"},
+                              {"trend_confidence", "0.9"},
+                              {"volatility_score", "0.2"},
+                              {"volatility_confidence", "0.8"},
+                              {"liquidity_score", "0.3"},
+                              {"liquidity_confidence", "0.7"},
+                              {"sentiment_score", "0.4"},
+                              {"sentiment_confidence", "0.6"},
+                              {"seasonality_score", "0.0"},
+                              {"seasonality_confidence", "0.2"},
+                              {"pattern_score", "0.1"},
+                              {"pattern_confidence", "0.3"},
+                              {"event_drive_score", "0.0"},
+                              {"event_drive_confidence", "0.2"},
+                              {"ts_ns", "100"}},
+                             &error))
         << error;
 
     StateSnapshot7D got;
@@ -323,9 +327,8 @@ TEST(RedisRealtimeStoreClientAdapterTest, AppliesTtlByKeyType) {
     EXPECT_EQ(client->expire_calls_for(RedisKeyBuilder::MarketTickLatest("SHFE.ag2406")), 1);
     EXPECT_EQ(client->expire_calls_for(RedisKeyBuilder::OrderInfo("ord-ttl")), 1);
     EXPECT_EQ(client->expire_calls_for(RedisKeyBuilder::StateSnapshot7DLatest("SHFE.ag2406")), 1);
-    EXPECT_EQ(client->expire_calls_for(RedisKeyBuilder::Position("acc-1",
-                                                                 "SHFE.ag2406",
-                                                                 PositionDirection::kLong)),
+    EXPECT_EQ(client->expire_calls_for(
+                  RedisKeyBuilder::Position("acc-1", "SHFE.ag2406", PositionDirection::kLong)),
               0);
 }
 

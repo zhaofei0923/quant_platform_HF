@@ -31,12 +31,10 @@ MarketRegime ParseMarketRegimeValue(std::int32_t value) {
 }  // namespace
 
 RedisRealtimeStoreClientAdapter::RedisRealtimeStoreClientAdapter(
-    std::shared_ptr<IRedisHashClient> client,
-    StorageRetryPolicy retry_policy)
+    std::shared_ptr<IRedisHashClient> client, StorageRetryPolicy retry_policy)
     : client_(std::move(client)), retry_policy_(retry_policy) {}
 
-void RedisRealtimeStoreClientAdapter::UpsertMarketSnapshot(
-    const MarketSnapshot& snapshot) {
+void RedisRealtimeStoreClientAdapter::UpsertMarketSnapshot(const MarketSnapshot& snapshot) {
     if (snapshot.instrument_id.empty()) {
         return;
     }
@@ -101,15 +99,13 @@ void RedisRealtimeStoreClientAdapter::UpsertOrderEvent(const OrderEvent& event) 
     }
 }
 
-void RedisRealtimeStoreClientAdapter::UpsertPositionSnapshot(
-    const PositionSnapshot& position) {
+void RedisRealtimeStoreClientAdapter::UpsertPositionSnapshot(const PositionSnapshot& position) {
     if (position.account_id.empty() || position.instrument_id.empty()) {
         return;
     }
 
-    const auto key = RedisKeyBuilder::Position(position.account_id,
-                                               position.instrument_id,
-                                               position.direction);
+    const auto key =
+        RedisKeyBuilder::Position(position.account_id, position.instrument_id, position.direction);
     std::unordered_map<std::string, std::string> fields{
         {"account_id", position.account_id},
         {"instrument_id", position.instrument_id},
@@ -123,8 +119,7 @@ void RedisRealtimeStoreClientAdapter::UpsertPositionSnapshot(
     (void)WriteWithRetry(key, fields);
 }
 
-void RedisRealtimeStoreClientAdapter::UpsertStateSnapshot7D(
-    const StateSnapshot7D& snapshot) {
+void RedisRealtimeStoreClientAdapter::UpsertStateSnapshot7D(const StateSnapshot7D& snapshot) {
     if (snapshot.instrument_id.empty()) {
         return;
     }
@@ -151,10 +146,16 @@ void RedisRealtimeStoreClientAdapter::UpsertStateSnapshot7D(
         {"bar_low", ToString(snapshot.bar_low)},
         {"bar_close", ToString(snapshot.bar_close)},
         {"bar_volume", ToString(snapshot.bar_volume)},
-        {"timeframe_minutes", ToString(snapshot.timeframe_minutes > 0 ? snapshot.timeframe_minutes
-                                                                      : 1)},
+        {"timeframe_minutes",
+         ToString(snapshot.timeframe_minutes > 0 ? snapshot.timeframe_minutes : 1)},
         {"has_bar", snapshot.has_bar ? "1" : "0"},
         {"market_regime", ToString(static_cast<std::int32_t>(snapshot.market_regime))},
+        {"market_state_adx", ToString(snapshot.market_state_adx)},
+        {"market_state_kama_er", ToString(snapshot.market_state_kama_er)},
+        {"market_state_atr_ratio", ToString(snapshot.market_state_atr_ratio)},
+        {"market_state_bars_seen",
+         ToString(static_cast<std::int64_t>(snapshot.market_state_bars_seen))},
+        {"market_state_decision_reason", snapshot.market_state_decision_reason},
         {"ts_ns", ToString(snapshot.ts_ns)},
     };
     if (WriteWithRetry(key, fields)) {
@@ -261,11 +262,10 @@ bool RedisRealtimeStoreClientAdapter::GetOrderEvent(const std::string& client_or
     return true;
 }
 
-bool RedisRealtimeStoreClientAdapter::GetPositionSnapshot(
-    const std::string& account_id,
-    const std::string& instrument_id,
-    PositionDirection direction,
-    PositionSnapshot* out) const {
+bool RedisRealtimeStoreClientAdapter::GetPositionSnapshot(const std::string& account_id,
+                                                          const std::string& instrument_id,
+                                                          PositionDirection direction,
+                                                          PositionSnapshot* out) const {
     if (out == nullptr || account_id.empty() || instrument_id.empty()) {
         return false;
     }
@@ -319,7 +319,8 @@ bool RedisRealtimeStoreClientAdapter::GetStateSnapshot7D(const std::string& inst
         double confidence = 0.0;
         const std::string score_key = std::string(prefix) + "_score";
         const std::string confidence_key = std::string(prefix) + "_confidence";
-        if (!ParseDouble(row, score_key, &score) || !ParseDouble(row, confidence_key, &confidence)) {
+        if (!ParseDouble(row, score_key, &score) ||
+            !ParseDouble(row, confidence_key, &confidence)) {
             return false;
         }
         dim->score = score;
@@ -373,6 +374,15 @@ bool RedisRealtimeStoreClientAdapter::GetStateSnapshot7D(const std::string& inst
     if (ParseInt32(row, "market_regime", &market_regime_value)) {
         snapshot.market_regime = ParseMarketRegimeValue(market_regime_value);
     }
+    (void)ParseDouble(row, "market_state_adx", &snapshot.market_state_adx);
+    (void)ParseDouble(row, "market_state_kama_er", &snapshot.market_state_kama_er);
+    (void)ParseDouble(row, "market_state_atr_ratio", &snapshot.market_state_atr_ratio);
+    std::int64_t market_state_bars_seen = 0;
+    if (ParseInt64(row, "market_state_bars_seen", &market_state_bars_seen) &&
+        market_state_bars_seen >= 0) {
+        snapshot.market_state_bars_seen = static_cast<std::uint64_t>(market_state_bars_seen);
+    }
+    snapshot.market_state_decision_reason = GetOrEmpty(row, "market_state_decision_reason");
     if (!ParseInt64(row, "ts_ns", &snapshot.ts_ns)) {
         return false;
     }
@@ -381,8 +391,7 @@ bool RedisRealtimeStoreClientAdapter::GetStateSnapshot7D(const std::string& inst
 }
 
 bool RedisRealtimeStoreClientAdapter::WriteWithRetry(
-    const std::string& key,
-    const std::unordered_map<std::string, std::string>& fields) const {
+    const std::string& key, const std::unordered_map<std::string, std::string>& fields) const {
     if (client_ == nullptr || key.empty()) {
         return false;
     }
@@ -428,8 +437,7 @@ bool RedisRealtimeStoreClientAdapter::ExpireWithRetry(const std::string& key,
 }
 
 bool RedisRealtimeStoreClientAdapter::ReadHash(
-    const std::string& key,
-    std::unordered_map<std::string, std::string>* out) const {
+    const std::string& key, std::unordered_map<std::string, std::string>* out) const {
     if (client_ == nullptr || out == nullptr || key.empty()) {
         return false;
     }
@@ -455,8 +463,7 @@ std::string RedisRealtimeStoreClientAdapter::OrderStatusToString(OrderStatus sta
     return "REJECTED";
 }
 
-bool RedisRealtimeStoreClientAdapter::ParseOrderStatus(const std::string& text,
-                                                       OrderStatus* out) {
+bool RedisRealtimeStoreClientAdapter::ParseOrderStatus(const std::string& text, OrderStatus* out) {
     if (out == nullptr) {
         return false;
     }
@@ -492,9 +499,8 @@ std::string RedisRealtimeStoreClientAdapter::PositionDirectionToString(
     return direction == PositionDirection::kShort ? "SHORT" : "LONG";
 }
 
-bool RedisRealtimeStoreClientAdapter::ParsePositionDirection(
-    const std::string& text,
-    PositionDirection* out) {
+bool RedisRealtimeStoreClientAdapter::ParsePositionDirection(const std::string& text,
+                                                             PositionDirection* out) {
     if (out == nullptr) {
         return false;
     }
@@ -522,8 +528,7 @@ std::string RedisRealtimeStoreClientAdapter::ToString(double value) {
 }
 
 bool RedisRealtimeStoreClientAdapter::ParseInt32(
-    const std::unordered_map<std::string, std::string>& row,
-    const std::string& key,
+    const std::unordered_map<std::string, std::string>& row, const std::string& key,
     std::int32_t* out) {
     if (out == nullptr) {
         return false;
@@ -541,8 +546,7 @@ bool RedisRealtimeStoreClientAdapter::ParseInt32(
 }
 
 bool RedisRealtimeStoreClientAdapter::ParseInt64(
-    const std::unordered_map<std::string, std::string>& row,
-    const std::string& key,
+    const std::unordered_map<std::string, std::string>& row, const std::string& key,
     std::int64_t* out) {
     if (out == nullptr) {
         return false;
@@ -560,9 +564,7 @@ bool RedisRealtimeStoreClientAdapter::ParseInt64(
 }
 
 bool RedisRealtimeStoreClientAdapter::ParseDouble(
-    const std::unordered_map<std::string, std::string>& row,
-    const std::string& key,
-    double* out) {
+    const std::unordered_map<std::string, std::string>& row, const std::string& key, double* out) {
     if (out == nullptr) {
         return false;
     }
@@ -579,8 +581,7 @@ bool RedisRealtimeStoreClientAdapter::ParseDouble(
 }
 
 std::string RedisRealtimeStoreClientAdapter::GetOrEmpty(
-    const std::unordered_map<std::string, std::string>& row,
-    const std::string& key) {
+    const std::unordered_map<std::string, std::string>& row, const std::string& key) {
     const auto it = row.find(key);
     if (it == row.end()) {
         return "";

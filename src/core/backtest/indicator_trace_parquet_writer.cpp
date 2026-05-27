@@ -27,7 +27,7 @@ constexpr std::int64_t kNanosPerSecond = 1'000'000'000LL;
 
 std::string FormatDateTimeFromEpochNs(EpochNanos ts_ns) {
     const std::time_t seconds = static_cast<std::time_t>(ts_ns / kNanosPerSecond);
-    std::tm tm_value {};
+    std::tm tm_value{};
 #if defined(_WIN32)
     if (gmtime_s(&tm_value, &seconds) != 0) {
         return "";
@@ -141,6 +141,11 @@ bool IndicatorTraceParquetWriter::Close(std::string* error) {
     arrow::DoubleBuilder adx_builder;
     arrow::DoubleBuilder er_builder;
     arrow::UInt8Builder market_regime_builder;
+    arrow::DoubleBuilder market_state_adx_builder;
+    arrow::DoubleBuilder market_state_kama_er_builder;
+    arrow::DoubleBuilder market_state_atr_ratio_builder;
+    arrow::UInt64Builder market_state_bars_seen_builder;
+    arrow::StringBuilder market_state_decision_reason_builder;
 
     for (const IndicatorTraceRow& row : rows_) {
         if (!ExpectArrowStatus(instrument_builder.Append(row.instrument_id),
@@ -149,7 +154,7 @@ bool IndicatorTraceParquetWriter::Close(std::string* error) {
             !ExpectArrowStatus(
                 dt_utc_builder.Append(row.dt_utc.empty() ? FormatDateTimeFromEpochNs(row.ts_ns)
                                                          : row.dt_utc),
-                               "failed appending dt_utc", error) ||
+                "failed appending dt_utc", error) ||
             !ExpectArrowStatus(timeframe_minutes_builder.Append(
                                    row.timeframe_minutes > 0 ? row.timeframe_minutes : 1),
                                "failed appending timeframe_minutes", error) ||
@@ -193,7 +198,17 @@ bool IndicatorTraceParquetWriter::Close(std::string* error) {
         if (!append_optional(row.kama, &kama_builder, "kama") ||
             !append_optional(row.atr, &atr_builder, "atr") ||
             !append_optional(row.adx, &adx_builder, "adx") ||
-            !append_optional(row.er, &er_builder, "er")) {
+            !append_optional(row.er, &er_builder, "er") ||
+            !append_optional(row.market_state_adx, &market_state_adx_builder, "market_state_adx") ||
+            !append_optional(row.market_state_kama_er, &market_state_kama_er_builder,
+                             "market_state_kama_er") ||
+            !append_optional(row.market_state_atr_ratio, &market_state_atr_ratio_builder,
+                             "market_state_atr_ratio") ||
+            !ExpectArrowStatus(market_state_bars_seen_builder.Append(row.market_state_bars_seen),
+                               "failed appending market_state_bars_seen", error) ||
+            !ExpectArrowStatus(
+                market_state_decision_reason_builder.Append(row.market_state_decision_reason),
+                "failed appending market_state_decision_reason", error)) {
             return false;
         }
     }
@@ -217,6 +232,11 @@ bool IndicatorTraceParquetWriter::Close(std::string* error) {
     std::shared_ptr<arrow::Array> adx_array;
     std::shared_ptr<arrow::Array> er_array;
     std::shared_ptr<arrow::Array> market_regime_array;
+    std::shared_ptr<arrow::Array> market_state_adx_array;
+    std::shared_ptr<arrow::Array> market_state_kama_er_array;
+    std::shared_ptr<arrow::Array> market_state_atr_ratio_array;
+    std::shared_ptr<arrow::Array> market_state_bars_seen_array;
+    std::shared_ptr<arrow::Array> market_state_decision_reason_array;
     if (!FinishArray(&instrument_builder, "instrument_id", &instrument_array, error) ||
         !FinishArray(&ts_ns_builder, "ts_ns", &ts_ns_array, error) ||
         !FinishArray(&dt_utc_builder, "dt_utc", &dt_utc_array, error) ||
@@ -241,7 +261,17 @@ bool IndicatorTraceParquetWriter::Close(std::string* error) {
         !FinishArray(&atr_builder, "atr", &atr_array, error) ||
         !FinishArray(&adx_builder, "adx", &adx_array, error) ||
         !FinishArray(&er_builder, "er", &er_array, error) ||
-        !FinishArray(&market_regime_builder, "market_regime", &market_regime_array, error)) {
+        !FinishArray(&market_regime_builder, "market_regime", &market_regime_array, error) ||
+        !FinishArray(&market_state_adx_builder, "market_state_adx", &market_state_adx_array,
+                     error) ||
+        !FinishArray(&market_state_kama_er_builder, "market_state_kama_er",
+                     &market_state_kama_er_array, error) ||
+        !FinishArray(&market_state_atr_ratio_builder, "market_state_atr_ratio",
+                     &market_state_atr_ratio_array, error) ||
+        !FinishArray(&market_state_bars_seen_builder, "market_state_bars_seen",
+                     &market_state_bars_seen_array, error) ||
+        !FinishArray(&market_state_decision_reason_builder, "market_state_decision_reason",
+                     &market_state_decision_reason_array, error)) {
         return false;
     }
 
@@ -265,16 +295,37 @@ bool IndicatorTraceParquetWriter::Close(std::string* error) {
         arrow::field("adx", arrow::float64(), true),
         arrow::field("er", arrow::float64(), true),
         arrow::field("market_regime", arrow::uint8(), false),
+        arrow::field("market_state_adx", arrow::float64(), true),
+        arrow::field("market_state_kama_er", arrow::float64(), true),
+        arrow::field("market_state_atr_ratio", arrow::float64(), true),
+        arrow::field("market_state_bars_seen", arrow::uint64(), false),
+        arrow::field("market_state_decision_reason", arrow::utf8(), false),
     });
 
-    auto table =
-        arrow::Table::Make(schema,
-                           {instrument_array, ts_ns_array, dt_utc_array, timeframe_minutes_array,
-                            bar_open_array, bar_high_array, bar_low_array, bar_close_array,
-                            bar_volume_array, analysis_bar_open_array, analysis_bar_high_array,
-                            analysis_bar_low_array, analysis_bar_close_array,
-                            analysis_price_offset_array, kama_array, atr_array, adx_array,
-                            er_array, market_regime_array});
+    auto table = arrow::Table::Make(schema, {instrument_array,
+                                             ts_ns_array,
+                                             dt_utc_array,
+                                             timeframe_minutes_array,
+                                             bar_open_array,
+                                             bar_high_array,
+                                             bar_low_array,
+                                             bar_close_array,
+                                             bar_volume_array,
+                                             analysis_bar_open_array,
+                                             analysis_bar_high_array,
+                                             analysis_bar_low_array,
+                                             analysis_bar_close_array,
+                                             analysis_price_offset_array,
+                                             kama_array,
+                                             atr_array,
+                                             adx_array,
+                                             er_array,
+                                             market_regime_array,
+                                             market_state_adx_array,
+                                             market_state_kama_er_array,
+                                             market_state_atr_ratio_array,
+                                             market_state_bars_seen_array,
+                                             market_state_decision_reason_array});
 
     const std::filesystem::path output_path(output_path_);
     const std::filesystem::path tmp_path(output_path_ + ".tmp");

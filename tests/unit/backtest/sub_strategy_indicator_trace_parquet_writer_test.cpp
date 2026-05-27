@@ -129,6 +129,11 @@ TEST(SubStrategyIndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicator
     row1.adx = 25.4;
     row1.er = 0.55;
     row1.market_regime = MarketRegime::kWeakTrend;
+    row1.market_state_adx = 25.4;
+    row1.market_state_kama_er = 0.55;
+    row1.market_state_atr_ratio = 0.012;
+    row1.market_state_bars_seen = 8;
+    row1.market_state_decision_reason = "adx_weak";
     row1.dt_utc = "2023-11-14 22:14:20.123";
     ASSERT_TRUE(writer.Append(row1, &error)) << error;
 
@@ -146,11 +151,11 @@ TEST(SubStrategyIndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicator
     ASSERT_TRUE(parquet_reader->ReadTable(&table).ok());
     ASSERT_NE(table, nullptr);
     EXPECT_EQ(table->num_rows(), 2);
-    ASSERT_EQ(table->num_columns(), 23);
+    ASSERT_EQ(table->num_columns(), 28);
 
     const std::shared_ptr<arrow::Schema> schema = table->schema();
     ASSERT_NE(schema, nullptr);
-    ASSERT_EQ(schema->num_fields(), 23);
+    ASSERT_EQ(schema->num_fields(), 28);
     EXPECT_EQ(schema->field(2)->name(), "dt_utc");
     EXPECT_EQ(schema->field(3)->name(), "trading_day");
     EXPECT_EQ(schema->field(4)->name(), "action_day");
@@ -160,6 +165,8 @@ TEST(SubStrategyIndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicator
     EXPECT_EQ(schema->field(18)->name(), "kama");
     EXPECT_EQ(schema->field(19)->name(), "atr");
     EXPECT_EQ(schema->field(22)->name(), "market_regime");
+    EXPECT_EQ(schema->field(23)->name(), "market_state_adx");
+    EXPECT_EQ(schema->field(27)->name(), "market_state_decision_reason");
 
     const auto dt_utc_column = table->GetColumnByName("dt_utc");
     ASSERT_NE(dt_utc_column, nullptr);
@@ -178,6 +185,9 @@ TEST(SubStrategyIndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicator
     const auto stop_loss_price_column = table->GetColumnByName("stop_loss_price");
     const auto take_profit_price_column = table->GetColumnByName("take_profit_price");
     const auto regime_column = table->GetColumnByName("market_regime");
+    const auto market_state_adx_column = table->GetColumnByName("market_state_adx");
+    const auto market_state_bars_seen_column = table->GetColumnByName("market_state_bars_seen");
+    const auto market_state_reason_column = table->GetColumnByName("market_state_decision_reason");
     ASSERT_NE(timeframe_column, nullptr);
     ASSERT_NE(strategy_id_column, nullptr);
     ASSERT_NE(analysis_offset_column, nullptr);
@@ -186,8 +196,10 @@ TEST(SubStrategyIndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicator
     ASSERT_EQ(stop_loss_price_column, nullptr);
     ASSERT_EQ(take_profit_price_column, nullptr);
     ASSERT_NE(regime_column, nullptr);
-    const auto timeframe =
-        std::static_pointer_cast<arrow::Int32Array>(timeframe_column->chunk(0));
+    ASSERT_NE(market_state_adx_column, nullptr);
+    ASSERT_NE(market_state_bars_seen_column, nullptr);
+    ASSERT_NE(market_state_reason_column, nullptr);
+    const auto timeframe = std::static_pointer_cast<arrow::Int32Array>(timeframe_column->chunk(0));
     const auto strategy_id =
         std::static_pointer_cast<arrow::StringArray>(strategy_id_column->chunk(0));
     const auto analysis_offset =
@@ -195,6 +207,12 @@ TEST(SubStrategyIndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicator
     const auto kama = std::static_pointer_cast<arrow::DoubleArray>(kama_column->chunk(0));
     const auto atr = std::static_pointer_cast<arrow::DoubleArray>(atr_column->chunk(0));
     const auto regime = std::static_pointer_cast<arrow::StringArray>(regime_column->chunk(0));
+    const auto market_state_adx =
+        std::static_pointer_cast<arrow::DoubleArray>(market_state_adx_column->chunk(0));
+    const auto market_state_bars_seen =
+        std::static_pointer_cast<arrow::UInt64Array>(market_state_bars_seen_column->chunk(0));
+    const auto market_state_reason =
+        std::static_pointer_cast<arrow::StringArray>(market_state_reason_column->chunk(0));
 
     EXPECT_EQ(timeframe->Value(0), 1);
     EXPECT_EQ(timeframe->Value(1), 1);
@@ -206,6 +224,10 @@ TEST(SubStrategyIndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicator
     EXPECT_DOUBLE_EQ(atr->Value(1), 1.2);
     EXPECT_EQ(regime->GetString(0), "kUnknown");
     EXPECT_EQ(regime->GetString(1), "kWeakTrend");
+    EXPECT_TRUE(market_state_adx->IsNull(0));
+    EXPECT_DOUBLE_EQ(market_state_adx->Value(1), 25.4);
+    EXPECT_EQ(market_state_bars_seen->Value(1), 8U);
+    EXPECT_EQ(market_state_reason->GetString(1), "adx_weak");
 
     std::filesystem::remove(path, ec);
 #endif

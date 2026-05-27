@@ -109,7 +109,8 @@ int main(int argc, char** argv) {
     }
     const std::string csv_path = detail::GetArgAny(args, {"csv_path", "csv-path", "csv"});
     if (!csv_path.empty() && dataset_root.empty() && spec_file.empty()) {
-        std::cerr << "factor_eval_cli: csv_path is deprecated, use dataset_root for parquet replay\n";
+        std::cerr
+            << "factor_eval_cli: csv_path is deprecated, use dataset_root for parquet replay\n";
         return 2;
     }
 
@@ -209,11 +210,9 @@ int main(int argc, char** argv) {
         << "\"kama_er_weak_lower\":"
         << detail::FormatDouble(spec.detector_config.kama_er_weak_lower) << ","
         << "\"atr_period\":" << spec.detector_config.atr_period << ","
-        << "\"atr_flat_ratio\":" << detail::FormatDouble(spec.detector_config.atr_flat_ratio) << ","
         << "\"require_adx_for_trend\":"
         << (spec.detector_config.require_adx_for_trend ? "true" : "false") << ","
-        << "\"use_kama_er\":" << (spec.detector_config.use_kama_er ? "true" : "false") << ","
-        << "\"min_bars_for_flat\":" << spec.detector_config.min_bars_for_flat << "},"
+        << "\"use_kama_er\":" << (spec.detector_config.use_kama_er ? "true" : "false") << "},"
         << "\"metrics\":{" << "\"total_pnl\":" << detail::FormatDouble(total_pnl) << ","
         << "\"max_drawdown\":" << detail::FormatDouble(max_drawdown) << ","
         << "\"win_rate\":" << detail::FormatDouble(win_rate) << ","
@@ -238,46 +237,45 @@ int main(int argc, char** argv) {
     }
 
     std::ostringstream result_json;
-    result_json
-        << "{\n"
-        << "  \"run_id\": \"" << JsonEscape(backtest_result.run_id) << "\",\n"
-        << "  \"factor_id\": \"" << JsonEscape(factor_id) << "\",\n"
-        << "  \"template\": \"" << JsonEscape(template_name) << "\",\n"
-        << "  \"spec_signature\": \"" << JsonEscape(backtest_result.input_signature) << "\",\n"
-        << "  \"metrics\": {\n"
-        << "    \"total_pnl\": " << detail::FormatDouble(total_pnl) << ",\n"
-        << "    \"max_drawdown\": " << detail::FormatDouble(max_drawdown) << ",\n"
-        << "    \"win_rate\": " << detail::FormatDouble(win_rate) << ",\n"
-        << "    \"fill_rate\": " << detail::FormatDouble(fill_rate) << ",\n"
-        << "    \"capital_efficiency\": " << detail::FormatDouble(capital_efficiency) << "\n"
-        << "  },\n"
-        << "  \"detector_config\": \"" << JsonEscape(spec.detector_config_path) << "\",\n"
-        << "  \"market_state_detector\": {\n"
-        << "    \"adx_period\": " << spec.detector_config.adx_period << ",\n"
-        << "    \"adx_strong_threshold\": "
-        << detail::FormatDouble(spec.detector_config.adx_strong_threshold) << ",\n"
-        << "    \"adx_weak_lower\": " << detail::FormatDouble(spec.detector_config.adx_weak_lower)
-        << ",\n"
-        << "    \"adx_weak_upper\": " << detail::FormatDouble(spec.detector_config.adx_weak_upper)
-        << ",\n"
-        << "    \"kama_er_period\": " << spec.detector_config.kama_er_period << ",\n"
-        << "    \"kama_fast_period\": " << spec.detector_config.kama_fast_period << ",\n"
-        << "    \"kama_slow_period\": " << spec.detector_config.kama_slow_period << ",\n"
-        << "    \"kama_er_strong\": " << detail::FormatDouble(spec.detector_config.kama_er_strong)
-        << ",\n"
-        << "    \"kama_er_weak_lower\": "
-        << detail::FormatDouble(spec.detector_config.kama_er_weak_lower) << ",\n"
-        << "    \"atr_period\": " << spec.detector_config.atr_period << ",\n"
-        << "    \"atr_flat_ratio\": " << detail::FormatDouble(spec.detector_config.atr_flat_ratio)
-        << ",\n"
-        << "    \"require_adx_for_trend\": "
-        << (spec.detector_config.require_adx_for_trend ? "true" : "false") << ",\n"
-        << "    \"use_kama_er\": " << (spec.detector_config.use_kama_er ? "true" : "false") << ",\n"
-        << "    \"min_bars_for_flat\": " << spec.detector_config.min_bars_for_flat << "\n"
-        << "  },\n"
-        << "  \"tracker_jsonl\": \"" << JsonEscape(output_jsonl) << "\",\n"
-        << "  \"status\": \"ok\"\n"
-        << "}\n";
+    result_json << "{\n"
+                << "  \"run_id\": \"" << JsonEscape(backtest_result.run_id) << "\",\n"
+                << "  \"factor_id\": \"" << JsonEscape(factor_id) << "\",\n"
+                << "  \"template\": \"" << JsonEscape(template_name) << "\",\n"
+                << "  \"spec_signature\": \"" << JsonEscape(backtest_result.input_signature)
+                << "\",\n"
+                << "  \"metrics\": {\n"
+                << "    \"total_pnl\": " << detail::FormatDouble(total_pnl) << ",\n"
+                << "    \"max_drawdown\": " << detail::FormatDouble(max_drawdown) << ",\n"
+                << "    \"win_rate\": " << detail::FormatDouble(win_rate) << ",\n"
+                << "    \"fill_rate\": " << detail::FormatDouble(fill_rate) << ",\n"
+                << "    \"capital_efficiency\": " << detail::FormatDouble(capital_efficiency)
+                << "\n"
+                << "  },\n"
+                << "  \"detector_config\": \"" << JsonEscape(spec.detector_config_path) << "\",\n"
+                << "  \"market_state_detector\": {\n"
+                << "    \"adx_period\": " << spec.detector_config.adx_period << ",\n"
+                << "    \"adx_strong_threshold\": "
+                << detail::FormatDouble(spec.detector_config.adx_strong_threshold) << ",\n"
+                << "    \"adx_weak_lower\": "
+                << detail::FormatDouble(spec.detector_config.adx_weak_lower) << ",\n"
+                << "    \"adx_weak_upper\": "
+                << detail::FormatDouble(spec.detector_config.adx_weak_upper) << ",\n"
+                << "    \"kama_er_period\": " << spec.detector_config.kama_er_period << ",\n"
+                << "    \"kama_fast_period\": " << spec.detector_config.kama_fast_period << ",\n"
+                << "    \"kama_slow_period\": " << spec.detector_config.kama_slow_period << ",\n"
+                << "    \"kama_er_strong\": "
+                << detail::FormatDouble(spec.detector_config.kama_er_strong) << ",\n"
+                << "    \"kama_er_weak_lower\": "
+                << detail::FormatDouble(spec.detector_config.kama_er_weak_lower) << ",\n"
+                << "    \"atr_period\": " << spec.detector_config.atr_period << ",\n"
+                << "    \"require_adx_for_trend\": "
+                << (spec.detector_config.require_adx_for_trend ? "true" : "false") << ",\n"
+                << "    \"use_kama_er\": " << (spec.detector_config.use_kama_er ? "true" : "false")
+                << "\n"
+                << "  },\n"
+                << "  \"tracker_jsonl\": \"" << JsonEscape(output_jsonl) << "\",\n"
+                << "  \"status\": \"ok\"\n"
+                << "}\n";
 
     if (!WriteTextFile(output_json, result_json.str(), &error)) {
         std::cerr << "factor_eval_cli: " << error << '\n';

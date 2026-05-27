@@ -19,7 +19,6 @@ TEST(MarketStateDetectorTest, ReturnsUnknownUntilIndicatorsReady) {
     config.adx_period = 3;
     config.atr_period = 3;
     config.kama_er_period = 3;
-    config.min_bars_for_flat = 1;
     MarketStateDetector detector(config);
 
     detector.Update(100.5, 99.5, 100.0);
@@ -27,37 +26,19 @@ TEST(MarketStateDetectorTest, ReturnsUnknownUntilIndicatorsReady) {
     detector.Update(102.5, 101.5, 102.0);
     detector.Update(103.5, 102.5, 103.0);
     EXPECT_EQ(detector.GetRegime(), MarketRegime::kUnknown);
+    EXPECT_EQ(detector.GetDecisionReason(), "adx_warmup");
 
     detector.Update(104.5, 103.5, 104.0);
     EXPECT_NE(detector.GetRegime(), MarketRegime::kUnknown);
     ASSERT_TRUE(detector.GetADX().has_value());
+    EXPECT_GT(detector.GetBarsSeen(), 0U);
 }
 
-TEST(MarketStateDetectorTest, DetectsFlatRegimeWhenAtrRatioIsTiny) {
+TEST(MarketStateDetectorTest, DoesNotUseAtrRatioAsFlatOverride) {
     MarketStateDetectorConfig config;
     config.adx_period = 3;
     config.atr_period = 3;
     config.kama_er_period = 3;
-    config.atr_flat_ratio = 0.001;
-    config.min_bars_for_flat = 3;
-    MarketStateDetector detector(config);
-
-    for (int i = 0; i < 10; ++i) {
-        detector.Update(100.0, 100.0, 100.0);
-    }
-
-    EXPECT_EQ(detector.GetRegime(), MarketRegime::kFlat);
-    ASSERT_TRUE(detector.GetATRRatio().has_value());
-    EXPECT_NEAR(*detector.GetATRRatio(), 0.0, 1e-12);
-}
-
-TEST(MarketStateDetectorTest, CanDisableFlatOverrideForSimNowCanary) {
-    MarketStateDetectorConfig config;
-    config.adx_period = 3;
-    config.atr_period = 3;
-    config.kama_er_period = 3;
-    config.atr_flat_ratio = 0.0;
-    config.min_bars_for_flat = 3;
     MarketStateDetector detector(config);
 
     for (int i = 0; i < 10; ++i) {
@@ -65,6 +46,7 @@ TEST(MarketStateDetectorTest, CanDisableFlatOverrideForSimNowCanary) {
     }
 
     EXPECT_NE(detector.GetRegime(), MarketRegime::kFlat);
+    EXPECT_NE(detector.GetDecisionReason(), "flat_override");
     ASSERT_TRUE(detector.GetATRRatio().has_value());
     EXPECT_NEAR(*detector.GetATRRatio(), 0.0, 1e-12);
 }
@@ -76,9 +58,7 @@ TEST(MarketStateDetectorTest, CanUseKamaEfficiencyBeforeAdxForSimNowCanary) {
     config.kama_er_period = 3;
     config.kama_er_strong = 0.6;
     config.kama_er_weak_lower = 0.3;
-    config.atr_flat_ratio = 0.0;
     config.require_adx_for_trend = false;
-    config.min_bars_for_flat = 1;
     MarketStateDetector detector(config);
 
     for (int i = 0; i < 8; ++i) {
@@ -89,6 +69,38 @@ TEST(MarketStateDetectorTest, CanUseKamaEfficiencyBeforeAdxForSimNowCanary) {
     EXPECT_FALSE(detector.GetADX().has_value());
     ASSERT_TRUE(detector.GetKAMAER().has_value());
     EXPECT_EQ(detector.GetRegime(), MarketRegime::kStrongTrend);
+    EXPECT_EQ(detector.GetDecisionReason(), "kama_strong");
+}
+
+TEST(MarketStateDetectorTest, ReportsDecisionReasonForAdxStrongAndWeakTrend) {
+    MarketStateDetectorConfig strong_cfg;
+    strong_cfg.adx_period = 3;
+    strong_cfg.atr_period = 3;
+    strong_cfg.kama_er_period = 3;
+    strong_cfg.adx_strong_threshold = 30.0;
+    strong_cfg.adx_weak_lower = 20.0;
+    strong_cfg.adx_weak_upper = 30.0;
+    strong_cfg.use_kama_er = false;
+
+    MarketStateDetector strong_detector(strong_cfg);
+    for (int i = 0; i < 12; ++i) {
+        const double close = 100.0 + static_cast<double>(i);
+        strong_detector.Update(close + 1.0, close - 1.0, close);
+    }
+    EXPECT_EQ(strong_detector.GetRegime(), MarketRegime::kStrongTrend);
+    EXPECT_EQ(strong_detector.GetDecisionReason(), "adx_strong");
+
+    MarketStateDetectorConfig weak_cfg = strong_cfg;
+    weak_cfg.adx_strong_threshold = 150.0;
+    weak_cfg.adx_weak_lower = 1.0;
+    weak_cfg.adx_weak_upper = 150.0;
+    MarketStateDetector weak_detector(weak_cfg);
+    for (int i = 0; i < 12; ++i) {
+        const double close = 100.0 + static_cast<double>(i);
+        weak_detector.Update(close + 1.0, close - 1.0, close);
+    }
+    EXPECT_EQ(weak_detector.GetRegime(), MarketRegime::kWeakTrend);
+    EXPECT_EQ(weak_detector.GetDecisionReason(), "adx_weak");
 }
 
 TEST(MarketStateDetectorTest, DetectsStrongTrendAndRanging) {
@@ -101,8 +113,6 @@ TEST(MarketStateDetectorTest, DetectsStrongTrendAndRanging) {
     strong_cfg.adx_weak_upper = 30.0;
     strong_cfg.kama_er_strong = 0.6;
     strong_cfg.kama_er_weak_lower = 0.3;
-    strong_cfg.atr_flat_ratio = 0.001;
-    strong_cfg.min_bars_for_flat = 1;
 
     MarketStateDetector strong_detector(strong_cfg);
     for (int i = 0; i < 12; ++i) {
@@ -127,7 +137,6 @@ TEST(MarketStateDetectorTest, IgnoresNonFiniteInputAndSupportsReset) {
     config.adx_period = 3;
     config.atr_period = 3;
     config.kama_er_period = 3;
-    config.min_bars_for_flat = 1;
 
     MarketStateDetector detector(config);
     detector.Update(101.0, 99.0, 100.0);
@@ -138,12 +147,15 @@ TEST(MarketStateDetectorTest, IgnoresNonFiniteInputAndSupportsReset) {
 
     const MarketRegime before = detector.GetRegime();
     const auto adx_before = detector.GetADX();
+    const std::string reason_before = detector.GetDecisionReason();
     detector.Update(std::numeric_limits<double>::quiet_NaN(), 100.0, 100.0);
     EXPECT_EQ(detector.GetRegime(), before);
     EXPECT_EQ(detector.GetADX(), adx_before);
+    EXPECT_EQ(detector.GetDecisionReason(), reason_before);
 
     detector.Reset();
     EXPECT_EQ(detector.GetRegime(), MarketRegime::kUnknown);
+    EXPECT_EQ(detector.GetDecisionReason(), "adx_warmup");
     EXPECT_FALSE(detector.GetADX().has_value());
     EXPECT_FALSE(detector.GetKAMA().has_value());
     EXPECT_FALSE(detector.GetATR().has_value());
@@ -156,7 +168,6 @@ TEST(MarketStateDetectorTest, ExposesKamaAndAtrWhenReady) {
     config.adx_period = 3;
     config.atr_period = 3;
     config.kama_er_period = 3;
-    config.min_bars_for_flat = 1;
 
     MarketStateDetector detector(config);
     EXPECT_FALSE(detector.GetKAMA().has_value());

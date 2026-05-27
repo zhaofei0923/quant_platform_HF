@@ -290,6 +290,7 @@ void WriteDetectorState(TimeframeStateFanout::PersistenceState* out, const std::
     (*out)[prefix + ".has_last_close"] = FormatBool(state.has_last_close);
     (*out)[prefix + ".bars_seen"] = std::to_string(state.bars_seen);
     (*out)[prefix + ".current_regime"] = std::to_string(static_cast<int>(state.current_regime));
+    (*out)[prefix + ".decision_reason"] = state.decision_reason;
 }
 
 bool ReadDetectorState(const TimeframeStateFanout::PersistenceState& state,
@@ -313,6 +314,8 @@ bool ReadDetectorState(const TimeframeStateFanout::PersistenceState& state,
     }
     out->bars_seen = bars_seen;
     out->current_regime = static_cast<MarketRegime>(regime_value);
+    const auto decision_reason = state.find(prefix + ".decision_reason");
+    out->decision_reason = decision_reason == state.end() ? "adx_warmup" : decision_reason->second;
     return true;
 }
 
@@ -368,9 +371,11 @@ bool ReadBar(const TimeframeStateFanout::PersistenceState& state, const std::str
 
 }  // namespace
 
-TimeframeStateFanout::TimeframeStateFanout(std::vector<std::int32_t> timeframes,
-                                           MarketStateDetectorConfig detector_config)
-    : detector_config_(detector_config) {
+TimeframeStateFanout::TimeframeStateFanout(
+    std::vector<std::int32_t> timeframes, MarketStateDetectorConfig detector_config,
+    MarketStateDetectorConfigByProduct detector_config_by_product)
+    : detector_config_(detector_config),
+      detector_config_by_product_(std::move(detector_config_by_product)) {
     std::sort(timeframes.begin(), timeframes.end());
     timeframes.erase(std::remove_if(timeframes.begin(), timeframes.end(),
                                     [](std::int32_t tf) { return tf <= 1; }),
@@ -452,6 +457,20 @@ void TimeframeStateFanout::ResetInstrument(const std::string& instrument_id) {
     for (auto it = detectors_.begin(); it != detectors_.end();) {
         if (it->first.rfind(prefix, 0) == 0) {
             it = detectors_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void TimeframeStateFanout::ResetInstrumentBuckets(const std::string& instrument_id) {
+    if (instrument_id.empty()) {
+        return;
+    }
+    const std::string prefix = instrument_id + "|";
+    for (auto it = buckets_.begin(); it != buckets_.end();) {
+        if (it->first.rfind(prefix, 0) == 0) {
+            it = buckets_.erase(it);
         } else {
             ++it;
         }
@@ -570,7 +589,10 @@ bool TimeframeStateFanout::LoadState(const PersistenceState& state, std::string*
         if (!ReadDetectorState(state, prefix + ".state", &detector_state, error)) {
             return false;
         }
-        MarketStateDetector detector(detector_config_);
+        const std::string instrument_id = key->substr(0, split);
+        const MarketStateDetectorConfig& detector_config = ResolveMarketStateDetectorConfig(
+            instrument_id, detector_config_, detector_config_by_product_);
+        MarketStateDetector detector(detector_config);
         if (!detector.ImportState(detector_state)) {
             SetError(error, "failed to import detector state for key: " + *key);
             return false;
@@ -658,8 +680,7 @@ void TimeframeStateFanout::MergeBarIntoBucket(const BarSnapshot& bar, Bucket* bu
 
 TimeframeStateEmission TimeframeStateFanout::BuildEmission(const BarSnapshot& bar,
                                                            std::int32_t timeframe_minutes) {
-    const std::string key = BuildKey(bar.instrument_id, timeframe_minutes);
-    MarketStateDetector& detector = DetectorFor(key);
+    MarketStateDetector& detector = DetectorFor(bar.instrument_id, timeframe_minutes);
     detector.Update(bar.analysis_high, bar.analysis_low, bar.analysis_close);
 
     StateSnapshot7D state;
@@ -676,7 +697,7 @@ TimeframeStateEmission TimeframeStateFanout::BuildEmission(const BarSnapshot& ba
     state.analysis_price_offset = bar.analysis_price_offset;
     state.bar_volume = static_cast<double>(bar.volume);
     state.has_bar = true;
-    state.market_regime = detector.GetRegime();
+    PopulateMarketStateDiagnostics(detector, &state);
     state.ts_ns = bar.ts_ns;
 
     TimeframeStateEmission emission;
@@ -686,12 +707,16 @@ TimeframeStateEmission TimeframeStateFanout::BuildEmission(const BarSnapshot& ba
     return emission;
 }
 
-MarketStateDetector& TimeframeStateFanout::DetectorFor(const std::string& key) {
+MarketStateDetector& TimeframeStateFanout::DetectorFor(const std::string& instrument_id,
+                                                       std::int32_t timeframe_minutes) {
+    const std::string key = BuildKey(instrument_id, timeframe_minutes);
     auto it = detectors_.find(key);
     if (it != detectors_.end()) {
         return it->second;
     }
-    auto [inserted, _] = detectors_.emplace(key, MarketStateDetector(detector_config_));
+    const MarketStateDetectorConfig& detector_config = ResolveMarketStateDetectorConfig(
+        instrument_id, detector_config_, detector_config_by_product_);
+    auto [inserted, _] = detectors_.emplace(key, MarketStateDetector(detector_config));
     return inserted->second;
 }
 

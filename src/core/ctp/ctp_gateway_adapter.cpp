@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "quant_hft/core/structured_log.h"
 #include "quant_hft/monitoring/metric_registry.h"
 
 #if defined(QUANT_HFT_ENABLE_CTP_REAL_API) && QUANT_HFT_ENABLE_CTP_REAL_API
@@ -2060,6 +2061,14 @@ bool CtpGatewayAdapter::PlaceOrder(const OrderIntent& intent) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!connected_ || (runtime_config_.enable_real_api && !healthy_)) {
+            EmitStructuredLog(&runtime_config_, "ctp_gateway_adapter", "warn",
+                              "ctp_order_submit_rejected",
+                              {{"reason", "gateway_not_ready"},
+                               {"connected", connected_ ? "true" : "false"},
+                               {"healthy", healthy_ ? "true" : "false"},
+                               {"client_order_id", intent.client_order_id},
+                               {"instrument_id", intent.instrument_id},
+                               {"strategy_id", intent.strategy_id}});
             return false;
         }
 
@@ -2072,6 +2081,12 @@ bool CtpGatewayAdapter::PlaceOrder(const OrderIntent& intent) {
 
         if (use_real) {
             if (td_api == nullptr) {
+                EmitStructuredLog(&runtime_config_, "ctp_gateway_adapter", "warn",
+                                  "ctp_order_submit_rejected",
+                                  {{"reason", "td_api_null"},
+                                   {"client_order_id", intent.client_order_id},
+                                   {"instrument_id", intent.instrument_id},
+                                   {"strategy_id", intent.strategy_id}});
                 return false;
             }
 
@@ -2097,7 +2112,17 @@ bool CtpGatewayAdapter::PlaceOrder(const OrderIntent& intent) {
             req.MinVolume = 1;
 
             const int request_id = NextRequestIdLocked();
-            if (td_api->ReqOrderInsert(&req, request_id) != 0) {
+            const int submit_ret = td_api->ReqOrderInsert(&req, request_id);
+            if (submit_ret != 0) {
+                EmitStructuredLog(&runtime_config_, "ctp_gateway_adapter", "warn",
+                                  "ctp_order_submit_rejected",
+                                  {{"reason", "req_order_insert_failed"},
+                                   {"return_code", std::to_string(submit_ret)},
+                                   {"request_id", std::to_string(request_id)},
+                                   {"order_ref", order_ref},
+                                   {"client_order_id", intent.client_order_id},
+                                   {"instrument_id", intent.instrument_id},
+                                   {"strategy_id", intent.strategy_id}});
                 return false;
             }
 
@@ -2112,10 +2137,23 @@ bool CtpGatewayAdapter::PlaceOrder(const OrderIntent& intent) {
             meta.total_volume = intent.volume;
             client_order_meta_[intent.client_order_id] = meta;
             order_ref_to_client_id_[order_ref] = intent.client_order_id;
+            EmitStructuredLog(&runtime_config_, "ctp_gateway_adapter", "info",
+                              "ctp_order_submitted",
+                              {{"request_id", std::to_string(request_id)},
+                               {"order_ref", order_ref},
+                               {"client_order_id", intent.client_order_id},
+                               {"instrument_id", intent.instrument_id},
+                               {"strategy_id", intent.strategy_id}});
             return true;
         }
 #else
         if (use_real) {
+            EmitStructuredLog(&runtime_config_, "ctp_gateway_adapter", "warn",
+                              "ctp_order_submit_rejected",
+                              {{"reason", "real_api_unavailable"},
+                               {"client_order_id", intent.client_order_id},
+                               {"instrument_id", intent.instrument_id},
+                               {"strategy_id", intent.strategy_id}});
             return false;
         }
 #endif

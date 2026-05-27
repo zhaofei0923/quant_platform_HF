@@ -50,15 +50,13 @@ struct CsvValidationCandidate {
 
 std::string Trim(std::string text) {
     const auto not_space = [](unsigned char ch) { return std::isspace(ch) == 0; };
-    text.erase(text.begin(),
-               std::find_if(text.begin(), text.end(), [&](char ch) {
+    text.erase(text.begin(), std::find_if(text.begin(), text.end(), [&](char ch) {
                    return not_space(static_cast<unsigned char>(ch));
                }));
-    text.erase(
-        std::find_if(text.rbegin(), text.rend(), [&](char ch) {
-            return not_space(static_cast<unsigned char>(ch));
-        }).base(),
-        text.end());
+    text.erase(std::find_if(text.rbegin(), text.rend(),
+                            [&](char ch) { return not_space(static_cast<unsigned char>(ch)); })
+                   .base(),
+               text.end());
     return text;
 }
 
@@ -285,9 +283,7 @@ bool EndsWithTrialId(const std::string& name, const std::string& trial_id) {
     return name.compare(offset, trial_id.size(), trial_id) == 0 && name[offset - 1] == '_';
 }
 
-bool ParseCsvRecord(const std::string& line,
-                    std::vector<std::string>* fields,
-                    std::string* error) {
+bool ParseCsvRecord(const std::string& line, std::vector<std::string>* fields, std::string* error) {
     if (fields == nullptr) {
         if (error != nullptr) {
             *error = "csv fields output is null";
@@ -365,8 +361,8 @@ bool ParseCsvValidationCandidates(const std::string& csv_text,
         std::string parse_error;
         if (!ParseCsvRecord(line, &fields, &parse_error)) {
             if (error != nullptr) {
-                *error = "failed parsing csv line " + std::to_string(line_number) + ": " +
-                         parse_error;
+                *error =
+                    "failed parsing csv line " + std::to_string(line_number) + ": " + parse_error;
             }
             return false;
         }
@@ -377,8 +373,7 @@ bool ParseCsvValidationCandidates(const std::string& csv_text,
             }
             for (const std::string& required :
                  {std::string("Rank"), std::string("Trial ID"), std::string("OOS_Calmar"),
-                  std::string("OOS_MaxDD"), std::string("OOS_Sharpe"),
-                  std::string("OOS_Status")}) {
+                  std::string("OOS_MaxDD"), std::string("OOS_Sharpe"), std::string("OOS_Status")}) {
                 if (header_index.find(required) == header_index.end()) {
                     if (error != nullptr) {
                         *error = "csv missing required column: " + required;
@@ -424,8 +419,7 @@ bool IsSuccessfulValidationStatus(std::string_view status) {
     return status == "completed" || status == "cached";
 }
 
-bool IsBetterCsvCandidate(const CsvValidationCandidate& left,
-                          const CsvValidationCandidate& right) {
+bool IsBetterCsvCandidate(const CsvValidationCandidate& left, const CsvValidationCandidate& right) {
     const double left_calmar = MetricSortValue(left.oos_calmar);
     const double right_calmar = MetricSortValue(right.oos_calmar);
     if (left_calmar != right_calmar) {
@@ -450,8 +444,7 @@ bool IsBetterCsvCandidate(const CsvValidationCandidate& left,
 }
 
 bool SelectRecommendedCandidateFromCsv(const std::string& csv_path,
-                                       CsvValidationCandidate* selected,
-                                       std::string* error) {
+                                       CsvValidationCandidate* selected, std::string* error) {
     if (selected == nullptr) {
         if (error != nullptr) {
             *error = "selected csv candidate output is null";
@@ -490,8 +483,7 @@ bool SelectRecommendedCandidateFromCsv(const std::string& csv_path,
     return true;
 }
 
-bool ParseTrainReport(const std::string& json_text,
-                      std::vector<RankedTrial>* ranked_trials,
+bool ParseTrainReport(const std::string& json_text, std::vector<RankedTrial>* ranked_trials,
                       std::string* error) {
     if (ranked_trials == nullptr) {
         if (error != nullptr) {
@@ -593,15 +585,16 @@ bool ParseDetectorConfig(const Value* detector_value, quant_hft::MarketStateDete
     if (detector_value == nullptr || out == nullptr || !detector_value->IsObject()) {
         return false;
     }
-    out->adx_period = static_cast<int>(ParseNumberValue(detector_value->Find("adx_period"), out->adx_period));
+    out->adx_period =
+        static_cast<int>(ParseNumberValue(detector_value->Find("adx_period"), out->adx_period));
     out->adx_strong_threshold =
         ParseNumberValue(detector_value->Find("adx_strong_threshold"), out->adx_strong_threshold);
     out->adx_weak_lower =
         ParseNumberValue(detector_value->Find("adx_weak_lower"), out->adx_weak_lower);
     out->adx_weak_upper =
         ParseNumberValue(detector_value->Find("adx_weak_upper"), out->adx_weak_upper);
-    out->kama_er_period =
-        static_cast<int>(ParseNumberValue(detector_value->Find("kama_er_period"), out->kama_er_period));
+    out->kama_er_period = static_cast<int>(
+        ParseNumberValue(detector_value->Find("kama_er_period"), out->kama_er_period));
     out->kama_fast_period = static_cast<int>(
         ParseNumberValue(detector_value->Find("kama_fast_period"), out->kama_fast_period));
     out->kama_slow_period = static_cast<int>(
@@ -612,19 +605,14 @@ bool ParseDetectorConfig(const Value* detector_value, quant_hft::MarketStateDete
         ParseNumberValue(detector_value->Find("kama_er_weak_lower"), out->kama_er_weak_lower);
     out->atr_period =
         static_cast<int>(ParseNumberValue(detector_value->Find("atr_period"), out->atr_period));
-    out->atr_flat_ratio =
-        ParseNumberValue(detector_value->Find("atr_flat_ratio"), out->atr_flat_ratio);
     out->require_adx_for_trend =
         ParseBoolValue(detector_value->Find("require_adx_for_trend"), out->require_adx_for_trend);
     out->use_kama_er = ParseBoolValue(detector_value->Find("use_kama_er"), out->use_kama_er);
-    out->min_bars_for_flat = static_cast<int>(
-        ParseNumberValue(detector_value->Find("min_bars_for_flat"), out->min_bars_for_flat));
     return true;
 }
 
 bool LoadArchivedBacktestSpec(const std::filesystem::path& archived_result_json,
-                              BacktestCliSpec* spec,
-                              std::string* error) {
+                              BacktestCliSpec* spec, std::string* error) {
     if (spec == nullptr) {
         if (error != nullptr) {
             *error = "backtest spec output is null";
@@ -710,9 +698,9 @@ bool LoadArchivedBacktestSpec(const std::filesystem::path& archived_result_json,
     parsed.emit_indicator_trace =
         ParseBoolValue(spec_value->Find("emit_indicator_trace"), parsed.emit_indicator_trace);
     parsed.indicator_trace_path = ParseStringValue(spec_value->Find("indicator_trace_path"));
-    parsed.emit_sub_strategy_indicator_trace = ParseBoolValue(
-        spec_value->Find("emit_sub_strategy_indicator_trace"),
-        parsed.emit_sub_strategy_indicator_trace);
+    parsed.emit_sub_strategy_indicator_trace =
+        ParseBoolValue(spec_value->Find("emit_sub_strategy_indicator_trace"),
+                       parsed.emit_sub_strategy_indicator_trace);
     parsed.sub_strategy_indicator_trace_path =
         ParseStringValue(spec_value->Find("sub_strategy_indicator_trace_path"));
     parsed.emit_trades = ParseBoolValue(spec_value->Find("emit_trades"), parsed.emit_trades);
@@ -732,9 +720,8 @@ bool LoadArchivedBacktestSpec(const std::filesystem::path& archived_result_json,
 }
 
 bool RewriteCompositeConfig(const std::filesystem::path& archived_dir,
-                           const std::filesystem::path& run_dir,
-                           std::filesystem::path* composite_path,
-                           std::string* error) {
+                            const std::filesystem::path& run_dir,
+                            std::filesystem::path* composite_path, std::string* error) {
     if (composite_path == nullptr) {
         if (error != nullptr) {
             *error = "composite path output is null";
@@ -814,7 +801,9 @@ std::filesystem::path ResolveRuntimeRoot(const std::filesystem::path& train_repo
     const std::filesystem::path train_reports_dir = window_dir.parent_path();
     if (window_dir.empty() || train_reports_dir.filename() != "train_reports") {
         if (error != nullptr) {
-            *error = "train_report_json must follow runtime/.../train_reports/window_xxxx/report.json layout";
+            *error =
+                "train_report_json must follow runtime/.../train_reports/window_xxxx/report.json "
+                "layout";
         }
         return {};
     }
@@ -909,8 +898,7 @@ const OosTop10ValidationRow* FindRowByTrialId(const OosTop10ValidationReport& re
 }
 
 bool WriteFinalRecommendedParamsYaml(const OosTop10ValidationRow& row,
-                                     const std::string& output_path,
-                                     std::string* error) {
+                                     const std::string& output_path, std::string* error) {
     if (!row.oos_calmar.has_value() || !row.oos_sharpe.has_value() ||
         !row.oos_max_drawdown_pct.has_value()) {
         if (error != nullptr) {
@@ -929,7 +917,8 @@ bool WriteFinalRecommendedParamsYaml(const OosTop10ValidationRow& row,
     }
 
     std::ostringstream yaml;
-    yaml << "# Selected based on highest Out-of-Sample Calmar Ratio among Top10 in-sample parameters.\n";
+    yaml << "# Selected based on highest Out-of-Sample Calmar Ratio among Top10 in-sample "
+            "parameters.\n";
     yaml << "# OOS Calmar: " << FormatFixedPrecision(*row.oos_calmar, 2)
          << ", OOS Sharpe: " << FormatFixedPrecision(*row.oos_sharpe, 2)
          << ", OOS MaxDD: " << FormatFixedPrecision(*row.oos_max_drawdown_pct, 2) << "%\n";
@@ -973,7 +962,8 @@ std::string RenderCsv(const OosTop10ValidationReport& report) {
     return csv.str();
 }
 
-BacktestCliResult BuildResultForWrite(const BacktestCliResult& source, const BacktestCliSpec& spec) {
+BacktestCliResult BuildResultForWrite(const BacktestCliResult& source,
+                                      const BacktestCliSpec& spec) {
     BacktestCliResult result = source;
     result.spec = spec;
     if (result.run_id.empty()) {
@@ -994,8 +984,7 @@ BacktestCliResult BuildResultForWrite(const BacktestCliResult& source, const Bac
 }  // namespace
 
 bool RunOosTop10Validation(const OosTop10ValidationRequest& request,
-                           OosTop10ValidationReport* report,
-                           std::string* error,
+                           OosTop10ValidationReport* report, std::string* error,
                            OosBacktestRunFn run_fn) {
     if (report == nullptr) {
         if (error != nullptr) {
@@ -1051,8 +1040,8 @@ bool RunOosTop10Validation(const OosTop10ValidationRequest& request,
     std::filesystem::create_directories(output_dir, ec);
     if (ec) {
         if (error != nullptr) {
-            *error = "failed to create output directory: " + output_dir.string() + ": " +
-                     ec.message();
+            *error =
+                "failed to create output directory: " + output_dir.string() + ": " + ec.message();
         }
         return false;
     }
@@ -1089,7 +1078,8 @@ bool RunOosTop10Validation(const OosTop10ValidationRequest& request,
         row.in_sample_sharpe = trial.metrics.sharpe_ratio;
         row.status = "pending";
 
-        const std::filesystem::path archived_dir = FindArchivedTrialDir(top_trials_dir, trial.trial_id);
+        const std::filesystem::path archived_dir =
+            FindArchivedTrialDir(top_trials_dir, trial.trial_id);
         if (archived_dir.empty()) {
             row.status = "failed";
             row.error_msg = "missing archived trial directory for " + trial.trial_id;
@@ -1106,8 +1096,8 @@ bool RunOosTop10Validation(const OosTop10ValidationRequest& request,
         TrialMetricsSnapshot extracted_metrics;
         std::string metrics_error;
         if (!request.overwrite && std::filesystem::exists(result_json_path) &&
-            ResultAnalyzer::ExtractTrialMetricsFromJson(result_json_path.string(), &extracted_metrics,
-                                                        &metrics_error)) {
+            ResultAnalyzer::ExtractTrialMetricsFromJson(result_json_path.string(),
+                                                        &extracted_metrics, &metrics_error)) {
             PopulateOosMetrics(extracted_metrics, &row);
             row.success = true;
             row.reused_existing = true;
@@ -1144,7 +1134,8 @@ bool RunOosTop10Validation(const OosTop10ValidationRequest& request,
         if (spec.emit_indicator_trace && !spec.indicator_trace_path.empty()) {
             spec.indicator_trace_path = (row_dir / "indicator_trace.csv").string();
         }
-        if (spec.emit_sub_strategy_indicator_trace && !spec.sub_strategy_indicator_trace_path.empty()) {
+        if (spec.emit_sub_strategy_indicator_trace &&
+            !spec.sub_strategy_indicator_trace_path.empty()) {
             spec.sub_strategy_indicator_trace_path =
                 (row_dir / "sub_strategy_indicator_trace.csv").string();
         }
@@ -1162,7 +1153,8 @@ bool RunOosTop10Validation(const OosTop10ValidationRequest& request,
 
         const BacktestCliResult persisted_result = BuildResultForWrite(run_result, spec);
         const std::string result_json_text = quant_hft::apps::RenderBacktestJson(persisted_result);
-        if (!quant_hft::apps::WriteTextFile(result_json_path.string(), result_json_text, &row_error)) {
+        if (!quant_hft::apps::WriteTextFile(result_json_path.string(), result_json_text,
+                                            &row_error)) {
             row.status = "failed";
             row.error_msg = row_error;
             ++report->failed_count;
@@ -1170,8 +1162,8 @@ bool RunOosTop10Validation(const OosTop10ValidationRequest& request,
             continue;
         }
 
-        if (!ResultAnalyzer::ExtractTrialMetricsFromJson(result_json_path.string(), &extracted_metrics,
-                                                         &row_error)) {
+        if (!ResultAnalyzer::ExtractTrialMetricsFromJson(result_json_path.string(),
+                                                         &extracted_metrics, &row_error)) {
             row.status = "failed";
             row.error_msg = row_error;
             ++report->failed_count;

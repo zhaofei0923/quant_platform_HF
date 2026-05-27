@@ -36,9 +36,9 @@ ctp:
   cancel_retry_base_ms: 1000
   cancel_retry_max_delay_ms: 5000
   cancel_wait_ack_timeout_ms: 1200
-  # SimNow can hang on repeated same-day settlement confirmations after an earlier success.
-  # This candidate trading profile is started after the operator has confirmed settlement state.
-  settlement_confirm_required: false
+  # Real SimNow order insert is rejected until settlement state is confirmed.
+  # Keep this enabled for unattended trading; use explicit script override only for diagnostics.
+  settlement_confirm_required: true
 
   # --- observability & breaker ---
   metrics_enabled: false
@@ -136,9 +136,7 @@ ctp:
     kama_er_strong: 0.6
     kama_er_weak_lower: 0.3
     atr_period: 14
-    # SimNow candidate canary uses short 5m sessions; do not let low ATR or ADX warmup suppress
-    # every KAMA raw signal before the execution chain can be validated.
-    atr_flat_ratio: 0.0
+    # SimNow candidate canary uses short 5m sessions; do not let ADX warmup suppress every KAMA
+    # raw signal before the execution chain can be validated.
     require_adx_for_trend: false
     use_kama_er: true
-    min_bars_for_flat: 20

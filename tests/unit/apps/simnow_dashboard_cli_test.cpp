@@ -61,6 +61,9 @@ std::string DashboardCommand(const std::filesystem::path& root,
            " --export-root \"" +
            (root / "exports").string() +
            "\""
+           " --monitor-root \"" +
+           (root / "monitor").string() +
+           "\""
            " --output-dir \"" +
            output_dir.string() + "\"";
 }
@@ -99,6 +102,21 @@ void WriteSampleReports(const std::filesystem::path& root) {
               "seq,event_type,run_id,trading_day,trade_id\n");
 }
 
+void WriteSampleSignalMonitor(const std::filesystem::path& root) {
+    WriteFile(
+        root / "monitor" / "signal_execution_watch.jsonl",
+        "{\"ts\":\"2026-05-27T09:00:00+08:00\",\"event\":\"signal_passed\","
+        "\"trace_id\":\"kama_candidate_c-open-c2607-1\",\"message\":\"composite gate passed\"}\n"
+        "{\"ts\":\"2026-05-27T09:00:31+08:00\",\"event\":\"incident\","
+        "\"trace_id\":\"kama_candidate_c-open-c2607-1\","
+        "\"message\":\"signal_without_order_submitted\"}\n"
+        "{\"ts\":\"2026-05-27T09:01:00+08:00\",\"event\":\"summary\","
+        "\"message\":\"signals=1 active=0 filled=0 incidents=1\","
+        "\"signals\":1,\"active\":0,\"filled\":0,\"incidents\":1}\n");
+    WriteFile(root / "monitor" / "incidents" / "20260527T090031-kama_candidate_c-open-c2607-1.md",
+              "# incident\n");
+}
+
 TEST(SimnowDashboardCli, EmptyWalAndDailyReportsRenderHtmlAndState) {
     const auto root = MakeTempDir("happy_path");
     const auto output_dir = root / "dashboard";
@@ -113,6 +131,7 @@ TEST(SimnowDashboardCli, EmptyWalAndDailyReportsRenderHtmlAndState) {
               "account_id=\"secret-account\"\n");
     WriteSampleMarketData(root);
     WriteSampleReports(root);
+    WriteSampleSignalMonitor(root);
 
     const int rc = RunCommandCapture(DashboardCommand(root, output_dir), stdout_log);
 
@@ -123,8 +142,13 @@ TEST(SimnowDashboardCli, EmptyWalAndDailyReportsRenderHtmlAndState) {
     EXPECT_NE(json.find("\"wal_order_events\": 0"), std::string::npos);
     EXPECT_NE(json.find("\"trading_day\": \"20260514\""), std::string::npos);
     EXPECT_NE(json.find("\"critical_alerts\": 1"), std::string::npos);
+    EXPECT_NE(json.find("\"signal_monitor\""), std::string::npos);
+    EXPECT_NE(json.find("\"signals\": 1"), std::string::npos);
+    EXPECT_NE(json.find("signal_without_order_submitted"), std::string::npos);
     EXPECT_NE(json.find("<redacted>"), std::string::npos);
     EXPECT_NE(html.find("SimNow Dashboard"), std::string::npos);
+    EXPECT_NE(html.find("Signal Execution"), std::string::npos);
+    EXPECT_NE(html.find("signal_without_order_submitted"), std::string::npos);
     EXPECT_NE(html.find("missing_pid"), std::string::npos);
     EXPECT_NE(html.find("20260514"), std::string::npos);
 }

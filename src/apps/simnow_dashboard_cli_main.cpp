@@ -9,6 +9,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <optional>
@@ -26,6 +27,7 @@ namespace fs = std::filesystem;
 constexpr std::int64_t kTickStaleSeconds = 180;
 constexpr std::int64_t kBarStaleSeconds = 240;
 constexpr std::size_t kRecentAlertLimit = 24;
+constexpr std::size_t kRecentSignalMonitorLimit = 12;
 
 struct DashboardOptions {
     std::string run_root;
@@ -33,6 +35,7 @@ struct DashboardOptions {
     std::string wal_file;
     std::string report_root;
     std::string export_root;
+    std::string monitor_root;
     std::string output_dir;
     int watch_seconds{0};
     bool strict_exit{false};
@@ -129,6 +132,25 @@ struct DailyStatus {
     std::string alert_report_path;
 };
 
+struct SignalMonitorStatus {
+    std::string status{"missing"};
+    bool healthy{false};
+    std::string pid;
+    std::string event_log_path;
+    std::string incident_dir;
+    std::string monitor_log_path;
+    bool event_log_exists{false};
+    std::optional<std::int64_t> event_log_age_seconds;
+    std::int64_t signals{0};
+    std::int64_t active{0};
+    std::int64_t filled{0};
+    std::int64_t incidents{0};
+    std::string last_event;
+    std::string last_message;
+    std::vector<std::string> recent_events;
+    std::vector<std::string> recent_incidents;
+};
+
 struct DashboardState {
     std::int64_t generated_ts_ns{0};
     std::string generated_at_local;
@@ -139,6 +161,7 @@ struct DashboardState {
     std::vector<MarketFileStatus> markets;
     WalStatus wal;
     DailyStatus daily;
+    SignalMonitorStatus signal_monitor;
     std::vector<std::string> recent_alerts;
     std::map<std::string, std::string> paths;
 };
@@ -866,6 +889,104 @@ DailyStatus CollectDailyStatus(const DashboardOptions& options) {
     return status;
 }
 
+std::string BriefSignalMonitorEvent(const std::string& line) {
+    const std::string ts = ExtractJsonString(line, "ts");
+    const std::string event = ExtractJsonString(line, "event");
+    const std::string message = ExtractJsonString(line, "message");
+    const std::string trace_id = ExtractJsonString(line, "trace_id");
+    std::ostringstream out;
+    if (!ts.empty()) {
+        out << ts << ' ';
+    }
+    out << (event.empty() ? "event" : event);
+    if (!trace_id.empty()) {
+        out << " trace_id=" << trace_id;
+    }
+    if (!message.empty()) {
+        out << " - " << message;
+    }
+    return out.str();
+}
+
+SignalMonitorStatus CollectSignalMonitorStatus(const DashboardOptions& options) {
+    SignalMonitorStatus status;
+    const fs::path run_root(options.run_root);
+    const fs::path monitor_root(options.monitor_root);
+    const fs::path event_log = monitor_root / "signal_execution_watch.jsonl";
+    const fs::path incident_dir = monitor_root / "incidents";
+    const fs::path monitor_log = run_root / "signal_execution_monitor.log";
+
+    status.pid = ReadDigitsOnly(run_root / "signal_execution_monitor.pid");
+    status.event_log_path = event_log.string();
+    status.incident_dir = incident_dir.string();
+    status.monitor_log_path = monitor_log.string();
+    status.event_log_age_seconds = FileAgeSeconds(event_log);
+    status.event_log_exists = status.event_log_age_seconds.has_value();
+
+    if (!status.pid.empty() && ProcessIsAlive(status.pid)) {
+        status.status = "alive";
+    } else if (!status.pid.empty()) {
+        status.status = "dead";
+    } else if (status.event_log_exists) {
+        status.status = "history_only";
+    } else {
+        status.status = "missing";
+    }
+
+    std::ifstream input(event_log);
+    std::string line;
+    while (std::getline(input, line)) {
+        if (line.empty()) {
+            continue;
+        }
+        const std::string event = ExtractJsonString(line, "event");
+        const std::string message = ExtractJsonString(line, "message");
+        if (event == "summary") {
+            status.signals = ExtractJsonInt(line, "signals").value_or(status.signals);
+            status.active = ExtractJsonInt(line, "active").value_or(status.active);
+            status.filled = ExtractJsonInt(line, "filled").value_or(status.filled);
+            status.incidents = ExtractJsonInt(line, "incidents").value_or(status.incidents);
+        } else if (event == "incident") {
+            ++status.incidents;
+        }
+        if (!event.empty()) {
+            status.last_event = event;
+        }
+        if (!message.empty()) {
+            status.last_message = message;
+        }
+        status.recent_events.push_back(BriefSignalMonitorEvent(line));
+        if (status.recent_events.size() > kRecentSignalMonitorLimit) {
+            status.recent_events.erase(status.recent_events.begin());
+        }
+    }
+
+    std::error_code ec;
+    if (fs::exists(incident_dir, ec)) {
+        std::vector<std::string> incidents;
+        for (const auto& entry : fs::directory_iterator(
+                 incident_dir, fs::directory_options::skip_permission_denied, ec)) {
+            if (ec) {
+                break;
+            }
+            if (!entry.is_regular_file(ec)) {
+                continue;
+            }
+            incidents.push_back(entry.path().filename().string());
+        }
+        std::sort(incidents.begin(), incidents.end(), std::greater<>());
+        for (const auto& item : incidents) {
+            status.recent_incidents.push_back(item);
+            if (status.recent_incidents.size() >= kRecentSignalMonitorLimit) {
+                break;
+            }
+        }
+    }
+
+    status.healthy = status.status == "alive" && status.incidents == 0;
+    return status;
+}
+
 std::string RedactAfterKey(std::string line, const std::string& key) {
     std::size_t pos = 0;
     while ((pos = line.find(key, pos)) != std::string::npos) {
@@ -1068,6 +1189,44 @@ std::string RenderStateJson(const DashboardState& state) {
     out << "    \"export_summary_path\": " << JsonString(state.daily.export_summary_path) << ",\n";
     out << "    \"health_report_path\": " << JsonString(state.daily.health_report_path) << ",\n";
     out << "    \"alert_report_path\": " << JsonString(state.daily.alert_report_path) << "\n";
+    out << "  },\n";
+
+    out << "  \"signal_monitor\": {\n";
+    out << "    \"status\": " << JsonString(state.signal_monitor.status) << ",\n";
+    out << "    \"healthy\": " << (state.signal_monitor.healthy ? "true" : "false") << ",\n";
+    out << "    \"pid\": " << JsonString(state.signal_monitor.pid) << ",\n";
+    out << "    \"event_log_path\": " << JsonString(state.signal_monitor.event_log_path) << ",\n";
+    out << "    \"incident_dir\": " << JsonString(state.signal_monitor.incident_dir) << ",\n";
+    out << "    \"monitor_log_path\": " << JsonString(state.signal_monitor.monitor_log_path)
+        << ",\n";
+    out << "    \"event_log_exists\": "
+        << (state.signal_monitor.event_log_exists ? "true" : "false") << ",\n";
+    out << "    \"event_log_age_seconds\": "
+        << JsonOptionalInt(state.signal_monitor.event_log_age_seconds) << ",\n";
+    out << "    \"signals\": " << state.signal_monitor.signals << ",\n";
+    out << "    \"active\": " << state.signal_monitor.active << ",\n";
+    out << "    \"filled\": " << state.signal_monitor.filled << ",\n";
+    out << "    \"incidents\": " << state.signal_monitor.incidents << ",\n";
+    out << "    \"last_event\": " << JsonString(state.signal_monitor.last_event) << ",\n";
+    out << "    \"last_message\": " << JsonString(state.signal_monitor.last_message) << ",\n";
+    out << "    \"recent_events\": [\n";
+    for (std::size_t i = 0; i < state.signal_monitor.recent_events.size(); ++i) {
+        out << "      " << JsonString(state.signal_monitor.recent_events[i]);
+        if (i + 1 < state.signal_monitor.recent_events.size()) {
+            out << ',';
+        }
+        out << "\n";
+    }
+    out << "    ],\n";
+    out << "    \"recent_incidents\": [\n";
+    for (std::size_t i = 0; i < state.signal_monitor.recent_incidents.size(); ++i) {
+        out << "      " << JsonString(state.signal_monitor.recent_incidents[i]);
+        if (i + 1 < state.signal_monitor.recent_incidents.size()) {
+            out << ',';
+        }
+        out << "\n";
+    }
+    out << "    ]\n";
     out << "  },\n";
 
     out << "  \"recent_alerts\": [\n";
@@ -1318,6 +1477,27 @@ std::string RenderHtml(const DashboardState& state) {
     html << RenderMetric("CSV fills", state.daily.fill_csv_rows);
     html << "</div></section>\n";
 
+    html << "<section class=\"panel span-6\"><h2>Signal Execution</h2><div class=\"metrics\">";
+    html << RenderMetric("monitor", state.signal_monitor.status);
+    html << RenderMetric("signals", state.signal_monitor.signals);
+    html << RenderMetric("active", state.signal_monitor.active);
+    html << RenderMetric("incidents", state.signal_monitor.incidents);
+    html << "</div><div class=\"section-note\">";
+    html << "Event log <code>" << HtmlEscape(state.signal_monitor.event_log_path) << "</code>";
+    if (state.signal_monitor.event_log_age_seconds.has_value()) {
+        html << " updated " << *state.signal_monitor.event_log_age_seconds << "s ago";
+    }
+    html << ".</div>";
+    html << "<ul class=\"logs\">";
+    if (state.signal_monitor.recent_events.empty()) {
+        html << "<li>No signal execution monitor events found</li>";
+    } else {
+        for (const auto& line : state.signal_monitor.recent_events) {
+            html << "<li>" << HtmlEscape(line) << "</li>";
+        }
+    }
+    html << "</ul></section>\n";
+
     html << "<section class=\"panel span-6\"><h2>Ops Reports</h2><div class=\"metrics\">";
     html << RenderMetric("ops healthy", state.daily.ops_overall_healthy.has_value()
                                             ? (*state.daily.ops_overall_healthy ? "true" : "false")
@@ -1353,6 +1533,8 @@ DashboardOptions ParseOptions(int argc, char** argv, std::string* error) {
         args, "report-root", DefaultPathFromRoot("runtime/trading/reports/simnow"));
     options.export_root = quant_hft::apps::GetArg(
         args, "export-root", DefaultPathFromRoot("runtime/trading/exports/simnow"));
+    options.monitor_root = quant_hft::apps::GetArg(
+        args, "monitor-root", DefaultPathFromRoot("runtime/trading/monitor/simnow"));
     options.output_dir = quant_hft::apps::GetArg(
         args, "output-dir", DefaultPathFromRoot("runtime/trading/dashboard/simnow"));
     options.strict_exit = ParseBoolArg(args, "strict-exit", false);
@@ -1370,9 +1552,10 @@ DashboardState CollectState(const DashboardOptions& options) {
     state.generated_ts_ns = UnixEpochNanosNow();
     state.generated_at_local = FormatLocalTime(state.generated_ts_ns);
     state.paths = {
-        {"run_root", options.run_root},       {"market_data_dir", options.market_data_dir},
-        {"wal_file", options.wal_file},       {"report_root", options.report_root},
-        {"export_root", options.export_root}, {"output_dir", options.output_dir},
+        {"run_root", options.run_root},         {"market_data_dir", options.market_data_dir},
+        {"wal_file", options.wal_file},         {"report_root", options.report_root},
+        {"export_root", options.export_root},   {"output_dir", options.output_dir},
+        {"monitor_root", options.monitor_root},
     };
 
     state.process = CollectProcessStatus(options);
@@ -1380,6 +1563,7 @@ DashboardState CollectState(const DashboardOptions& options) {
     state.markets = CollectMarketStatus(options);
     state.wal = CollectWalStatus(options);
     state.daily = CollectDailyStatus(options);
+    state.signal_monitor = CollectSignalMonitorStatus(options);
     state.recent_alerts = CollectRecentAlerts(state.process.core_log);
 
     bool market_healthy = true;
@@ -1388,6 +1572,9 @@ DashboardState CollectState(const DashboardOptions& options) {
                                      [](const auto& item) { return item.healthy; });
     }
     state.overall_healthy = state.process.healthy && market_healthy;
+    if (state.signal_monitor.incidents > 0) {
+        state.overall_healthy = false;
+    }
 
     if (!state.process.supervisor_pids.empty() && state.process.status != "alive") {
         ++state.warning_count;
@@ -1399,6 +1586,12 @@ DashboardState CollectState(const DashboardOptions& options) {
         ++state.warning_count;
     }
     if (state.daily.parse_errors > 0) {
+        ++state.warning_count;
+    }
+    if (state.signal_monitor.status == "dead") {
+        ++state.warning_count;
+    }
+    if (state.signal_monitor.incidents > 0) {
         ++state.warning_count;
     }
     for (const auto& item : state.markets) {

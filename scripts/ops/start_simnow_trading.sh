@@ -18,6 +18,7 @@ PROBE_SECONDS="${SIMNOW_PROBE_SECONDS:-5}"
 PROBE_TIMEOUT_SECONDS="${SIMNOW_PROBE_TIMEOUT_SECONDS:-120}"
 HEALTH_INTERVAL_MS="${SIMNOW_HEALTH_INTERVAL_MS:-1000}"
 INSTRUMENT_TIMEOUT_SECONDS="${SIMNOW_INSTRUMENT_TIMEOUT_SECONDS:-45}"
+ALLOW_UNCONFIRMED_SETTLEMENT="${SIMNOW_ALLOW_UNCONFIRMED_SETTLEMENT:-0}"
 MIN_FREE_MB="${SIMNOW_MIN_FREE_MB:-2048}"
 LOG_MAX_BYTES="${SIMNOW_LOG_MAX_BYTES:-104857600}"
 LOG_RETENTION_DAYS="${SIMNOW_LOG_RETENTION_DAYS:-14}"
@@ -126,6 +127,30 @@ is_positive_int() {
 
 is_non_negative_int() {
   [[ "${1:-}" =~ ^[0-9]+$ ]]
+}
+
+is_bool_flag() {
+  [[ "${1:-}" == "0" || "${1:-}" == "1" ]]
+}
+
+is_true_text() {
+  local value
+  value="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+  [[ "${value}" == "1" || "${value}" == "true" || "${value}" == "yes" || "${value}" == "on" ]]
+}
+
+yaml_bool_value() {
+  local key="$1"
+  local file_path="$2"
+  awk -F: -v key="${key}" '
+    $1 ~ "^[[:space:]]*" key "[[:space:]]*$" {
+      value = $2
+      sub(/[[:space:]]*#.*/, "", value)
+      gsub(/[[:space:]\"'"'"']/, "", value)
+      print tolower(value)
+      exit
+    }
+  ' "${file_path}" 2>/dev/null
 }
 
 pid_is_alive() {
@@ -280,9 +305,11 @@ fi
 if [[ ${INSTRUMENT_TIMEOUT_SECONDS_SET_BY_CLI} -eq 0 ]]; then
   INSTRUMENT_TIMEOUT_SECONDS="${SIMNOW_INSTRUMENT_TIMEOUT_SECONDS:-${INSTRUMENT_TIMEOUT_SECONDS}}"
 fi
+ALLOW_UNCONFIRMED_SETTLEMENT="${SIMNOW_ALLOW_UNCONFIRMED_SETTLEMENT:-${ALLOW_UNCONFIRMED_SETTLEMENT}}"
 is_positive_int "${PROBE_SECONDS}" || die "SIMNOW_PROBE_SECONDS must be a positive integer"
 is_positive_int "${PROBE_TIMEOUT_SECONDS}" || die "SIMNOW_PROBE_TIMEOUT_SECONDS must be a positive integer"
 is_positive_int "${INSTRUMENT_TIMEOUT_SECONDS}" || die "SIMNOW_INSTRUMENT_TIMEOUT_SECONDS must be a positive integer"
+is_bool_flag "${ALLOW_UNCONFIRMED_SETTLEMENT}" || die "SIMNOW_ALLOW_UNCONFIRMED_SETTLEMENT must be 0 or 1"
 [[ -n "${RUN_ROOT}" ]] || die "SIMNOW_RUN_ROOT must not be empty"
 [[ -n "${WAL_FILE}" ]] || die "SIMNOW_WAL_FILE must not be empty"
 
@@ -321,6 +348,16 @@ fi
 [[ -n "${CTP_SIM_PASSWORD:-}" ]] || die "CTP_SIM_PASSWORD is missing"
 [[ -n "${CTP_SIM_AUTH_CODE:-}" ]] || die "CTP_SIM_AUTH_CODE is missing"
 [[ -n "${CTP_SIM_APP_ID:-}" ]] || die "CTP_SIM_APP_ID is missing"
+
+CONFIG_SETTLEMENT_CONFIRM_REQUIRED="$(yaml_bool_value settlement_confirm_required "${CONFIG_PATH}")"
+if is_true_text "${CTP_SIM_ENABLE_REAL_API}"; then
+  if [[ "${CONFIG_SETTLEMENT_CONFIRM_REQUIRED}" == "false" && "${ALLOW_UNCONFIRMED_SETTLEMENT}" != "1" ]]; then
+    die "settlement_confirm_required=false is unsafe for real SimNow trading; set it true or export SIMNOW_ALLOW_UNCONFIRMED_SETTLEMENT=1 for diagnostics only"
+  fi
+  if [[ ${SKIP_PROBE} -eq 1 && "${ALLOW_UNCONFIRMED_SETTLEMENT}" != "1" ]]; then
+    die "--skip-probe is unsafe for real SimNow trading because it can skip settlement confirmation; export SIMNOW_ALLOW_UNCONFIRMED_SETTLEMENT=1 for diagnostics only"
+  fi
+fi
 
 case "${CTP_SIM_MARKET_FRONT}|${CTP_SIM_TRADER_FRONT}" in
   tcp://182.254.243.31:30011\|tcp://182.254.243.31:30001|\

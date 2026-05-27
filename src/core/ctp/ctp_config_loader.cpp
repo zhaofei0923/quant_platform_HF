@@ -1,12 +1,14 @@
 #include "quant_hft/core/ctp_config_loader.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -42,8 +44,7 @@ std::unordered_map<std::string, std::string> LoadSimpleYaml(const std::string& p
     }
 
     std::string line;
-    std::string active_section;
-    std::size_t active_section_indent = 0;
+    std::vector<std::pair<std::size_t, std::string>> section_stack;
     while (std::getline(in, line)) {
         const auto hash = line.find('#');
         if (hash != std::string::npos) {
@@ -59,6 +60,10 @@ std::unordered_map<std::string, std::string> LoadSimpleYaml(const std::string& p
             continue;
         }
 
+        while (!section_stack.empty() && indent <= section_stack.back().first) {
+            section_stack.pop_back();
+        }
+
         const auto pos = trimmed.find(':');
         if (pos == std::string::npos) {
             continue;
@@ -67,19 +72,26 @@ std::unordered_map<std::string, std::string> LoadSimpleYaml(const std::string& p
         const auto key = Trim(trimmed.substr(0, pos));
         const bool is_section = !trimmed.empty() && trimmed.back() == ':';
         if (is_section) {
-            active_section = key;
-            active_section_indent = indent;
+            if (key != "ctp") {
+                section_stack.emplace_back(indent, key);
+            }
             continue;
         }
 
         auto value = Trim(trimmed.substr(pos + 1));
         if (!key.empty()) {
-            if (!active_section.empty() && indent > active_section_indent) {
-                kv[active_section + "." + key] = ResolveEnvVars(value);
-            } else {
-                active_section.clear();
-                kv[key] = ResolveEnvVars(value);
+            std::string full_key;
+            for (const auto& section : section_stack) {
+                if (!full_key.empty()) {
+                    full_key.push_back('.');
+                }
+                full_key += section.second;
             }
+            if (!full_key.empty()) {
+                full_key.push_back('.');
+            }
+            full_key += key;
+            kv[full_key] = ResolveEnvVars(value);
         }
     }
     return kv;
@@ -231,6 +243,96 @@ bool ParseExecutionAlgo(const std::string& raw, ExecutionAlgo* out) {
     if (normalized == "vwap_lite" || normalized == "vwap-lite" || normalized == "vwap") {
         *out = ExecutionAlgo::kVwapLite;
         return true;
+    }
+    return false;
+}
+
+constexpr std::array<const char*, 12> kMarketStateDetectorFields = {
+    "adx_period",         "adx_strong_threshold", "adx_weak_lower",        "adx_weak_upper",
+    "kama_er_period",     "kama_fast_period",     "kama_slow_period",      "kama_er_strong",
+    "kama_er_weak_lower", "atr_period",           "require_adx_for_trend", "use_kama_er",
+};
+
+bool ApplyMarketStateDetectorField(MarketStateDetectorConfig* detector, const std::string& field,
+                                   const std::string& raw_value, const std::string& key,
+                                   std::string* error) {
+    if (detector == nullptr) {
+        if (error != nullptr) {
+            *error = "market_state_detector output is null";
+        }
+        return false;
+    }
+    const auto parse_int = [&](int* target) -> bool {
+        if (!ParseIntValue(raw_value, target)) {
+            if (error != nullptr) {
+                *error = "invalid integer for key: " + key;
+            }
+            return false;
+        }
+        return true;
+    };
+    const auto parse_double = [&](double* target) -> bool {
+        if (!ParseDoubleValue(raw_value, target)) {
+            if (error != nullptr) {
+                *error = "invalid double for key: " + key;
+            }
+            return false;
+        }
+        return true;
+    };
+    const auto parse_bool = [&](bool* target) -> bool {
+        if (!ParseBoolValue(raw_value, target)) {
+            if (error != nullptr) {
+                *error = "invalid bool for key: " + key;
+            }
+            return false;
+        }
+        return true;
+    };
+
+    if (field == "adx_period") {
+        return parse_int(&detector->adx_period);
+    }
+    if (field == "adx_strong_threshold") {
+        return parse_double(&detector->adx_strong_threshold);
+    }
+    if (field == "adx_weak_lower") {
+        return parse_double(&detector->adx_weak_lower);
+    }
+    if (field == "adx_weak_upper") {
+        return parse_double(&detector->adx_weak_upper);
+    }
+    if (field == "kama_er_period") {
+        return parse_int(&detector->kama_er_period);
+    }
+    if (field == "kama_fast_period") {
+        return parse_int(&detector->kama_fast_period);
+    }
+    if (field == "kama_slow_period") {
+        return parse_int(&detector->kama_slow_period);
+    }
+    if (field == "kama_er_strong") {
+        return parse_double(&detector->kama_er_strong);
+    }
+    if (field == "kama_er_weak_lower") {
+        return parse_double(&detector->kama_er_weak_lower);
+    }
+    if (field == "atr_period") {
+        return parse_int(&detector->atr_period);
+    }
+    if (field == "atr_flat_ratio" || field == "min_bars_for_flat") {
+        // Deprecated ATR flat-gate keys are accepted as no-ops for legacy configs.
+        return true;
+    }
+    if (field == "require_adx_for_trend") {
+        return parse_bool(&detector->require_adx_for_trend);
+    }
+    if (field == "use_kama_er") {
+        return parse_bool(&detector->use_kama_er);
+    }
+
+    if (error != nullptr) {
+        *error = "unknown market_state_detector key: " + key;
     }
     return false;
 }
@@ -1671,68 +1773,16 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* confi
 
     {
         MarketStateDetectorConfig detector = loaded.market_state_detector;
-        const auto get_detector_value = [&](const std::string& key) -> std::string {
-            const auto nested = get_value("market_state_detector." + key);
-            if (!nested.empty()) {
-                return nested;
-            }
-            return get_value(key);
-        };
-        const auto parse_int = [&](const char* key, int* target) -> bool {
-            const auto raw = get_detector_value(key);
+        for (const char* field : kMarketStateDetectorFields) {
+            std::string raw = get_value(std::string("market_state_detector.") + field);
             if (raw.empty()) {
-                return true;
+                raw = get_value(field);
             }
-            if (!ParseIntValue(raw, target)) {
-                if (error != nullptr) {
-                    *error = std::string("invalid integer for key: market_state_detector.") + key;
-                }
+            if (!raw.empty() &&
+                !ApplyMarketStateDetectorField(
+                    &detector, field, raw, std::string("market_state_detector.") + field, error)) {
                 return false;
             }
-            return true;
-        };
-        const auto parse_double = [&](const char* key, double* target) -> bool {
-            const auto raw = get_detector_value(key);
-            if (raw.empty()) {
-                return true;
-            }
-            if (!ParseDoubleValue(raw, target)) {
-                if (error != nullptr) {
-                    *error = std::string("invalid double for key: market_state_detector.") + key;
-                }
-                return false;
-            }
-            return true;
-        };
-        const auto parse_bool = [&](const char* key, bool* target) -> bool {
-            const auto raw = get_detector_value(key);
-            if (raw.empty()) {
-                return true;
-            }
-            if (!ParseBoolValue(raw, target)) {
-                if (error != nullptr) {
-                    *error = std::string("invalid bool for key: market_state_detector.") + key;
-                }
-                return false;
-            }
-            return true;
-        };
-
-        if (!parse_int("adx_period", &detector.adx_period) ||
-            !parse_double("adx_strong_threshold", &detector.adx_strong_threshold) ||
-            !parse_double("adx_weak_lower", &detector.adx_weak_lower) ||
-            !parse_double("adx_weak_upper", &detector.adx_weak_upper) ||
-            !parse_int("kama_er_period", &detector.kama_er_period) ||
-            !parse_int("kama_fast_period", &detector.kama_fast_period) ||
-            !parse_int("kama_slow_period", &detector.kama_slow_period) ||
-            !parse_double("kama_er_strong", &detector.kama_er_strong) ||
-            !parse_double("kama_er_weak_lower", &detector.kama_er_weak_lower) ||
-            !parse_int("atr_period", &detector.atr_period) ||
-            !parse_double("atr_flat_ratio", &detector.atr_flat_ratio) ||
-            !parse_bool("require_adx_for_trend", &detector.require_adx_for_trend) ||
-            !parse_bool("use_kama_er", &detector.use_kama_er) ||
-            !parse_int("min_bars_for_flat", &detector.min_bars_for_flat)) {
-            return false;
         }
 
         try {
@@ -1744,6 +1794,48 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* confi
             return false;
         }
         loaded.market_state_detector = detector;
+
+        MarketStateDetectorConfigByProduct by_product;
+        constexpr std::string_view kPrefix = "market_state_detector_by_product.";
+        for (const auto& [key, raw] : kv) {
+            if (key.rfind(kPrefix, 0) != 0) {
+                continue;
+            }
+            const std::string rest = key.substr(kPrefix.size());
+            const std::size_t dot = rest.find('.');
+            if (dot == std::string::npos || dot == 0 || dot + 1 >= rest.size()) {
+                if (error != nullptr) {
+                    *error = "invalid market_state_detector_by_product key: " + key;
+                }
+                return false;
+            }
+            const std::string raw_product = rest.substr(0, dot);
+            const std::string product_id = NormalizeMarketStateProductId(raw_product);
+            if (product_id.empty()) {
+                if (error != nullptr) {
+                    *error = "invalid market_state_detector_by_product product: " + raw_product;
+                }
+                return false;
+            }
+            const std::string field = rest.substr(dot + 1);
+            auto [it, inserted] = by_product.try_emplace(product_id, detector);
+            (void)inserted;
+            if (!ApplyMarketStateDetectorField(&it->second, field, raw, key, error)) {
+                return false;
+            }
+        }
+        for (const auto& [product_id, product_detector] : by_product) {
+            try {
+                (void)MarketStateDetector(product_detector);
+            } catch (const std::invalid_argument& ex) {
+                if (error != nullptr) {
+                    *error = "invalid market_state_detector_by_product config for product " +
+                             product_id + ": " + ex.what();
+                }
+                return false;
+            }
+        }
+        loaded.market_state_detector_by_product = std::move(by_product);
     }
 
     loaded.runtime.password = get_value("password");

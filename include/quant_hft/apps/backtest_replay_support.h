@@ -23,6 +23,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "quant_hft/apps/backtest_metrics.h"
@@ -274,8 +275,111 @@ inline bool ResolveDetectorYamlValue(const std::map<std::string, std::string>& v
     return false;
 }
 
+inline constexpr std::array<const char*, 12> kMarketStateDetectorFields = {
+    "adx_period",         "adx_strong_threshold", "adx_weak_lower",        "adx_weak_upper",
+    "kama_er_period",     "kama_fast_period",     "kama_slow_period",      "kama_er_strong",
+    "kama_er_weak_lower", "atr_period",           "require_adx_for_trend", "use_kama_er",
+};
+
+inline bool ApplyDetectorConfigField(MarketStateDetectorConfig* config, const std::string& field,
+                                     const std::string& raw, const std::string& context,
+                                     std::string* error) {
+    if (config == nullptr) {
+        if (error != nullptr) {
+            *error = "detector_config output is null";
+        }
+        return false;
+    }
+    const auto parse_int = [&](int* target) -> bool {
+        std::int64_t parsed = 0;
+        if (!ParseInt64(raw, &parsed)) {
+            if (error != nullptr) {
+                *error = "invalid detector_config " + context + ": " + raw;
+            }
+            return false;
+        }
+        if (parsed < std::numeric_limits<int>::min() || parsed > std::numeric_limits<int>::max()) {
+            if (error != nullptr) {
+                *error = "detector_config " + context + " is out of int range: " + raw;
+            }
+            return false;
+        }
+        *target = static_cast<int>(parsed);
+        return true;
+    };
+    const auto parse_double = [&](double* target) -> bool {
+        double parsed = 0.0;
+        if (!ParseDouble(raw, &parsed)) {
+            if (error != nullptr) {
+                *error = "invalid detector_config " + context + ": " + raw;
+            }
+            return false;
+        }
+        *target = parsed;
+        return true;
+    };
+    const auto parse_bool = [&](bool* target) -> bool {
+        bool parsed = false;
+        if (!ParseBool(raw, &parsed)) {
+            if (error != nullptr) {
+                *error = "invalid detector_config " + context + ": " + raw;
+            }
+            return false;
+        }
+        *target = parsed;
+        return true;
+    };
+
+    if (field == "adx_period") {
+        return parse_int(&config->adx_period);
+    }
+    if (field == "adx_strong_threshold") {
+        return parse_double(&config->adx_strong_threshold);
+    }
+    if (field == "adx_weak_lower") {
+        return parse_double(&config->adx_weak_lower);
+    }
+    if (field == "adx_weak_upper") {
+        return parse_double(&config->adx_weak_upper);
+    }
+    if (field == "kama_er_period") {
+        return parse_int(&config->kama_er_period);
+    }
+    if (field == "kama_fast_period") {
+        return parse_int(&config->kama_fast_period);
+    }
+    if (field == "kama_slow_period") {
+        return parse_int(&config->kama_slow_period);
+    }
+    if (field == "kama_er_strong") {
+        return parse_double(&config->kama_er_strong);
+    }
+    if (field == "kama_er_weak_lower") {
+        return parse_double(&config->kama_er_weak_lower);
+    }
+    if (field == "atr_period") {
+        return parse_int(&config->atr_period);
+    }
+    if (field == "atr_flat_ratio" || field == "min_bars_for_flat") {
+        // Deprecated ATR flat-gate keys are accepted as no-ops for legacy configs.
+        return true;
+    }
+    if (field == "require_adx_for_trend") {
+        return parse_bool(&config->require_adx_for_trend);
+    }
+    if (field == "use_kama_er") {
+        return parse_bool(&config->use_kama_er);
+    }
+
+    if (error != nullptr) {
+        *error = "unknown detector_config field: " + context;
+    }
+    return false;
+}
+
 inline bool LoadMarketStateDetectorConfigFile(const std::string& config_path,
                                               MarketStateDetectorConfig* out_config,
+                                              MarketStateDetectorConfigByProduct* out_by_product,
                                               std::string* error) {
     if (out_config == nullptr) {
         if (error != nullptr) {
@@ -290,73 +394,12 @@ inline bool LoadMarketStateDetectorConfigFile(const std::string& config_path,
     }
 
     MarketStateDetectorConfig config;
-    auto parse_int = [&](const std::string& field, int* target) -> bool {
+    for (const char* field : kMarketStateDetectorFields) {
         std::string raw;
-        if (!ResolveDetectorYamlValue(yaml_values, field, &raw)) {
-            return true;
-        }
-        std::int64_t parsed = 0;
-        if (!ParseInt64(raw, &parsed)) {
-            if (error != nullptr) {
-                *error = "invalid detector_config " + field + ": " + raw;
-            }
+        if (ResolveDetectorYamlValue(yaml_values, field, &raw) &&
+            !ApplyDetectorConfigField(&config, field, raw, field, error)) {
             return false;
         }
-        if (parsed < std::numeric_limits<int>::min() || parsed > std::numeric_limits<int>::max()) {
-            if (error != nullptr) {
-                *error = "detector_config " + field + " is out of int range: " + raw;
-            }
-            return false;
-        }
-        *target = static_cast<int>(parsed);
-        return true;
-    };
-    auto parse_double = [&](const std::string& field, double* target) -> bool {
-        std::string raw;
-        if (!ResolveDetectorYamlValue(yaml_values, field, &raw)) {
-            return true;
-        }
-        double parsed = 0.0;
-        if (!ParseDouble(raw, &parsed)) {
-            if (error != nullptr) {
-                *error = "invalid detector_config " + field + ": " + raw;
-            }
-            return false;
-        }
-        *target = parsed;
-        return true;
-    };
-    auto parse_bool = [&](const std::string& field, bool* target) -> bool {
-        std::string raw;
-        if (!ResolveDetectorYamlValue(yaml_values, field, &raw)) {
-            return true;
-        }
-        bool parsed = false;
-        if (!ParseBool(raw, &parsed)) {
-            if (error != nullptr) {
-                *error = "invalid detector_config " + field + ": " + raw;
-            }
-            return false;
-        }
-        *target = parsed;
-        return true;
-    };
-
-    if (!parse_int("adx_period", &config.adx_period) ||
-        !parse_double("adx_strong_threshold", &config.adx_strong_threshold) ||
-        !parse_double("adx_weak_lower", &config.adx_weak_lower) ||
-        !parse_double("adx_weak_upper", &config.adx_weak_upper) ||
-        !parse_int("kama_er_period", &config.kama_er_period) ||
-        !parse_int("kama_fast_period", &config.kama_fast_period) ||
-        !parse_int("kama_slow_period", &config.kama_slow_period) ||
-        !parse_double("kama_er_strong", &config.kama_er_strong) ||
-        !parse_double("kama_er_weak_lower", &config.kama_er_weak_lower) ||
-        !parse_int("atr_period", &config.atr_period) ||
-        !parse_double("atr_flat_ratio", &config.atr_flat_ratio) ||
-        !parse_bool("require_adx_for_trend", &config.require_adx_for_trend) ||
-        !parse_bool("use_kama_er", &config.use_kama_er) ||
-        !parse_int("min_bars_for_flat", &config.min_bars_for_flat)) {
-        return false;
     }
 
     try {
@@ -368,8 +411,68 @@ inline bool LoadMarketStateDetectorConfigFile(const std::string& config_path,
         return false;
     }
 
+    MarketStateDetectorConfigByProduct by_product;
+    const std::array<std::string, 2> prefixes = {"market_state_detector_by_product.",
+                                                 "ctp.market_state_detector_by_product."};
+    for (const auto& [key, raw] : yaml_values) {
+        std::string rest;
+        for (const std::string& prefix : prefixes) {
+            if (key.rfind(prefix, 0) == 0) {
+                rest = key.substr(prefix.size());
+                break;
+            }
+        }
+        if (rest.empty()) {
+            continue;
+        }
+        const std::size_t dot = rest.find('.');
+        if (dot == std::string::npos || dot == 0 || dot + 1 >= rest.size()) {
+            if (error != nullptr) {
+                *error = "invalid detector_config market_state_detector_by_product key: " + key;
+            }
+            return false;
+        }
+        const std::string raw_product = rest.substr(0, dot);
+        const std::string product_id = NormalizeMarketStateProductId(raw_product);
+        if (product_id.empty()) {
+            if (error != nullptr) {
+                *error = "invalid detector_config market_state_detector_by_product product: " +
+                         raw_product;
+            }
+            return false;
+        }
+        const std::string field = rest.substr(dot + 1);
+        auto [it, inserted] = by_product.try_emplace(product_id, config);
+        (void)inserted;
+        if (!ApplyDetectorConfigField(
+                &it->second, field, raw,
+                "market_state_detector_by_product." + product_id + "." + field, error)) {
+            return false;
+        }
+    }
+    for (const auto& [product_id, product_config] : by_product) {
+        try {
+            (void)MarketStateDetector(product_config);
+        } catch (const std::exception& ex) {
+            if (error != nullptr) {
+                *error = "invalid detector_config_by_product " + product_id + ": " + ex.what();
+            }
+            return false;
+        }
+    }
+
     *out_config = config;
+    if (out_by_product != nullptr) {
+        *out_by_product = std::move(by_product);
+    }
     return true;
+}
+
+inline bool LoadMarketStateDetectorConfigFile(const std::string& config_path,
+                                              MarketStateDetectorConfig* out_config,
+                                              std::string* error) {
+    MarketStateDetectorConfigByProduct ignored;
+    return LoadMarketStateDetectorConfigFile(config_path, out_config, &ignored, error);
 }
 
 inline std::string NormalizeTradingDay(const std::string& raw) {
@@ -1183,6 +1286,7 @@ struct BacktestCliSpec {
     bool emit_position_history{false};
     bool emit_per_variety_outputs{false};
     MarketStateDetectorConfig detector_config{};
+    MarketStateDetectorConfigByProduct detector_config_by_product{};
 };
 
 struct ReplayTick {
@@ -2415,7 +2519,7 @@ inline bool ParseBacktestCliSpec(const ArgMap& args, BacktestCliSpec* out, std::
     }
     if (!spec.detector_config_path.empty() &&
         !detail::LoadMarketStateDetectorConfigFile(spec.detector_config_path, &spec.detector_config,
-                                                   error)) {
+                                                   &spec.detector_config_by_product, error)) {
         return false;
     }
 
@@ -2466,6 +2570,26 @@ inline std::string BuildInputSignature(const BacktestCliSpec& spec) {
                                 << config.strategy_main_config_path << ':'
                                 << config.strategy_composite_config << ':' << config.product_id;
     }
+    std::vector<std::string> detector_products;
+    detector_products.reserve(spec.detector_config_by_product.size());
+    for (const auto& entry : spec.detector_config_by_product) {
+        detector_products.push_back(entry.first);
+    }
+    std::sort(detector_products.begin(), detector_products.end());
+    std::ostringstream detector_by_product_stream;
+    for (const std::string& product_id : detector_products) {
+        const MarketStateDetectorConfig& detector = spec.detector_config_by_product.at(product_id);
+        detector_by_product_stream
+            << product_id << ':' << detector.adx_period << ':'
+            << detail::FormatDouble(detector.adx_strong_threshold) << ':'
+            << detail::FormatDouble(detector.adx_weak_lower) << ':'
+            << detail::FormatDouble(detector.adx_weak_upper) << ':' << detector.kama_er_period
+            << ':' << detector.kama_fast_period << ':' << detector.kama_slow_period << ':'
+            << detail::FormatDouble(detector.kama_er_strong) << ':'
+            << detail::FormatDouble(detector.kama_er_weak_lower) << ':' << detector.atr_period
+            << ':' << (detector.require_adx_for_trend ? "true" : "false") << ':'
+            << (detector.use_kama_er ? "true" : "false") << ';';
+    }
 
     std::ostringstream oss;
     oss << "csv_path=" << spec.csv_path << ';' << "dataset_root=" << spec.dataset_root << ';'
@@ -2486,15 +2610,12 @@ inline std::string BuildInputSignature(const BacktestCliSpec& spec) {
         << "detector_config.kama_er_weak_lower="
         << detail::FormatDouble(spec.detector_config.kama_er_weak_lower) << ';'
         << "detector_config.atr_period=" << spec.detector_config.atr_period << ';'
-        << "detector_config.atr_flat_ratio="
-        << detail::FormatDouble(spec.detector_config.atr_flat_ratio) << ';'
         << "detector_config.require_adx_for_trend="
         << (spec.detector_config.require_adx_for_trend ? "true" : "false") << ';'
         << "detector_config.use_kama_er=" << (spec.detector_config.use_kama_er ? "true" : "false")
-        << ';' << "detector_config.min_bars_for_flat=" << spec.detector_config.min_bars_for_flat
-        << ';' << "engine_mode=" << spec.engine_mode << ';'
-        << "rollover_mode=" << spec.rollover_mode << ';'
-        << "product_series_mode=" << spec.product_series_mode << ';'
+        << ';' << "detector_config_by_product=" << detector_by_product_stream.str() << ';'
+        << "engine_mode=" << spec.engine_mode << ';' << "rollover_mode=" << spec.rollover_mode
+        << ';' << "product_series_mode=" << spec.product_series_mode << ';'
         << "contract_expiry_calendar_path=" << spec.contract_expiry_calendar_path << ';'
         << "rollover_price_mode=" << spec.rollover_price_mode << ';'
         << "rollover_slippage_bps=" << detail::FormatDouble(spec.rollover_slippage_bps) << ';'
@@ -3372,7 +3493,7 @@ inline StateSnapshot7D BuildStateSnapshotFromBar(const ReplayTick& /*first*/,
     state.has_bar = true;
     if (detector != nullptr) {
         detector->Update(analysis_high, analysis_low, analysis_close);
-        state.market_regime = detector->GetRegime();
+        PopulateMarketStateDiagnostics(*detector, &state);
     }
     state.ts_ns = ts_ns;
     return state;
@@ -5205,9 +5326,14 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         instrument_bars[last.instrument_id] += 1;
         mark_price[last.instrument_id] = bar.close;
 
-        auto [detector_it, inserted] =
-            regime_detectors.try_emplace(last.instrument_id, spec.detector_config);
-        (void)inserted;
+        auto detector_it = regime_detectors.find(last.instrument_id);
+        if (detector_it == regime_detectors.end()) {
+            const MarketStateDetectorConfig& detector_config = ResolveMarketStateDetectorConfig(
+                last.instrument_id, spec.detector_config, spec.detector_config_by_product);
+            detector_it =
+                regime_detectors.emplace(last.instrument_id, MarketStateDetector(detector_config))
+                    .first;
+        }
         const StateSnapshot7D state = BuildStateSnapshotFromBar(
             first, last, bar, last.ts_ns, timeframe_minutes, &detector_it->second);
 
@@ -5238,6 +5364,17 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             row.adx = detector_it->second.GetADX();
             row.er = detector_it->second.GetKAMAER();
             row.market_regime = state.market_regime;
+            if (std::isfinite(state.market_state_adx)) {
+                row.market_state_adx = state.market_state_adx;
+            }
+            if (std::isfinite(state.market_state_kama_er)) {
+                row.market_state_kama_er = state.market_state_kama_er;
+            }
+            if (std::isfinite(state.market_state_atr_ratio)) {
+                row.market_state_atr_ratio = state.market_state_atr_ratio;
+            }
+            row.market_state_bars_seen = state.market_state_bars_seen;
+            row.market_state_decision_reason = state.market_state_decision_reason;
             if (emit_indicator_trace_csv && !indicator_trace_csv_writer.Append(row, error)) {
                 return false;
             }
@@ -5323,6 +5460,17 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 row.stop_loss_price = atomic_trace.stop_loss_price;
                 row.take_profit_price = atomic_trace.take_profit_price;
                 row.market_regime = state.market_regime;
+                if (std::isfinite(state.market_state_adx)) {
+                    row.market_state_adx = state.market_state_adx;
+                }
+                if (std::isfinite(state.market_state_kama_er)) {
+                    row.market_state_kama_er = state.market_state_kama_er;
+                }
+                if (std::isfinite(state.market_state_atr_ratio)) {
+                    row.market_state_atr_ratio = state.market_state_atr_ratio;
+                }
+                row.market_state_bars_seen = state.market_state_bars_seen;
+                row.market_state_decision_reason = state.market_state_decision_reason;
                 if (emit_sub_strategy_indicator_trace_csv &&
                     !sub_strategy_indicator_trace_csv_writer.Append(row, error)) {
                     return false;
@@ -5932,13 +6080,10 @@ inline std::string RenderBacktestJson(const BacktestCliResult& result) {
          << "      \"kama_er_weak_lower\": "
          << detail::FormatDouble(result.spec.detector_config.kama_er_weak_lower) << ",\n"
          << "      \"atr_period\": " << result.spec.detector_config.atr_period << ",\n"
-         << "      \"atr_flat_ratio\": "
-         << detail::FormatDouble(result.spec.detector_config.atr_flat_ratio) << ",\n"
          << "      \"require_adx_for_trend\": "
          << (result.spec.detector_config.require_adx_for_trend ? "true" : "false") << ",\n"
          << "      \"use_kama_er\": "
-         << (result.spec.detector_config.use_kama_er ? "true" : "false") << ",\n"
-         << "      \"min_bars_for_flat\": " << result.spec.detector_config.min_bars_for_flat << "\n"
+         << (result.spec.detector_config.use_kama_er ? "true" : "false") << "\n"
          << "    },\n"
          << "    \"emit_state_snapshots\": "
          << (result.spec.emit_state_snapshots ? "true" : "false") << ",\n"

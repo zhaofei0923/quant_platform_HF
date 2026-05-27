@@ -102,7 +102,7 @@ StateSnapshot7D RuleMarketStateEngine::BuildState(const std::string& instrument_
         out.has_bar = true;
     }
     if (buffer.detector != nullptr) {
-        out.market_regime = buffer.detector->GetRegime();
+        PopulateMarketStateDiagnostics(*buffer.detector, &out);
     }
 
     if (buffer.prices.size() < 2) {
@@ -135,12 +135,13 @@ StateSnapshot7D RuleMarketStateEngine::BuildState(const std::string& instrument_
     const auto liquidity = std::clamp(1.0 / (1.0 + spread), 0.0, 1.0);
 
     const auto imbalance_num = static_cast<double>(snapshot.bid_volume_1 - snapshot.ask_volume_1);
-    const auto imbalance_den = static_cast<double>(snapshot.bid_volume_1 + snapshot.ask_volume_1 + 1);
+    const auto imbalance_den =
+        static_cast<double>(snapshot.bid_volume_1 + snapshot.ask_volume_1 + 1);
     const auto sentiment = std::clamp(imbalance_num / imbalance_den, -1.0, 1.0);
 
-    const auto seasonality = 0.0;   // Placeholder: daily/weekly seasonality model in phase 2.
-    const auto pattern = trend;     // Placeholder: chart pattern score.
-    const auto event_drive = 0.0;   // Placeholder: macro/news impact score.
+    const auto seasonality = 0.0;  // Placeholder: daily/weekly seasonality model in phase 2.
+    const auto pattern = trend;    // Placeholder: chart pattern score.
+    const auto event_drive = 0.0;  // Placeholder: macro/news impact score.
 
     out.trend = {trend, 0.8};
     out.volatility = {volatility, 0.7};

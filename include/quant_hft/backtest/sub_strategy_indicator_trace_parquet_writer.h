@@ -35,6 +35,11 @@ struct SubStrategyIndicatorTraceRow {
     std::optional<double> stop_loss_price;
     std::optional<double> take_profit_price;
     MarketRegime market_regime{MarketRegime::kUnknown};
+    std::optional<double> market_state_adx;
+    std::optional<double> market_state_kama_er;
+    std::optional<double> market_state_atr_ratio;
+    std::uint64_t market_state_bars_seen{0};
+    std::string market_state_decision_reason;
 };
 
 class SubStrategyIndicatorTraceParquetWriter {

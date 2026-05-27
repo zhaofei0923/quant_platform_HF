@@ -243,6 +243,11 @@ struct StateSnapshot7D {
     double bar_volume{0.0};
     bool has_bar{false};
     MarketRegime market_regime{MarketRegime::kUnknown};
+    double market_state_adx{std::numeric_limits<double>::quiet_NaN()};
+    double market_state_kama_er{std::numeric_limits<double>::quiet_NaN()};
+    double market_state_atr_ratio{std::numeric_limits<double>::quiet_NaN()};
+    std::uint64_t market_state_bars_seen{0};
+    std::string market_state_decision_reason;
     EpochNanos ts_ns{0};
 
     double effective_bar_open() const noexcept {
@@ -471,8 +476,8 @@ struct HealthEvent {
 namespace quant_hft {
 
 inline EpochNanos NowEpochNanos() {
-    const auto now = std::chrono::time_point_cast<std::chrono::nanoseconds>(
-        std::chrono::system_clock::now());
+    const auto now =
+        std::chrono::time_point_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now());
     return now.time_since_epoch().count();
 }
 

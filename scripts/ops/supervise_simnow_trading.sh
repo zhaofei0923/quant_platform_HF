@@ -13,6 +13,7 @@ DAILY_SETTLEMENT_SCRIPT="${SIMNOW_DAILY_SETTLEMENT_SCRIPT:-${SCRIPT_DIR}/run_dai
 OPS_HEALTH_BIN="${OPS_HEALTH_BIN:-${BUILD_DIR}/ops_health_report_cli}"
 OPS_ALERT_BIN="${OPS_ALERT_BIN:-${BUILD_DIR}/ops_alert_report_cli}"
 EXPORT_SCRIPT="${SIMNOW_EXPORT_SCRIPT:-${SCRIPT_DIR}/export_simnow_trading_day.sh}"
+SIGNAL_MONITOR_SCRIPT="${SIMNOW_SIGNAL_MONITOR_SCRIPT:-${SCRIPT_DIR}/monitor_simnow_signal_execution.sh}"
 RUN_ROOT="${SIMNOW_RUN_ROOT:-${QUANT_ROOT}/runtime/trading/runs/simnow}"
 MARKET_DATA_DIR="${SIMNOW_MARKET_DATA_DIR:-${QUANT_ROOT}/runtime/market_data/simnow}"
 WAL_FILE="${SIMNOW_WAL_FILE:-${QUANT_ROOT}/runtime/trading/wal/simnow/events.wal}"
@@ -44,6 +45,9 @@ PROBE_SECONDS="${SIMNOW_PROBE_SECONDS:-5}"
 PROBE_TIMEOUT_SECONDS="${SIMNOW_PROBE_TIMEOUT_SECONDS:-120}"
 HEALTH_INTERVAL_MS="${SIMNOW_HEALTH_INTERVAL_MS:-1000}"
 INSTRUMENT_TIMEOUT_SECONDS="${SIMNOW_INSTRUMENT_TIMEOUT_SECONDS:-45}"
+ALLOW_UNCONFIRMED_SETTLEMENT="${SIMNOW_ALLOW_UNCONFIRMED_SETTLEMENT:-0}"
+SIGNAL_MONITOR_ENABLED="${SIMNOW_SIGNAL_EXECUTION_MONITOR:-0}"
+SIGNAL_MONITOR_POLL_SECONDS="${SIMNOW_SIGNAL_MONITOR_POLL_SECONDS:-5}"
 RUN_ID_PREFIX="${SIMNOW_RUN_ID_PREFIX:-simnow-auto}"
 RUN_ONCE=0
 DRY_RUN=0
@@ -96,6 +100,10 @@ Window spec examples:
 
 Alert hooks are inherited from start_simnow_trading.sh:
   SIMNOW_ALERT_WEBHOOK_URL, SIMNOW_ALERT_EMAIL_TO, SIMNOW_ALERT_COMMAND
+
+Optional signal execution watcher:
+  SIMNOW_SIGNAL_EXECUTION_MONITOR=1 starts monitor_simnow_signal_execution.sh
+  alongside the supervisor and records incidents under runtime/trading/monitor/simnow.
 USAGE
 }
 
@@ -173,6 +181,26 @@ is_non_negative_int() {
 
 is_bool_flag() {
   [[ "${1:-}" == "0" || "${1:-}" == "1" ]]
+}
+
+is_true_text() {
+  local value
+  value="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+  [[ "${value}" == "1" || "${value}" == "true" || "${value}" == "yes" || "${value}" == "on" ]]
+}
+
+yaml_bool_value() {
+  local key="$1"
+  local file_path="$2"
+  awk -F: -v key="${key}" '
+    $1 ~ "^[[:space:]]*" key "[[:space:]]*$" {
+      value = $2
+      sub(/[[:space:]]*#.*/, "", value)
+      gsub(/[[:space:]\"'"'"']/, "", value)
+      print tolower(value)
+      exit
+    }
+  ' "${file_path}" 2>/dev/null
 }
 
 time_to_minutes() {
@@ -546,6 +574,36 @@ start_engine_for_session() {
   return 1
 }
 
+start_signal_execution_monitor() {
+  local monitor_pid=""
+  local monitor_pid_file="${RUN_ROOT}/signal_execution_monitor.pid"
+  local monitor_log="${RUN_ROOT}/signal_execution_monitor.log"
+
+  [[ "${SIGNAL_MONITOR_ENABLED}" == "1" ]] || return 0
+  if [[ ! -x "${SIGNAL_MONITOR_SCRIPT}" ]]; then
+    send_alert_once "signal_monitor_missing" "warning" \
+      "signal execution monitor script is not executable: ${SIGNAL_MONITOR_SCRIPT}"
+    return 1
+  fi
+  if [[ -f "${monitor_pid_file}" ]]; then
+    monitor_pid="$(tr -dc '0-9' < "${monitor_pid_file}" || true)"
+    if pid_is_alive "${monitor_pid}"; then
+      return 0
+    fi
+  fi
+
+  echo "[step] starting signal execution monitor" | tee -a "${SUPERVISOR_LOG}"
+  QUANT_ROOT="${QUANT_ROOT}" SIMNOW_RUN_ROOT="${RUN_ROOT}" \
+    SIMNOW_MARKET_DATA_DIR="${MARKET_DATA_DIR}" SIMNOW_WAL_FILE="${WAL_FILE}" \
+    "${SIGNAL_MONITOR_SCRIPT}" \
+      --run-root "${RUN_ROOT}" \
+      --market-data-dir "${MARKET_DATA_DIR}" \
+      --wal-file "${WAL_FILE}" \
+      --poll-seconds "${SIGNAL_MONITOR_POLL_SECONDS}" \
+      > "${monitor_log}" 2>&1 &
+  printf '%s\n' "$!" > "${monitor_pid_file}"
+}
+
 count_market_rows_by_trading_day() {
   local file_name="$1"
   local trading_day="$2"
@@ -831,20 +889,32 @@ CONVERT_MARKET_PARQUET="${SIMNOW_EOD_CONVERT_MARKET_PARQUET:-${CONVERT_MARKET_PA
 PROBE_SECONDS="${SIMNOW_PROBE_SECONDS:-${PROBE_SECONDS}}"
 PROBE_TIMEOUT_SECONDS="${SIMNOW_PROBE_TIMEOUT_SECONDS:-${PROBE_TIMEOUT_SECONDS}}"
 INSTRUMENT_TIMEOUT_SECONDS="${SIMNOW_INSTRUMENT_TIMEOUT_SECONDS:-${INSTRUMENT_TIMEOUT_SECONDS}}"
+ALLOW_UNCONFIRMED_SETTLEMENT="${SIMNOW_ALLOW_UNCONFIRMED_SETTLEMENT:-${ALLOW_UNCONFIRMED_SETTLEMENT}}"
+SIGNAL_MONITOR_ENABLED="${SIMNOW_SIGNAL_EXECUTION_MONITOR:-${SIGNAL_MONITOR_ENABLED}}"
+SIGNAL_MONITOR_POLL_SECONDS="${SIMNOW_SIGNAL_MONITOR_POLL_SECONDS:-${SIGNAL_MONITOR_POLL_SECONDS}}"
 is_bool_flag "${EOD_EXECUTE}" || die "SIMNOW_EOD_EXECUTE must be 0 or 1"
 is_bool_flag "${EOD_PROJECT_DB}" || die "SIMNOW_EOD_PROJECT_DB must be 0 or 1"
 is_bool_flag "${EOD_QUERY_DB}" || die "SIMNOW_EOD_QUERY_DB must be 0 or 1"
 is_bool_flag "${STRICT_RECONCILE}" || die "SIMNOW_STRICT_RECONCILE must be 0 or 1"
 is_bool_flag "${CONVERT_MARKET_PARQUET}" || die "SIMNOW_EOD_CONVERT_MARKET_PARQUET must be 0 or 1"
+is_bool_flag "${ALLOW_UNCONFIRMED_SETTLEMENT}" || die "SIMNOW_ALLOW_UNCONFIRMED_SETTLEMENT must be 0 or 1"
+is_bool_flag "${SIGNAL_MONITOR_ENABLED}" || die "SIMNOW_SIGNAL_EXECUTION_MONITOR must be 0 or 1"
 is_positive_int "${PROBE_SECONDS}" || die "SIMNOW_PROBE_SECONDS must be positive"
 is_positive_int "${PROBE_TIMEOUT_SECONDS}" || die "SIMNOW_PROBE_TIMEOUT_SECONDS must be positive"
 is_positive_int "${INSTRUMENT_TIMEOUT_SECONDS}" || die "SIMNOW_INSTRUMENT_TIMEOUT_SECONDS must be positive"
+is_positive_int "${SIGNAL_MONITOR_POLL_SECONDS}" || die "SIMNOW_SIGNAL_MONITOR_POLL_SECONDS must be positive"
 [[ -n "${RUN_ROOT}" ]] || die "SIMNOW_RUN_ROOT must not be empty"
 [[ -n "${MARKET_DATA_DIR}" ]] || die "SIMNOW_MARKET_DATA_DIR must not be empty"
 [[ -n "${WAL_FILE}" ]] || die "SIMNOW_WAL_FILE must not be empty"
 [[ -n "${REPORT_ROOT}" ]] || die "SIMNOW_REPORT_ROOT must not be empty"
 [[ -n "${EXPORT_ROOT}" ]] || die "SIMNOW_EXPORT_ROOT must not be empty"
 [[ -n "${RECONCILE_ROOT}" ]] || die "SIMNOW_RECONCILE_ROOT must not be empty"
+
+CONFIG_SETTLEMENT_CONFIRM_REQUIRED="$(yaml_bool_value settlement_confirm_required "${CONFIG_PATH}")"
+if is_true_text "${CTP_SIM_ENABLE_REAL_API:-true}" && \
+   [[ "${CONFIG_SETTLEMENT_CONFIRM_REQUIRED}" == "false" && "${ALLOW_UNCONFIRMED_SETTLEMENT}" != "1" ]]; then
+  die "settlement_confirm_required=false is unsafe for real SimNow trading; set it true or export SIMNOW_ALLOW_UNCONFIRMED_SETTLEMENT=1 for diagnostics only"
+fi
 
 mkdir -p "${RUN_ROOT}" "${REPORT_ROOT}" "${EXPORT_ROOT}" "${RECONCILE_ROOT}" "$(dirname "${WAL_FILE}")"
 LOCK_DIR="${SIMNOW_LOCK_DIR:-${RUN_ROOT}/locks}"
@@ -874,12 +944,14 @@ fi
 
 echo "[info] SimNow supervisor started at $(date -Is)" | tee -a "${SUPERVISOR_LOG}"
 echo "[info] windows=${TRADING_WINDOWS}" | tee -a "${SUPERVISOR_LOG}"
+start_signal_execution_monitor || true
 
 active_session_key=""
 session_start_epoch="$(date +%s)"
 restart_count=0
 
 while true; do
+  start_signal_execution_monitor || true
   rotate_logs
   check_free_disk "${RUN_ROOT}" "${MIN_FREE_MB}" || true
   check_free_disk "${MARKET_DATA_DIR}" "${MIN_FREE_MB}" || true

@@ -5,6 +5,7 @@
 #include <exception>
 #include <utility>
 
+#include "quant_hft/core/structured_log.h"
 #include "quant_hft/strategy/strategy_registry.h"
 
 namespace quant_hft {
@@ -12,6 +13,17 @@ namespace quant_hft {
 namespace {
 
 constexpr EpochNanos kDefaultTimerIntervalNs = 100'000'000;
+
+void EmitStrategyExceptionLog(const std::string& event,
+                              const std::string& phase,
+                              const std::string& strategy_id,
+                              const std::string& error) {
+    EmitStructuredLog(nullptr,
+                      "strategy_engine",
+                      "error",
+                      event,
+                      {{"phase", phase}, {"strategy_id", strategy_id}, {"error", error}});
+}
 
 }  // namespace
 
@@ -290,7 +302,18 @@ void StrategyEngine::DispatchState(const StateSnapshot7D& state) {
                     for (const CompositeAtomicTraceRow& row : rows) {
                         try {
                             config_.indicator_trace_sink(state, entry.strategy_id, row);
+                        } catch (const std::exception& ex) {
+                            EmitStrategyExceptionLog("strategy_callback_exception",
+                                                     "indicator_trace_sink",
+                                                     entry.strategy_id,
+                                                     ex.what());
+                            std::lock_guard<std::mutex> lock(mutex_);
+                            ++stats_.strategy_callback_exceptions;
                         } catch (...) {
+                            EmitStrategyExceptionLog("strategy_callback_exception",
+                                                     "indicator_trace_sink",
+                                                     entry.strategy_id,
+                                                     "unknown exception");
                             std::lock_guard<std::mutex> lock(mutex_);
                             ++stats_.strategy_callback_exceptions;
                         }
@@ -298,7 +321,16 @@ void StrategyEngine::DispatchState(const StateSnapshot7D& state) {
                 }
             }
             EmitIntents(entry.strategy_id, std::move(intents));
+        } catch (const std::exception& ex) {
+            EmitStrategyExceptionLog(
+                "strategy_callback_exception", "state", entry.strategy_id, ex.what());
+            std::lock_guard<std::mutex> lock(mutex_);
+            ++stats_.strategy_callback_exceptions;
         } catch (...) {
+            EmitStrategyExceptionLog("strategy_callback_exception",
+                                     "state",
+                                     entry.strategy_id,
+                                     "unknown exception");
             std::lock_guard<std::mutex> lock(mutex_);
             ++stats_.strategy_callback_exceptions;
         }
@@ -314,7 +346,18 @@ void StrategyEngine::DispatchOrderEvent(const OrderEvent& event) {
         for (auto& entry : strategies_) {
             try {
                 entry.strategy->OnOrderEvent(event);
+            } catch (const std::exception& ex) {
+                EmitStrategyExceptionLog("strategy_callback_exception",
+                                         "order_event_broadcast",
+                                         entry.strategy_id,
+                                         ex.what());
+                std::lock_guard<std::mutex> lock(mutex_);
+                ++stats_.strategy_callback_exceptions;
             } catch (...) {
+                EmitStrategyExceptionLog("strategy_callback_exception",
+                                         "order_event_broadcast",
+                                         entry.strategy_id,
+                                         "unknown exception");
                 std::lock_guard<std::mutex> lock(mutex_);
                 ++stats_.strategy_callback_exceptions;
             }
@@ -333,7 +376,16 @@ void StrategyEngine::DispatchOrderEvent(const OrderEvent& event) {
 
     try {
         it->strategy->OnOrderEvent(event);
+    } catch (const std::exception& ex) {
+        EmitStrategyExceptionLog(
+            "strategy_callback_exception", "order_event", it->strategy_id, ex.what());
+        std::lock_guard<std::mutex> lock(mutex_);
+        ++stats_.strategy_callback_exceptions;
     } catch (...) {
+        EmitStrategyExceptionLog("strategy_callback_exception",
+                                 "order_event",
+                                 it->strategy_id,
+                                 "unknown exception");
         std::lock_guard<std::mutex> lock(mutex_);
         ++stats_.strategy_callback_exceptions;
     }
@@ -343,7 +395,16 @@ void StrategyEngine::DispatchAccountSnapshot(const TradingAccountSnapshot& snaps
     for (auto& entry : strategies_) {
         try {
             entry.strategy->OnAccountSnapshot(snapshot);
+        } catch (const std::exception& ex) {
+            EmitStrategyExceptionLog(
+                "strategy_callback_exception", "account_snapshot", entry.strategy_id, ex.what());
+            std::lock_guard<std::mutex> lock(mutex_);
+            ++stats_.strategy_callback_exceptions;
         } catch (...) {
+            EmitStrategyExceptionLog("strategy_callback_exception",
+                                     "account_snapshot",
+                                     entry.strategy_id,
+                                     "unknown exception");
             std::lock_guard<std::mutex> lock(mutex_);
             ++stats_.strategy_callback_exceptions;
         }
@@ -356,7 +417,16 @@ void StrategyEngine::DispatchTimer(EpochNanos now_ns) {
         try {
             intents = entry.strategy->OnTimer(now_ns);
             EmitIntents(entry.strategy_id, std::move(intents));
+        } catch (const std::exception& ex) {
+            EmitStrategyExceptionLog(
+                "strategy_callback_exception", "timer", entry.strategy_id, ex.what());
+            std::lock_guard<std::mutex> lock(mutex_);
+            ++stats_.strategy_callback_exceptions;
         } catch (...) {
+            EmitStrategyExceptionLog("strategy_callback_exception",
+                                     "timer",
+                                     entry.strategy_id,
+                                     "unknown exception");
             std::lock_guard<std::mutex> lock(mutex_);
             ++stats_.strategy_callback_exceptions;
         }
@@ -428,7 +498,16 @@ void StrategyEngine::MaybeCollectMetrics(EpochNanos now_ns) {
                 }
                 collected.push_back(std::move(metric));
             }
+        } catch (const std::exception& ex) {
+            EmitStrategyExceptionLog(
+                "strategy_callback_exception", "collect_metrics", entry.strategy_id, ex.what());
+            std::lock_guard<std::mutex> lock(mutex_);
+            ++stats_.strategy_callback_exceptions;
         } catch (...) {
+            EmitStrategyExceptionLog("strategy_callback_exception",
+                                     "collect_metrics",
+                                     entry.strategy_id,
+                                     "unknown exception");
             std::lock_guard<std::mutex> lock(mutex_);
             ++stats_.strategy_callback_exceptions;
         }
@@ -449,7 +528,29 @@ void StrategyEngine::EmitIntents(const std::string& strategy_id,
         if (intent.strategy_id.empty()) {
             intent.strategy_id = strategy_id;
         }
-        intent_sink_(intent);
+        try {
+            intent_sink_(intent);
+        } catch (const std::exception& ex) {
+            EmitStructuredLog(nullptr,
+                              "strategy_engine",
+                              "error",
+                              "strategy_intent_sink_exception",
+                              {{"strategy_id", intent.strategy_id},
+                               {"trace_id", intent.trace_id},
+                               {"instrument_id", intent.instrument_id},
+                               {"error", ex.what()}});
+            throw;
+        } catch (...) {
+            EmitStructuredLog(nullptr,
+                              "strategy_engine",
+                              "error",
+                              "strategy_intent_sink_exception",
+                              {{"strategy_id", intent.strategy_id},
+                               {"trace_id", intent.trace_id},
+                               {"instrument_id", intent.instrument_id},
+                               {"error", "unknown exception"}});
+            throw;
+        }
     }
 }
 

@@ -129,6 +129,11 @@ TEST(IndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicatorsWhenEnable
     row1.adx = 25.4;
     row1.er = 0.55;
     row1.market_regime = MarketRegime::kWeakTrend;
+    row1.market_state_adx = 25.4;
+    row1.market_state_kama_er = 0.55;
+    row1.market_state_atr_ratio = 0.012;
+    row1.market_state_bars_seen = 8;
+    row1.market_state_decision_reason = "adx_weak";
     row1.dt_utc = "2023-11-14 22:14:20";
     ASSERT_TRUE(writer.Append(row1, &error)) << error;
 
@@ -141,6 +146,11 @@ TEST(IndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicatorsWhenEnable
     row2.adx = 42.0;
     row2.er = 0.85;
     row2.market_regime = MarketRegime::kStrongTrend;
+    row2.market_state_adx = 42.0;
+    row2.market_state_kama_er = 0.85;
+    row2.market_state_atr_ratio = 0.015;
+    row2.market_state_bars_seen = 9;
+    row2.market_state_decision_reason = "adx_strong";
     row2.dt_utc = "2023-11-14 22:15:20";
     ASSERT_TRUE(writer.Append(row2, &error)) << error;
 
@@ -158,17 +168,19 @@ TEST(IndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicatorsWhenEnable
     ASSERT_TRUE(parquet_reader->ReadTable(&table).ok());
     ASSERT_NE(table, nullptr);
     EXPECT_EQ(table->num_rows(), 3);
-    ASSERT_EQ(table->num_columns(), 19);
+    ASSERT_EQ(table->num_columns(), 24);
 
     const std::shared_ptr<arrow::Schema> schema = table->schema();
     ASSERT_NE(schema, nullptr);
-    ASSERT_EQ(schema->num_fields(), 19);
+    ASSERT_EQ(schema->num_fields(), 24);
     EXPECT_EQ(schema->field(0)->name(), "instrument_id");
     EXPECT_EQ(schema->field(2)->name(), "dt_utc");
     EXPECT_EQ(schema->field(3)->name(), "timeframe_minutes");
     EXPECT_EQ(schema->field(9)->name(), "analysis_bar_open");
     EXPECT_EQ(schema->field(14)->name(), "kama");
     EXPECT_EQ(schema->field(18)->name(), "market_regime");
+    EXPECT_EQ(schema->field(19)->name(), "market_state_adx");
+    EXPECT_EQ(schema->field(23)->name(), "market_state_decision_reason");
     EXPECT_FALSE(schema->field(0)->nullable());
     EXPECT_FALSE(schema->field(2)->nullable());
     EXPECT_FALSE(schema->field(3)->nullable());
@@ -191,6 +203,9 @@ TEST(IndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicatorsWhenEnable
     const auto adx_column = table->GetColumnByName("adx");
     const auto er_column = table->GetColumnByName("er");
     const auto regime_column = table->GetColumnByName("market_regime");
+    const auto market_state_adx_column = table->GetColumnByName("market_state_adx");
+    const auto market_state_bars_seen_column = table->GetColumnByName("market_state_bars_seen");
+    const auto market_state_reason_column = table->GetColumnByName("market_state_decision_reason");
     ASSERT_NE(timeframe_column, nullptr);
     ASSERT_NE(analysis_offset_column, nullptr);
     ASSERT_NE(kama_column, nullptr);
@@ -198,8 +213,10 @@ TEST(IndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicatorsWhenEnable
     ASSERT_NE(adx_column, nullptr);
     ASSERT_NE(er_column, nullptr);
     ASSERT_NE(regime_column, nullptr);
-    const auto timeframe =
-        std::static_pointer_cast<arrow::Int32Array>(timeframe_column->chunk(0));
+    ASSERT_NE(market_state_adx_column, nullptr);
+    ASSERT_NE(market_state_bars_seen_column, nullptr);
+    ASSERT_NE(market_state_reason_column, nullptr);
+    const auto timeframe = std::static_pointer_cast<arrow::Int32Array>(timeframe_column->chunk(0));
     const auto analysis_offset =
         std::static_pointer_cast<arrow::DoubleArray>(analysis_offset_column->chunk(0));
     const auto kama = std::static_pointer_cast<arrow::DoubleArray>(kama_column->chunk(0));
@@ -207,6 +224,12 @@ TEST(IndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicatorsWhenEnable
     const auto adx = std::static_pointer_cast<arrow::DoubleArray>(adx_column->chunk(0));
     const auto er = std::static_pointer_cast<arrow::DoubleArray>(er_column->chunk(0));
     const auto regime = std::static_pointer_cast<arrow::UInt8Array>(regime_column->chunk(0));
+    const auto market_state_adx =
+        std::static_pointer_cast<arrow::DoubleArray>(market_state_adx_column->chunk(0));
+    const auto market_state_bars_seen =
+        std::static_pointer_cast<arrow::UInt64Array>(market_state_bars_seen_column->chunk(0));
+    const auto market_state_reason =
+        std::static_pointer_cast<arrow::StringArray>(market_state_reason_column->chunk(0));
 
     EXPECT_EQ(timeframe->Value(0), 1);
     EXPECT_EQ(timeframe->Value(1), 1);
@@ -224,6 +247,10 @@ TEST(IndicatorTraceParquetWriterTest, WritesRowsWithNullableIndicatorsWhenEnable
     EXPECT_EQ(regime->Value(0), static_cast<std::uint8_t>(MarketRegime::kUnknown));
     EXPECT_EQ(regime->Value(1), static_cast<std::uint8_t>(MarketRegime::kWeakTrend));
     EXPECT_EQ(regime->Value(2), static_cast<std::uint8_t>(MarketRegime::kStrongTrend));
+    EXPECT_TRUE(market_state_adx->IsNull(0));
+    EXPECT_DOUBLE_EQ(market_state_adx->Value(1), 25.4);
+    EXPECT_EQ(market_state_bars_seen->Value(2), 9U);
+    EXPECT_EQ(market_state_reason->GetString(2), "adx_strong");
 
     std::filesystem::remove(path, ec);
 #endif

@@ -212,6 +212,8 @@ int main() {
               "analysis_price_offset",
               "has_bar",
               "market_regime",
+              "market_state_bars_seen",
+              "market_state_decision_reason",
               "ts_ns"}},
             {"SignalIntent",
              {"strategy_id",

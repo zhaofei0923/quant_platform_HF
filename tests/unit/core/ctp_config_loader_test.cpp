@@ -902,10 +902,8 @@ TEST(CtpConfigLoaderTest, LoadsNestedMarketStateDetectorConfig) {
         "    kama_er_strong: 0.7\n"
         "    kama_er_weak_lower: 0.25\n"
         "    atr_period: 9\n"
-        "    atr_flat_ratio: 0.002\n"
         "    require_adx_for_trend: false\n"
-        "    use_kama_er: true\n"
-        "    min_bars_for_flat: 12\n");
+        "    use_kama_er: true\n");
 
     CtpFileConfig config;
     std::string error;
@@ -913,13 +911,11 @@ TEST(CtpConfigLoaderTest, LoadsNestedMarketStateDetectorConfig) {
     EXPECT_EQ(config.market_state_detector.adx_period, 7);
     EXPECT_DOUBLE_EQ(config.market_state_detector.adx_strong_threshold, 45.0);
     EXPECT_EQ(config.market_state_detector.kama_er_period, 8);
-    EXPECT_DOUBLE_EQ(config.market_state_detector.atr_flat_ratio, 0.002);
     EXPECT_FALSE(config.market_state_detector.require_adx_for_trend);
-    EXPECT_EQ(config.market_state_detector.min_bars_for_flat, 12);
     std::filesystem::remove(config_path);
 }
 
-TEST(CtpConfigLoaderTest, NestedMarketStateDetectorKeysOverrideLegacyFlatKeys) {
+TEST(CtpConfigLoaderTest, IgnoresDeprecatedMarketStateFlatGateKeys) {
     const auto config_path = WriteTempConfig(
         "ctp:\n"
         "  environment: sim\n"
@@ -932,15 +928,16 @@ TEST(CtpConfigLoaderTest, NestedMarketStateDetectorKeysOverrideLegacyFlatKeys) {
         "  password: \"plain-secret\"\n"
         "  adx_period: 6\n"
         "  atr_flat_ratio: 0.003\n"
+        "  min_bars_for_flat: 5\n"
         "  market_state_detector:\n"
         "    adx_period: 11\n"
-        "    atr_flat_ratio: 0.0015\n");
+        "    atr_flat_ratio: 0.0015\n"
+        "    min_bars_for_flat: 12\n");
 
     CtpFileConfig config;
     std::string error;
     ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error)) << error;
     EXPECT_EQ(config.market_state_detector.adx_period, 11);
-    EXPECT_DOUBLE_EQ(config.market_state_detector.atr_flat_ratio, 0.0015);
     std::filesystem::remove(config_path);
 }
 
@@ -963,6 +960,96 @@ TEST(CtpConfigLoaderTest, RejectsInvalidMarketStateDetectorConfig) {
     EXPECT_FALSE(CtpConfigLoader::LoadFromYaml(invalid_period.string(), &config, &error));
     EXPECT_NE(error.find("market_state_detector"), std::string::npos);
     std::filesystem::remove(invalid_period);
+}
+
+TEST(CtpConfigLoaderTest, LoadsMarketStateDetectorByProductOverrides) {
+    const auto config_path = WriteTempConfig(
+        "ctp:\n"
+        "  environment: sim\n"
+        "  is_production_mode: false\n"
+        "  broker_id: \"9999\"\n"
+        "  user_id: \"191202\"\n"
+        "  investor_id: \"191202\"\n"
+        "  market_front: \"tcp://127.0.0.1:40011\"\n"
+        "  trader_front: \"tcp://127.0.0.1:40001\"\n"
+        "  password: \"plain-secret\"\n"
+        "  market_state_detector:\n"
+        "    adx_period: 9\n"
+        "    require_adx_for_trend: false\n"
+        "  market_state_detector_by_product:\n"
+        "    c:\n"
+        "      use_kama_er: false\n"
+        "    HC:\n"
+        "      adx_period: 21\n"
+        "      require_adx_for_trend: true\n");
+
+    CtpFileConfig config;
+    std::string error;
+    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error)) << error;
+    EXPECT_EQ(config.market_state_detector.adx_period, 9);
+    EXPECT_FALSE(config.market_state_detector.require_adx_for_trend);
+    ASSERT_EQ(config.market_state_detector_by_product.size(), 2U);
+
+    const auto c_it = config.market_state_detector_by_product.find("c");
+    ASSERT_NE(c_it, config.market_state_detector_by_product.end());
+    EXPECT_EQ(c_it->second.adx_period, 9);
+    EXPECT_FALSE(c_it->second.require_adx_for_trend);
+    EXPECT_FALSE(c_it->second.use_kama_er);
+
+    const auto hc_it = config.market_state_detector_by_product.find("hc");
+    ASSERT_NE(hc_it, config.market_state_detector_by_product.end());
+    EXPECT_EQ(hc_it->second.adx_period, 21);
+    EXPECT_TRUE(hc_it->second.require_adx_for_trend);
+
+    const MarketStateDetectorConfig& resolved_c = ResolveMarketStateDetectorConfig(
+        "DCE.c2607", config.market_state_detector, config.market_state_detector_by_product);
+    const MarketStateDetectorConfig& resolved_hc = ResolveMarketStateDetectorConfig(
+        "SHFE.hc2610", config.market_state_detector, config.market_state_detector_by_product);
+    EXPECT_FALSE(resolved_c.use_kama_er);
+    EXPECT_EQ(resolved_hc.adx_period, 21);
+    std::filesystem::remove(config_path);
+}
+
+TEST(CtpConfigLoaderTest, RejectsInvalidMarketStateDetectorByProductConfig) {
+    const auto invalid_product = WriteTempConfig(
+        "ctp:\n"
+        "  environment: sim\n"
+        "  is_production_mode: false\n"
+        "  broker_id: \"9999\"\n"
+        "  user_id: \"191202\"\n"
+        "  investor_id: \"191202\"\n"
+        "  market_front: \"tcp://127.0.0.1:40011\"\n"
+        "  trader_front: \"tcp://127.0.0.1:40001\"\n"
+        "  password: \"plain-secret\"\n"
+        "  market_state_detector_by_product:\n"
+        "    c2607:\n"
+        "      require_adx_for_trend: true\n");
+
+    CtpFileConfig config;
+    std::string error;
+    EXPECT_FALSE(CtpConfigLoader::LoadFromYaml(invalid_product.string(), &config, &error));
+    EXPECT_NE(error.find("market_state_detector_by_product product"), std::string::npos);
+    std::filesystem::remove(invalid_product);
+
+    const auto invalid_threshold = WriteTempConfig(
+        "ctp:\n"
+        "  environment: sim\n"
+        "  is_production_mode: false\n"
+        "  broker_id: \"9999\"\n"
+        "  user_id: \"191202\"\n"
+        "  investor_id: \"191202\"\n"
+        "  market_front: \"tcp://127.0.0.1:40011\"\n"
+        "  trader_front: \"tcp://127.0.0.1:40001\"\n"
+        "  password: \"plain-secret\"\n"
+        "  market_state_detector_by_product:\n"
+        "    hc:\n"
+        "      kama_er_weak_lower: 0.8\n"
+        "      kama_er_strong: 0.6\n");
+
+    error.clear();
+    EXPECT_FALSE(CtpConfigLoader::LoadFromYaml(invalid_threshold.string(), &config, &error));
+    EXPECT_NE(error.find("market_state_detector_by_product config"), std::string::npos);
+    std::filesystem::remove(invalid_threshold);
 }
 
 }  // namespace

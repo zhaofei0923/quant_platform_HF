@@ -93,7 +93,5 @@ ctp:
     kama_er_strong: 0.6
     kama_er_weak_lower: 0.3
     atr_period: 14
-    atr_flat_ratio: 0.001
     require_adx_for_trend: true
     use_kama_er: true
-    min_bars_for_flat: 20

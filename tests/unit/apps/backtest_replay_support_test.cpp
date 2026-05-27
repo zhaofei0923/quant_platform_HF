@@ -1018,7 +1018,6 @@ TEST(BacktestReplaySupportTest, BuildStateSnapshotFromBarUpdatesMarketRegimeWhen
     config.adx_period = 3;
     config.atr_period = 3;
     config.kama_er_period = 3;
-    config.min_bars_for_flat = 1;
     MarketStateDetector detector(config);
 
     StateSnapshot7D state;
@@ -1852,7 +1851,6 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecLoadsDetectorConfigFile) {
         "  adx_period: 7\n"
         "  atr_period: 5\n"
         "  kama_er_period: 6\n"
-        "  atr_flat_ratio: 0.002\n"
         "  require_adx_for_trend: false\n");
 
     ArgMap args;
@@ -1867,7 +1865,6 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecLoadsDetectorConfigFile) {
     EXPECT_EQ(spec.detector_config.adx_period, 7);
     EXPECT_EQ(spec.detector_config.atr_period, 5);
     EXPECT_EQ(spec.detector_config.kama_er_period, 6);
-    EXPECT_NEAR(spec.detector_config.atr_flat_ratio, 0.002, 1e-12);
     EXPECT_FALSE(spec.detector_config.require_adx_for_trend);
 
     std::filesystem::remove(config_path);
@@ -1908,6 +1905,116 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecLoadsDetectorConfigFromCtpNe
     EXPECT_EQ(spec.detector_config.atr_period, 11);
 
     std::filesystem::remove(config_path);
+}
+
+TEST(BacktestReplaySupportTest, ParseBacktestCliSpecLoadsDetectorConfigByProductOverrides) {
+    const auto config_path = WriteTempDetectorConfig(
+        "ctp:\n"
+        "  market_state_detector:\n"
+        "    adx_period: 9\n"
+        "    require_adx_for_trend: false\n"
+        "  market_state_detector_by_product:\n"
+        "    hc:\n"
+        "      adx_period: 21\n"
+        "      require_adx_for_trend: true\n");
+
+    ArgMap args;
+    args["engine_mode"] = "csv";
+    args["csv_path"] = "backtest_data/rb.csv";
+    args["detector_config"] = config_path.string();
+
+    BacktestCliSpec spec;
+    std::string error;
+    ASSERT_TRUE(ParseBacktestCliSpec(args, &spec, &error)) << error;
+    EXPECT_EQ(spec.detector_config.adx_period, 9);
+    EXPECT_FALSE(spec.detector_config.require_adx_for_trend);
+
+    const auto hc_it = spec.detector_config_by_product.find("hc");
+    ASSERT_NE(hc_it, spec.detector_config_by_product.end());
+    EXPECT_EQ(hc_it->second.adx_period, 21);
+    EXPECT_TRUE(hc_it->second.require_adx_for_trend);
+
+    const MarketStateDetectorConfig& c_config = ResolveMarketStateDetectorConfig(
+        "DCE.c2607", spec.detector_config, spec.detector_config_by_product);
+    const MarketStateDetectorConfig& hc_config = ResolveMarketStateDetectorConfig(
+        "SHFE.hc2610", spec.detector_config, spec.detector_config_by_product);
+    EXPECT_FALSE(c_config.require_adx_for_trend);
+    EXPECT_EQ(hc_config.adx_period, 21);
+
+    std::filesystem::remove(config_path);
+}
+
+TEST(BacktestReplaySupportTest, ParseBacktestCliSpecRejectsInvalidDetectorByProductConfig) {
+    const auto invalid_product = WriteTempDetectorConfig(
+        "market_state_detector_by_product:\n"
+        "  hc2610:\n"
+        "    require_adx_for_trend: true\n");
+
+    ArgMap args;
+    args["engine_mode"] = "csv";
+    args["csv_path"] = "backtest_data/rb.csv";
+    args["detector_config"] = invalid_product.string();
+
+    BacktestCliSpec spec;
+    std::string error;
+    EXPECT_FALSE(ParseBacktestCliSpec(args, &spec, &error));
+    EXPECT_NE(error.find("market_state_detector_by_product product"), std::string::npos);
+    std::filesystem::remove(invalid_product);
+
+    const auto invalid_threshold = WriteTempDetectorConfig(
+        "market_state_detector_by_product:\n"
+        "  hc:\n"
+        "    kama_er_weak_lower: 0.8\n"
+        "    kama_er_strong: 0.6\n");
+    args["detector_config"] = invalid_threshold.string();
+    error.clear();
+    EXPECT_FALSE(ParseBacktestCliSpec(args, &spec, &error));
+    EXPECT_NE(error.find("detector_config_by_product"), std::string::npos);
+    std::filesystem::remove(invalid_threshold);
+}
+
+TEST(BacktestReplaySupportTest, BuildStateSnapshotCarriesResolvedDetectorDiagnostics) {
+    MarketStateDetectorConfig global_config;
+    global_config.adx_period = 14;
+    global_config.atr_period = 3;
+    global_config.kama_er_period = 3;
+    global_config.require_adx_for_trend = false;
+    MarketStateDetectorConfig hc_config = global_config;
+    hc_config.require_adx_for_trend = true;
+    MarketStateDetectorConfigByProduct by_product;
+    by_product.emplace("hc", hc_config);
+
+    const MarketStateDetectorConfig& resolved =
+        ResolveMarketStateDetectorConfig("SHFE.hc2610", global_config, by_product);
+    MarketStateDetector detector(resolved);
+
+    StateSnapshot7D state;
+    for (int i = 0; i < 8; ++i) {
+        ReplayTick last;
+        last.instrument_id = "SHFE.hc2610";
+        last.trading_day = "20260515";
+        last.update_time = "09:00:00";
+        last.ts_ns = 1'000'000'000LL + i;
+
+        const double close = 200.0 + static_cast<double>(i);
+        BarSnapshot bar;
+        bar.instrument_id = last.instrument_id;
+        bar.open = close - 0.5;
+        bar.high = close + 1.0;
+        bar.low = close - 1.0;
+        bar.close = close;
+        bar.analysis_open = bar.open;
+        bar.analysis_high = bar.high;
+        bar.analysis_low = bar.low;
+        bar.analysis_close = bar.close;
+        bar.volume = 10 + i;
+        state = BuildStateSnapshotFromBar(last, last, bar, last.ts_ns, 5, &detector);
+    }
+
+    EXPECT_EQ(state.market_regime, MarketRegime::kUnknown);
+    EXPECT_EQ(state.market_state_decision_reason, "adx_warmup");
+    EXPECT_EQ(state.market_state_bars_seen, 8U);
+    EXPECT_TRUE(std::isfinite(state.market_state_atr_ratio));
 }
 
 TEST(BacktestReplaySupportTest, ParseBacktestCliSpecParsesIndicatorTraceFlags) {
@@ -2600,7 +2707,9 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecIndicatorTraceWritesCsvWhenPathEn
     EXPECT_EQ(lines.front(),
               "instrument_id,ts_ns,dt_utc,timeframe_minutes,bar_open,bar_high,bar_low,bar_close,"
               "bar_volume,analysis_bar_open,analysis_bar_high,analysis_bar_low,"
-              "analysis_bar_close,analysis_price_offset,kama,atr,adx,er,market_regime");
+              "analysis_bar_close,analysis_price_offset,kama,atr,adx,er,market_regime,"
+              "market_state_adx,market_state_kama_er,market_state_atr_ratio,"
+              "market_state_bars_seen,market_state_decision_reason");
 
     std::filesystem::remove(csv_path, ec);
     std::filesystem::remove(trace_path, ec);
@@ -2846,7 +2955,8 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecSubStrategyTraceWritesCsvWhenPath
               "strategy_type,bar_open,bar_high,bar_low,bar_close,bar_volume,"
               "analysis_bar_open,analysis_bar_high,analysis_bar_low,analysis_bar_close,"
               "analysis_price_offset,kama,atr,adx,er,stop_loss_price,take_profit_price,"
-              "market_regime");
+              "market_regime,market_state_adx,market_state_kama_er,market_state_atr_ratio,"
+              "market_state_bars_seen,market_state_decision_reason");
 
     std::filesystem::remove(csv_path, ec);
     std::filesystem::remove(composite_path, ec);

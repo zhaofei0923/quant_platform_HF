@@ -28,6 +28,13 @@ namespace fs = std::filesystem;
 
 constexpr std::int64_t kTickStaleSeconds = 180;
 constexpr std::int64_t kBarStaleSeconds = 240;
+constexpr int kCommodityMorningBreakMinute = 10 * 60 + 15;
+constexpr int kCommodityLunchBreakMinute = 11 * 60 + 30;
+constexpr int kCommodityDayCloseMinute = 15 * 60;
+constexpr int kCommodityPostDayCloseLatestMinute = 15 * 60 + 30;
+constexpr std::int64_t kCommodityMorningBreakSeconds = 15 * 60;
+constexpr std::int64_t kCommodityLunchBreakSeconds = 2 * 60 * 60;
+constexpr std::int64_t kCommodityDayCloseSeconds = 5 * 60 * 60 + 45 * 60;
 constexpr std::size_t kRecentAlertLimit = 24;
 constexpr std::size_t kRecentSignalMonitorLimit = 12;
 constexpr std::size_t kRecentCtpEventLimit = 16;
@@ -1049,6 +1056,72 @@ std::string StatusForAge(const std::optional<std::int64_t>& age, std::int64_t th
     return *age <= threshold ? "fresh" : "stale";
 }
 
+std::optional<int> ParseClockMinute(std::string value) {
+    const std::size_t space_pos = value.find(' ');
+    if (space_pos != std::string::npos) {
+        value = value.substr(space_pos + 1);
+    }
+    if (value.size() < 5 || value[2] != ':') {
+        return std::nullopt;
+    }
+    const auto is_digit = [](char ch) { return std::isdigit(static_cast<unsigned char>(ch)) != 0; };
+    if (!is_digit(value[0]) || !is_digit(value[1]) || !is_digit(value[3]) || !is_digit(value[4])) {
+        return std::nullopt;
+    }
+    const int hour = (value[0] - '0') * 10 + (value[1] - '0');
+    const int minute = (value[3] - '0') * 10 + (value[4] - '0');
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+        return std::nullopt;
+    }
+    return hour * 60 + minute;
+}
+
+std::optional<std::int64_t> CommodityPauseWindowSeconds(int close_minute) {
+    if (close_minute == kCommodityMorningBreakMinute) {
+        return kCommodityMorningBreakSeconds;
+    }
+    if (close_minute == kCommodityLunchBreakMinute) {
+        return kCommodityLunchBreakSeconds;
+    }
+    if (close_minute >= kCommodityDayCloseMinute &&
+        close_minute <= kCommodityPostDayCloseLatestMinute) {
+        return kCommodityDayCloseSeconds;
+    }
+    return std::nullopt;
+}
+
+bool IsWithinPauseAge(const std::optional<std::int64_t>& age, std::int64_t pause_seconds) {
+    return age.has_value() && *age <= pause_seconds;
+}
+
+bool IsCommodityPauseObservation(const std::string& clock_text,
+                                 const std::optional<std::int64_t>& age) {
+    const auto minute = ParseClockMinute(clock_text);
+    if (!minute.has_value()) {
+        return false;
+    }
+    const auto pause_seconds = CommodityPauseWindowSeconds(*minute);
+    if (!pause_seconds.has_value()) {
+        return false;
+    }
+    return IsWithinPauseAge(age, *pause_seconds);
+}
+
+void ApplyCommodityPauseStatus(MarketFileStatus& status) {
+    if (status.tick_status == "stale" &&
+        IsCommodityPauseObservation(status.tick.update_time, status.tick_age_seconds)) {
+        status.tick_status = "closed";
+    }
+    if (status.bar_status == "stale" &&
+        IsCommodityPauseObservation(status.bar.minute, status.bar_age_seconds)) {
+        status.bar_status = "closed";
+    }
+}
+
+bool MarketObservationHealthy(const std::string& status) {
+    return status == "fresh" || status == "closed";
+}
+
 ProcessStatus CollectProcessStatus(const DashboardOptions& options) {
     ProcessStatus status;
     const fs::path run_root(options.run_root);
@@ -1093,7 +1166,9 @@ std::vector<MarketFileStatus> CollectMarketStatus(const DashboardOptions& option
             status.bar_status = StatusForAge(status.bar_age_seconds, kBarStaleSeconds);
             status.bar = ParseBar(status.bar_file);
         }
-        status.healthy = status.tick_status == "fresh" && status.bar_status == "fresh";
+        ApplyCommodityPauseStatus(status);
+        status.healthy = MarketObservationHealthy(status.tick_status) &&
+                         MarketObservationHealthy(status.bar_status);
     }
     std::vector<MarketFileStatus> markets;
     for (auto& [_, status] : discovered) {
@@ -2177,11 +2252,13 @@ std::string RenderHtml(const DashboardState& state) {
         html << "<tr><td>" << HtmlEscape(item.product) << "</td><td>"
              << HtmlEscape(EmptyAsDash(item.tick.instrument_id.empty() ? item.bar.instrument_id
                                                                        : item.tick.instrument_id))
-             << "</td><td>" << RenderBadge(item.tick_status, item.tick_status == "fresh")
+             << "</td><td>"
+             << RenderBadge(item.tick_status, MarketObservationHealthy(item.tick_status))
              << " <span class=\"subtle\">"
              << (item.tick_age_seconds.has_value() ? std::to_string(*item.tick_age_seconds) + "s"
                                                    : "n/a")
-             << "</span></td><td>" << RenderBadge(item.bar_status, item.bar_status == "fresh")
+             << "</span></td><td>"
+             << RenderBadge(item.bar_status, MarketObservationHealthy(item.bar_status))
              << " <span class=\"subtle\">"
              << (item.bar_age_seconds.has_value() ? std::to_string(*item.bar_age_seconds) + "s"
                                                   : "n/a")

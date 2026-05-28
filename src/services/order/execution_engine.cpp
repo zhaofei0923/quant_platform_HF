@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <stdexcept>
 #include <thread>
 #include <utility>
@@ -18,32 +19,26 @@ bool IsTerminalStatus(OrderStatus status) {
 }
 
 std::shared_ptr<MonitoringCounter> RiskRejectCounter() {
-    static auto metric = MetricRegistry::Instance().BuildCounter(
-        "quant_hft_risk_reject_total", "Total risk rejection count");
+    static auto metric = MetricRegistry::Instance().BuildCounter("quant_hft_risk_reject_total",
+                                                                 "Total risk rejection count");
     return metric;
 }
 
 std::shared_ptr<MonitoringHistogram> OrderLatencyHistogram() {
     static auto metric = MetricRegistry::Instance().BuildHistogram(
-        "quant_hft_order_latency_seconds",
-        "Order handling latency in seconds",
+        "quant_hft_order_latency_seconds", "Order handling latency in seconds",
         {0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0});
     return metric;
 }
 
 }  // namespace
 
-ExecutionEngine::ExecutionEngine(std::shared_ptr<CTPTraderAdapter> adapter,
-                                 std::shared_ptr<FlowController> flow_controller,
-                                 std::shared_ptr<CircuitBreakerManager> breaker_manager,
-                                 std::shared_ptr<OrderManager> order_manager,
-                                 std::shared_ptr<PositionManager> position_manager,
-                                 std::shared_ptr<ITradingDomainStore> domain_store,
-                                 int acquire_timeout_ms,
-                                 int cancel_retry_max,
-                                 int cancel_retry_base_ms,
-                                 int cancel_retry_max_delay_ms,
-                                 int cancel_wait_ack_timeout_ms)
+ExecutionEngine::ExecutionEngine(
+    std::shared_ptr<CTPTraderAdapter> adapter, std::shared_ptr<FlowController> flow_controller,
+    std::shared_ptr<CircuitBreakerManager> breaker_manager,
+    std::shared_ptr<OrderManager> order_manager, std::shared_ptr<PositionManager> position_manager,
+    std::shared_ptr<ITradingDomainStore> domain_store, int acquire_timeout_ms, int cancel_retry_max,
+    int cancel_retry_base_ms, int cancel_retry_max_delay_ms, int cancel_wait_ack_timeout_ms)
     : adapter_(std::move(adapter)),
       flow_controller_(std::move(flow_controller)),
       breaker_manager_(std::move(breaker_manager)),
@@ -134,9 +129,9 @@ std::future<bool> ExecutionEngine::CancelOrderAsync(const std::string& client_or
                 return false;
             }
         }
-        const auto account_id =
-            default_account_id_.empty() ? adapter_->GetLastUserSession().investor_id
-                                        : default_account_id_;
+        const auto account_id = default_account_id_.empty()
+                                    ? adapter_->GetLastUserSession().investor_id
+                                    : default_account_id_;
         if (!AllowByBreaker(default_strategy_id_, account_id)) {
             return false;
         }
@@ -166,8 +161,8 @@ std::future<bool> ExecutionEngine::CancelOrderAsync(const std::string& client_or
             const bool submitted = adapter_->CancelOrder(client_order_id, client_order_id);
             if (domain_store_ != nullptr) {
                 std::string ignored_error;
-                (void)domain_store_->UpdateOrderCancelRetry(
-                    client_order_id, attempt, NowEpochNanos(), &ignored_error);
+                (void)domain_store_->UpdateOrderCancelRetry(client_order_id, attempt,
+                                                            NowEpochNanos(), &ignored_error);
             }
             if (submitted) {
                 if (order_manager_ == nullptr) {
@@ -203,9 +198,9 @@ std::future<TradingAccountSnapshot> ExecutionEngine::QueryTradingAccountAsync() 
         if (adapter_ == nullptr || flow_controller_ == nullptr) {
             throw std::runtime_error("query dependencies are null");
         }
-        const auto account_id =
-            default_account_id_.empty() ? adapter_->GetLastUserSession().investor_id
-                                        : default_account_id_;
+        const auto account_id = default_account_id_.empty()
+                                    ? adapter_->GetLastUserSession().investor_id
+                                    : default_account_id_;
         if (!AcquireFlowPermit(Operation{
                 account_id,
                 OperationType::kQuery,
@@ -217,8 +212,7 @@ std::future<TradingAccountSnapshot> ExecutionEngine::QueryTradingAccountAsync() 
         if (adapter_->EnqueueTradingAccountQuery() <= 0) {
             throw std::runtime_error("failed to enqueue trading account query");
         }
-        const auto deadline =
-            std::chrono::steady_clock::now() + std::chrono::milliseconds(3000);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(3000);
         while (std::chrono::steady_clock::now() < deadline) {
             const auto snapshot = adapter_->GetLastTradingAccountSnapshot();
             if (snapshot.ts_ns > before || (before == 0 && snapshot.ts_ns > 0)) {
@@ -236,9 +230,9 @@ std::future<std::vector<InvestorPositionSnapshot>> ExecutionEngine::QueryInvesto
         if (adapter_ == nullptr || flow_controller_ == nullptr) {
             throw std::runtime_error("query dependencies are null");
         }
-        const auto account_id =
-            default_account_id_.empty() ? adapter_->GetLastUserSession().investor_id
-                                        : default_account_id_;
+        const auto account_id = default_account_id_.empty()
+                                    ? adapter_->GetLastUserSession().investor_id
+                                    : default_account_id_;
         if (!AcquireFlowPermit(Operation{
                 account_id,
                 OperationType::kQuery,
@@ -250,8 +244,7 @@ std::future<std::vector<InvestorPositionSnapshot>> ExecutionEngine::QueryInvesto
         if (adapter_->EnqueueInvestorPositionQuery() <= 0) {
             throw std::runtime_error("failed to enqueue investor position query");
         }
-        const auto deadline =
-            std::chrono::steady_clock::now() + std::chrono::milliseconds(3000);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(3000);
         while (std::chrono::steady_clock::now() < deadline) {
             auto snapshots = adapter_->GetLastInvestorPositionSnapshots();
             if (snapshots.size() != before_size || !snapshots.empty()) {
@@ -263,12 +256,14 @@ std::future<std::vector<InvestorPositionSnapshot>> ExecutionEngine::QueryInvesto
     });
 }
 
-void ExecutionEngine::RegisterOrderCallback(OrderCallback cb) {
-    order_callback_ = std::move(cb);
-}
+void ExecutionEngine::RegisterOrderCallback(OrderCallback cb) { order_callback_ = std::move(cb); }
 
 void ExecutionEngine::SetRiskManager(std::shared_ptr<RiskManager> risk_manager) {
     risk_manager_ = std::move(risk_manager);
+}
+
+void ExecutionEngine::SetContractMultiplierResolver(ContractMultiplierResolver resolver) {
+    contract_multiplier_resolver_ = std::move(resolver);
 }
 
 std::string ExecutionEngine::GetTradingDay() const {
@@ -317,10 +312,8 @@ bool ExecutionEngine::PlaceOrder(const OrderIntent& intent) {
     return PlaceOrderAsync(intent).get().success;
 }
 
-bool ExecutionEngine::CancelOrder(const std::string& account_id,
-                                  const std::string& strategy_id,
-                                  const std::string& client_order_id,
-                                  const std::string& trace_id,
+bool ExecutionEngine::CancelOrder(const std::string& account_id, const std::string& strategy_id,
+                                  const std::string& client_order_id, const std::string& trace_id,
                                   const std::string& instrument_id) {
     (void)trace_id;
     (void)instrument_id;
@@ -389,7 +382,8 @@ bool ExecutionEngine::QueryBrokerTradingParams(int request_id, const std::string
     return adapter_->EnqueueBrokerTradingParamsQuery(request_id);
 }
 
-bool ExecutionEngine::AllowByBreaker(const std::string& strategy_id, const std::string& account_id) {
+bool ExecutionEngine::AllowByBreaker(const std::string& strategy_id,
+                                     const std::string& account_id) {
     if (!breaker_manager_->Allow(BreakerScope::kStrategy, strategy_id)) {
         return false;
     }
@@ -420,12 +414,24 @@ bool ExecutionEngine::AcquireFlowPermit(const Operation& operation) {
     return flow_controller_->Acquire(operation, acquire_timeout_ms_).allowed;
 }
 
+double ExecutionEngine::ResolveContractMultiplier(const std::string& instrument_id) const {
+    if (!contract_multiplier_resolver_) {
+        return 0.0;
+    }
+    const double multiplier = contract_multiplier_resolver_(instrument_id);
+    return std::isfinite(multiplier) && multiplier > 0.0 ? multiplier : 0.0;
+}
+
 OrderContext ExecutionEngine::BuildOrderContext(const OrderIntent& intent) const {
     OrderContext context;
     context.account_id = intent.account_id;
     context.strategy_id = intent.strategy_id;
     context.instrument_id = intent.instrument_id;
     context.current_price = intent.price;
+    const double contract_multiplier = ResolveContractMultiplier(intent.instrument_id);
+    if (contract_multiplier > 0.0) {
+        context.contract_multiplier = contract_multiplier;
+    }
 
     if (adapter_ != nullptr) {
         const auto account = adapter_->GetLastTradingAccountSnapshot();
@@ -441,8 +447,7 @@ OrderContext ExecutionEngine::BuildOrderContext(const OrderIntent& intent) const
             if (position.symbol != intent.instrument_id) {
                 continue;
             }
-            context.current_position +=
-                static_cast<double>(position.long_qty - position.short_qty);
+            context.current_position += static_cast<double>(position.long_qty - position.short_qty);
             context.current_margin += position.margin;
         }
     }
@@ -460,6 +465,10 @@ OrderContext ExecutionEngine::BuildCancelContext(const std::string& client_order
             context.strategy_id = order->strategy_id;
             context.instrument_id = order->symbol;
             context.current_price = order->price;
+            const double contract_multiplier = ResolveContractMultiplier(order->symbol);
+            if (contract_multiplier > 0.0) {
+                context.contract_multiplier = contract_multiplier;
+            }
         }
     }
     if (adapter_ != nullptr) {

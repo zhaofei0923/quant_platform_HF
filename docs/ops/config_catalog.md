@@ -179,7 +179,7 @@
 | `ctp.risk_sim_subaccount_initial_equity` | double | 否 | 程序默认 | `>=0` | 仿真子账户初始权益；关闭子账户时为 0 | `0` |
 | `ctp.risk_sim_subaccount_max_margin` | double | 否 | 初始权益 | `>=0` | 仿真子账户保证金占用上限；关闭子账户时为 0 | `0` |
 | `ctp.risk_sim_subaccount_order_margin_rate` | double | 否 | 程序默认 | `>=0` | 估算新开仓保证金的保证金率；仅子账户启用时生效 | `1.0` |
-| `ctp.risk_sim_subaccount_contract_multiplier` | double | 否 | 程序默认 | `>0` | 估算新开仓保证金的合约乘数；仅子账户启用时生效 | `1.0` |
+| `ctp.risk_sim_subaccount_contract_multiplier` | double | 否 | 程序默认 | `>0` | 估算新开仓保证金的兜底合约乘数；实时合约元数据中的 `volume_multiple` 优先生效，仅子账户启用时生效 | `1.0` |
 | `ctp.risk_default_rule_group` | string | 否 | 程序默认 | 非空 | 默认规则组 | `default` |
 | `ctp.risk_default_rule_version` | string | 否 | 程序默认 | 非空 | 默认规则版本 | `v1` |
 | `ctp.risk_default_policy_id` | string | 否 | 程序默认 | 非空 | 默认策略 ID | `policy.global` |

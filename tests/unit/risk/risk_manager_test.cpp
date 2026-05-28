@@ -217,6 +217,7 @@ TEST(RiskManagerTest, CheckOrderSimSubaccountCapitalExceededRejects) {
 
     auto context = BuildContext();
     context.current_margin = 199000.0;
+    context.contract_multiplier = 0.0;
     const auto result =
         risk_manager->CheckOrder(BuildIntent("ord-subaccount", Side::kBuy, 1000.0, 2), context);
 
@@ -226,6 +227,33 @@ TEST(RiskManagerTest, CheckOrderSimSubaccountCapitalExceededRejects) {
     ASSERT_TRUE(result.current_value.has_value());
     EXPECT_DOUBLE_EQ(result.limit_value.value(), 200000.0);
     EXPECT_DOUBLE_EQ(result.current_value.value(), 201000.0);
+}
+
+TEST(RiskManagerTest, CheckOrderSimSubaccountUsesContextContractMultiplier) {
+    auto store = std::make_shared<FakeTradingDomainStore>();
+    auto order_manager = std::make_shared<OrderManager>(store);
+    auto risk_manager = CreateRiskManager(order_manager, store);
+
+    RiskManagerConfig config;
+    config.enable_dynamic_reload = false;
+    config.rule_file_path.clear();
+    config.sim_subaccount_enabled = true;
+    config.sim_subaccount_id = "acc1";
+    config.sim_subaccount_initial_equity = 950.0;
+    config.sim_subaccount_max_margin = 950.0;
+    config.sim_subaccount_order_margin_rate = 0.1;
+    config.sim_subaccount_contract_multiplier = 1.0;
+    ASSERT_TRUE(risk_manager->Initialize(config));
+
+    auto context = BuildContext();
+    context.contract_multiplier = 10.0;
+    const auto result = risk_manager->CheckOrder(
+        BuildIntent("ord-product-multiplier", Side::kBuy, 1000.0, 1), context);
+
+    EXPECT_FALSE(result.allowed);
+    EXPECT_EQ(result.violated_rule, RiskRuleType::SIM_SUBACCOUNT_CAPITAL);
+    ASSERT_TRUE(result.current_value.has_value());
+    EXPECT_DOUBLE_EQ(result.current_value.value(), 1000.0);
 }
 
 TEST(RiskManagerTest, CheckCancelCancelRateExceededRejects) {

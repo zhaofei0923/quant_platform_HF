@@ -1197,6 +1197,17 @@ int main(int argc, char** argv) {
         active_instrument_selected_at;
     std::atomic<int> query_request_id{1};
     auto next_query_request_id = [&query_request_id]() { return query_request_id.fetch_add(1); };
+    auto resolve_contract_multiplier = [&](const std::string& instrument_id) -> double {
+        if (instrument_id.empty()) {
+            return 0.0;
+        }
+        std::lock_guard<std::mutex> lock(instrument_meta_mutex);
+        const auto it = instrument_meta_by_id.find(instrument_id);
+        if (it == instrument_meta_by_id.end() || it->second.volume_multiple <= 0) {
+            return 0.0;
+        }
+        return static_cast<double>(it->second.volume_multiple);
+    };
     auto flow_controller = std::make_shared<FlowController>();
     auto breaker_manager = std::make_shared<CircuitBreakerManager>();
     {
@@ -1314,6 +1325,7 @@ int main(int argc, char** argv) {
                                {"error", trace_error}});
         }
     };
+    strategy_engine_config.contract_multiplier_resolver = resolve_contract_multiplier;
     strategy_engine_config.load_state_on_start = file_config.strategy_state_persist_enabled;
     strategy_engine_config.state_snapshot_interval_ns =
         static_cast<EpochNanos>(file_config.strategy_state_snapshot_interval_ms) * 1'000'000;
@@ -1358,6 +1370,7 @@ int main(int argc, char** argv) {
         ctp_trader, flow_controller, breaker_manager, order_manager, position_manager,
         trading_domain_store, 1000, config.cancel_retry_max, config.cancel_retry_base_ms,
         config.cancel_retry_max_delay_ms, config.cancel_wait_ack_timeout_ms);
+    execution_engine.SetContractMultiplierResolver(resolve_contract_multiplier);
     ctp_trader->SetCircuitBreaker([breaker_manager, &config](bool opened) {
         if (!opened) {
             return;

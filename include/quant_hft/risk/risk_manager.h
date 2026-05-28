@@ -69,7 +69,7 @@ struct OrderContext {
     double today_pnl{0.0};
     double today_commission{0.0};
     double current_price{0.0};
-    double contract_multiplier{1.0};
+    double contract_multiplier{0.0};
 };
 
 struct RiskEvent {

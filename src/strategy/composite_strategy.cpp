@@ -949,8 +949,7 @@ void CompositeStrategy::SetBacktestAccountSnapshot(double equity, double pnl_aft
     atomic_context_.total_pnl_after_cost = pnl_after_cost;
 }
 
-void CompositeStrategy::SetBacktestContractMultiplier(const std::string& instrument_id,
-                                                      double multiplier) {
+void CompositeStrategy::SetContractMultiplier(const std::string& instrument_id, double multiplier) {
     if (instrument_id.empty() || !std::isfinite(multiplier) || multiplier <= 0.0) {
         return;
     }
@@ -958,6 +957,11 @@ void CompositeStrategy::SetBacktestContractMultiplier(const std::string& instrum
         return;
     }
     atomic_context_.contract_multipliers[instrument_id] = multiplier;
+}
+
+void CompositeStrategy::SetBacktestContractMultiplier(const std::string& instrument_id,
+                                                      double multiplier) {
+    SetContractMultiplier(instrument_id, multiplier);
 }
 
 std::string CompositeStrategy::GetBacktestPositionOwner(const std::string& instrument_id) const {

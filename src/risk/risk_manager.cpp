@@ -438,9 +438,19 @@ class DefaultRiskManager final : public RiskManager {
                 if (intent.offset != OffsetFlag::kOpen) {
                     return BuildAllow();
                 }
-                const double multiplier = config_.sim_subaccount_contract_multiplier > 0.0
-                                              ? config_.sim_subaccount_contract_multiplier
-                                              : std::max(1.0, context.contract_multiplier);
+                const double context_multiplier =
+                    std::isfinite(context.contract_multiplier) && context.contract_multiplier > 0.0
+                        ? context.contract_multiplier
+                        : 0.0;
+                const double configured_multiplier =
+                    std::isfinite(config_.sim_subaccount_contract_multiplier) &&
+                            config_.sim_subaccount_contract_multiplier > 0.0
+                        ? config_.sim_subaccount_contract_multiplier
+                        : 0.0;
+                const double multiplier =
+                    context_multiplier > 0.0
+                        ? context_multiplier
+                        : (configured_multiplier > 0.0 ? configured_multiplier : 1.0);
                 const double margin_rate = std::max(0.0, config_.sim_subaccount_order_margin_rate);
                 const double estimated_order_margin = std::fabs(intent.price) *
                                                       static_cast<double>(intent.volume) *

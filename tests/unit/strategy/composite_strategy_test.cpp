@@ -1104,7 +1104,7 @@ TEST(CompositeStrategyTest, PropagatesBacktestSnapshotIntoAtomicContext) {
     CompositeStrategy strategy(definition, &AtomicFactory::Instance());
     strategy.Initialize(MakeStrategyContext());
     strategy.SetBacktestAccountSnapshot(200000.0, 1234.5);
-    strategy.SetBacktestContractMultiplier("rb2405", 10.0);
+    strategy.SetContractMultiplier("rb2405", 10.0);
 
     double captured_equity = 0.0;
     double captured_pnl = 0.0;

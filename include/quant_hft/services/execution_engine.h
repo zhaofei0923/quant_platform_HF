@@ -1,7 +1,7 @@
 #pragma once
 
-#include <future>
 #include <functional>
+#include <future>
 #include <memory>
 #include <string>
 #include <vector>
@@ -24,22 +24,22 @@ struct OrderResult {
 };
 
 class ExecutionEngine {
-public:
+   public:
     ExecutionEngine(std::shared_ptr<CTPTraderAdapter> adapter,
                     std::shared_ptr<FlowController> flow_controller,
                     std::shared_ptr<CircuitBreakerManager> breaker_manager,
                     std::shared_ptr<OrderManager> order_manager = nullptr,
                     std::shared_ptr<PositionManager> position_manager = nullptr,
                     std::shared_ptr<ITradingDomainStore> domain_store = nullptr,
-                    int acquire_timeout_ms = 1000,
-                    int cancel_retry_max = 3,
-                    int cancel_retry_base_ms = 1000,
-                    int cancel_retry_max_delay_ms = 5000,
+                    int acquire_timeout_ms = 1000, int cancel_retry_max = 3,
+                    int cancel_retry_base_ms = 1000, int cancel_retry_max_delay_ms = 5000,
                     int cancel_wait_ack_timeout_ms = 1200);
 
     std::future<OrderResult> PlaceOrderAsync(const OrderIntent& intent);
     std::future<bool> CancelOrderAsync(const std::string& client_order_id);
     void SetRiskManager(std::shared_ptr<RiskManager> risk_manager);
+    using ContractMultiplierResolver = std::function<double(const std::string&)>;
+    void SetContractMultiplierResolver(ContractMultiplierResolver resolver);
     std::future<TradingAccountSnapshot> QueryTradingAccountAsync();
     std::future<std::vector<InvestorPositionSnapshot>> QueryInvestorPositionAsync(
         const std::string& instrument_id = "");
@@ -52,10 +52,8 @@ public:
     [[deprecated("use PlaceOrderAsync")]]
     bool PlaceOrder(const OrderIntent& intent);
     [[deprecated("use CancelOrderAsync")]]
-    bool CancelOrder(const std::string& account_id,
-                     const std::string& strategy_id,
-                     const std::string& client_order_id,
-                     const std::string& trace_id,
+    bool CancelOrder(const std::string& account_id, const std::string& strategy_id,
+                     const std::string& client_order_id, const std::string& trace_id,
                      const std::string& instrument_id = "");
 
     [[deprecated("use QueryTradingAccountAsync")]]
@@ -67,11 +65,12 @@ public:
     [[deprecated("use CTPTraderAdapter::EnqueueBrokerTradingParamsQuery()")]]
     bool QueryBrokerTradingParams(int request_id, const std::string& account_id);
 
-private:
+   private:
     bool AllowByBreaker(const std::string& strategy_id, const std::string& account_id);
     void RecordBreakerSuccess(const std::string& strategy_id, const std::string& account_id);
     void RecordBreakerFailure(const std::string& strategy_id, const std::string& account_id);
     bool AcquireFlowPermit(const Operation& operation);
+    double ResolveContractMultiplier(const std::string& instrument_id) const;
     OrderContext BuildOrderContext(const OrderIntent& intent) const;
     OrderContext BuildCancelContext(const std::string& client_order_id) const;
 
@@ -82,6 +81,7 @@ private:
     std::shared_ptr<PositionManager> position_manager_;
     std::shared_ptr<ITradingDomainStore> domain_store_;
     std::shared_ptr<RiskManager> risk_manager_;
+    ContractMultiplierResolver contract_multiplier_resolver_;
     OrderCallback order_callback_;
     std::string default_account_id_;
     std::string default_strategy_id_;

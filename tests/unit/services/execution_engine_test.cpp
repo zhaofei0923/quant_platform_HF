@@ -1,3 +1,7 @@
+#include "quant_hft/services/execution_engine.h"
+
+#include <gtest/gtest.h>
+
 #include <chrono>
 #include <memory>
 #include <string>
@@ -5,16 +9,13 @@
 #include <unordered_map>
 #include <vector>
 
-#include <gtest/gtest.h>
-
 #include "quant_hft/core/circuit_breaker.h"
 #include "quant_hft/core/ctp_trader_adapter.h"
 #include "quant_hft/core/flow_controller.h"
 #include "quant_hft/core/redis_hash_client.h"
-#include "quant_hft/core/trading_domain_store_client_adapter.h"
 #include "quant_hft/core/timescale_sql_client.h"
+#include "quant_hft/core/trading_domain_store_client_adapter.h"
 #include "quant_hft/risk/risk_manager.h"
-#include "quant_hft/services/execution_engine.h"
 
 namespace quant_hft {
 namespace {
@@ -69,7 +70,7 @@ struct EngineBundle {
 };
 
 class RejectAllRiskManager final : public RiskManager {
-public:
+   public:
     bool Initialize(const RiskManagerConfig& config) override {
         (void)config;
         return true;
@@ -94,9 +95,7 @@ public:
         return result;
     }
 
-    void OnTrade(const Trade& trade) override {
-        (void)trade;
-    }
+    void OnTrade(const Trade& trade) override { (void)trade; }
 
     void OnOrderRejected(const Order& order, const std::string& reason) override {
         (void)order;
@@ -108,15 +107,56 @@ public:
         return true;
     }
 
-    std::vector<RiskRule> GetActiveRules() const override {
-        return {};
-    }
+    std::vector<RiskRule> GetActiveRules() const override { return {}; }
 
     void ResetDailyStats() override {}
 
-    void RegisterRiskEventCallback(RiskEventCallback callback) override {
-        (void)callback;
+    void RegisterRiskEventCallback(RiskEventCallback callback) override { (void)callback; }
+};
+
+class CapturingRiskManager final : public RiskManager {
+   public:
+    bool Initialize(const RiskManagerConfig& config) override {
+        (void)config;
+        return true;
     }
+
+    RiskCheckResult CheckOrder(const OrderIntent& intent, const OrderContext& context) override {
+        (void)intent;
+        captured_contract_multiplier = context.contract_multiplier;
+        RiskCheckResult result;
+        result.allowed = true;
+        return result;
+    }
+
+    RiskCheckResult CheckCancel(const std::string& client_order_id,
+                                const OrderContext& context) override {
+        (void)client_order_id;
+        captured_contract_multiplier = context.contract_multiplier;
+        RiskCheckResult result;
+        result.allowed = true;
+        return result;
+    }
+
+    void OnTrade(const Trade& trade) override { (void)trade; }
+
+    void OnOrderRejected(const Order& order, const std::string& reason) override {
+        (void)order;
+        (void)reason;
+    }
+
+    bool ReloadRules(const std::vector<RiskRule>& rules) override {
+        (void)rules;
+        return true;
+    }
+
+    std::vector<RiskRule> GetActiveRules() const override { return {}; }
+
+    void ResetDailyStats() override {}
+
+    void RegisterRiskEventCallback(RiskEventCallback callback) override { (void)callback; }
+
+    double captured_contract_multiplier{0.0};
 };
 
 EngineBundle BuildEngineBundle() {
@@ -148,13 +188,9 @@ EngineBundle BuildEngineBundle() {
     bundle.redis = std::make_shared<InMemoryRedisHashClient>();
     bundle.order_manager = std::make_shared<OrderManager>(bundle.store);
     bundle.position_manager = std::make_shared<PositionManager>(bundle.store, bundle.redis);
-    bundle.engine = std::make_unique<ExecutionEngine>(bundle.adapter,
-                                                      bundle.flow,
-                                                      bundle.breaker,
-                                                      bundle.order_manager,
-                                                      bundle.position_manager,
-                                                      bundle.store,
-                                                      0);
+    bundle.engine = std::make_unique<ExecutionEngine>(bundle.adapter, bundle.flow, bundle.breaker,
+                                                      bundle.order_manager, bundle.position_manager,
+                                                      bundle.store, 0);
     return bundle;
 }
 
@@ -171,6 +207,20 @@ TEST(ExecutionEngineTest, PlaceOrderRiskRejectReturnsFailedResult) {
     const auto result = bundle.engine->PlaceOrderAsync(BuildOrder("ord-risk-reject")).get();
     EXPECT_FALSE(result.success);
     EXPECT_NE(result.message.find("risk reject"), std::string::npos);
+}
+
+TEST(ExecutionEngineTest, PlaceOrderRiskContextUsesResolvedContractMultiplier) {
+    auto bundle = BuildEngineBundle();
+    auto risk_manager = std::make_shared<CapturingRiskManager>();
+    bundle.engine->SetRiskManager(risk_manager);
+    bundle.engine->SetContractMultiplierResolver([](const std::string& instrument_id) {
+        return instrument_id == "SHFE.ag2406" ? 10.0 : 0.0;
+    });
+
+    const auto result = bundle.engine->PlaceOrderAsync(BuildOrder("ord-contract-multiplier")).get();
+
+    EXPECT_TRUE(result.success) << result.message;
+    EXPECT_DOUBLE_EQ(risk_manager->captured_contract_multiplier, 10.0);
 }
 
 TEST(ExecutionEngineTest, CircuitBreakerOpenBlocksNewOrder) {
@@ -276,9 +326,8 @@ TEST(ExecutionEngineTest, DuplicateOrderEventIgnored) {
     bundle.engine->HandleOrderEvent(accepted);
     bundle.engine->HandleOrderEvent(accepted);
 
-    const auto rows =
-        bundle.sql->QueryRows("ops.processed_order_events", "event_key",
-                              OrderManager::BuildOrderEventKey(accepted), nullptr);
+    const auto rows = bundle.sql->QueryRows("ops.processed_order_events", "event_key",
+                                            OrderManager::BuildOrderEventKey(accepted), nullptr);
     EXPECT_EQ(rows.size(), 1U);
 }
 
@@ -337,7 +386,8 @@ TEST(ExecutionEngineTest, PositionUpdateAfterTradeRedisAndPgConsistent) {
     filled.exchange_ts_ns = 400;
     bundle.engine->HandleOrderEvent(filled);
 
-    const auto rows = bundle.sql->QueryRows("trading_core.position_summary", "account_id", "acc1", nullptr);
+    const auto rows =
+        bundle.sql->QueryRows("trading_core.position_summary", "account_id", "acc1", nullptr);
     ASSERT_FALSE(rows.empty());
     std::unordered_map<std::string, std::string> hash;
     std::string error;

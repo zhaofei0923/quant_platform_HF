@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <exception>
 #include <utility>
 
@@ -14,14 +15,9 @@ namespace {
 
 constexpr EpochNanos kDefaultTimerIntervalNs = 100'000'000;
 
-void EmitStrategyExceptionLog(const std::string& event,
-                              const std::string& phase,
-                              const std::string& strategy_id,
-                              const std::string& error) {
-    EmitStructuredLog(nullptr,
-                      "strategy_engine",
-                      "error",
-                      event,
+void EmitStrategyExceptionLog(const std::string& event, const std::string& phase,
+                              const std::string& strategy_id, const std::string& error) {
+    EmitStructuredLog(nullptr, "strategy_engine", "error", event,
                       {{"phase", phase}, {"strategy_id", strategy_id}, {"error", error}});
 }
 
@@ -293,9 +289,15 @@ void StrategyEngine::DispatchState(const StateSnapshot7D& state) {
     std::vector<SignalIntent> intents;
     for (auto& entry : strategies_) {
         try {
+            auto* composite = dynamic_cast<CompositeStrategy*>(entry.strategy.get());
+            if (composite != nullptr && config_.contract_multiplier_resolver) {
+                const double multiplier = config_.contract_multiplier_resolver(state.instrument_id);
+                if (std::isfinite(multiplier) && multiplier > 0.0) {
+                    composite->SetContractMultiplier(state.instrument_id, multiplier);
+                }
+            }
             intents = entry.strategy->OnState(state);
             if (config_.indicator_trace_sink) {
-                auto* composite = dynamic_cast<CompositeStrategy*>(entry.strategy.get());
                 if (composite != nullptr) {
                     const std::vector<CompositeAtomicTraceRow> rows =
                         composite->CollectAtomicIndicatorTrace();
@@ -304,15 +306,13 @@ void StrategyEngine::DispatchState(const StateSnapshot7D& state) {
                             config_.indicator_trace_sink(state, entry.strategy_id, row);
                         } catch (const std::exception& ex) {
                             EmitStrategyExceptionLog("strategy_callback_exception",
-                                                     "indicator_trace_sink",
-                                                     entry.strategy_id,
+                                                     "indicator_trace_sink", entry.strategy_id,
                                                      ex.what());
                             std::lock_guard<std::mutex> lock(mutex_);
                             ++stats_.strategy_callback_exceptions;
                         } catch (...) {
                             EmitStrategyExceptionLog("strategy_callback_exception",
-                                                     "indicator_trace_sink",
-                                                     entry.strategy_id,
+                                                     "indicator_trace_sink", entry.strategy_id,
                                                      "unknown exception");
                             std::lock_guard<std::mutex> lock(mutex_);
                             ++stats_.strategy_callback_exceptions;
@@ -322,14 +322,12 @@ void StrategyEngine::DispatchState(const StateSnapshot7D& state) {
             }
             EmitIntents(entry.strategy_id, std::move(intents));
         } catch (const std::exception& ex) {
-            EmitStrategyExceptionLog(
-                "strategy_callback_exception", "state", entry.strategy_id, ex.what());
+            EmitStrategyExceptionLog("strategy_callback_exception", "state", entry.strategy_id,
+                                     ex.what());
             std::lock_guard<std::mutex> lock(mutex_);
             ++stats_.strategy_callback_exceptions;
         } catch (...) {
-            EmitStrategyExceptionLog("strategy_callback_exception",
-                                     "state",
-                                     entry.strategy_id,
+            EmitStrategyExceptionLog("strategy_callback_exception", "state", entry.strategy_id,
                                      "unknown exception");
             std::lock_guard<std::mutex> lock(mutex_);
             ++stats_.strategy_callback_exceptions;
@@ -347,17 +345,13 @@ void StrategyEngine::DispatchOrderEvent(const OrderEvent& event) {
             try {
                 entry.strategy->OnOrderEvent(event);
             } catch (const std::exception& ex) {
-                EmitStrategyExceptionLog("strategy_callback_exception",
-                                         "order_event_broadcast",
-                                         entry.strategy_id,
-                                         ex.what());
+                EmitStrategyExceptionLog("strategy_callback_exception", "order_event_broadcast",
+                                         entry.strategy_id, ex.what());
                 std::lock_guard<std::mutex> lock(mutex_);
                 ++stats_.strategy_callback_exceptions;
             } catch (...) {
-                EmitStrategyExceptionLog("strategy_callback_exception",
-                                         "order_event_broadcast",
-                                         entry.strategy_id,
-                                         "unknown exception");
+                EmitStrategyExceptionLog("strategy_callback_exception", "order_event_broadcast",
+                                         entry.strategy_id, "unknown exception");
                 std::lock_guard<std::mutex> lock(mutex_);
                 ++stats_.strategy_callback_exceptions;
             }
@@ -377,14 +371,12 @@ void StrategyEngine::DispatchOrderEvent(const OrderEvent& event) {
     try {
         it->strategy->OnOrderEvent(event);
     } catch (const std::exception& ex) {
-        EmitStrategyExceptionLog(
-            "strategy_callback_exception", "order_event", it->strategy_id, ex.what());
+        EmitStrategyExceptionLog("strategy_callback_exception", "order_event", it->strategy_id,
+                                 ex.what());
         std::lock_guard<std::mutex> lock(mutex_);
         ++stats_.strategy_callback_exceptions;
     } catch (...) {
-        EmitStrategyExceptionLog("strategy_callback_exception",
-                                 "order_event",
-                                 it->strategy_id,
+        EmitStrategyExceptionLog("strategy_callback_exception", "order_event", it->strategy_id,
                                  "unknown exception");
         std::lock_guard<std::mutex> lock(mutex_);
         ++stats_.strategy_callback_exceptions;
@@ -396,15 +388,13 @@ void StrategyEngine::DispatchAccountSnapshot(const TradingAccountSnapshot& snaps
         try {
             entry.strategy->OnAccountSnapshot(snapshot);
         } catch (const std::exception& ex) {
-            EmitStrategyExceptionLog(
-                "strategy_callback_exception", "account_snapshot", entry.strategy_id, ex.what());
+            EmitStrategyExceptionLog("strategy_callback_exception", "account_snapshot",
+                                     entry.strategy_id, ex.what());
             std::lock_guard<std::mutex> lock(mutex_);
             ++stats_.strategy_callback_exceptions;
         } catch (...) {
-            EmitStrategyExceptionLog("strategy_callback_exception",
-                                     "account_snapshot",
-                                     entry.strategy_id,
-                                     "unknown exception");
+            EmitStrategyExceptionLog("strategy_callback_exception", "account_snapshot",
+                                     entry.strategy_id, "unknown exception");
             std::lock_guard<std::mutex> lock(mutex_);
             ++stats_.strategy_callback_exceptions;
         }
@@ -418,14 +408,12 @@ void StrategyEngine::DispatchTimer(EpochNanos now_ns) {
             intents = entry.strategy->OnTimer(now_ns);
             EmitIntents(entry.strategy_id, std::move(intents));
         } catch (const std::exception& ex) {
-            EmitStrategyExceptionLog(
-                "strategy_callback_exception", "timer", entry.strategy_id, ex.what());
+            EmitStrategyExceptionLog("strategy_callback_exception", "timer", entry.strategy_id,
+                                     ex.what());
             std::lock_guard<std::mutex> lock(mutex_);
             ++stats_.strategy_callback_exceptions;
         } catch (...) {
-            EmitStrategyExceptionLog("strategy_callback_exception",
-                                     "timer",
-                                     entry.strategy_id,
+            EmitStrategyExceptionLog("strategy_callback_exception", "timer", entry.strategy_id,
                                      "unknown exception");
             std::lock_guard<std::mutex> lock(mutex_);
             ++stats_.strategy_callback_exceptions;
@@ -499,15 +487,13 @@ void StrategyEngine::MaybeCollectMetrics(EpochNanos now_ns) {
                 collected.push_back(std::move(metric));
             }
         } catch (const std::exception& ex) {
-            EmitStrategyExceptionLog(
-                "strategy_callback_exception", "collect_metrics", entry.strategy_id, ex.what());
+            EmitStrategyExceptionLog("strategy_callback_exception", "collect_metrics",
+                                     entry.strategy_id, ex.what());
             std::lock_guard<std::mutex> lock(mutex_);
             ++stats_.strategy_callback_exceptions;
         } catch (...) {
-            EmitStrategyExceptionLog("strategy_callback_exception",
-                                     "collect_metrics",
-                                     entry.strategy_id,
-                                     "unknown exception");
+            EmitStrategyExceptionLog("strategy_callback_exception", "collect_metrics",
+                                     entry.strategy_id, "unknown exception");
             std::lock_guard<std::mutex> lock(mutex_);
             ++stats_.strategy_callback_exceptions;
         }
@@ -531,20 +517,14 @@ void StrategyEngine::EmitIntents(const std::string& strategy_id,
         try {
             intent_sink_(intent);
         } catch (const std::exception& ex) {
-            EmitStructuredLog(nullptr,
-                              "strategy_engine",
-                              "error",
-                              "strategy_intent_sink_exception",
+            EmitStructuredLog(nullptr, "strategy_engine", "error", "strategy_intent_sink_exception",
                               {{"strategy_id", intent.strategy_id},
                                {"trace_id", intent.trace_id},
                                {"instrument_id", intent.instrument_id},
                                {"error", ex.what()}});
             throw;
         } catch (...) {
-            EmitStructuredLog(nullptr,
-                              "strategy_engine",
-                              "error",
-                              "strategy_intent_sink_exception",
+            EmitStructuredLog(nullptr, "strategy_engine", "error", "strategy_intent_sink_exception",
                               {{"strategy_id", intent.strategy_id},
                                {"trace_id", intent.trace_id},
                                {"instrument_id", intent.instrument_id},

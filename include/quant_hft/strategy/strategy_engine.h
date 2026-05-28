@@ -24,6 +24,7 @@ struct StrategyEngineConfig {
     std::shared_ptr<IStrategyStatePersistence> state_persistence;
     std::function<void(const StateSnapshot7D&, const std::string&, const CompositeAtomicTraceRow&)>
         indicator_trace_sink;
+    std::function<double(const std::string&)> contract_multiplier_resolver;
     bool load_state_on_start{false};
     EpochNanos state_snapshot_interval_ns{0};
     EpochNanos metrics_collect_interval_ns{1'000'000'000};

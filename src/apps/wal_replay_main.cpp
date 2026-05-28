@@ -15,12 +15,11 @@ int main(int argc, char** argv) {
     WalReplayLoader replay_loader;
 
     const auto stats = replay_loader.Replay(wal_path, &order_state_machine, &ledger);
-    std::cout << "WAL replay completed path=" << wal_path
-              << " lines=" << stats.lines_total
-              << " events=" << stats.events_loaded
-              << " ignored=" << stats.ignored_lines
+    std::cout << "WAL replay completed path=" << wal_path << " lines=" << stats.lines_total
+              << " events=" << stats.events_loaded << " ignored=" << stats.ignored_lines
               << " parse_errors=" << stats.parse_errors
               << " state_rejected=" << stats.state_rejected
-              << " ledger_applied=" << stats.ledger_applied << '\n';
+              << " ledger_applied=" << stats.ledger_applied
+              << " submit_mappings=" << stats.submit_mappings_loaded << '\n';
     return 0;
 }

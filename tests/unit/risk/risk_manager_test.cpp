@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <unordered_set>
@@ -298,6 +299,30 @@ TEST(RiskManagerTest, RiskManagerReloadRulesDynamicUpdate) {
     const auto result =
         risk_manager->CheckOrder(BuildIntent("ord-reload", Side::kBuy, 4000.0, 2), BuildContext());
     EXPECT_FALSE(result.allowed);
+}
+
+TEST(RiskManagerTest, InitializeStopsExistingDynamicReloadThread) {
+    namespace fs = std::filesystem;
+    const auto rule_path = fs::temp_directory_path() / "quant_hft_risk_reload_thread.yaml";
+    {
+        std::ofstream out(rule_path);
+        out << "# intentionally empty: manager should fall back to defaults\n";
+    }
+
+    auto store = std::make_shared<FakeTradingDomainStore>();
+    auto order_manager = std::make_shared<OrderManager>(store);
+    auto risk_manager = CreateRiskManager(order_manager, store);
+
+    RiskManagerConfig config;
+    config.enable_dynamic_reload = true;
+    config.reload_interval_seconds = 1;
+    config.rule_file_path = rule_path.string();
+
+    ASSERT_TRUE(risk_manager->Initialize(config));
+    ASSERT_TRUE(risk_manager->Initialize(config));
+    EXPECT_FALSE(risk_manager->GetActiveRules().empty());
+
+    fs::remove(rule_path);
 }
 
 }  // namespace

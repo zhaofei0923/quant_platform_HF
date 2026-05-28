@@ -15,6 +15,7 @@ class LocalWalRegulatorySink : public IRegulatorySink {
 
     bool AppendOrderEvent(const OrderEvent& event) override;
     bool AppendTradeEvent(const OrderEvent& event) override;
+    bool AppendCtpOrderSubmitMapping(const CtpOrderSubmitMapping& mapping) override;
     bool Flush() override;
 
    private:
@@ -22,6 +23,7 @@ class LocalWalRegulatorySink : public IRegulatorySink {
     static std::string GetEnvOrEmpty(const char* name);
     std::uint64_t ComputeNextSeq() const;
     bool Append(const char* kind, const char* event_type, const OrderEvent& event);
+    bool AppendMapping(const CtpOrderSubmitMapping& mapping);
 
     std::string wal_path_;
     std::string run_id_;

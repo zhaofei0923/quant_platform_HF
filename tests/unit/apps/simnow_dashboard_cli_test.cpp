@@ -249,6 +249,32 @@ TEST(SimnowDashboardCli, RendersCtpConnectionAndOrderFlowPanels) {
     EXPECT_EQ(html.find("auth_code"), std::string::npos);
 }
 
+TEST(SimnowDashboardCli, HidesStaleIncidentFilesAfterMonitorReset) {
+    const auto root = MakeTempDir("fresh_monitor");
+    const auto output_dir = root / "dashboard";
+    const auto stdout_log = root / "stdout.log";
+
+    WriteFile(root / "wal" / "events.wal", "");
+    WriteFile(root / "monitor" / "signal_execution_watch.jsonl",
+              "{\"ts\":\"2026-05-28T12:40:17+08:00\",\"event\":\"monitor_started\","
+              "\"message\":\"SimNow signal execution monitor started\"}\n"
+              "{\"ts\":\"2026-05-28T12:41:18+08:00\",\"event\":\"summary\","
+              "\"message\":\"signals=0 active=0 filled=0 incidents=0\","
+              "\"signals\":0,\"active\":0,\"filled\":0,\"incidents\":0}\n");
+    WriteFile(
+        root / "monitor" / "incidents" / "20260528T095805-kama_candidate_hc-open-hc2610-old.md",
+        "# old incident\n");
+
+    const int rc = RunCommandCapture(DashboardCommand(root, output_dir), stdout_log);
+
+    EXPECT_EQ(rc, 0);
+    const std::string json = ReadFile(output_dir / "dashboard_state.json");
+    const std::string html = ReadFile(output_dir / "index.html");
+    EXPECT_NE(json.find("\"incidents\": 0"), std::string::npos);
+    EXPECT_EQ(json.find("kama_candidate_hc-open-hc2610-old"), std::string::npos);
+    EXPECT_EQ(html.find("kama_candidate_hc-open-hc2610-old"), std::string::npos);
+}
+
 TEST(SimnowDashboardCli, StrictExitReturnsNonZeroForUnhealthyState) {
     const auto root = MakeTempDir("strict_exit");
     const auto output_dir = root / "dashboard";

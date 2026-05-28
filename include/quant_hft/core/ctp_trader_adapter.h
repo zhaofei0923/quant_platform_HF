@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -9,6 +10,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -33,6 +35,7 @@ enum class TraderSessionState {
 class CTPTraderAdapter {
    public:
     using OrderEventCallback = IOrderGateway::OrderEventCallback;
+    using OrderSubmitMappingCallback = CtpGatewayAdapter::OrderSubmitMappingCallback;
     using TradingAccountSnapshotCallback = CtpGatewayAdapter::TradingAccountSnapshotCallback;
     using InvestorPositionSnapshotCallback = CtpGatewayAdapter::InvestorPositionSnapshotCallback;
     using InstrumentMetaSnapshotCallback = CtpGatewayAdapter::InstrumentMetaSnapshotCallback;
@@ -96,6 +99,7 @@ class CTPTraderAdapter {
     int EnqueueTradeQuery();
 
     void RegisterOrderEventCallback(OrderEventCallback callback);
+    void RegisterOrderSubmitMappingCallback(OrderSubmitMappingCallback callback);
     void RegisterTradingAccountSnapshotCallback(TradingAccountSnapshotCallback callback);
     void RegisterInvestorPositionSnapshotCallback(InvestorPositionSnapshotCallback callback);
     void RegisterInstrumentMetaSnapshotCallback(InstrumentMetaSnapshotCallback callback);
@@ -125,15 +129,22 @@ class CTPTraderAdapter {
     void ResolveSettlementPromise(int request_id);
     void RejectSettlementPromise(int request_id, const std::string& error_msg);
     void ResolveLoginPromise(int request_id, int error_code, const std::string& error_msg);
+    void RejectAllPromises(const std::string& error_msg);
     void ScheduleReconnect();
-    void OnReconnectTimer();
+    void OnReconnectTimer(std::uint64_t generation);
     void ResetReconnectState();
+    void StopReconnectWorker();
+    void ReconnectWorkerLoop();
+    void JoinLoginTimeoutThreads();
+    bool IsGenerationCurrent(std::uint64_t generation) const;
+    void UnregisterGatewayCallbacks();
 
     mutable std::mutex mutex_;
     std::shared_ptr<CtpGatewayAdapter> gateway_;
     EventDispatcher dispatcher_;
     CallbackDispatcher callback_dispatcher_;
     OrderEventCallback user_order_event_callback_;
+    OrderSubmitMappingCallback user_order_submit_mapping_callback_;
     TradingAccountSnapshotCallback user_trading_account_callback_;
     InvestorPositionSnapshotCallback user_investor_position_callback_;
     InstrumentMetaSnapshotCallback user_instrument_meta_callback_;
@@ -149,12 +160,22 @@ class CTPTraderAdapter {
     std::atomic<bool> need_reconnect_{false};
     std::atomic<int> reconnect_attempts_{0};
     std::chrono::steady_clock::time_point last_reconnect_time_{};
+    std::atomic<std::uint64_t> lifecycle_generation_{1};
+    mutable std::mutex reconnect_mutex_;
+    std::condition_variable reconnect_cv_;
+    std::thread reconnect_thread_;
+    bool reconnect_stop_{false};
+    bool reconnect_scheduled_{false};
+    std::chrono::steady_clock::time_point reconnect_deadline_{};
+    std::uint64_t reconnect_generation_{0};
     std::atomic<int> next_request_id_{1};
     mutable std::mutex promise_map_mutex_;
     std::unordered_map<int, std::shared_ptr<std::promise<void>>> query_promises_;
     std::unordered_map<int, std::shared_ptr<std::promise<void>>> settlement_promises_;
     std::unordered_map<int, std::shared_ptr<std::promise<std::pair<int, std::string>>>>
         login_promises_;
+    mutable std::mutex login_timeout_threads_mutex_;
+    std::vector<std::thread> login_timeout_threads_;
     mutable std::uint64_t order_ref_seq_{0};
     std::function<void(bool)> circuit_breaker_callback_;
 };

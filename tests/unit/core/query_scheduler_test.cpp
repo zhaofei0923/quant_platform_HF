@@ -1,10 +1,12 @@
-#include <atomic>
-#include <chrono>
-#include <thread>
+#include "quant_hft/core/query_scheduler.h"
 
 #include <gtest/gtest.h>
 
-#include "quant_hft/core/query_scheduler.h"
+#include <atomic>
+#include <chrono>
+#include <memory>
+#include <string>
+#include <thread>
 
 namespace quant_hft {
 
@@ -54,6 +56,42 @@ TEST(QuerySchedulerTest, PriorityOrdering) {
     scheduler.MarkComplete();
     scheduler.DrainOnce();
     EXPECT_EQ(order, "HL");
+}
+
+TEST(QuerySchedulerTest, DeferredTaskOwnsStateUntilDrainedAfterCompletion) {
+    QueryScheduler scheduler(10);
+    std::weak_ptr<int> observed_state;
+    int executed = 0;
+
+    scheduler.TrySchedule(QueryScheduler::QueryTask{
+        1,
+        QueryScheduler::Priority::kHigh,
+        [&executed] { ++executed; },
+    });
+
+    {
+        auto state = std::make_shared<int>(41);
+        observed_state = state;
+        scheduler.TrySchedule(QueryScheduler::QueryTask{
+            2,
+            QueryScheduler::Priority::kNormal,
+            [state, &executed] {
+                EXPECT_EQ(*state, 41);
+                *state = 42;
+                ++executed;
+            },
+        });
+    }
+
+    EXPECT_FALSE(observed_state.expired());
+    EXPECT_EQ(scheduler.DrainOnce(), 1U);
+    EXPECT_EQ(executed, 1);
+    EXPECT_FALSE(observed_state.expired());
+
+    scheduler.MarkComplete();
+    EXPECT_EQ(scheduler.DrainOnce(), 1U);
+    EXPECT_EQ(executed, 2);
+    EXPECT_TRUE(observed_state.expired());
 }
 
 }  // namespace quant_hft

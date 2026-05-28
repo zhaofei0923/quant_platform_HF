@@ -87,6 +87,17 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
         }
     });
 
+    gateway_->RegisterOrderSubmitMappingCallback([this](const CtpOrderSubmitMapping& mapping) {
+        OrderSubmitMappingCallback callback;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            callback = user_order_submit_mapping_callback_;
+        }
+        if (callback) {
+            callback(mapping);
+        }
+    });
+
     gateway_->RegisterTradingAccountSnapshotCallback(
         [this](const TradingAccountSnapshot& snapshot) {
             TradingAccountSnapshot copied = snapshot;
@@ -316,11 +327,14 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
 
 CTPTraderAdapter::~CTPTraderAdapter() {
     Disconnect();
+    UnregisterGatewayCallbacks();
+    JoinLoginTimeoutThreads();
     callback_dispatcher_.Stop();
 }
 
 bool CTPTraderAdapter::Connect(const MarketDataConnectConfig& config) {
     Disconnect();
+    lifecycle_generation_.fetch_add(1, std::memory_order_acq_rel);
     {
         std::lock_guard<std::mutex> lock(mutex_);
         settlement_confirm_required_ = config.settlement_confirm_required;
@@ -333,10 +347,7 @@ bool CTPTraderAdapter::Connect(const MarketDataConnectConfig& config) {
     need_reconnect_.store(false, std::memory_order_relaxed);
     reconnect_attempts_.store(0, std::memory_order_relaxed);
     {
-        std::lock_guard<std::mutex> lock(promise_map_mutex_);
-        query_promises_.clear();
-        settlement_promises_.clear();
-        login_promises_.clear();
+        RejectAllPromises("adapter reconnecting");
     }
 
     dispatcher_.Start();
@@ -363,6 +374,8 @@ bool CTPTraderAdapter::Connect(const MarketDataConnectConfig& config) {
 
 void CTPTraderAdapter::Disconnect() {
     need_reconnect_.store(false, std::memory_order_relaxed);
+    lifecycle_generation_.fetch_add(1, std::memory_order_acq_rel);
+    StopReconnectWorker();
     {
         std::lock_guard<std::mutex> lock(mutex_);
         has_connect_config_ = false;
@@ -372,12 +385,7 @@ void CTPTraderAdapter::Disconnect() {
     gateway_->Disconnect();
     CtpConnectedGauge()->Set(0.0);
     dispatcher_.Stop();
-    {
-        std::lock_guard<std::mutex> lock(promise_map_mutex_);
-        query_promises_.clear();
-        settlement_promises_.clear();
-        login_promises_.clear();
-    }
+    RejectAllPromises("adapter disconnected");
 }
 
 bool CTPTraderAdapter::IsReady() const {
@@ -433,9 +441,7 @@ bool CTPTraderAdapter::ConfirmSettlement() {
                     std::lock_guard<std::mutex> lock(mutex_);
                     settlement_confirmed_ = true;
                     state_ = TraderSessionState::kReady;
-                    EmitStructuredLog(nullptr,
-                                      "ctp_trader_adapter",
-                                      "warn",
+                    EmitStructuredLog(nullptr, "ctp_trader_adapter", "warn",
                                       "settlement_confirm_timeout_account_probe_ready");
                     return true;
                 }
@@ -516,8 +522,12 @@ std::future<std::pair<int, std::string>> CTPTraderAdapter::LoginAsync(const std:
         return future;
     }
 
-    std::thread([this, request_id, timeout_ms]() {
+    const auto generation = lifecycle_generation_.load(std::memory_order_acquire);
+    std::thread timeout_thread([this, request_id, timeout_ms, generation]() {
         std::this_thread::sleep_for(std::chrono::milliseconds(std::max(1, timeout_ms)));
+        if (!IsGenerationCurrent(generation)) {
+            return;
+        }
         std::shared_ptr<std::promise<std::pair<int, std::string>>> timed_out;
         {
             std::lock_guard<std::mutex> lock(promise_map_mutex_);
@@ -534,7 +544,11 @@ std::future<std::pair<int, std::string>> CTPTraderAdapter::LoginAsync(const std:
             } catch (...) {
             }
         }
-    }).detach();
+    });
+    {
+        std::lock_guard<std::mutex> lock(login_timeout_threads_mutex_);
+        login_timeout_threads_.push_back(std::move(timeout_thread));
+    }
 
     return future;
 }
@@ -728,6 +742,11 @@ void CTPTraderAdapter::RegisterOrderEventCallback(OrderEventCallback callback) {
     user_order_event_callback_ = std::move(callback);
 }
 
+void CTPTraderAdapter::RegisterOrderSubmitMappingCallback(OrderSubmitMappingCallback callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    user_order_submit_mapping_callback_ = std::move(callback);
+}
+
 void CTPTraderAdapter::RegisterTradingAccountSnapshotCallback(
     TradingAccountSnapshotCallback callback) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -895,6 +914,43 @@ void CTPTraderAdapter::ResolveLoginPromise(int request_id, int error_code,
     }
 }
 
+void CTPTraderAdapter::RejectAllPromises(const std::string& error_msg) {
+    std::unordered_map<int, std::shared_ptr<std::promise<void>>> query_promises;
+    std::unordered_map<int, std::shared_ptr<std::promise<void>>> settlement_promises;
+    std::unordered_map<int, std::shared_ptr<std::promise<std::pair<int, std::string>>>>
+        login_promises;
+    {
+        std::lock_guard<std::mutex> lock(promise_map_mutex_);
+        query_promises.swap(query_promises_);
+        settlement_promises.swap(settlement_promises_);
+        login_promises.swap(login_promises_);
+    }
+
+    const auto exception = std::make_exception_ptr(
+        std::runtime_error(error_msg.empty() ? "adapter stopped" : error_msg));
+    for (auto& entry : query_promises) {
+        auto& promise = entry.second;
+        try {
+            promise->set_exception(exception);
+        } catch (...) {
+        }
+    }
+    for (auto& entry : settlement_promises) {
+        auto& promise = entry.second;
+        try {
+            promise->set_exception(exception);
+        } catch (...) {
+        }
+    }
+    for (auto& entry : login_promises) {
+        auto& promise = entry.second;
+        try {
+            promise->set_value({-3, error_msg.empty() ? "adapter stopped" : error_msg});
+        } catch (...) {
+        }
+    }
+}
+
 void CTPTraderAdapter::ScheduleReconnect() {
     if (!need_reconnect_.load(std::memory_order_relaxed)) {
         return;
@@ -906,14 +962,27 @@ void CTPTraderAdapter::ScheduleReconnect() {
     }
     const int shift = std::min(attempt, 10);
     const int delay_ms = std::min(30000, kBaseReconnectDelayMs * (1 << shift));
-    std::thread([this, delay_ms]() {
-        std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
-        OnReconnectTimer();
-    }).detach();
+    {
+        std::lock_guard<std::mutex> lock(reconnect_mutex_);
+        if (reconnect_stop_) {
+            return;
+        }
+        if (!reconnect_thread_.joinable()) {
+            reconnect_thread_ = std::thread(&CTPTraderAdapter::ReconnectWorkerLoop, this);
+        }
+        if (reconnect_scheduled_) {
+            return;
+        }
+        reconnect_generation_ = lifecycle_generation_.load(std::memory_order_acquire);
+        reconnect_deadline_ =
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(delay_ms);
+        reconnect_scheduled_ = true;
+    }
+    reconnect_cv_.notify_one();
 }
 
-void CTPTraderAdapter::OnReconnectTimer() {
-    if (!need_reconnect_.load(std::memory_order_relaxed)) {
+void CTPTraderAdapter::OnReconnectTimer(std::uint64_t generation) {
+    if (!IsGenerationCurrent(generation) || !need_reconnect_.load(std::memory_order_relaxed)) {
         return;
     }
     last_reconnect_time_ = std::chrono::steady_clock::now();
@@ -938,16 +1007,16 @@ void CTPTraderAdapter::OnReconnectTimer() {
         return;
     }
     const auto login_result = login_future.get();
-    if (login_result.first != 0) {
+    if (!IsGenerationCurrent(generation) || login_result.first != 0) {
         ScheduleReconnect();
         return;
     }
 
-    if (!ConfirmSettlement()) {
+    if (!IsGenerationCurrent(generation) || !ConfirmSettlement()) {
         ScheduleReconnect();
         return;
     }
-    if (!RecoverOrdersAndTrades()) {
+    if (!IsGenerationCurrent(generation) || !RecoverOrdersAndTrades()) {
         ScheduleReconnect();
         return;
     }
@@ -962,6 +1031,86 @@ void CTPTraderAdapter::ResetReconnectState() {
     need_reconnect_.store(false, std::memory_order_relaxed);
     reconnect_attempts_.store(0, std::memory_order_relaxed);
     last_reconnect_time_ = std::chrono::steady_clock::now();
+}
+
+void CTPTraderAdapter::StopReconnectWorker() {
+    std::thread worker;
+    {
+        std::lock_guard<std::mutex> lock(reconnect_mutex_);
+        reconnect_stop_ = true;
+        reconnect_scheduled_ = false;
+        worker = std::move(reconnect_thread_);
+    }
+    reconnect_cv_.notify_all();
+    if (worker.joinable()) {
+        worker.join();
+    }
+    {
+        std::lock_guard<std::mutex> lock(reconnect_mutex_);
+        reconnect_stop_ = false;
+        reconnect_generation_ = lifecycle_generation_.load(std::memory_order_acquire);
+    }
+}
+
+void CTPTraderAdapter::ReconnectWorkerLoop() {
+    std::unique_lock<std::mutex> lock(reconnect_mutex_);
+    while (true) {
+        reconnect_cv_.wait(lock, [this]() { return reconnect_stop_ || reconnect_scheduled_; });
+        if (reconnect_stop_) {
+            return;
+        }
+        const auto deadline = reconnect_deadline_;
+        const auto generation = reconnect_generation_;
+        const bool interrupted = reconnect_cv_.wait_until(lock, deadline, [this, generation]() {
+            return reconnect_stop_ || !reconnect_scheduled_ || reconnect_generation_ != generation;
+        });
+        if (reconnect_stop_) {
+            return;
+        }
+        if (interrupted) {
+            continue;
+        }
+        reconnect_scheduled_ = false;
+        lock.unlock();
+        OnReconnectTimer(generation);
+        lock.lock();
+    }
+}
+
+void CTPTraderAdapter::JoinLoginTimeoutThreads() {
+    std::vector<std::thread> threads;
+    {
+        std::lock_guard<std::mutex> lock(login_timeout_threads_mutex_);
+        threads.swap(login_timeout_threads_);
+    }
+    for (auto& thread : threads) {
+        if (thread.joinable()) {
+            thread.join();
+        }
+    }
+}
+
+bool CTPTraderAdapter::IsGenerationCurrent(std::uint64_t generation) const {
+    return generation == lifecycle_generation_.load(std::memory_order_acquire);
+}
+
+void CTPTraderAdapter::UnregisterGatewayCallbacks() {
+    if (gateway_ == nullptr) {
+        return;
+    }
+    gateway_->RegisterOrderEventCallback(nullptr);
+    gateway_->RegisterOrderSubmitMappingCallback(nullptr);
+    gateway_->RegisterTradingAccountSnapshotCallback(nullptr);
+    gateway_->RegisterInvestorPositionSnapshotCallback(nullptr);
+    gateway_->RegisterInstrumentMetaSnapshotCallback(nullptr);
+    gateway_->RegisterBrokerTradingParamsSnapshotCallback(nullptr);
+    gateway_->RegisterInstrumentMarginRateSnapshotCallback(nullptr);
+    gateway_->RegisterInstrumentCommissionRateSnapshotCallback(nullptr);
+    gateway_->RegisterInstrumentOrderCommRateSnapshotCallback(nullptr);
+    gateway_->RegisterConnectionStateCallback(nullptr);
+    gateway_->RegisterLoginResponseCallback(nullptr);
+    gateway_->RegisterQueryCompleteCallback(nullptr);
+    gateway_->RegisterSettlementConfirmCallback(nullptr);
 }
 
 }  // namespace quant_hft

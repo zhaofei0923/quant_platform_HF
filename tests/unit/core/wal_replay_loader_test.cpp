@@ -38,6 +38,26 @@ OrderEvent BuildEvent(const std::string& client_order_id, OrderStatus status, in
     return event;
 }
 
+CtpOrderSubmitMapping BuildMapping() {
+    CtpOrderSubmitMapping mapping;
+    mapping.account_id = "a1";
+    mapping.strategy_id = "strat-1";
+    mapping.trace_id = "trace-map";
+    mapping.client_order_id = "kama_candidate_hc-open-hc2610-abc";
+    mapping.instrument_id = "SHFE.hc2610";
+    mapping.exchange_id = "SHFE";
+    mapping.side = Side::kBuy;
+    mapping.offset = OffsetFlag::kOpen;
+    mapping.volume = 1;
+    mapping.price = 3200.0;
+    mapping.order_ref = "1";
+    mapping.front_id = 2;
+    mapping.session_id = 3;
+    mapping.request_id = 4;
+    mapping.submit_ts_ns = 100;
+    return mapping;
+}
+
 }  // namespace
 
 TEST(WalReplayLoaderTest, RebuildsOrderStateAndLedgerFromWal) {
@@ -125,6 +145,44 @@ TEST(WalReplayLoaderTest, SupportsLegacyWalWithoutExtendedFields) {
 
     const auto snapshot = order_state_machine.GetOrderSnapshot("ord-old");
     EXPECT_EQ(snapshot.status, OrderStatus::kAccepted);
+
+    std::filesystem::remove(wal_path);
+}
+
+TEST(WalReplayLoaderTest, ReplaysCtpSubmitMappingForOrphanOrderResolution) {
+    const auto wal_path = NewTempWalPath("ctp_mapping");
+    {
+        LocalWalRegulatorySink sink(wal_path.string());
+        ASSERT_TRUE(sink.AppendCtpOrderSubmitMapping(BuildMapping()));
+        sink.Flush();
+    }
+
+    OrderStateMachine order_state_machine;
+    InMemoryPortfolioLedger ledger;
+    CtpOrderMappingStore mapping_store;
+    WalReplayLoader loader;
+    const auto stats =
+        loader.Replay(wal_path.string(), &order_state_machine, &ledger, &mapping_store);
+
+    EXPECT_EQ(stats.lines_total, 1);
+    EXPECT_EQ(stats.events_loaded, 0);
+    EXPECT_EQ(stats.ignored_lines, 1);
+    EXPECT_EQ(stats.parse_errors, 0);
+    EXPECT_EQ(stats.submit_mappings_loaded, 1);
+
+    OrderEvent orphan;
+    orphan.account_id = "a1";
+    orphan.client_order_id = "1";
+    orphan.order_ref = "1";
+    orphan.front_id = 2;
+    orphan.session_id = 3;
+    orphan.status = OrderStatus::kFilled;
+    orphan.filled_volume = 1;
+    ASSERT_TRUE(mapping_store.EnrichOrderEvent(&orphan));
+    EXPECT_EQ(orphan.client_order_id, "kama_candidate_hc-open-hc2610-abc");
+    EXPECT_EQ(orphan.strategy_id, "strat-1");
+    EXPECT_EQ(orphan.trace_id, "trace-map");
+    EXPECT_EQ(orphan.instrument_id, "SHFE.hc2610");
 
     std::filesystem::remove(wal_path);
 }

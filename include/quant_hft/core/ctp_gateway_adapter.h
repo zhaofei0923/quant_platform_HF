@@ -28,6 +28,7 @@ struct CtpUserSessionInfo {
 class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
    public:
     using ConnectionStateCallback = std::function<void(bool healthy)>;
+    using OrderSubmitMappingCallback = std::function<void(const CtpOrderSubmitMapping&)>;
     using LoginResponseCallback =
         std::function<void(int request_id, int error_code, const std::string& error_msg)>;
     using QueryCompleteCallback =
@@ -62,6 +63,7 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
     bool PlaceOrder(const OrderIntent& intent) override;
     bool CancelOrder(const std::string& client_order_id, const std::string& trace_id) override;
     void RegisterOrderEventCallback(OrderEventCallback callback) override;
+    virtual void RegisterOrderSubmitMappingCallback(OrderSubmitMappingCallback callback);
 
     // v6.7.11 query entry (ReqQryUserSession) through scheduler.
     virtual bool EnqueueUserSessionQuery(int request_id);
@@ -114,6 +116,7 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
    private:
     friend class CtpMdSpi;
     friend class CtpTdSpi;
+    friend class CtpCallbackScope;
 
     struct OrderMeta {
         std::string order_ref;
@@ -156,6 +159,7 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
     std::unordered_map<std::string, std::string> order_ref_to_client_id_;
     MarketDataCallback market_data_callback_;
     OrderEventCallback order_event_callback_;
+    OrderSubmitMappingCallback order_submit_mapping_callback_;
 
     QueryScheduler query_scheduler_;
     CtpUserSessionInfo user_session_;

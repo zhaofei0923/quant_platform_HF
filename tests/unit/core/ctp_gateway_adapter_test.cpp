@@ -32,9 +32,9 @@ TEST(CtpGatewayAdapterTest, ConnectSubscribeAndOrderFlow) {
     cfg.market_front_address = "tcp://sim-md";
     cfg.trader_front_address = "tcp://sim-td";
     cfg.broker_id = "9999";
-    cfg.user_id = "191202";
-    cfg.investor_id = "191202";
-    cfg.password = "p1";
+    cfg.user_id = "test_user";
+    cfg.investor_id = "test_investor";
+    cfg.password = "test_password";
     cfg.is_production_mode = false;
 
     ASSERT_TRUE(adapter.Connect(cfg));
@@ -77,6 +77,51 @@ TEST(CtpGatewayAdapterTest, ConnectSubscribeAndOrderFlow) {
     ASSERT_TRUE(adapter.CancelOrder("ord1", "t2"));
     EXPECT_EQ(order_events.load(), 2);
     EXPECT_EQ(canceled_events.load(), 1);
+}
+
+TEST(CtpGatewayAdapterTest, PlaceOrderEmitsSubmitMappingBeforeOrderCallback) {
+    CtpGatewayAdapter adapter(10);
+
+    MarketDataConnectConfig cfg;
+    cfg.market_front_address = "tcp://sim-md";
+    cfg.trader_front_address = "tcp://sim-td";
+    cfg.broker_id = "9999";
+    cfg.user_id = "test_user";
+    cfg.investor_id = "test_investor";
+    cfg.password = "test_password";
+    cfg.is_production_mode = false;
+
+    ASSERT_TRUE(adapter.Connect(cfg));
+
+    std::atomic<int> sequence{0};
+    CtpOrderSubmitMapping observed_mapping;
+    adapter.RegisterOrderSubmitMappingCallback([&](const CtpOrderSubmitMapping& mapping) {
+        EXPECT_EQ(sequence.fetch_add(1), 0);
+        observed_mapping = mapping;
+    });
+    adapter.RegisterOrderEventCallback([&](const OrderEvent& event) {
+        EXPECT_EQ(sequence.fetch_add(1), 1);
+        EXPECT_EQ(event.client_order_id, "ord-map-1");
+    });
+
+    OrderIntent intent;
+    intent.account_id = "a1";
+    intent.client_order_id = "ord-map-1";
+    intent.strategy_id = "strat-map";
+    intent.instrument_id = "SHFE.ag2406";
+    intent.side = Side::kBuy;
+    intent.offset = OffsetFlag::kOpen;
+    intent.volume = 1;
+    intent.price = 4010.0;
+    intent.trace_id = "trace-map";
+
+    ASSERT_TRUE(adapter.PlaceOrder(intent));
+    EXPECT_EQ(sequence.load(), 2);
+    EXPECT_EQ(observed_mapping.client_order_id, "ord-map-1");
+    EXPECT_EQ(observed_mapping.order_ref, "ord-map-1");
+    EXPECT_EQ(observed_mapping.trace_id, "trace-map");
+    EXPECT_EQ(observed_mapping.strategy_id, "strat-map");
+    EXPECT_EQ(observed_mapping.instrument_id, "SHFE.ag2406");
 }
 
 TEST(CtpGatewayAdapterTest, QueryAndOffsetApplySrc) {

@@ -5,10 +5,11 @@
 namespace quant_hft {
 
 class IRegulatorySink {
-public:
+   public:
     virtual ~IRegulatorySink() = default;
     virtual bool AppendOrderEvent(const OrderEvent& event) = 0;
     virtual bool AppendTradeEvent(const OrderEvent& event) = 0;
+    virtual bool AppendCtpOrderSubmitMapping(const CtpOrderSubmitMapping& mapping) = 0;
     virtual bool Flush() = 0;
 };
 

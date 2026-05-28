@@ -565,7 +565,7 @@ start_engine_for_session() {
   fi
 
   echo "[step] starting session=${session_label} trading_day=${trading_day} restart=${restart_number}"
-  if "${start_cmd[@]}"; then
+  if (exec 8>&-; "${start_cmd[@]}"); then
     printf '%s|%s|%s\n' "${session_label}" "${trading_day}" "$(date +%s)" > "${SESSION_STATE_FILE}"
     return 0
   fi
@@ -593,14 +593,16 @@ start_signal_execution_monitor() {
   fi
 
   echo "[step] starting signal execution monitor" | tee -a "${SUPERVISOR_LOG}"
-  QUANT_ROOT="${QUANT_ROOT}" SIMNOW_RUN_ROOT="${RUN_ROOT}" \
-    SIMNOW_MARKET_DATA_DIR="${MARKET_DATA_DIR}" SIMNOW_WAL_FILE="${WAL_FILE}" \
-    "${SIGNAL_MONITOR_SCRIPT}" \
-      --run-root "${RUN_ROOT}" \
-      --market-data-dir "${MARKET_DATA_DIR}" \
-      --wal-file "${WAL_FILE}" \
-      --poll-seconds "${SIGNAL_MONITOR_POLL_SECONDS}" \
-      > "${monitor_log}" 2>&1 &
+  (
+    exec 8>&-
+    QUANT_ROOT="${QUANT_ROOT}" SIMNOW_RUN_ROOT="${RUN_ROOT}" \
+      SIMNOW_MARKET_DATA_DIR="${MARKET_DATA_DIR}" SIMNOW_WAL_FILE="${WAL_FILE}" \
+      "${SIGNAL_MONITOR_SCRIPT}" \
+        --run-root "${RUN_ROOT}" \
+        --market-data-dir "${MARKET_DATA_DIR}" \
+        --wal-file "${WAL_FILE}" \
+        --poll-seconds "${SIGNAL_MONITOR_POLL_SECONDS}"
+  ) > "${monitor_log}" 2>&1 &
   printf '%s\n' "$!" > "${monitor_pid_file}"
 }
 

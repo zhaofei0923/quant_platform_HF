@@ -1,14 +1,14 @@
-#include <chrono>
+#include "quant_hft/core/ctp_trader_adapter.h"
+
+#include <gtest/gtest.h>
+
 #include <atomic>
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
-
-#include <gtest/gtest.h>
-
-#include "quant_hft/core/ctp_trader_adapter.h"
 
 namespace quant_hft {
 
@@ -51,9 +51,8 @@ bool WaitUntil(const std::function<bool()>& predicate, int timeout_ms) {
 }
 
 class FakeGateway final : public CtpGatewayAdapter {
-public:
-    FakeGateway()
-        : CtpGatewayAdapter(100) {}
+   public:
+    FakeGateway() : CtpGatewayAdapter(100) {}
 
     bool Connect(const MarketDataConnectConfig& config) override {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -88,9 +87,7 @@ public:
         return place_order_success_;
     }
 
-    bool RequestUserLogin(int request_id,
-                          const std::string&,
-                          const std::string&,
+    bool RequestUserLogin(int request_id, const std::string&, const std::string&,
                           const std::string&) override {
         LoginResponseCallback cb;
         bool do_callback = false;
@@ -248,7 +245,7 @@ public:
         }
     }
 
-private:
+   private:
     mutable std::mutex mutex_;
     MarketDataConnectConfig config_{};
     bool connected_{false};
@@ -312,6 +309,20 @@ TEST(CTPTraderAdapterTest, ReconnectPerformsLoginAndConfirmSettlement) {
     EXPECT_GE(fake_gateway->enqueue_trade_query_calls(), 1);
 }
 
+TEST(CTPTraderAdapterTest, DisconnectCancelsPendingReconnectTimer) {
+    auto fake_gateway = std::make_shared<FakeGateway>();
+    CTPTraderAdapter adapter(fake_gateway, 1);
+    ASSERT_TRUE(adapter.Connect(BuildSimConfig()));
+    ASSERT_TRUE(adapter.ConfirmSettlement());
+    ASSERT_TRUE(adapter.IsReady());
+
+    fake_gateway->EmitConnectionState(false);
+    adapter.Disconnect();
+    fake_gateway->SetHealthy(true);
+
+    EXPECT_FALSE(WaitUntil([&]() { return fake_gateway->request_user_login_calls() >= 1; }, 1400));
+}
+
 TEST(CTPTraderAdapterTest, RecoverOrdersAndTradesQueriesCtp) {
     auto fake_gateway = std::make_shared<FakeGateway>();
     CTPTraderAdapter adapter(fake_gateway, 1);
@@ -320,6 +331,21 @@ TEST(CTPTraderAdapterTest, RecoverOrdersAndTradesQueriesCtp) {
     EXPECT_TRUE(adapter.RecoverOrdersAndTrades(500));
     EXPECT_EQ(fake_gateway->enqueue_order_query_calls(), 1);
     EXPECT_EQ(fake_gateway->enqueue_trade_query_calls(), 1);
+}
+
+TEST(CTPTraderAdapterTest, DisconnectRejectsPendingLoginPromise) {
+    auto fake_gateway = std::make_shared<FakeGateway>();
+    fake_gateway->set_auto_login_response(false);
+    CTPTraderAdapter adapter(fake_gateway, 1);
+    ASSERT_TRUE(adapter.Connect(BuildSimConfig()));
+
+    auto future = adapter.LoginAsync("9999", "191202", "pwd", 200);
+    adapter.Disconnect();
+
+    ASSERT_EQ(future.wait_for(std::chrono::milliseconds(500)), std::future_status::ready);
+    const auto result = future.get();
+    EXPECT_EQ(result.first, -3);
+    EXPECT_NE(result.second.find("disconnected"), std::string::npos);
 }
 
 TEST(CTPTraderAdapterTest, LoginAsyncReturnsFutureAndResolvesOnSuccess) {
@@ -372,9 +398,8 @@ TEST(CTPTraderAdapterTest, CriticalDispatchTimeoutTriggersCircuitBreakerCallback
         }
     });
 
-    adapter.RegisterOrderEventCallback([](const OrderEvent&) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(60));
-    });
+    adapter.RegisterOrderEventCallback(
+        [](const OrderEvent&) { std::this_thread::sleep_for(std::chrono::milliseconds(60)); });
 
     OrderEvent event;
     event.account_id = "acc1";

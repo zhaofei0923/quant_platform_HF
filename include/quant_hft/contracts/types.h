@@ -296,6 +296,25 @@ struct OrderIntent {
     std::string trace_id;
 };
 
+struct CtpOrderSubmitMapping {
+    std::string run_id;
+    std::string account_id;
+    std::string strategy_id;
+    std::string trace_id;
+    std::string client_order_id;
+    std::string instrument_id;
+    std::string exchange_id;
+    Side side{Side::kBuy};
+    OffsetFlag offset{OffsetFlag::kOpen};
+    std::int32_t volume{0};
+    double price{0.0};
+    std::string order_ref;
+    std::int32_t front_id{0};
+    std::int32_t session_id{0};
+    std::int32_t request_id{0};
+    EpochNanos submit_ts_ns{0};
+};
+
 struct RiskDecision {
     RiskAction action{RiskAction::kReview};
     std::string rule_id;

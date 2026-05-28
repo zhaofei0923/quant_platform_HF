@@ -197,7 +197,10 @@ struct DashboardState {
     std::int64_t generated_ts_ns{0};
     std::string generated_at_local;
     bool overall_healthy{false};
+    bool live_healthy{false};
     std::int64_t warning_count{0};
+    std::int64_t live_warning_count{0};
+    std::int64_t historical_risk_count{0};
     ProcessStatus process;
     std::vector<ContractStatus> contracts;
     std::vector<MarketFileStatus> markets;
@@ -334,12 +337,22 @@ bool ProcessIsAlive(const std::string& pid_text) {
     }
 }
 
-std::vector<std::string> FindSupervisorPids() {
+fs::path CanonicalOrAbsolute(const fs::path& path) {
+    std::error_code ec;
+    fs::path canonical = fs::weakly_canonical(path, ec);
+    if (!ec) {
+        return canonical;
+    }
+    return fs::absolute(path, ec);
+}
+
+std::vector<std::string> FindSupervisorPids(const std::string& run_root) {
     std::vector<std::string> pids;
     std::error_code ec;
     if (!fs::exists("/proc", ec)) {
         return pids;
     }
+    const fs::path target_run_root = CanonicalOrAbsolute(run_root);
     const std::string self_pid = std::to_string(static_cast<long long>(getpid()));
     for (const auto& entry :
          fs::directory_iterator("/proc", fs::directory_options::skip_permission_denied, ec)) {
@@ -360,6 +373,12 @@ std::vector<std::string> FindSupervisorPids() {
         std::string text = *cmdline;
         std::replace(text.begin(), text.end(), '\0', ' ');
         if (text.find("supervise_simnow_trading.sh") != std::string::npos) {
+            const fs::path cwd = CanonicalOrAbsolute(entry.path() / "cwd");
+            const fs::path default_run_root =
+                CanonicalOrAbsolute(cwd / "runtime/trading/runs/simnow");
+            if (text.find(run_root) == std::string::npos && default_run_root != target_run_root) {
+                continue;
+            }
             pids.push_back(pid);
         }
     }
@@ -1011,7 +1030,7 @@ ProcessStatus CollectProcessStatus(const DashboardOptions& options) {
     status.pid = ReadDigitsOnly(run_root / "current_core_engine.pid");
     status.run_dir = ReadFirstLine(run_root / "current_run_dir");
     status.core_log = ReadFirstLine(run_root / "current_core_engine_log");
-    status.supervisor_pids = FindSupervisorPids();
+    status.supervisor_pids = FindSupervisorPids(options.run_root);
 
     if (!status.pid.empty() && ProcessIsAlive(status.pid)) {
         status.status = "alive";
@@ -1023,9 +1042,11 @@ ProcessStatus CollectProcessStatus(const DashboardOptions& options) {
         status.healthy = false;
         return status;
     }
-    if (!status.supervisor_pids.empty() && status.run_dir.empty()) {
+    if (!status.supervisor_pids.empty()) {
         status.status = "waiting_for_trading_window";
         status.healthy = true;
+        status.run_dir.clear();
+        status.core_log.clear();
         return status;
     }
     status.status = "missing_pid";
@@ -1213,7 +1234,7 @@ SignalMonitorStatus CollectSignalMonitorStatus(const DashboardOptions& options) 
     }
 
     std::error_code ec;
-    if (fs::exists(incident_dir, ec)) {
+    if (status.incidents > 0 && fs::exists(incident_dir, ec)) {
         std::vector<std::string> incidents;
         for (const auto& entry : fs::directory_iterator(
                  incident_dir, fs::directory_options::skip_permission_denied, ec)) {
@@ -1436,6 +1457,12 @@ CtpConnectionStatus CollectCtpConnectionStatus(const DashboardOptions& options,
         }
     }
 
+    if (process.status == "waiting_for_trading_window") {
+        status.status = "waiting_for_trading_window";
+        status.healthy = true;
+        return status;
+    }
+
     std::string probe_log = LatestRegularFile(options.probe_log_dir, "simnow_probe", ".log");
     if (probe_log.empty() && !process.run_dir.empty()) {
         const fs::path current_run_probe = fs::path(process.run_dir) / "simnow_probe.log";
@@ -1463,11 +1490,6 @@ CtpConnectionStatus CollectCtpConnectionStatus(const DashboardOptions& options,
         }
     }
 
-    if (process.status == "waiting_for_trading_window") {
-        status.status = "waiting_for_trading_window";
-        status.healthy = true;
-        return status;
-    }
     if (!process.healthy) {
         status.status = status.latest_probe_log.empty() ? "core_not_running" : "history_only";
         status.healthy = false;
@@ -1588,6 +1610,15 @@ CtpOrderFlowStatus CollectCtpOrderFlowStatus(const DashboardOptions& options,
     flow.monitor_filled = signal_monitor.filled;
     flow.monitor_incidents = signal_monitor.incidents;
 
+    const bool current_monitor_idle = signal_monitor.status == "alive" &&
+                                      signal_monitor.signals == 0 && signal_monitor.active == 0 &&
+                                      signal_monitor.filled == 0 && signal_monitor.incidents == 0;
+    if (current_monitor_idle && process.status == "waiting_for_trading_window") {
+        flow.status = "idle";
+        flow.healthy = true;
+        return flow;
+    }
+
     std::int64_t signal_passed_events = 0;
     std::ifstream monitor_input(signal_monitor.event_log_path);
     std::string line;
@@ -1665,7 +1696,10 @@ std::string RenderStateJson(const DashboardState& state) {
     out << "  \"generated_ts_ns\": " << state.generated_ts_ns << ",\n";
     out << "  \"generated_at_local\": " << JsonString(state.generated_at_local) << ",\n";
     out << "  \"overall_healthy\": " << (state.overall_healthy ? "true" : "false") << ",\n";
+    out << "  \"live_healthy\": " << (state.live_healthy ? "true" : "false") << ",\n";
     out << "  \"warning_count\": " << state.warning_count << ",\n";
+    out << "  \"live_warning_count\": " << state.live_warning_count << ",\n";
+    out << "  \"historical_risk_count\": " << state.historical_risk_count << ",\n";
     out << "  \"paths\": {\n";
     std::size_t path_index = 0;
     for (const auto& [key, value] : state.paths) {
@@ -2043,6 +2077,9 @@ std::string RenderHtml(const DashboardState& state) {
             "color:var(--muted);background:var(--soft);}"
             "td{background:#fffaf2;}"
             "code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;}"
+            ".scroll{max-height:230px;overflow:auto;border:1px solid "
+            "var(--line);background:#fffaf2;}"
+            ".scroll table{border-top:0;border-left:0}.scroll .logs{padding:8px;}"
             ".logs{margin:0;padding:0;list-style:none;display:grid;gap:7px;}"
             ".logs li{background:#fffaf2;border:1px solid var(--line);border-radius:0;padding:9px "
             "10px;"
@@ -2068,7 +2105,7 @@ std::string RenderHtml(const DashboardState& state) {
     html << "<main><section class=\"hero\"><div><div class=\"eyebrow\">SimNow operations</div>"
             "<h1>Trading console for live status, market freshness, and audit evidence.</h1></div>"
             "<div class=\"hero-meta\">"
-         << RenderBadge(state.overall_healthy ? "healthy" : "unhealthy", state.overall_healthy)
+         << RenderBadge(state.live_healthy ? "live healthy" : "live unhealthy", state.live_healthy)
          << "<div class=\"subtle\">Generated " << HtmlEscape(state.generated_at_local)
          << "</div></div></section><div class=\"grid\">\n";
 
@@ -2079,7 +2116,8 @@ std::string RenderHtml(const DashboardState& state) {
                          state.process.supervisor_pids.empty()
                              ? "not_running"
                              : std::to_string(state.process.supervisor_pids.size()) + " running");
-    html << RenderMetric("warnings", state.warning_count);
+    html << RenderMetric("live warnings", state.live_warning_count);
+    html << RenderMetric("history risks", state.historical_risk_count);
     html << "</div></section>\n";
 
     html << "<section class=\"panel span-4\"><h2>WAL</h2><div class=\"metrics\">";
@@ -2156,7 +2194,7 @@ std::string RenderHtml(const DashboardState& state) {
         html << " updated " << *state.signal_monitor.event_log_age_seconds << "s ago";
     }
     html << ".</div>";
-    html << "<ul class=\"logs\">";
+    html << "<div class=\"scroll\"><ul class=\"logs\">";
     if (state.signal_monitor.recent_events.empty()) {
         html << "<li>No signal execution monitor events found</li>";
     } else {
@@ -2164,7 +2202,7 @@ std::string RenderHtml(const DashboardState& state) {
             html << "<li>" << HtmlEscape(line) << "</li>";
         }
     }
-    html << "</ul></section>\n";
+    html << "</ul></div></section>\n";
 
     html << "<section class=\"panel span-6\"><h2>CTP Connection</h2><div class=\"metrics\">";
     html << RenderMetric("status", state.ctp_connection.status);
@@ -2192,7 +2230,7 @@ std::string RenderHtml(const DashboardState& state) {
             html << HtmlEscape(state.ctp_connection.active_instruments[i]);
         }
     }
-    html << "</div><ul class=\"logs\">";
+    html << "</div><div class=\"scroll\"><ul class=\"logs\">";
     if (state.ctp_connection.recent_events.empty()) {
         html << "<li>No CTP connection events found</li>";
     } else {
@@ -2200,7 +2238,7 @@ std::string RenderHtml(const DashboardState& state) {
             html << "<li>" << HtmlEscape(line) << "</li>";
         }
     }
-    html << "</ul></section>\n";
+    html << "</ul></div></section>\n";
 
     html << "<section class=\"panel span-6\"><h2>Signal To CTP Flow</h2>"
             "<div class=\"metrics\">";
@@ -2218,7 +2256,7 @@ std::string RenderHtml(const DashboardState& state) {
     html << "Last error " << HtmlEscape(EmptyAsDash(state.ctp_order_flow.last_error_id))
          << "; reason " << HtmlEscape(EmptyAsDash(state.ctp_order_flow.last_reject_reason))
          << ". Monitor incidents " << state.ctp_order_flow.monitor_incidents << ".";
-    html << "</div><ul class=\"logs\">";
+    html << "</div><div class=\"scroll\"><ul class=\"logs\">";
     if (state.ctp_order_flow.recent_events.empty()) {
         html << "<li>No CTP order-flow events found</li>";
     } else {
@@ -2226,10 +2264,11 @@ std::string RenderHtml(const DashboardState& state) {
             html << "<li>" << HtmlEscape(line) << "</li>";
         }
     }
-    html << "</ul></section>\n";
+    html << "</ul></div></section>\n";
 
     html << "<section class=\"panel span-12\"><h2>CTP Orders And Rejects</h2>";
-    html << "<table><thead><tr><th>Recent rejection / incident</th></tr></thead><tbody>";
+    html << "<div class=\"scroll\"><table><thead><tr><th>Recent rejection / "
+            "incident</th></tr></thead><tbody>";
     if (state.ctp_order_flow.recent_rejections.empty()) {
         html << "<tr><td>No CTP rejections or order incidents found</td></tr>";
     } else {
@@ -2237,7 +2276,7 @@ std::string RenderHtml(const DashboardState& state) {
             html << "<tr><td>" << HtmlEscape(line) << "</td></tr>";
         }
     }
-    html << "</tbody></table></section>\n";
+    html << "</tbody></table></div></section>\n";
 
     html << "<section class=\"panel span-6\"><h2>Ops Reports</h2><div class=\"metrics\">";
     html << RenderMetric("ops healthy", state.daily.ops_overall_healthy.has_value()
@@ -2248,14 +2287,15 @@ std::string RenderHtml(const DashboardState& state) {
     html << RenderMetric("parse errors", state.daily.parse_errors);
     html << "</div></section>\n";
 
-    html << "<section class=\"panel span-12\"><h2>Recent Alerts</h2><ul class=\"logs\">";
+    html << "<section class=\"panel span-12\"><h2>Recent Alerts</h2><div class=\"scroll\"><ul "
+            "class=\"logs\">";
     for (const auto& line : state.recent_alerts) {
         html << "<li>" << HtmlEscape(line) << "</li>";
     }
-    html << "</ul></section>\n";
+    html << "</ul></div></section>\n";
 
-    html << "<section class=\"panel span-12\"><h2>Paths</h2>" << RenderPathTable(state.paths)
-         << "</section>\n";
+    html << "<section class=\"panel span-12\"><h2>Paths</h2><div class=\"scroll\">"
+         << RenderPathTable(state.paths) << "</div></section>\n";
 
     html << "</div></main>\n</body>\n</html>\n";
     return html.str();
@@ -2319,48 +2359,62 @@ DashboardState CollectState(const DashboardOptions& options) {
         CollectCtpOrderFlowStatus(options, state.signal_monitor, state.wal, state.process);
     state.recent_alerts = CollectRecentAlerts(state.process.core_log);
 
+    const bool waiting_for_window = state.process.status == "waiting_for_trading_window";
     bool market_healthy = true;
     if (!state.markets.empty()) {
         market_healthy = std::all_of(state.markets.begin(), state.markets.end(),
                                      [](const auto& item) { return item.healthy; });
     }
-    state.overall_healthy = state.process.healthy && market_healthy;
-    if (state.signal_monitor.incidents > 0) {
-        state.overall_healthy = false;
-    }
-    if (state.ctp_connection.status == "degraded" || state.ctp_order_flow.status == "attention") {
-        state.overall_healthy = false;
-    }
+    state.live_healthy = state.process.healthy && (waiting_for_window || market_healthy) &&
+                         state.signal_monitor.status != "dead" &&
+                         state.signal_monitor.incidents == 0 && state.ctp_connection.healthy &&
+                         state.ctp_order_flow.monitor_incidents == 0 &&
+                         state.ctp_order_flow.ctp_submit_rejected == 0;
+    state.overall_healthy = state.live_healthy;
 
     if (!state.process.supervisor_pids.empty() && state.process.status != "alive") {
-        ++state.warning_count;
-    }
-    if (!state.wal.exists) {
-        ++state.warning_count;
-    }
-    if (!state.daily.report_found && !state.daily.trading_day.empty()) {
-        ++state.warning_count;
-    }
-    if (state.daily.parse_errors > 0) {
-        ++state.warning_count;
-    }
-    if (state.signal_monitor.status == "dead") {
-        ++state.warning_count;
-    }
-    if (state.signal_monitor.incidents > 0) {
-        ++state.warning_count;
-    }
-    if (state.ctp_connection.status == "degraded") {
-        ++state.warning_count;
-    }
-    if (state.ctp_order_flow.status == "attention") {
-        ++state.warning_count;
-    }
-    for (const auto& item : state.markets) {
-        if (!item.healthy) {
-            ++state.warning_count;
+        if (!waiting_for_window) {
+            ++state.live_warning_count;
         }
     }
+    if (!state.wal.exists) {
+        ++state.live_warning_count;
+    }
+    if (!state.daily.report_found && !state.daily.trading_day.empty()) {
+        ++state.historical_risk_count;
+    }
+    if (state.daily.parse_errors > 0) {
+        ++state.historical_risk_count;
+    }
+    if (state.signal_monitor.status == "dead") {
+        ++state.live_warning_count;
+    }
+    if (state.signal_monitor.incidents > 0) {
+        ++state.live_warning_count;
+    }
+    if (state.ctp_connection.status == "degraded") {
+        ++state.live_warning_count;
+    }
+    if (state.ctp_order_flow.status == "attention") {
+        if (state.ctp_order_flow.monitor_incidents > 0 ||
+            state.ctp_order_flow.ctp_submit_rejected > 0) {
+            ++state.live_warning_count;
+        } else {
+            ++state.historical_risk_count;
+        }
+    }
+    for (const auto& item : state.markets) {
+        if (!item.healthy && !waiting_for_window) {
+            ++state.live_warning_count;
+        }
+    }
+    if (state.ctp_order_flow.wal_rejected > 0) {
+        ++state.historical_risk_count;
+    }
+    if (state.daily.critical_alerts > 0 || state.daily.warn_alerts > 0) {
+        ++state.historical_risk_count;
+    }
+    state.warning_count = state.live_warning_count + state.historical_risk_count;
     return state;
 }
 

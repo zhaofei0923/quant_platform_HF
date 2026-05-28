@@ -35,6 +35,10 @@ bool LocalWalRegulatorySink::AppendTradeEvent(const OrderEvent& event) {
     return Append("trade", "trade_fill", event);
 }
 
+bool LocalWalRegulatorySink::AppendCtpOrderSubmitMapping(const CtpOrderSubmitMapping& mapping) {
+    return AppendMapping(mapping);
+}
+
 bool LocalWalRegulatorySink::Flush() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!stream_.is_open()) {
@@ -84,6 +88,40 @@ bool LocalWalRegulatorySink::Append(const char* kind, const char* event_type,
         << "\"session_id\":" << event.session_id << ","
         << "\"trace_id\":\"" << EscapeJsonString(event.trace_id) << "\""
         << "}\n";
+
+    stream_ << oss.str();
+    return stream_.good();
+}
+
+bool LocalWalRegulatorySink::AppendMapping(const CtpOrderSubmitMapping& mapping) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!stream_.is_open()) {
+        return false;
+    }
+
+    const std::string run_id = mapping.run_id.empty() ? run_id_ : mapping.run_id;
+    std::ostringstream oss;
+    oss << "{"
+        << "\"seq\":" << seq_++ << ","
+        << "\"schema_version\":2,"
+        << "\"kind\":\"ctp_order_submit_mapping\","
+        << "\"event_type\":\"ctp_submit_mapping\","
+        << "\"run_id\":\"" << EscapeJsonString(run_id) << "\","
+        << "\"submit_ts_ns\":" << mapping.submit_ts_ns << ","
+        << "\"account_id\":\"" << EscapeJsonString(mapping.account_id) << "\","
+        << "\"strategy_id\":\"" << EscapeJsonString(mapping.strategy_id) << "\","
+        << "\"trace_id\":\"" << EscapeJsonString(mapping.trace_id) << "\","
+        << "\"client_order_id\":\"" << EscapeJsonString(mapping.client_order_id) << "\","
+        << "\"instrument_id\":\"" << EscapeJsonString(mapping.instrument_id) << "\","
+        << "\"exchange_id\":\"" << EscapeJsonString(mapping.exchange_id) << "\","
+        << "\"side\":" << static_cast<int>(mapping.side) << ","
+        << "\"offset\":" << static_cast<int>(mapping.offset) << ","
+        << "\"volume\":" << mapping.volume << ","
+        << "\"price\":" << mapping.price << ","
+        << "\"order_ref\":\"" << EscapeJsonString(mapping.order_ref) << "\","
+        << "\"front_id\":" << mapping.front_id << ","
+        << "\"session_id\":" << mapping.session_id << ","
+        << "\"request_id\":" << mapping.request_id << "}\n";
 
     stream_ << oss.str();
     return stream_.good();

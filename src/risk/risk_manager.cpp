@@ -248,14 +248,10 @@ class DefaultRiskManager final : public RiskManager {
                        std::shared_ptr<ITradingDomainStore> domain_store)
         : order_manager_(std::move(order_manager)), domain_store_(std::move(domain_store)) {}
 
-    ~DefaultRiskManager() override {
-        stop_reload_.store(true);
-        if (reload_thread_.joinable()) {
-            reload_thread_.join();
-        }
-    }
+    ~DefaultRiskManager() override { StopReloadThread(); }
 
     bool Initialize(const RiskManagerConfig& config) override {
+        StopReloadThread();
         config_ = config;
         RegisterDefaultRiskRules(&executor_, order_manager_, config_.enable_self_trade_prevention,
                                  [this](const std::string& key, double rate, int limiter_type) {
@@ -276,7 +272,6 @@ class DefaultRiskManager final : public RiskManager {
                             runtime_guard_rules.end());
         ReloadRules(loaded_rules);
 
-        stop_reload_.store(false);
         if (config_.enable_dynamic_reload && !config_.rule_file_path.empty()) {
             StartReloadThread();
         }
@@ -395,8 +390,8 @@ class DefaultRiskManager final : public RiskManager {
         AddThresholdRule(&defaults, RiskRuleType::MAX_CANCEL_RATE, "risk.global.max_cancel_rate",
                          "", static_cast<double>(config.default_max_cancel_rate), 100);
         AddThresholdRule(&defaults, RiskRuleType::MAX_DAILY_CANCEL_COUNT,
-                 "risk.global.max_daily_cancel_count", "",
-                 static_cast<double>(config.default_max_daily_cancel_count), 100);
+                         "risk.global.max_daily_cancel_count", "",
+                         static_cast<double>(config.default_max_daily_cancel_count), 100);
 
         RiskRule stp;
         stp.rule_id = "risk.global.self_trade_prevention";
@@ -498,8 +493,7 @@ class DefaultRiskManager final : public RiskManager {
         return it->second->TryAcquire();
     }
 
-    RiskCheckResult CheckDailyCancelCount(const RiskRule& rule,
-                                          const OrderContext& context,
+    RiskCheckResult CheckDailyCancelCount(const RiskRule& rule, const OrderContext& context,
                                           const std::string& client_order_id) {
         if (rule.threshold <= 0.0) {
             return BuildAllow();
@@ -517,8 +511,7 @@ class DefaultRiskManager final : public RiskManager {
             result.reason = "日内撤单次数超过上限";
             result.limit_value = rule.threshold;
             result.current_value = static_cast<double>(current_count);
-            EmitRejectEvent(rule, context, result.reason, RiskEventSeverity::WARN,
-                            client_order_id);
+            EmitRejectEvent(rule, context, result.reason, RiskEventSeverity::WARN, client_order_id);
             return result;
         }
         return BuildAllow();
@@ -569,36 +562,48 @@ class DefaultRiskManager final : public RiskManager {
 
     void StartReloadThread() {
         namespace fs = std::filesystem;
-        if (!fs::exists(config_.rule_file_path)) {
+        const RiskManagerConfig reload_config = config_;
+        const std::string rule_file_path = reload_config.rule_file_path;
+        if (!fs::exists(rule_file_path)) {
             return;
         }
-        last_rule_file_write_time_ = fs::last_write_time(config_.rule_file_path);
-        reload_thread_ = std::thread([this]() {
+        StopReloadThread();
+        stop_reload_.store(false);
+        last_rule_file_write_time_ = fs::last_write_time(rule_file_path);
+        reload_thread_ = std::thread([this, reload_config, rule_file_path]() {
             namespace fs = std::filesystem;
-            const int sleep_seconds = std::max(1, config_.reload_interval_seconds);
+            const int sleep_seconds = std::max(1, reload_config.reload_interval_seconds);
             while (!stop_reload_.load()) {
                 std::this_thread::sleep_for(std::chrono::seconds(sleep_seconds));
                 if (stop_reload_.load()) {
                     break;
                 }
-                if (!fs::exists(config_.rule_file_path)) {
+                if (!fs::exists(rule_file_path)) {
                     continue;
                 }
-                const auto current_write_time = fs::last_write_time(config_.rule_file_path);
+                const auto current_write_time = fs::last_write_time(rule_file_path);
                 if (current_write_time == last_rule_file_write_time_) {
                     continue;
                 }
                 last_rule_file_write_time_ = current_write_time;
                 std::string error;
-                auto reloaded = LoadRiskRulesFromYaml(config_.rule_file_path, &error);
+                auto reloaded = LoadRiskRulesFromYaml(rule_file_path, &error);
                 if (!reloaded.empty()) {
-                    const auto runtime_guard_rules = BuildRuntimeGuardRules(config_);
+                    const auto runtime_guard_rules = BuildRuntimeGuardRules(reload_config);
                     reloaded.insert(reloaded.end(), runtime_guard_rules.begin(),
                                     runtime_guard_rules.end());
                     ReloadRules(reloaded);
                 }
             }
         });
+    }
+
+    void StopReloadThread() {
+        stop_reload_.store(true);
+        if (reload_thread_.joinable()) {
+            reload_thread_.join();
+        }
+        stop_reload_.store(false);
     }
 
     std::shared_ptr<OrderManager> order_manager_;

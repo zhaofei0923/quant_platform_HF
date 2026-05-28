@@ -25,6 +25,7 @@
 #include "quant_hft/core/circuit_breaker.h"
 #include "quant_hft/core/ctp_config_loader.h"
 #include "quant_hft/core/ctp_md_adapter.h"
+#include "quant_hft/core/ctp_order_mapping_store.h"
 #include "quant_hft/core/ctp_trader_adapter.h"
 #include "quant_hft/core/flow_controller.h"
 #include "quant_hft/core/local_wal_regulatory_sink.h"
@@ -761,8 +762,9 @@ bool RotateCsvWithMismatchedHeader(const std::filesystem::path& path, const std:
     std::filesystem::rename(path, rotated, ec);
     if (ec) {
         if (error != nullptr) {
-            *error = "failed to rotate " + description + " csv with mismatched header: " +
-                     path.string() + " -> " + rotated.string() + ": " + ec.message();
+            *error = "failed to rotate " + description +
+                     " csv with mismatched header: " + path.string() + " -> " + rotated.string() +
+                     ": " + ec.message();
         }
         return false;
     }
@@ -1233,6 +1235,7 @@ int main(int argc, char** argv) {
     CtpPositionLedger ctp_position_ledger;
     CtpAccountLedger ctp_account_ledger;
     OrderStateMachine order_state_machine;
+    CtpOrderMappingStore ctp_order_mapping_store;
     BarAggregator bar_aggregator;
     std::mutex bar_aggregation_mutex;
     std::unordered_map<std::string, EpochNanos> instrument_last_tick_ts_ns;
@@ -1438,13 +1441,15 @@ int main(int argc, char** argv) {
         market_data_recorder.SetAllowedInstrumentIds({});
     }
 
-    const auto replay_stats = replay_loader.Replay(wal_path, &order_state_machine, &ledger);
+    const auto replay_stats =
+        replay_loader.Replay(wal_path, &order_state_machine, &ledger, &ctp_order_mapping_store);
     if (replay_stats.lines_total > 0 || replay_stats.parse_errors > 0) {
         std::cout << "WAL replay lines=" << replay_stats.lines_total
                   << " events=" << replay_stats.events_loaded
                   << " parse_errors=" << replay_stats.parse_errors
                   << " state_rejected=" << replay_stats.state_rejected
-                  << " ledger_applied=" << replay_stats.ledger_applied << '\n';
+                  << " ledger_applied=" << replay_stats.ledger_applied
+                  << " submit_mappings=" << replay_stats.submit_mappings_loaded << '\n';
     }
 
     auto process_order_event = [&](const OrderEvent& raw_event) {
@@ -1457,6 +1462,19 @@ int main(int argc, char** argv) {
         }
         if (event.ts_ns <= 0) {
             event.ts_ns = event.recv_ts_ns;
+        }
+        const std::string observed_client_order_id = event.client_order_id;
+        const std::string observed_order_ref = event.order_ref;
+        const bool mapping_resolved = ctp_order_mapping_store.EnrichOrderEvent(&event);
+        if (mapping_resolved && observed_client_order_id != event.client_order_id) {
+            EmitStructuredLog(&config, "core_engine", "info", "ctp_orphan_order_event_resolved",
+                              {{"observed_client_order_id", observed_client_order_id},
+                               {"observed_order_ref", observed_order_ref},
+                               {"client_order_id", event.client_order_id},
+                               {"trace_id", event.trace_id},
+                               {"order_ref", event.order_ref},
+                               {"front_id", std::to_string(event.front_id)},
+                               {"session_id", std::to_string(event.session_id)}});
         }
         if (event.status == OrderStatus::kRejected && event.event_source != "internal") {
             EmitOrderRejectedEventLog(config, event);
@@ -1942,6 +1960,18 @@ int main(int argc, char** argv) {
         return active_instrument_ids.find(instrument_id) != active_instrument_ids.end();
     };
 
+    ctp_trader->RegisterOrderSubmitMappingCallback([&](const CtpOrderSubmitMapping& mapping) {
+        ctp_order_mapping_store.Upsert(mapping);
+        if (!wal_sink.AppendCtpOrderSubmitMapping(mapping) || !wal_sink.Flush()) {
+            const auto failure_count = wal_write_failures.fetch_add(1) + 1;
+            EmitStructuredLog(&config, "core_engine", "error",
+                              "wal_append_ctp_submit_mapping_failed",
+                              {{"client_order_id", mapping.client_order_id},
+                               {"order_ref", mapping.order_ref},
+                               {"request_id", std::to_string(mapping.request_id)},
+                               {"failure_count", std::to_string(failure_count)}});
+        }
+    });
     ctp_trader->RegisterOrderEventCallback(
         [&](const OrderEvent& event) { process_order_event(event); });
     ctp_md->RegisterTickCallback([&](const MarketSnapshot& snapshot) {

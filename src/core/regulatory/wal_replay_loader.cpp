@@ -161,6 +161,38 @@ bool ParseStringField(const std::string& line, const std::string& key, std::stri
     return true;
 }
 
+bool ParseSide(int raw_side, Side* side) {
+    switch (raw_side) {
+        case 0:
+            *side = Side::kBuy;
+            return true;
+        case 1:
+            *side = Side::kSell;
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool ParseOffset(int raw_offset, OffsetFlag* offset) {
+    switch (raw_offset) {
+        case 0:
+            *offset = OffsetFlag::kOpen;
+            return true;
+        case 1:
+            *offset = OffsetFlag::kClose;
+            return true;
+        case 2:
+            *offset = OffsetFlag::kCloseToday;
+            return true;
+        case 3:
+            *offset = OffsetFlag::kCloseYesterday;
+            return true;
+        default:
+            return false;
+    }
+}
+
 bool ParseStatus(int raw_status, OrderStatus* status) {
     switch (raw_status) {
         case 0:
@@ -198,6 +230,11 @@ bool IsReplayableWalKind(const std::string& line, bool* replayable) {
     }
     *replayable = (kind == "order" || kind == "trade");
     return true;
+}
+
+bool IsCtpOrderSubmitMapping(const std::string& line) {
+    std::string kind;
+    return ParseStringField(line, "kind", &kind) && kind == "ctp_order_submit_mapping";
 }
 
 bool ParseWalLine(const std::string& line, OrderEvent* event) {
@@ -266,11 +303,58 @@ bool ParseWalLine(const std::string& line, OrderEvent* event) {
     return true;
 }
 
+bool ParseCtpOrderSubmitMappingLine(const std::string& line, CtpOrderSubmitMapping* mapping) {
+    if (mapping == nullptr) {
+        return false;
+    }
+    if (!ParseStringField(line, "client_order_id", &mapping->client_order_id) ||
+        !ParseStringField(line, "order_ref", &mapping->order_ref)) {
+        return false;
+    }
+
+    (void)ParseStringField(line, "run_id", &mapping->run_id);
+    (void)ParseStringField(line, "account_id", &mapping->account_id);
+    (void)ParseStringField(line, "strategy_id", &mapping->strategy_id);
+    (void)ParseStringField(line, "trace_id", &mapping->trace_id);
+    (void)ParseStringField(line, "instrument_id", &mapping->instrument_id);
+    (void)ParseStringField(line, "exchange_id", &mapping->exchange_id);
+
+    std::int64_t submit_ts_ns = 0;
+    if (ParseInt64Field(line, "submit_ts_ns", &submit_ts_ns)) {
+        mapping->submit_ts_ns = submit_ts_ns;
+    }
+
+    int raw_side = 0;
+    if (ParseIntField(line, "side", &raw_side)) {
+        (void)ParseSide(raw_side, &mapping->side);
+    }
+    int raw_offset = 0;
+    if (ParseIntField(line, "offset", &raw_offset)) {
+        (void)ParseOffset(raw_offset, &mapping->offset);
+    }
+    int parsed_int = 0;
+    if (ParseIntField(line, "volume", &parsed_int)) {
+        mapping->volume = parsed_int;
+    }
+    (void)ParseDoubleField(line, "price", &mapping->price);
+    if (ParseIntField(line, "front_id", &parsed_int)) {
+        mapping->front_id = parsed_int;
+    }
+    if (ParseIntField(line, "session_id", &parsed_int)) {
+        mapping->session_id = parsed_int;
+    }
+    if (ParseIntField(line, "request_id", &parsed_int)) {
+        mapping->request_id = parsed_int;
+    }
+    return true;
+}
+
 }  // namespace
 
 WalReplayStats WalReplayLoader::Replay(const std::string& wal_path,
                                        OrderStateMachine* order_state_machine,
-                                       IPortfolioLedger* portfolio_ledger) const {
+                                       IPortfolioLedger* portfolio_ledger,
+                                       CtpOrderMappingStore* order_mapping_store) const {
     WalReplayStats stats;
 
     std::ifstream stream(wal_path);
@@ -285,6 +369,20 @@ WalReplayStats WalReplayLoader::Replay(const std::string& wal_path,
         }
 
         ++stats.lines_total;
+        if (IsCtpOrderSubmitMapping(line)) {
+            CtpOrderSubmitMapping mapping;
+            if (!ParseCtpOrderSubmitMappingLine(line, &mapping)) {
+                ++stats.parse_errors;
+                continue;
+            }
+            if (order_mapping_store != nullptr) {
+                order_mapping_store->Upsert(mapping);
+            }
+            ++stats.submit_mappings_loaded;
+            ++stats.ignored_lines;
+            continue;
+        }
+
         bool replayable = false;
         if (!IsReplayableWalKind(line, &replayable)) {
             ++stats.parse_errors;

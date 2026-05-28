@@ -2240,6 +2240,9 @@ int main(int argc, char** argv) {
         EmitStructuredLog(&config, "core_engine", "error", "ctp_settlement_confirm_failed");
         return 2;
     }
+    EmitStructuredLog(
+        &config, "core_engine", "info", "ctp_settlement_confirmed",
+        {{"settlement_confirm_required", config.settlement_confirm_required ? "true" : "false"}});
 
     if (dominant_contract_mode) {
         const auto& product_ids = dominant_product_ids;

@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iomanip>
 #include <iostream>
 #include <map>
 #include <optional>
@@ -19,6 +20,7 @@
 #include <vector>
 
 #include "quant_hft/apps/cli_support.h"
+#include "quant_hft/core/ctp_text.h"
 
 namespace {
 
@@ -28,6 +30,7 @@ constexpr std::int64_t kTickStaleSeconds = 180;
 constexpr std::int64_t kBarStaleSeconds = 240;
 constexpr std::size_t kRecentAlertLimit = 24;
 constexpr std::size_t kRecentSignalMonitorLimit = 12;
+constexpr std::size_t kRecentCtpEventLimit = 16;
 
 struct DashboardOptions {
     std::string run_root;
@@ -36,6 +39,8 @@ struct DashboardOptions {
     std::string report_root;
     std::string export_root;
     std::string monitor_root;
+    std::string ctp_instrument_dir;
+    std::string probe_log_dir;
     std::string output_dir;
     int watch_seconds{0};
     bool strict_exit{false};
@@ -151,6 +156,43 @@ struct SignalMonitorStatus {
     std::vector<std::string> recent_incidents;
 };
 
+struct CtpConnectionStatus {
+    std::string status{"unknown"};
+    bool healthy{false};
+    std::string td_front{"unknown"};
+    std::string md_front{"unknown"};
+    std::string login_status{"unknown"};
+    std::string auth_status{"unknown"};
+    std::string settlement_status{"unknown"};
+    std::string probe_status{"missing"};
+    std::string latest_probe_log;
+    std::optional<std::int64_t> probe_age_seconds;
+    std::int64_t reconnect_attempts{0};
+    std::int64_t ctp_errors{0};
+    std::string last_error;
+    std::vector<std::string> active_instruments;
+    std::vector<std::string> recent_events;
+};
+
+struct CtpOrderFlowStatus {
+    std::string status{"unknown"};
+    bool healthy{false};
+    std::int64_t signals{0};
+    std::int64_t active{0};
+    std::int64_t monitor_filled{0};
+    std::int64_t monitor_incidents{0};
+    std::int64_t order_submitted_logs{0};
+    std::int64_t ctp_submitted{0};
+    std::int64_t ctp_submit_rejected{0};
+    std::int64_t ctp_callbacks{0};
+    std::int64_t wal_rejected{0};
+    std::int64_t wal_fills{0};
+    std::string last_error_id;
+    std::string last_reject_reason;
+    std::vector<std::string> recent_events;
+    std::vector<std::string> recent_rejections;
+};
+
 struct DashboardState {
     std::int64_t generated_ts_ns{0};
     std::string generated_at_local;
@@ -162,6 +204,8 @@ struct DashboardState {
     WalStatus wal;
     DailyStatus daily;
     SignalMonitorStatus signal_monitor;
+    CtpConnectionStatus ctp_connection;
+    CtpOrderFlowStatus ctp_order_flow;
     std::vector<std::string> recent_alerts;
     std::map<std::string, std::string> paths;
 };
@@ -684,9 +728,216 @@ std::int64_t CountOccurrences(const std::string& text, const std::string& needle
     return count;
 }
 
-std::vector<ContractStatus> DiscoverContracts() {
+void PushLimited(std::vector<std::string>* items, std::string value, std::size_t limit) {
+    if (items == nullptr || value.empty()) {
+        return;
+    }
+    items->push_back(std::move(value));
+    while (items->size() > limit) {
+        items->erase(items->begin());
+    }
+}
+
+std::string ExtractKvValue(const std::string& text, const std::string& key) {
+    const std::string marker = key + "=";
+    const auto pos = text.find(marker);
+    if (pos == std::string::npos) {
+        return "";
+    }
+    std::size_t value_start = pos + marker.size();
+    while (value_start < text.size() &&
+           std::isspace(static_cast<unsigned char>(text[value_start])) != 0) {
+        ++value_start;
+    }
+    if (value_start >= text.size()) {
+        return "";
+    }
+    if (text[value_start] == '"') {
+        ++value_start;
+        std::string value;
+        bool escaped = false;
+        for (std::size_t i = value_start; i < text.size(); ++i) {
+            const char ch = text[i];
+            if (escaped) {
+                value.push_back(ch);
+                escaped = false;
+                continue;
+            }
+            if (ch == '\\') {
+                escaped = true;
+                continue;
+            }
+            if (ch == '"') {
+                return value;
+            }
+            value.push_back(ch);
+        }
+        return value;
+    }
+    std::size_t value_end = value_start;
+    while (value_end < text.size() &&
+           std::isspace(static_cast<unsigned char>(text[value_end])) == 0) {
+        ++value_end;
+    }
+    std::string value = text.substr(value_start, value_end - value_start);
+    while (!value.empty() && (value.back() == ',' || value.back() == ';')) {
+        value.pop_back();
+    }
+    return value;
+}
+
+std::string ExtractEventField(const std::string& line, const std::string& key) {
+    std::string value = ExtractJsonString(line, key);
+    if (!value.empty()) {
+        return value;
+    }
+    if (const auto number = ExtractJsonInt(line, key); number.has_value()) {
+        return std::to_string(*number);
+    }
+    return ExtractKvValue(line, key);
+}
+
+std::string SafeAscii(std::string text) {
+    if (!quant_hft::ctp::IsValidUtf8(text)) {
+        text = quant_hft::ctp::DecodeCtpText(text);
+    }
+    for (char& ch : text) {
+        const unsigned char byte = static_cast<unsigned char>(ch);
+        if (byte < 32 && byte != '\t') {
+            ch = '?';
+        }
+    }
+    return text;
+}
+
+bool HasAnyNeedle(const std::string& lower, const std::vector<std::string>& needles) {
+    return std::any_of(needles.begin(), needles.end(),
+                       [&](const auto& needle) { return lower.find(needle) != std::string::npos; });
+}
+
+std::string LatestRegularFile(const fs::path& root, const std::string& prefix,
+                              const std::string& suffix) {
+    std::error_code ec;
+    if (!fs::exists(root, ec)) {
+        return "";
+    }
+    fs::path latest;
+    for (const auto& entry :
+         fs::directory_iterator(root, fs::directory_options::skip_permission_denied, ec)) {
+        if (ec) {
+            break;
+        }
+        if (!entry.is_regular_file(ec)) {
+            continue;
+        }
+        const std::string filename = entry.path().filename().string();
+        if (!prefix.empty() && filename.rfind(prefix, 0) != 0) {
+            continue;
+        }
+        if (!suffix.empty() && (filename.size() < suffix.size() ||
+                                filename.substr(filename.size() - suffix.size()) != suffix)) {
+            continue;
+        }
+        if (latest.empty()) {
+            latest = entry.path();
+            continue;
+        }
+        const auto latest_time = fs::last_write_time(latest, ec);
+        if (ec) {
+            latest = entry.path();
+            continue;
+        }
+        const auto candidate_time = fs::last_write_time(entry.path(), ec);
+        if (!ec && candidate_time > latest_time) {
+            latest = entry.path();
+        }
+    }
+    return latest.string();
+}
+
+std::string BriefStructuredEvent(const std::string& line, const std::string& source) {
+    const std::string ts = ExtractEventField(line, "ts").empty() ? ExtractEventField(line, "ts_ns")
+                                                                 : ExtractEventField(line, "ts");
+    const std::string event = ExtractEventField(line, "event").empty()
+                                  ? ExtractEventField(line, "event_type")
+                                  : ExtractEventField(line, "event");
+    const std::string trace_id = ExtractEventField(line, "trace_id");
+    const std::string client_order_id = ExtractEventField(line, "client_order_id");
+    const std::string order_ref = ExtractEventField(line, "order_ref");
+    const std::string error_id = ExtractEventField(line, "error_id").empty()
+                                     ? ExtractEventField(line, "ErrorID")
+                                     : ExtractEventField(line, "error_id");
+    const std::string message = ExtractEventField(line, "message").empty()
+                                    ? ExtractEventField(line, "reason")
+                                    : ExtractEventField(line, "message");
+    std::string display_message = message;
+    if (!error_id.empty()) {
+        try {
+            const std::string known = quant_hft::ctp::KnownCtpErrorMessage(std::stoi(error_id));
+            if (!known.empty() && quant_hft::ctp::LooksLikePlaceholderText(display_message)) {
+                display_message = known;
+            }
+        } catch (...) {
+        }
+    }
+    std::ostringstream out;
+    out << source;
+    if (!ts.empty()) {
+        out << ' ' << ts;
+    }
+    if (!event.empty()) {
+        out << ' ' << event;
+    }
+    if (!trace_id.empty()) {
+        out << " trace_id=" << trace_id;
+    }
+    if (!client_order_id.empty()) {
+        out << " client_order_id=" << client_order_id;
+    }
+    if (!order_ref.empty()) {
+        out << " order_ref=" << order_ref;
+    }
+    if (!error_id.empty()) {
+        out << " error_id=" << error_id;
+    }
+    if (!display_message.empty()) {
+        out << " - " << display_message;
+    }
+    return SafeAscii(out.str());
+}
+
+std::string ClassifyCtpIssue(const std::string& line) {
+    const std::string lower = ToLower(line);
+    if (lower.find("settlement_unconfirmed") != std::string::npos ||
+        lower.find("errorid=42") != std::string::npos ||
+        lower.find("error_id=42") != std::string::npos ||
+        lower.find("\"error_id\":42") != std::string::npos ||
+        lower.find("\"error_id\": 42") != std::string::npos) {
+        return "settlement_unconfirmed";
+    }
+    if (lower.find("login") != std::string::npos &&
+        HasAnyNeedle(lower, {"fail", "failed", "level=error", "reject"})) {
+        return "login_failed";
+    }
+    if (lower.find("auth") != std::string::npos &&
+        HasAnyNeedle(lower, {"fail", "failed", "level=error", "reject"})) {
+        return "auth_failed";
+    }
+    if (lower.find("disconnect") != std::string::npos) {
+        return "front_disconnected";
+    }
+    if (lower.find("reject") != std::string::npos || lower.find("rejected") != std::string::npos) {
+        return "order_rejected";
+    }
+    if (lower.find("timeout") != std::string::npos) {
+        return "timeout";
+    }
+    return "";
+}
+
+std::vector<ContractStatus> DiscoverContracts(const std::string& ctp_instrument_dir) {
     std::vector<ContractStatus> contracts;
-    const fs::path root = fs::path(DefaultPathFromRoot("runtime/ctp_instruments"));
+    const fs::path root(ctp_instrument_dir);
     std::error_code ec;
     if (!fs::exists(root, ec)) {
         return contracts;
@@ -1002,15 +1253,59 @@ std::string RedactAfterKey(std::string line, const std::string& key) {
     return line;
 }
 
+std::string ReplaceKnownCtpPlaceholderError(std::string line) {
+    if (!quant_hft::ctp::LooksLikePlaceholderText(line)) {
+        return line;
+    }
+    std::string error_id = ExtractEventField(line, "ErrorID");
+    if (error_id.empty()) {
+        error_id = ExtractEventField(line, "error_id");
+    }
+    if (error_id.empty()) {
+        return line;
+    }
+    std::string known;
+    try {
+        known = quant_hft::ctp::KnownCtpErrorMessage(std::stoi(error_id));
+    } catch (...) {
+        return line;
+    }
+    if (known.empty()) {
+        return line;
+    }
+
+    const std::vector<std::string> markers = {"ErrorMsg=", "error_msg=", "status_msg="};
+    for (const auto& marker : markers) {
+        std::size_t pos = 0;
+        while ((pos = line.find(marker, pos)) != std::string::npos) {
+            const std::size_t value_start = pos + marker.size();
+            std::size_t value_end = value_start;
+            while (value_end < line.size() && line[value_end] != ')' && line[value_end] != '"' &&
+                   line[value_end] != '\n' && line[value_end] != '\r') {
+                ++value_end;
+            }
+            if (line.substr(value_start, value_end - value_start).find("????") !=
+                std::string::npos) {
+                line.replace(value_start, value_end - value_start, known);
+                pos = value_start + known.size();
+            } else {
+                pos = value_end;
+            }
+        }
+    }
+    return line;
+}
+
 std::string SanitizeLogLine(std::string line) {
     const std::vector<std::string> quoted_keys = {
-        "account_id=\"",    "investor_id=\"",  "user_id=\"",
-        "balance=\"",       "available=\"",    "curr_margin=\"",
-        "frozen_margin=\"", "close_profit=\"", "position_profit=\""};
+        "account_id=\"",      "investor_id=\"", "user_id=\"",       "balance=\"",
+        "available=\"",       "curr_margin=\"", "frozen_margin=\"", "close_profit=\"",
+        "position_profit=\"", "password=\"",    "auth_code=\"",     "authcode=\""};
     for (const auto& key : quoted_keys) {
         line = RedactAfterKey(std::move(line), key);
     }
-    return line;
+    line = ReplaceKnownCtpPlaceholderError(std::move(line));
+    return SafeAscii(line);
 }
 
 std::vector<std::string> CollectRecentAlerts(const std::string& core_log) {
@@ -1046,6 +1341,307 @@ std::vector<std::string> CollectRecentAlerts(const std::string& core_log) {
         alerts.emplace_back("no recent alert lines matched");
     }
     return alerts;
+}
+
+bool LineHasNonZeroError(const std::string& lower) {
+    const bool has_error_key = lower.find("errorid=") != std::string::npos ||
+                               lower.find("error_id=") != std::string::npos ||
+                               lower.find("\"error_id\"") != std::string::npos ||
+                               lower.find("\"errorid\"") != std::string::npos;
+    if (!has_error_key) {
+        return false;
+    }
+    return lower.find("errorid=0") == std::string::npos &&
+           lower.find("error_id=0") == std::string::npos &&
+           lower.find("\"error_id\":0") == std::string::npos &&
+           lower.find("\"error_id\": 0") == std::string::npos;
+}
+
+bool LineLooksFailed(const std::string& lower) {
+    return LineHasNonZeroError(lower) ||
+           HasAnyNeedle(lower, {"level=error", " failed", " fail", "reject", "timeout"});
+}
+
+void UpdateCtpConnectionFromLine(const std::string& line, const std::string& source,
+                                 CtpConnectionStatus* status) {
+    if (status == nullptr || line.empty()) {
+        return;
+    }
+    const std::string lower = ToLower(line);
+    const std::string issue = ClassifyCtpIssue(line);
+    const bool connection_related =
+        HasAnyNeedle(lower, {"onfront", "rspuserlogin", "authenticate", "settlement_confirm",
+                             "reqsettlement", "reconnect", "front_connected", "front_disconnected",
+                             "probe_completed", "session_snapshot", "health_status"});
+    if (!connection_related) {
+        return;
+    }
+
+    PushLimited(&status->recent_events, SanitizeLogLine(BriefStructuredEvent(line, source)),
+                kRecentCtpEventLimit);
+
+    if (!issue.empty()) {
+        ++status->ctp_errors;
+        status->last_error = issue;
+    }
+    if (lower.find("ctp_td_front_connected") != std::string::npos ||
+        lower.find("td_front_connected") != std::string::npos ||
+        lower.find("trader_front_connected") != std::string::npos) {
+        status->td_front = "connected";
+    }
+    if (lower.find("ctp_td_front_disconnected") != std::string::npos ||
+        lower.find("td_front_disconnected") != std::string::npos ||
+        lower.find("trader_front_disconnected") != std::string::npos) {
+        status->td_front = "disconnected";
+    }
+    if (lower.find("ctp_md_front_connected") != std::string::npos ||
+        lower.find("md_front_connected") != std::string::npos) {
+        status->md_front = "connected";
+    }
+    if (lower.find("ctp_md_front_disconnected") != std::string::npos ||
+        lower.find("md_front_disconnected") != std::string::npos) {
+        status->md_front = "disconnected";
+    }
+    if (lower.find("auth") != std::string::npos ||
+        lower.find("authenticate") != std::string::npos) {
+        status->auth_status = LineLooksFailed(lower) ? "failed" : "authenticated";
+    }
+    if (lower.find("login") != std::string::npos ||
+        lower.find("rspuserlogin") != std::string::npos ||
+        lower.find("session_snapshot") != std::string::npos) {
+        status->login_status = LineLooksFailed(lower) ? "failed" : "logged_in";
+    }
+    if (lower.find("settlement") != std::string::npos) {
+        status->settlement_status = LineLooksFailed(lower) ? "unconfirmed" : "confirmed";
+    }
+    if (lower.find("reconnect") != std::string::npos) {
+        ++status->reconnect_attempts;
+    }
+    if (lower.find("probe_completed") != std::string::npos) {
+        status->probe_status = LineLooksFailed(lower) ? "failed" : "completed";
+    }
+    if (lower.find("health_status") != std::string::npos &&
+        lower.find("healthy") != std::string::npos) {
+        status->probe_status = "healthy";
+    }
+}
+
+CtpConnectionStatus CollectCtpConnectionStatus(const DashboardOptions& options,
+                                               const ProcessStatus& process,
+                                               const std::vector<ContractStatus>& contracts) {
+    CtpConnectionStatus status;
+    for (const auto& contract : contracts) {
+        if (!contract.instrument_id.empty()) {
+            status.active_instruments.push_back(contract.instrument_id);
+        }
+    }
+
+    std::string probe_log = LatestRegularFile(options.probe_log_dir, "simnow_probe", ".log");
+    if (probe_log.empty() && !process.run_dir.empty()) {
+        const fs::path current_run_probe = fs::path(process.run_dir) / "simnow_probe.log";
+        std::error_code ec;
+        if (fs::is_regular_file(current_run_probe, ec)) {
+            probe_log = current_run_probe.string();
+        }
+    }
+    status.latest_probe_log = probe_log;
+    if (!probe_log.empty()) {
+        status.probe_status = "history_only";
+        status.probe_age_seconds = FileAgeSeconds(probe_log);
+        std::ifstream input(probe_log);
+        std::string line;
+        while (std::getline(input, line)) {
+            UpdateCtpConnectionFromLine(line, "probe", &status);
+        }
+    }
+
+    if (!process.core_log.empty()) {
+        std::ifstream input(process.core_log);
+        std::string line;
+        while (std::getline(input, line)) {
+            UpdateCtpConnectionFromLine(line, "core", &status);
+        }
+    }
+
+    if (process.status == "waiting_for_trading_window") {
+        status.status = "waiting_for_trading_window";
+        status.healthy = true;
+        return status;
+    }
+    if (!process.healthy) {
+        status.status = status.latest_probe_log.empty() ? "core_not_running" : "history_only";
+        status.healthy = false;
+        return status;
+    }
+    if (status.td_front == "disconnected" || status.md_front == "disconnected" ||
+        status.login_status == "failed" || status.auth_status == "failed" ||
+        status.settlement_status == "unconfirmed" || status.ctp_errors > 0) {
+        status.status = "degraded";
+        status.healthy = false;
+        return status;
+    }
+    if (status.td_front == "connected" || status.md_front == "connected" ||
+        status.login_status == "logged_in" || status.settlement_status == "confirmed" ||
+        status.probe_status == "completed" || status.probe_status == "healthy") {
+        status.status = "connected";
+        status.healthy = true;
+        return status;
+    }
+    status.status = "observing";
+    status.healthy = true;
+    return status;
+}
+
+void UpdateCtpOrderFlowFromLine(const std::string& line, const std::string& source,
+                                CtpOrderFlowStatus* flow) {
+    if (flow == nullptr || line.empty()) {
+        return;
+    }
+    const std::string lower = ToLower(line);
+    const bool relevant = HasAnyNeedle(
+        lower,
+        {"signal_passed", "order_submitted", "ctp_order_submitted", "ctp_order_submit_rejected",
+         "order_rejected", "order_update", "trade_fill", "onrsporderinsert", "onerrrtnorderinsert",
+         "onrtnorder", "onrtntrade", "client_order_id", "order_ref", "settlement_unconfirmed"});
+    if (!relevant) {
+        return;
+    }
+
+    PushLimited(&flow->recent_events, SanitizeLogLine(BriefStructuredEvent(line, source)),
+                kRecentCtpEventLimit);
+
+    if (lower.find("event=order_submitted") != std::string::npos &&
+        lower.find("event=ctp_order_submitted") == std::string::npos) {
+        ++flow->order_submitted_logs;
+    }
+    if (lower.find("ctp_order_submitted") != std::string::npos) {
+        ++flow->ctp_submitted;
+    }
+    if (lower.find("ctp_order_submit_rejected") != std::string::npos ||
+        lower.find("order_rejected") != std::string::npos) {
+        ++flow->ctp_submit_rejected;
+    }
+
+    const std::string issue = ClassifyCtpIssue(line);
+    if (!issue.empty() && issue != "front_disconnected") {
+        flow->last_reject_reason = issue;
+        PushLimited(&flow->recent_rejections, SanitizeLogLine(BriefStructuredEvent(line, source)),
+                    kRecentCtpEventLimit);
+    }
+    std::string error_id = ExtractEventField(line, "error_id");
+    if (error_id.empty()) {
+        error_id = ExtractEventField(line, "ErrorID");
+    }
+    if (!error_id.empty() && error_id != "0") {
+        flow->last_error_id = error_id;
+    }
+}
+
+void UpdateCtpOrderFlowFromWalLine(const std::string& line, CtpOrderFlowStatus* flow) {
+    if (flow == nullptr || line.empty()) {
+        return;
+    }
+    const std::string lower = ToLower(line);
+    const bool order_event = lower.find("\"event_type\":\"order_update\"") != std::string::npos ||
+                             lower.find("\"event_type\": \"order_update\"") != std::string::npos ||
+                             lower.find("\"kind\":\"order\"") != std::string::npos ||
+                             lower.find("\"kind\": \"order\"") != std::string::npos;
+    const bool trade_event = lower.find("\"event_type\":\"trade_fill\"") != std::string::npos ||
+                             lower.find("\"event_type\": \"trade_fill\"") != std::string::npos ||
+                             lower.find("\"kind\":\"trade\"") != std::string::npos ||
+                             lower.find("\"kind\": \"trade\"") != std::string::npos;
+    if (!order_event && !trade_event) {
+        return;
+    }
+    PushLimited(&flow->recent_events, SanitizeLogLine(BriefStructuredEvent(line, "wal")),
+                kRecentCtpEventLimit);
+    if (order_event) {
+        ++flow->ctp_callbacks;
+        const auto status = ExtractJsonInt(line, "status");
+        if (status.has_value() && *status == 5) {
+            ++flow->wal_rejected;
+            std::string error_id = ExtractEventField(line, "error_id");
+            if (error_id.empty()) {
+                error_id = ExtractEventField(line, "ErrorID");
+            }
+            if (!error_id.empty() && error_id != "0") {
+                flow->last_error_id = error_id;
+            }
+            const std::string reason = ClassifyCtpIssue(line);
+            flow->last_reject_reason = reason.empty() ? "order_rejected" : reason;
+            PushLimited(&flow->recent_rejections,
+                        SanitizeLogLine(BriefStructuredEvent(line, "wal")), kRecentCtpEventLimit);
+        }
+    }
+    if (trade_event) {
+        ++flow->wal_fills;
+    }
+}
+
+CtpOrderFlowStatus CollectCtpOrderFlowStatus(const DashboardOptions& options,
+                                             const SignalMonitorStatus& signal_monitor,
+                                             const WalStatus& wal_status,
+                                             const ProcessStatus& process) {
+    CtpOrderFlowStatus flow;
+    flow.signals = signal_monitor.signals;
+    flow.active = signal_monitor.active;
+    flow.monitor_filled = signal_monitor.filled;
+    flow.monitor_incidents = signal_monitor.incidents;
+
+    std::int64_t signal_passed_events = 0;
+    std::ifstream monitor_input(signal_monitor.event_log_path);
+    std::string line;
+    while (std::getline(monitor_input, line)) {
+        if (line.find("\"event\":\"signal_passed\"") != std::string::npos ||
+            line.find("\"event\": \"signal_passed\"") != std::string::npos) {
+            ++signal_passed_events;
+        }
+        UpdateCtpOrderFlowFromLine(line, "watcher", &flow);
+    }
+    if (flow.signals == 0 && signal_passed_events > 0) {
+        flow.signals = signal_passed_events;
+    }
+
+    if (!process.core_log.empty()) {
+        std::ifstream core_input(process.core_log);
+        while (std::getline(core_input, line)) {
+            UpdateCtpOrderFlowFromLine(line, "core", &flow);
+        }
+    }
+
+    if (wal_status.exists) {
+        std::ifstream wal_input(options.wal_file);
+        while (std::getline(wal_input, line)) {
+            UpdateCtpOrderFlowFromWalLine(line, &flow);
+        }
+    }
+
+    const bool has_activity = flow.signals > 0 || flow.order_submitted_logs > 0 ||
+                              flow.ctp_submitted > 0 || flow.ctp_callbacks > 0 ||
+                              flow.wal_fills > 0;
+    const bool has_problem =
+        flow.monitor_incidents > 0 || flow.ctp_submit_rejected > 0 || flow.wal_rejected > 0;
+    flow.healthy = !has_problem;
+    if (has_problem) {
+        flow.status = "attention";
+    } else if (flow.active > 0) {
+        flow.status = "active";
+    } else if (has_activity) {
+        flow.status = "flowing";
+    } else {
+        flow.status = "idle";
+    }
+    return flow;
+}
+
+std::string FormatPercent(std::int64_t numerator, std::int64_t denominator) {
+    if (denominator <= 0) {
+        return "n/a";
+    }
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(1)
+        << (100.0 * static_cast<double>(numerator) / static_cast<double>(denominator)) << '%';
+    return out.str();
 }
 
 std::string JsonString(const std::string& value) {
@@ -1222,6 +1818,78 @@ std::string RenderStateJson(const DashboardState& state) {
     for (std::size_t i = 0; i < state.signal_monitor.recent_incidents.size(); ++i) {
         out << "      " << JsonString(state.signal_monitor.recent_incidents[i]);
         if (i + 1 < state.signal_monitor.recent_incidents.size()) {
+            out << ',';
+        }
+        out << "\n";
+    }
+    out << "    ]\n";
+    out << "  },\n";
+
+    out << "  \"ctp_connection\": {\n";
+    out << "    \"status\": " << JsonString(state.ctp_connection.status) << ",\n";
+    out << "    \"healthy\": " << (state.ctp_connection.healthy ? "true" : "false") << ",\n";
+    out << "    \"td_front\": " << JsonString(state.ctp_connection.td_front) << ",\n";
+    out << "    \"md_front\": " << JsonString(state.ctp_connection.md_front) << ",\n";
+    out << "    \"login_status\": " << JsonString(state.ctp_connection.login_status) << ",\n";
+    out << "    \"auth_status\": " << JsonString(state.ctp_connection.auth_status) << ",\n";
+    out << "    \"settlement_status\": " << JsonString(state.ctp_connection.settlement_status)
+        << ",\n";
+    out << "    \"probe_status\": " << JsonString(state.ctp_connection.probe_status) << ",\n";
+    out << "    \"latest_probe_log\": " << JsonString(state.ctp_connection.latest_probe_log)
+        << ",\n";
+    out << "    \"probe_age_seconds\": " << JsonOptionalInt(state.ctp_connection.probe_age_seconds)
+        << ",\n";
+    out << "    \"reconnect_attempts\": " << state.ctp_connection.reconnect_attempts << ",\n";
+    out << "    \"ctp_errors\": " << state.ctp_connection.ctp_errors << ",\n";
+    out << "    \"last_error\": " << JsonString(state.ctp_connection.last_error) << ",\n";
+    out << "    \"active_instruments\": [";
+    for (std::size_t i = 0; i < state.ctp_connection.active_instruments.size(); ++i) {
+        if (i > 0) {
+            out << ", ";
+        }
+        out << JsonString(state.ctp_connection.active_instruments[i]);
+    }
+    out << "],\n";
+    out << "    \"recent_events\": [\n";
+    for (std::size_t i = 0; i < state.ctp_connection.recent_events.size(); ++i) {
+        out << "      " << JsonString(state.ctp_connection.recent_events[i]);
+        if (i + 1 < state.ctp_connection.recent_events.size()) {
+            out << ',';
+        }
+        out << "\n";
+    }
+    out << "    ]\n";
+    out << "  },\n";
+
+    out << "  \"ctp_order_flow\": {\n";
+    out << "    \"status\": " << JsonString(state.ctp_order_flow.status) << ",\n";
+    out << "    \"healthy\": " << (state.ctp_order_flow.healthy ? "true" : "false") << ",\n";
+    out << "    \"signals\": " << state.ctp_order_flow.signals << ",\n";
+    out << "    \"active\": " << state.ctp_order_flow.active << ",\n";
+    out << "    \"monitor_filled\": " << state.ctp_order_flow.monitor_filled << ",\n";
+    out << "    \"monitor_incidents\": " << state.ctp_order_flow.monitor_incidents << ",\n";
+    out << "    \"order_submitted_logs\": " << state.ctp_order_flow.order_submitted_logs << ",\n";
+    out << "    \"ctp_submitted\": " << state.ctp_order_flow.ctp_submitted << ",\n";
+    out << "    \"ctp_submit_rejected\": " << state.ctp_order_flow.ctp_submit_rejected << ",\n";
+    out << "    \"ctp_callbacks\": " << state.ctp_order_flow.ctp_callbacks << ",\n";
+    out << "    \"wal_rejected\": " << state.ctp_order_flow.wal_rejected << ",\n";
+    out << "    \"wal_fills\": " << state.ctp_order_flow.wal_fills << ",\n";
+    out << "    \"last_error_id\": " << JsonString(state.ctp_order_flow.last_error_id) << ",\n";
+    out << "    \"last_reject_reason\": " << JsonString(state.ctp_order_flow.last_reject_reason)
+        << ",\n";
+    out << "    \"recent_events\": [\n";
+    for (std::size_t i = 0; i < state.ctp_order_flow.recent_events.size(); ++i) {
+        out << "      " << JsonString(state.ctp_order_flow.recent_events[i]);
+        if (i + 1 < state.ctp_order_flow.recent_events.size()) {
+            out << ',';
+        }
+        out << "\n";
+    }
+    out << "    ],\n";
+    out << "    \"recent_rejections\": [\n";
+    for (std::size_t i = 0; i < state.ctp_order_flow.recent_rejections.size(); ++i) {
+        out << "      " << JsonString(state.ctp_order_flow.recent_rejections[i]);
+        if (i + 1 < state.ctp_order_flow.recent_rejections.size()) {
             out << ',';
         }
         out << "\n";
@@ -1498,6 +2166,79 @@ std::string RenderHtml(const DashboardState& state) {
     }
     html << "</ul></section>\n";
 
+    html << "<section class=\"panel span-6\"><h2>CTP Connection</h2><div class=\"metrics\">";
+    html << RenderMetric("status", state.ctp_connection.status);
+    html << RenderMetric("TD front", state.ctp_connection.td_front);
+    html << RenderMetric("MD front", state.ctp_connection.md_front);
+    html << RenderMetric("settlement", state.ctp_connection.settlement_status);
+    html << RenderMetric("login", state.ctp_connection.login_status);
+    html << RenderMetric("auth", state.ctp_connection.auth_status);
+    html << RenderMetric("probe", state.ctp_connection.probe_status);
+    html << RenderMetric("reconnects", state.ctp_connection.reconnect_attempts);
+    html << "</div><div class=\"section-note\">";
+    html << "Probe <code>" << HtmlEscape(EmptyAsDash(state.ctp_connection.latest_probe_log))
+         << "</code>";
+    if (state.ctp_connection.probe_age_seconds.has_value()) {
+        html << " updated " << *state.ctp_connection.probe_age_seconds << "s ago";
+    }
+    html << ". Active instruments: ";
+    if (state.ctp_connection.active_instruments.empty()) {
+        html << "-";
+    } else {
+        for (std::size_t i = 0; i < state.ctp_connection.active_instruments.size(); ++i) {
+            if (i > 0) {
+                html << ", ";
+            }
+            html << HtmlEscape(state.ctp_connection.active_instruments[i]);
+        }
+    }
+    html << "</div><ul class=\"logs\">";
+    if (state.ctp_connection.recent_events.empty()) {
+        html << "<li>No CTP connection events found</li>";
+    } else {
+        for (const auto& line : state.ctp_connection.recent_events) {
+            html << "<li>" << HtmlEscape(line) << "</li>";
+        }
+    }
+    html << "</ul></section>\n";
+
+    html << "<section class=\"panel span-6\"><h2>Signal To CTP Flow</h2>"
+            "<div class=\"metrics\">";
+    html << RenderMetric("status", state.ctp_order_flow.status);
+    html << RenderMetric("signals", state.ctp_order_flow.signals);
+    html << RenderMetric("order logs", state.ctp_order_flow.order_submitted_logs);
+    html << RenderMetric("CTP submit", state.ctp_order_flow.ctp_submitted);
+    html << RenderMetric("callbacks", state.ctp_order_flow.ctp_callbacks);
+    html << RenderMetric("fills", state.ctp_order_flow.wal_fills);
+    html << RenderMetric(
+        "rejects", state.ctp_order_flow.wal_rejected + state.ctp_order_flow.ctp_submit_rejected);
+    html << RenderMetric("submit rate", FormatPercent(state.ctp_order_flow.ctp_submitted,
+                                                      state.ctp_order_flow.signals));
+    html << "</div><div class=\"section-note\">";
+    html << "Last error " << HtmlEscape(EmptyAsDash(state.ctp_order_flow.last_error_id))
+         << "; reason " << HtmlEscape(EmptyAsDash(state.ctp_order_flow.last_reject_reason))
+         << ". Monitor incidents " << state.ctp_order_flow.monitor_incidents << ".";
+    html << "</div><ul class=\"logs\">";
+    if (state.ctp_order_flow.recent_events.empty()) {
+        html << "<li>No CTP order-flow events found</li>";
+    } else {
+        for (const auto& line : state.ctp_order_flow.recent_events) {
+            html << "<li>" << HtmlEscape(line) << "</li>";
+        }
+    }
+    html << "</ul></section>\n";
+
+    html << "<section class=\"panel span-12\"><h2>CTP Orders And Rejects</h2>";
+    html << "<table><thead><tr><th>Recent rejection / incident</th></tr></thead><tbody>";
+    if (state.ctp_order_flow.recent_rejections.empty()) {
+        html << "<tr><td>No CTP rejections or order incidents found</td></tr>";
+    } else {
+        for (const auto& line : state.ctp_order_flow.recent_rejections) {
+            html << "<tr><td>" << HtmlEscape(line) << "</td></tr>";
+        }
+    }
+    html << "</tbody></table></section>\n";
+
     html << "<section class=\"panel span-6\"><h2>Ops Reports</h2><div class=\"metrics\">";
     html << RenderMetric("ops healthy", state.daily.ops_overall_healthy.has_value()
                                             ? (*state.daily.ops_overall_healthy ? "true" : "false")
@@ -1535,6 +2276,10 @@ DashboardOptions ParseOptions(int argc, char** argv, std::string* error) {
         args, "export-root", DefaultPathFromRoot("runtime/trading/exports/simnow"));
     options.monitor_root = quant_hft::apps::GetArg(
         args, "monitor-root", DefaultPathFromRoot("runtime/trading/monitor/simnow"));
+    options.ctp_instrument_dir = quant_hft::apps::GetArg(
+        args, "ctp-instrument-dir", DefaultPathFromRoot("runtime/ctp_instruments"));
+    options.probe_log_dir = quant_hft::apps::GetArg(
+        args, "probe-log-dir", DefaultPathFromRoot("runtime/verify_simnow_login"));
     options.output_dir = quant_hft::apps::GetArg(
         args, "output-dir", DefaultPathFromRoot("runtime/trading/dashboard/simnow"));
     options.strict_exit = ParseBoolArg(args, "strict-exit", false);
@@ -1552,18 +2297,26 @@ DashboardState CollectState(const DashboardOptions& options) {
     state.generated_ts_ns = UnixEpochNanosNow();
     state.generated_at_local = FormatLocalTime(state.generated_ts_ns);
     state.paths = {
-        {"run_root", options.run_root},         {"market_data_dir", options.market_data_dir},
-        {"wal_file", options.wal_file},         {"report_root", options.report_root},
-        {"export_root", options.export_root},   {"output_dir", options.output_dir},
+        {"run_root", options.run_root},
+        {"market_data_dir", options.market_data_dir},
+        {"wal_file", options.wal_file},
+        {"report_root", options.report_root},
+        {"export_root", options.export_root},
+        {"output_dir", options.output_dir},
         {"monitor_root", options.monitor_root},
+        {"ctp_instrument_dir", options.ctp_instrument_dir},
+        {"probe_log_dir", options.probe_log_dir},
     };
 
     state.process = CollectProcessStatus(options);
-    state.contracts = DiscoverContracts();
+    state.contracts = DiscoverContracts(options.ctp_instrument_dir);
     state.markets = CollectMarketStatus(options);
     state.wal = CollectWalStatus(options);
     state.daily = CollectDailyStatus(options);
     state.signal_monitor = CollectSignalMonitorStatus(options);
+    state.ctp_connection = CollectCtpConnectionStatus(options, state.process, state.contracts);
+    state.ctp_order_flow =
+        CollectCtpOrderFlowStatus(options, state.signal_monitor, state.wal, state.process);
     state.recent_alerts = CollectRecentAlerts(state.process.core_log);
 
     bool market_healthy = true;
@@ -1573,6 +2326,9 @@ DashboardState CollectState(const DashboardOptions& options) {
     }
     state.overall_healthy = state.process.healthy && market_healthy;
     if (state.signal_monitor.incidents > 0) {
+        state.overall_healthy = false;
+    }
+    if (state.ctp_connection.status == "degraded" || state.ctp_order_flow.status == "attention") {
         state.overall_healthy = false;
     }
 
@@ -1592,6 +2348,12 @@ DashboardState CollectState(const DashboardOptions& options) {
         ++state.warning_count;
     }
     if (state.signal_monitor.incidents > 0) {
+        ++state.warning_count;
+    }
+    if (state.ctp_connection.status == "degraded") {
+        ++state.warning_count;
+    }
+    if (state.ctp_order_flow.status == "attention") {
         ++state.warning_count;
     }
     for (const auto& item : state.markets) {

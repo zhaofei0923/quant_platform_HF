@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "quant_hft/core/ctp_text.h"
 #include "quant_hft/core/structured_log.h"
 #include "quant_hft/monitoring/metric_registry.h"
 
@@ -47,11 +48,11 @@ std::shared_ptr<MonitoringCounter> CtpReconnectCounter() {
 #endif
 
 #if QUANT_HFT_HAS_REAL_CTP
-std::string SafeCtpString(const char* raw) {
-    if (raw == nullptr) {
-        return "";
-    }
-    return std::string(raw);
+std::string SafeCtpString(const char* raw) { return ctp::DecodeCtpText(raw); }
+
+std::string SafeCtpErrorString(CThostFtdcRspInfoField* rsp_info) {
+    return rsp_info == nullptr ? ""
+                               : ctp::DecodeCtpErrorMessage(rsp_info->ErrorID, rsp_info->ErrorMsg);
 }
 
 template <typename Api, typename = void>
@@ -226,7 +227,7 @@ bool IsRecoverableQueryError(CThostFtdcRspInfoField* rsp_info) {
     if (rsp_info == nullptr) {
         return false;
     }
-    const auto message = SafeCtpString(rsp_info->ErrorMsg);
+    const auto message = SafeCtpErrorString(rsp_info);
     return ContainsAnyToken(message, {
                                          "query not ready",
                                          "not ready",
@@ -244,7 +245,7 @@ std::string FormatRspError(const std::string& stage, CThostFtdcRspInfoField* rsp
     if (rsp_info == nullptr) {
         return stage;
     }
-    const auto error_msg = SafeCtpString(rsp_info->ErrorMsg);
+    const auto error_msg = SafeCtpErrorString(rsp_info);
     std::string detail = stage + " (ErrorID=" + std::to_string(rsp_info->ErrorID);
     if (!error_msg.empty()) {
         detail += ", ErrorMsg=" + error_msg;
@@ -611,9 +612,9 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
                 callback = owner_->login_response_callback_;
             }
             if (callback) {
-                callback(n_request_id, p_rsp_info == nullptr ? -1 : p_rsp_info->ErrorID,
-                         p_rsp_info == nullptr ? "Td login failed"
-                                               : SafeCtpString(p_rsp_info->ErrorMsg));
+                callback(
+                    n_request_id, p_rsp_info == nullptr ? -1 : p_rsp_info->ErrorID,
+                    p_rsp_info == nullptr ? "Td login failed" : SafeCtpErrorString(p_rsp_info));
             }
             SetError("Td login failed", p_rsp_info);
             return;
@@ -675,7 +676,7 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
         }
         if (callback) {
             callback(n_request_id, p_rsp_info == nullptr ? 0 : p_rsp_info->ErrorID,
-                     p_rsp_info == nullptr ? "" : SafeCtpString(p_rsp_info->ErrorMsg));
+                     SafeCtpErrorString(p_rsp_info));
         }
     }
 
@@ -1165,7 +1166,7 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
         event.filled_volume = 0;
         event.avg_fill_price = p_input_order == nullptr ? 0.0 : p_input_order->LimitPrice;
         event.reason = FormatRspError("order_insert_rejected", p_rsp_info);
-        event.status_msg = SafeCtpString(p_rsp_info->ErrorMsg);
+        event.status_msg = SafeCtpErrorString(p_rsp_info);
         event.order_ref = p_input_order == nullptr ? "" : SafeCtpString(p_input_order->OrderRef);
         event.front_id = owner_->front_id_;
         event.session_id = owner_->session_id_;
@@ -1196,7 +1197,7 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
         event.filled_volume = 0;
         event.avg_fill_price = p_input_order == nullptr ? 0.0 : p_input_order->LimitPrice;
         event.reason = FormatRspError("order_insert_error", p_rsp_info);
-        event.status_msg = SafeCtpString(p_rsp_info->ErrorMsg);
+        event.status_msg = SafeCtpErrorString(p_rsp_info);
         event.order_ref = p_input_order == nullptr ? "" : SafeCtpString(p_input_order->OrderRef);
         event.front_id = owner_->front_id_;
         event.session_id = owner_->session_id_;
@@ -1228,7 +1229,7 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
         event.reason = IsRspSuccess(p_rsp_info)
                            ? "cancel_request_accepted"
                            : FormatRspError("cancel_request_rejected", p_rsp_info);
-        event.status_msg = p_rsp_info == nullptr ? "" : SafeCtpString(p_rsp_info->ErrorMsg);
+        event.status_msg = SafeCtpErrorString(p_rsp_info);
         event.event_source = "OnRspOrderAction";
         event.ts_ns = NowEpochNanos();
         EmitOrderEvent(std::move(event), false);
@@ -1252,7 +1253,7 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
         event.session_id =
             p_order_action == nullptr ? owner_->session_id_ : p_order_action->SessionID;
         event.reason = FormatRspError("cancel_error", p_rsp_info);
-        event.status_msg = SafeCtpString(p_rsp_info->ErrorMsg);
+        event.status_msg = SafeCtpErrorString(p_rsp_info);
         event.event_source = "OnErrRtnOrderAction";
         event.ts_ns = NowEpochNanos();
         EmitOrderEvent(std::move(event), false);

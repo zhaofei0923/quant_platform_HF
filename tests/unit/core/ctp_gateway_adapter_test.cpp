@@ -10,7 +10,20 @@
 #include <string>
 #include <thread>
 
+#include "quant_hft/core/ctp_text.h"
+
 namespace quant_hft {
+
+TEST(CtpTextTest, DecodesGbkErrorMessageAndKnownPlaceholder) {
+    const std::string gb18030_settlement_unconfirmed =
+        "\xBD\xE1\xCB\xE3\xBD\xE1\xB9\xFB\xCE\xB4\xC8\xB7\xC8\xCF";
+
+    EXPECT_EQ(ctp::DecodeCtpText(gb18030_settlement_unconfirmed), "结算结果未确认");
+    EXPECT_EQ(ctp::DecodeCtpErrorMessage(42, gb18030_settlement_unconfirmed.c_str()),
+              "结算结果未确认");
+    EXPECT_EQ(ctp::DecodeCtpErrorMessage(42, "CTP:??????????????"), "结算结果未确认");
+    EXPECT_EQ(ctp::DecodeCtpErrorMessage(9999, "plain ascii error"), "plain ascii error");
+}
 
 TEST(CtpGatewayAdapterTest, ConnectSubscribeAndOrderFlow) {
     CtpGatewayAdapter adapter(10);

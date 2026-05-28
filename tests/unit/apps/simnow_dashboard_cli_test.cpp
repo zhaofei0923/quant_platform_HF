@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include <cstdlib>
 #include <filesystem>
@@ -64,6 +65,12 @@ std::string DashboardCommand(const std::filesystem::path& root,
            " --monitor-root \"" +
            (root / "monitor").string() +
            "\""
+           " --ctp-instrument-dir \"" +
+           (root / "ctp_instruments").string() +
+           "\""
+           " --probe-log-dir \"" +
+           (root / "verify_simnow_login").string() +
+           "\""
            " --output-dir \"" +
            output_dir.string() + "\"";
 }
@@ -117,6 +124,58 @@ void WriteSampleSignalMonitor(const std::filesystem::path& root) {
               "# incident\n");
 }
 
+void WriteSampleCtpRuntime(const std::filesystem::path& root,
+                           const std::filesystem::path& core_log) {
+    WriteFile(root / "ctp_instruments" / "c_dominant_contract.json",
+              "{\"product_id\":\"c\",\"instrument_id\":\"c2607\","
+              "\"exchange_id\":\"DCE\",\"selection_metric\":\"open_interest\"}\n");
+    WriteFile(root / "verify_simnow_login" / "simnow_probe_real.log",
+              "ts_ns=1 level=info app=simnow_probe event=session_snapshot state=logged_in\n"
+              "ts_ns=2 level=info app=simnow_probe event=probe_completed state=healthy\n");
+    WriteFile(root / "runs" / "current_core_engine.pid", std::to_string(getpid()) + "\n");
+    WriteFile(root / "runs" / "current_core_engine_log", core_log.string() + "\n");
+    WriteFile(core_log,
+              "ts_ns=1 level=info app=core_engine event=ctp_td_front_connected\n"
+              "ts_ns=2 level=info app=core_engine event=ctp_md_front_connected\n"
+              "ts_ns=3 level=info app=core_engine event=ctp_login_response error_id=0\n"
+              "ts_ns=4 level=info app=core_engine event=ctp_settlement_confirmed "
+              "settlement_confirm_required=true\n"
+              "ts_ns=5 level=info app=core_engine event=order_submitted "
+              "trace_id=kama_candidate_c-open-c2607-1 "
+              "client_order_id=kama_candidate_c-0001-1 instrument_id=c2607\n"
+              "ts_ns=6 level=info app=core_engine event=ctp_order_submitted "
+              "trace_id=kama_candidate_c-open-c2607-1 "
+              "client_order_id=kama_candidate_c-0001-1 order_ref=0001 request_id=7\n"
+              "ts_ns=7 level=error app=core_engine event=order_rejected "
+              "reason=\"order_insert_error (ErrorID=42, ErrorMsg=CTP:?????????????\?)\" "
+              "client_order_id=kama_candidate_c-0001-1\n");
+}
+
+void WriteSampleCtpSignalMonitor(const std::filesystem::path& root) {
+    WriteFile(root / "monitor" / "signal_execution_watch.jsonl",
+              "{\"ts\":\"2026-05-27T09:00:00+08:00\",\"event\":\"signal_passed\","
+              "\"trace_id\":\"kama_candidate_c-open-c2607-1\","
+              "\"message\":\"composite gate passed\"}\n"
+              "{\"ts\":\"2026-05-27T09:00:01+08:00\",\"event\":\"summary\","
+              "\"message\":\"signals=1 active=0 filled=1 incidents=0\","
+              "\"signals\":1,\"active\":0,\"filled\":1,\"incidents\":0}\n");
+}
+
+void WriteSampleCtpWal(const std::filesystem::path& root) {
+    WriteFile(root / "wal" / "events.wal",
+              "{\"seq\":1,\"schema_version\":2,\"kind\":\"order\","
+              "\"event_type\":\"order_update\","
+              "\"trace_id\":\"kama_candidate_c-open-c2607-1\","
+              "\"client_order_id\":\"kama_candidate_c-0001-1\","
+              "\"order_ref\":\"0001\",\"status\":5,\"error_id\":42,"
+              "\"reason\":\"结算结果未确认\"}\n"
+              "{\"seq\":2,\"schema_version\":2,\"kind\":\"trade\","
+              "\"event_type\":\"trade_fill\","
+              "\"trace_id\":\"kama_candidate_c-open-c2607-2\","
+              "\"client_order_id\":\"kama_candidate_c-0002-2\","
+              "\"trade_id\":\"trade-1\"}\n");
+}
+
 TEST(SimnowDashboardCli, EmptyWalAndDailyReportsRenderHtmlAndState) {
     const auto root = MakeTempDir("happy_path");
     const auto output_dir = root / "dashboard";
@@ -151,6 +210,43 @@ TEST(SimnowDashboardCli, EmptyWalAndDailyReportsRenderHtmlAndState) {
     EXPECT_NE(html.find("signal_without_order_submitted"), std::string::npos);
     EXPECT_NE(html.find("missing_pid"), std::string::npos);
     EXPECT_NE(html.find("20260514"), std::string::npos);
+}
+
+TEST(SimnowDashboardCli, RendersCtpConnectionAndOrderFlowPanels) {
+    const auto root = MakeTempDir("ctp_panels");
+    const auto output_dir = root / "dashboard";
+    const auto stdout_log = root / "stdout.log";
+    const auto core_log = root / "runs" / "run_1" / "core_engine.log";
+
+    WriteSampleCtpRuntime(root, core_log);
+    WriteSampleCtpSignalMonitor(root);
+    WriteSampleCtpWal(root);
+
+    const int rc = RunCommandCapture(DashboardCommand(root, output_dir), stdout_log);
+
+    EXPECT_EQ(rc, 0);
+    const std::string json = ReadFile(output_dir / "dashboard_state.json");
+    const std::string html = ReadFile(output_dir / "index.html");
+    EXPECT_NE(json.find("\"ctp_connection\""), std::string::npos);
+    EXPECT_NE(json.find("\"status\": \"connected\""), std::string::npos);
+    EXPECT_NE(json.find("\"td_front\": \"connected\""), std::string::npos);
+    EXPECT_NE(json.find("\"settlement_status\": \"confirmed\""), std::string::npos);
+    EXPECT_NE(json.find("ctp_settlement_confirmed"), std::string::npos);
+    EXPECT_NE(json.find("\"active_instruments\": [\"c2607\"]"), std::string::npos);
+    EXPECT_NE(json.find("\"ctp_order_flow\""), std::string::npos);
+    EXPECT_NE(json.find("\"ctp_submitted\": 1"), std::string::npos);
+    EXPECT_NE(json.find("\"ctp_callbacks\": 1"), std::string::npos);
+    EXPECT_NE(json.find("\"wal_rejected\": 1"), std::string::npos);
+    EXPECT_NE(json.find("\"wal_fills\": 1"), std::string::npos);
+    EXPECT_NE(json.find("\"last_error_id\": \"42\""), std::string::npos);
+    EXPECT_NE(json.find("\"last_reject_reason\": \"settlement_unconfirmed\""), std::string::npos);
+    EXPECT_NE(html.find("CTP Connection"), std::string::npos);
+    EXPECT_NE(html.find("Signal To CTP Flow"), std::string::npos);
+    EXPECT_NE(html.find("CTP Orders And Rejects"), std::string::npos);
+    EXPECT_NE(html.find("settlement_unconfirmed"), std::string::npos);
+    EXPECT_NE(html.find("结算结果未确认"), std::string::npos);
+    EXPECT_EQ(html.find("????????"), std::string::npos);
+    EXPECT_EQ(html.find("auth_code"), std::string::npos);
 }
 
 TEST(SimnowDashboardCli, StrictExitReturnsNonZeroForUnhealthyState) {

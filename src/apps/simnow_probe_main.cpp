@@ -492,6 +492,9 @@ int main(int argc, char** argv) {
         EmitStructuredLog(&runtime, "simnow_probe", "error", "settlement_confirm_failed");
         return 4;
     }
+    EmitStructuredLog(
+        &runtime, "simnow_probe", "info", "settlement_confirmed",
+        {{"settlement_confirm_required", runtime.settlement_confirm_required ? "true" : "false"}});
 
     std::string instrument =
         std::getenv("CTP_SIM_INSTRUMENT") != nullptr

@@ -954,6 +954,31 @@ std::string ClassifyCtpIssue(const std::string& line) {
     return "";
 }
 
+std::string RunIdFromRunDir(const std::string& run_dir) {
+    if (run_dir.empty()) {
+        return "";
+    }
+    return fs::path(run_dir).filename().string();
+}
+
+std::vector<std::string> CurrentSignalMonitorEpochLines(const std::string& event_log_path) {
+    std::ifstream input(event_log_path);
+    std::vector<std::string> all_lines;
+    std::vector<std::string> current_lines;
+    std::string line;
+    while (std::getline(input, line)) {
+        if (line.empty()) {
+            continue;
+        }
+        all_lines.push_back(line);
+        if (ExtractJsonString(line, "event") == "monitor_started") {
+            current_lines.clear();
+        }
+        current_lines.push_back(line);
+    }
+    return current_lines.empty() ? all_lines : current_lines;
+}
+
 std::vector<ContractStatus> DiscoverContracts(const std::string& ctp_instrument_dir) {
     std::vector<ContractStatus> contracts;
     const fs::path root(ctp_instrument_dir);
@@ -1544,8 +1569,10 @@ void UpdateCtpOrderFlowFromLine(const std::string& line, const std::string& sour
         ++flow->ctp_submit_rejected;
     }
 
+    const bool legacy_state_machine_reject =
+        lower.find("legacy_state_machine_rejected") != std::string::npos;
     const std::string issue = ClassifyCtpIssue(line);
-    if (!issue.empty() && issue != "front_disconnected") {
+    if (!issue.empty() && issue != "front_disconnected" && !legacy_state_machine_reject) {
         flow->last_reject_reason = issue;
         PushLimited(&flow->recent_rejections, SanitizeLogLine(BriefStructuredEvent(line, source)),
                     kRecentCtpEventLimit);
@@ -1620,9 +1647,7 @@ CtpOrderFlowStatus CollectCtpOrderFlowStatus(const DashboardOptions& options,
     }
 
     std::int64_t signal_passed_events = 0;
-    std::ifstream monitor_input(signal_monitor.event_log_path);
-    std::string line;
-    while (std::getline(monitor_input, line)) {
+    for (const auto& line : CurrentSignalMonitorEpochLines(signal_monitor.event_log_path)) {
         if (line.find("\"event\":\"signal_passed\"") != std::string::npos ||
             line.find("\"event\": \"signal_passed\"") != std::string::npos) {
             ++signal_passed_events;
@@ -1635,14 +1660,20 @@ CtpOrderFlowStatus CollectCtpOrderFlowStatus(const DashboardOptions& options,
 
     if (!process.core_log.empty()) {
         std::ifstream core_input(process.core_log);
+        std::string line;
         while (std::getline(core_input, line)) {
             UpdateCtpOrderFlowFromLine(line, "core", &flow);
         }
     }
 
+    const std::string current_run_id = RunIdFromRunDir(process.run_dir);
     if (wal_status.exists) {
         std::ifstream wal_input(options.wal_file);
+        std::string line;
         while (std::getline(wal_input, line)) {
+            if (!current_run_id.empty() && ExtractJsonString(line, "run_id") != current_run_id) {
+                continue;
+            }
             UpdateCtpOrderFlowFromWalLine(line, &flow);
         }
     }

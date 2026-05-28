@@ -249,6 +249,58 @@ TEST(SimnowDashboardCli, RendersCtpConnectionAndOrderFlowPanels) {
     EXPECT_EQ(html.find("auth_code"), std::string::npos);
 }
 
+TEST(SimnowDashboardCli, LiveHealthIgnoresStaleOrderFlowBeforeCurrentMonitorEpoch) {
+    const auto root = MakeTempDir("stale_order_flow");
+    const auto output_dir = root / "dashboard";
+    const auto stdout_log = root / "stdout.log";
+    const auto run_dir = root / "runs" / "simnow-auto-20260528-day_pm-142549-r1";
+    const auto core_log = run_dir / "core_engine.log";
+
+    WriteSampleMarketData(root);
+    WriteFile(root / "ctp_instruments" / "c_dominant_contract.json",
+              "{\"product_id\":\"c\",\"instrument_id\":\"c2607\","
+              "\"exchange_id\":\"DCE\",\"selection_metric\":\"open_interest\"}\n");
+    WriteFile(root / "runs" / "current_core_engine.pid", std::to_string(getpid()) + "\n");
+    WriteFile(root / "runs" / "current_run_dir", run_dir.string() + "\n");
+    WriteFile(root / "runs" / "current_core_engine_log", core_log.string() + "\n");
+    WriteFile(core_log,
+              "ts_ns=1 level=info app=core_engine event=ctp_td_front_connected\n"
+              "ts_ns=2 level=info app=core_engine event=ctp_md_front_connected\n"
+              "ts_ns=3 level=info app=core_engine event=ctp_login_response error_id=0\n"
+              "ts_ns=4 level=info app=core_engine event=ctp_settlement_confirmed "
+              "settlement_confirm_required=true\n");
+    WriteFile(root / "monitor" / "signal_execution_watch.jsonl",
+              "{\"ts\":\"2026-05-28T13:20:00+08:00\",\"event\":\"signal_passed\","
+              "\"trace_id\":\"old-signal\",\"message\":\"old signal\"}\n"
+              "{\"ts\":\"2026-05-28T13:20:01+08:00\",\"event\":\"incident\","
+              "\"trace_id\":\"old-signal\",\"message\":\"old incident\"}\n"
+              "{\"ts\":\"2026-05-28T14:25:49+08:00\",\"event\":\"monitor_started\","
+              "\"message\":\"SimNow signal execution monitor started\"}\n"
+              "{\"ts\":\"2026-05-28T14:26:53+08:00\",\"event\":\"summary\","
+              "\"message\":\"signals=0 active=0 filled=0 incidents=0\","
+              "\"signals\":0,\"active\":0,\"filled\":0,\"incidents\":0}\n");
+    WriteFile(root / "wal" / "events.wal",
+              "{\"seq\":1,\"schema_version\":2,\"kind\":\"order\","
+              "\"event_type\":\"order_update\","
+              "\"run_id\":\"simnow-auto-20260527-day_pm-133111-r2\","
+              "\"client_order_id\":\"old-order\",\"status\":5,\"error_id\":42,"
+              "\"reason\":\"结算结果未确认\"}\n");
+
+    const int rc = RunCommandCapture(DashboardCommand(root, output_dir), stdout_log);
+
+    EXPECT_EQ(rc, 0);
+    const std::string json = ReadFile(output_dir / "dashboard_state.json");
+    const std::string html = ReadFile(output_dir / "index.html");
+    EXPECT_NE(json.find("\"live_healthy\": true"), std::string::npos);
+    EXPECT_NE(json.find("\"overall_healthy\": true"), std::string::npos);
+    EXPECT_NE(json.find("\"live_warning_count\": 0"), std::string::npos);
+    EXPECT_NE(json.find("\"signals\": 0"), std::string::npos);
+    EXPECT_NE(json.find("\"ctp_submit_rejected\": 0"), std::string::npos);
+    EXPECT_NE(json.find("\"wal_rejected\": 0"), std::string::npos);
+    EXPECT_NE(html.find("live healthy"), std::string::npos);
+    EXPECT_EQ(html.find("live unhealthy"), std::string::npos);
+}
+
 TEST(SimnowDashboardCli, HidesStaleIncidentFilesAfterMonitorReset) {
     const auto root = MakeTempDir("fresh_monitor");
     const auto output_dir = root / "dashboard";

@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "quant_hft/contracts/types.h"
@@ -72,6 +73,7 @@ class CompositeStrategy : public ILiveStrategy {
 
     void Initialize(const StrategyContext& ctx) override;
     std::vector<SignalIntent> OnState(const StateSnapshot7D& state) override;
+    std::vector<SignalIntent> OnMarketTick(const MarketSnapshot& snapshot) override;
     void OnOrderEvent(const OrderEvent& event) override;
     void OnAccountSnapshot(const TradingAccountSnapshot& snapshot) override;
     std::vector<SignalIntent> OnTimer(EpochNanos now_ns) override;
@@ -151,6 +153,9 @@ class CompositeStrategy : public ILiveStrategy {
     std::vector<SignalIntent> ApplyNonOpenSignalGate(const std::vector<SignalIntent>& signals);
     OpeningGateResult ApplyOpeningGate(const std::vector<SignalIntent>& opening_signals,
                                        const StateSnapshot7D& state);
+    void TrackPendingOpenOrder(const OrderEvent& event);
+    bool HasPendingOpenForProduct(const std::string& product_id) const;
+    bool HasOpenPositionForProduct(const std::string& product_id) const;
     std::vector<SignalIntent> MergeSignals(const std::vector<SignalIntent>& signals) const;
     static AtomicParams MergeParamsForRunMode(const SubStrategyDefinition& definition,
                                               RunMode run_mode);
@@ -178,6 +183,9 @@ class CompositeStrategy : public ILiveStrategy {
     std::vector<AtomicTraceSlot> trace_providers_;
     std::unordered_map<std::string, std::size_t> sub_strategy_slot_index_by_id_;
     std::unordered_map<std::string, std::int32_t> last_filled_volume_by_order_;
+    std::unordered_map<std::string, std::unordered_set<std::string>>
+        pending_open_orders_by_product_;
+    std::unordered_map<std::string, std::string> pending_open_product_by_order_id_;
     std::unordered_map<std::string, std::string> position_owner_by_instrument_;
     std::unordered_map<std::string, std::string> active_force_close_window_by_instrument_;
     std::unordered_map<std::string, StrategyRiskGuardState> risk_guard_state_by_strategy_;

@@ -163,6 +163,7 @@
 | `ctp.account_id` | string | 否 | 程序默认 | 非空 | 策略账户上下文；SimNow 自动交易建议使用真实投资者/账户标识 | `${CTP_SIM_INVESTOR_ID}` |
 | `ctp.execution_mode` | string | 否 | 程序默认 | `direct/sliced` | 执行模式 | `direct` |
 | `ctp.execution_algo` | string | 否 | 程序默认 | `direct/sliced/twap/vwap_lite` | 执行算法 | `direct` |
+| `ctp.execution_price_mode` | string | 否 | `signal_limit` | `signal_limit/marketable_limit` | 报单价格来源；`marketable_limit` 使用最新一档买卖盘口 | `marketable_limit` |
 | `ctp.slice_size` | int | 否 | 程序默认 | `>0` | 分片手数 | `2` |
 | `ctp.slice_interval_ms` | int | 否 | 程序默认 | `>=0` | 分片间隔 | `120` |
 | `ctp.twap_duration_ms` | int | 否 | 程序默认 | `>=0` | TWAP 时长 | `0` |
@@ -234,18 +235,20 @@
 
 ## `configs/sim/ctp.yaml`
 
-- Purpose: SimNow 7x24 回归/联调配置。
+- Purpose: SimNow 生产 KAMA 运行配置，加载 `kama_trend_production`；需要通过 `--config configs/sim/ctp.yaml` 显式指定。
 - Consumer: `start_simnow_trading.sh` / `supervise_simnow_trading.sh` / `core_engine` / `simnow_compare_cli`。
 - 常见错误: `risk_rule_groups` 与对应 `risk_rule_<group>_*` 键不匹配。
 - 最小运行: `./build/core_engine configs/sim/ctp.yaml`。
 - 字段说明: 见“CTP 通用字段字典”；本文件重点字段：
+  - 生产 KAMA 策略入口（`strategy_ids` / `strategy_composite_config`）
+  - 生产交易品种（`product_ids`，默认启用 `c,hc`）
   - 执行算法参数（`execution_*`）
   - 默认风控模板（`risk_default_*`）
   - 自定义风控组模板（`risk_rule_<group>_*`）
 
 ## `configs/sim/ctp_sim_trade_candidates.yaml`
 
-- Purpose: SimNow 多品种候选参数联调配置，当前运行 `c/hc` 两个独立 Composite 实例。
+- Purpose: SimNow 默认多品种候选参数联调配置，当前运行 `c/hc` 两个独立 Composite 实例。
 - Consumer: `core_engine` / `simnow_compare_cli`。
 - 字段说明: 见“CTP 通用字段字典”；重点字段为 `strategy_composite_config_map.<strategy_id>`、`product_ids` 与行情按品种分区开关。
 

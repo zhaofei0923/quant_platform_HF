@@ -3,28 +3,43 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <sstream>
 
 namespace quant_hft {
 
 namespace {
 
 std::string LowerAscii(std::string value) {
-    std::transform(value.begin(),
-                   value.end(),
-                   value.begin(),
+    std::transform(value.begin(), value.end(), value.begin(),
                    [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     return value;
 }
 
 bool IsCancelActionFeedback(const OrderEvent& event) {
-    return event.event_source == "OnRspOrderAction" ||
-           event.event_source == "OnErrRtnOrderAction";
+    return event.event_source == "OnRspOrderAction" || event.event_source == "OnErrRtnOrderAction";
+}
+
+std::string DirectionToText(PositionDirection direction) {
+    return direction == PositionDirection::kLong ? "long" : "short";
+}
+
+std::string OffsetToText(OffsetFlag offset) {
+    switch (offset) {
+        case OffsetFlag::kOpen:
+            return "open";
+        case OffsetFlag::kCloseToday:
+            return "close_today";
+        case OffsetFlag::kCloseYesterday:
+            return "close_yesterday";
+        case OffsetFlag::kClose:
+        default:
+            return "close";
+    }
 }
 
 }  // namespace
 
-std::size_t CtpPositionLedger::PositionKeyHasher::operator()(
-    const PositionKey& key) const {
+std::size_t CtpPositionLedger::PositionKeyHasher::operator()(const PositionKey& key) const {
     const auto h1 = std::hash<std::string>{}(key.account_id);
     const auto h2 = std::hash<std::string>{}(key.instrument_id);
     const auto h3 = std::hash<std::string>{}(key.exchange_id);
@@ -34,9 +49,8 @@ std::size_t CtpPositionLedger::PositionKeyHasher::operator()(
     return h1 ^ (h2 << 1) ^ (h3 << 2) ^ (h4 << 3) ^ (h5 << 4) ^ (h6 << 5);
 }
 
-bool CtpPositionLedger::ApplyInvestorPositionSnapshot(
-    const InvestorPositionSnapshot& snapshot,
-    std::string* error) {
+bool CtpPositionLedger::ApplyInvestorPositionSnapshot(const InvestorPositionSnapshot& snapshot,
+                                                      std::string* error) {
     if (snapshot.account_id.empty() || snapshot.instrument_id.empty()) {
         if (error != nullptr) {
             *error = "snapshot account_id and instrument_id are required";
@@ -46,21 +60,17 @@ bool CtpPositionLedger::ApplyInvestorPositionSnapshot(
 
     const auto direction = ParsePositionDirection(snapshot.posi_direction);
     const auto position_date = NormalizePositionDate(snapshot.position_date);
-    const auto key = MakeKey(snapshot.account_id,
-                             snapshot.instrument_id,
-                             snapshot.exchange_id,
-                             snapshot.hedge_flag,
-                             direction,
-                             position_date);
+    const auto key = MakeKey(snapshot.account_id, snapshot.instrument_id, snapshot.exchange_id,
+                             snapshot.hedge_flag, direction, position_date);
 
     PositionBucket bucket;
     bucket.position = ClampNonNegative(snapshot.position);
     const auto preferred_frozen =
         direction == PositionDirection::kLong ? snapshot.long_frozen : snapshot.short_frozen;
     const auto fallback_frozen = std::max(snapshot.long_frozen, snapshot.short_frozen);
-    bucket.frozen = std::min(bucket.position,
-                             ClampNonNegative(preferred_frozen > 0 ? preferred_frozen
-                                                                   : fallback_frozen));
+    bucket.frozen =
+        std::min(bucket.position,
+                 ClampNonNegative(preferred_frozen > 0 ? preferred_frozen : fallback_frozen));
     bucket.last_update_ts_ns = snapshot.ts_ns;
 
     std::lock_guard<std::mutex> lock(mutex_);
@@ -94,23 +104,70 @@ bool CtpPositionLedger::RegisterOrderIntent(const CtpOrderIntentForLedger& inten
     }
 
     if (IsCloseOffset(intent.offset)) {
-        const auto key = MakeKey(intent.account_id,
-                                 intent.instrument_id,
-                                 intent.exchange_id,
-                                 intent.hedge_flag,
-                                 intent.direction,
-                                 pending.position_date);
-        auto& bucket = positions_[key];
-        const auto closable = std::max(0, bucket.position - bucket.frozen);
-        if (closable < intent.requested_volume) {
+        struct BucketDiagnostic {
+            std::string position_date;
+            std::int32_t position{0};
+            std::int32_t frozen{0};
+            std::int32_t closable{0};
+        };
+
+        std::vector<BucketDiagnostic> diagnostics;
+        const auto position_dates = ResolvePositionDatesForIntent(intent);
+        std::int32_t remaining = intent.requested_volume;
+        std::int32_t total_closable = 0;
+        for (const auto& position_date : position_dates) {
+            const auto key = MakeKey(intent.account_id, intent.instrument_id, intent.exchange_id,
+                                     intent.hedge_flag, intent.direction, position_date);
+            BucketDiagnostic diagnostic;
+            diagnostic.position_date = position_date;
+            const auto bucket_it = positions_.find(key);
+            if (bucket_it != positions_.end()) {
+                diagnostic.position = bucket_it->second.position;
+                diagnostic.frozen = bucket_it->second.frozen;
+                diagnostic.closable = std::max(0, diagnostic.position - diagnostic.frozen);
+            }
+            diagnostics.push_back(diagnostic);
+            total_closable += diagnostic.closable;
+            if (remaining > 0 && diagnostic.closable > 0) {
+                const auto freeze = std::min(remaining, diagnostic.closable);
+                pending.close_allocations.push_back(CloseAllocation{position_date, freeze});
+                remaining -= freeze;
+            }
+        }
+
+        if (remaining > 0) {
             if (error != nullptr) {
-                *error = "insufficient closable volume";
+                std::ostringstream message;
+                message << "insufficient closable volume"
+                        << " account_id=" << intent.account_id
+                        << " instrument_id=" << intent.instrument_id << " exchange_id="
+                        << NormalizeExchangeId(intent.exchange_id, intent.instrument_id)
+                        << " hedge_flag=" << NormalizeHedgeFlag(intent.hedge_flag)
+                        << " direction=" << DirectionToText(intent.direction)
+                        << " offset=" << OffsetToText(intent.offset)
+                        << " requested=" << intent.requested_volume
+                        << " total_closable=" << total_closable;
+                for (const auto& diagnostic : diagnostics) {
+                    message << ' ' << diagnostic.position_date
+                            << "_position=" << diagnostic.position << ' '
+                            << diagnostic.position_date << "_frozen=" << diagnostic.frozen << ' '
+                            << diagnostic.position_date << "_closable=" << diagnostic.closable;
+                }
+                *error = message.str();
             }
             return false;
         }
-        bucket.frozen += intent.requested_volume;
-        bucket.last_update_ts_ns = NowEpochNanos();
-        pending.frozen_volume = intent.requested_volume;
+
+        const auto now_ns = NowEpochNanos();
+        for (const auto& allocation : pending.close_allocations) {
+            const auto key = MakeKey(intent.account_id, intent.instrument_id, intent.exchange_id,
+                                     intent.hedge_flag, intent.direction, allocation.position_date);
+            auto bucket_it = positions_.find(key);
+            if (bucket_it != positions_.end()) {
+                bucket_it->second.frozen += allocation.frozen_volume;
+                bucket_it->second.last_update_ts_ns = now_ns;
+            }
+        }
     }
 
     pending_orders_.emplace(intent.client_order_id, std::move(pending));
@@ -152,32 +209,52 @@ bool CtpPositionLedger::ApplyOrderEvent(const OrderEvent& event, std::string* er
     }
 
     const auto delta_filled = event.filled_volume - pending.last_filled_volume;
-    const auto key = MakeKey(pending.intent.account_id,
-                             pending.intent.instrument_id,
-                             pending.intent.exchange_id,
-                             pending.intent.hedge_flag,
-                             pending.intent.direction,
-                             pending.position_date);
-    auto& bucket = positions_[key];
-
     if (delta_filled > 0) {
         if (IsCloseOffset(pending.intent.offset)) {
-            bucket.position = std::max(0, bucket.position - delta_filled);
-            const auto release = std::min(delta_filled, pending.frozen_volume);
-            pending.frozen_volume -= release;
-            bucket.frozen = std::max(0, bucket.frozen - release);
+            auto remaining_delta = delta_filled;
+            for (auto& allocation : pending.close_allocations) {
+                if (remaining_delta <= 0) {
+                    break;
+                }
+                const auto release = std::min(remaining_delta, allocation.frozen_volume);
+                if (release <= 0) {
+                    continue;
+                }
+                const auto key = MakeKey(pending.intent.account_id, pending.intent.instrument_id,
+                                         pending.intent.exchange_id, pending.intent.hedge_flag,
+                                         pending.intent.direction, allocation.position_date);
+                auto& bucket = positions_[key];
+                bucket.position = std::max(0, bucket.position - release);
+                bucket.frozen = std::max(0, bucket.frozen - release);
+                bucket.last_update_ts_ns = event.ts_ns;
+                allocation.frozen_volume -= release;
+                remaining_delta -= release;
+            }
         } else {
+            const auto key = MakeKey(pending.intent.account_id, pending.intent.instrument_id,
+                                     pending.intent.exchange_id, pending.intent.hedge_flag,
+                                     pending.intent.direction, pending.position_date);
+            auto& bucket = positions_[key];
             bucket.position += delta_filled;
+            bucket.last_update_ts_ns = event.ts_ns;
         }
-        bucket.last_update_ts_ns = event.ts_ns;
     }
     pending.last_filled_volume = event.filled_volume;
 
     if (IsTerminalStatus(event.status)) {
-        if (pending.frozen_volume > 0) {
-            bucket.frozen = std::max(0, bucket.frozen - pending.frozen_volume);
-            pending.frozen_volume = 0;
-            bucket.last_update_ts_ns = event.ts_ns;
+        if (IsCloseOffset(pending.intent.offset)) {
+            for (auto& allocation : pending.close_allocations) {
+                if (allocation.frozen_volume <= 0) {
+                    continue;
+                }
+                const auto key = MakeKey(pending.intent.account_id, pending.intent.instrument_id,
+                                         pending.intent.exchange_id, pending.intent.hedge_flag,
+                                         pending.intent.direction, allocation.position_date);
+                auto& bucket = positions_[key];
+                bucket.frozen = std::max(0, bucket.frozen - allocation.frozen_volume);
+                bucket.last_update_ts_ns = event.ts_ns;
+                allocation.frozen_volume = 0;
+            }
         }
         pending_orders_.erase(pending_it);
     }
@@ -203,11 +280,7 @@ CtpPositionView CtpPositionLedger::GetPosition(const std::string& account_id,
     view.position_date = NormalizePositionDate(position_date);
     view.last_update_ts_ns = NowEpochNanos();
 
-    const auto key = MakeKey(account_id,
-                             instrument_id,
-                             view.exchange_id,
-                             hedge_flag,
-                             direction,
+    const auto key = MakeKey(account_id, instrument_id, view.exchange_id, hedge_flag, direction,
                              view.position_date);
     std::lock_guard<std::mutex> lock(mutex_);
     const auto it = positions_.find(key);
@@ -285,8 +358,7 @@ std::string CtpPositionLedger::NormalizeHedgeFlag(const std::string& raw) {
     return raw;
 }
 
-std::string CtpPositionLedger::ResolvePositionDateForIntent(
-    const CtpOrderIntentForLedger& intent) {
+std::string CtpPositionLedger::ResolvePositionDateForIntent(const CtpOrderIntentForLedger& intent) {
     if (intent.offset == OffsetFlag::kCloseToday) {
         return "today";
     }
@@ -294,6 +366,20 @@ std::string CtpPositionLedger::ResolvePositionDateForIntent(
         return "yesterday";
     }
     return NormalizePositionDate(intent.position_date);
+}
+
+std::vector<std::string> CtpPositionLedger::ResolvePositionDatesForIntent(
+    const CtpOrderIntentForLedger& intent) {
+    if (intent.offset == OffsetFlag::kCloseToday) {
+        return {"today"};
+    }
+    if (intent.offset == OffsetFlag::kCloseYesterday) {
+        return {"yesterday"};
+    }
+    if (!intent.position_date.empty()) {
+        return {NormalizePositionDate(intent.position_date)};
+    }
+    return {"today", "yesterday"};
 }
 
 PositionDirection CtpPositionLedger::ParsePositionDirection(const std::string& raw) {
@@ -304,12 +390,9 @@ PositionDirection CtpPositionLedger::ParsePositionDirection(const std::string& r
     return PositionDirection::kShort;
 }
 
-CtpPositionLedger::PositionKey CtpPositionLedger::MakeKey(const std::string& account_id,
-                                                          const std::string& instrument_id,
-                                                          const std::string& exchange_id,
-                                                          const std::string& hedge_flag,
-                                                          PositionDirection direction,
-                                                          const std::string& position_date) {
+CtpPositionLedger::PositionKey CtpPositionLedger::MakeKey(
+    const std::string& account_id, const std::string& instrument_id, const std::string& exchange_id,
+    const std::string& hedge_flag, PositionDirection direction, const std::string& position_date) {
     PositionKey key;
     key.account_id = account_id;
     key.instrument_id = instrument_id;

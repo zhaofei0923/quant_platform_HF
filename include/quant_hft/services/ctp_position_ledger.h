@@ -4,6 +4,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "quant_hft/contracts/types.h"
 
@@ -36,25 +37,22 @@ struct CtpOrderIntentForLedger {
 };
 
 class CtpPositionLedger {
-public:
-    bool ApplyInvestorPositionSnapshot(const InvestorPositionSnapshot& snapshot, std::string* error);
+   public:
+    bool ApplyInvestorPositionSnapshot(const InvestorPositionSnapshot& snapshot,
+                                       std::string* error);
     bool RegisterOrderIntent(const CtpOrderIntentForLedger& intent, std::string* error);
     bool ApplyOrderEvent(const OrderEvent& event, std::string* error);
 
-    CtpPositionView GetPosition(const std::string& account_id,
-                                const std::string& instrument_id,
-                                PositionDirection direction,
-                                          const std::string& position_date,
-                                          const std::string& exchange_id = "",
-                                          const std::string& hedge_flag = "1") const;
-    std::int32_t GetClosableVolume(const std::string& account_id,
-                                   const std::string& instrument_id,
-                                   PositionDirection direction,
-                                              const std::string& position_date,
-                                              const std::string& exchange_id = "",
-                                              const std::string& hedge_flag = "1") const;
+    CtpPositionView GetPosition(const std::string& account_id, const std::string& instrument_id,
+                                PositionDirection direction, const std::string& position_date,
+                                const std::string& exchange_id = "",
+                                const std::string& hedge_flag = "1") const;
+    std::int32_t GetClosableVolume(const std::string& account_id, const std::string& instrument_id,
+                                   PositionDirection direction, const std::string& position_date,
+                                   const std::string& exchange_id = "",
+                                   const std::string& hedge_flag = "1") const;
 
-private:
+   private:
     struct PositionKey {
         std::string account_id;
         std::string instrument_id;
@@ -65,8 +63,8 @@ private:
 
         bool operator==(const PositionKey& rhs) const {
             return account_id == rhs.account_id && instrument_id == rhs.instrument_id &&
-                     exchange_id == rhs.exchange_id && hedge_flag == rhs.hedge_flag &&
-                     direction == rhs.direction && position_date == rhs.position_date;
+                   exchange_id == rhs.exchange_id && hedge_flag == rhs.hedge_flag &&
+                   direction == rhs.direction && position_date == rhs.position_date;
         }
     };
 
@@ -80,10 +78,15 @@ private:
         EpochNanos last_update_ts_ns{0};
     };
 
+    struct CloseAllocation {
+        std::string position_date;
+        std::int32_t frozen_volume{0};
+    };
+
     struct PendingOrderState {
         CtpOrderIntentForLedger intent;
         std::string position_date;
-        std::int32_t frozen_volume{0};
+        std::vector<CloseAllocation> close_allocations;
         std::int32_t last_filled_volume{0};
     };
 
@@ -94,13 +97,12 @@ private:
                                            const std::string& instrument_id);
     static std::string NormalizeHedgeFlag(const std::string& raw);
     static std::string ResolvePositionDateForIntent(const CtpOrderIntentForLedger& intent);
+    static std::vector<std::string> ResolvePositionDatesForIntent(
+        const CtpOrderIntentForLedger& intent);
     static PositionDirection ParsePositionDirection(const std::string& raw);
-    static PositionKey MakeKey(const std::string& account_id,
-                               const std::string& instrument_id,
-                               const std::string& exchange_id,
-                               const std::string& hedge_flag,
-                               PositionDirection direction,
-                               const std::string& position_date);
+    static PositionKey MakeKey(const std::string& account_id, const std::string& instrument_id,
+                               const std::string& exchange_id, const std::string& hedge_flag,
+                               PositionDirection direction, const std::string& position_date);
     static std::int32_t ClampNonNegative(std::int32_t value);
 
     mutable std::mutex mutex_;

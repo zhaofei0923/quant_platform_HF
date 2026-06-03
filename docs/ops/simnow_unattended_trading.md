@@ -32,8 +32,10 @@ test -x build/simnow_probe
 默认配置文件为：
 
 ```bash
-configs/sim/ctp.yaml
+configs/sim/ctp_sim_trade_candidates.yaml
 ```
+
+该默认配置运行 `c/hc` 两个 KAMA 候选 Composite 实例：`kama_candidate_c` 与 `kama_candidate_hc`。生产 KAMA 配置 `configs/sim/ctp.yaml` 仍保留，可通过 `--config configs/sim/ctp.yaml` 显式指定。
 
 ## 启动方式选择
 

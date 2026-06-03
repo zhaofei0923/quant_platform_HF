@@ -112,9 +112,15 @@ enum class ExecutionAlgo {
     kVwapLite,
 };
 
+enum class ExecutionPriceMode {
+    kSignalLimit,
+    kMarketableLimit,
+};
+
 struct ExecutionConfig {
     ExecutionMode mode{ExecutionMode::kDirect};
     ExecutionAlgo algo{ExecutionAlgo::kDirect};
+    ExecutionPriceMode price_mode{ExecutionPriceMode::kSignalLimit};
     int slice_size{1};
     int slice_interval_ms{200};
     int twap_duration_ms{0};

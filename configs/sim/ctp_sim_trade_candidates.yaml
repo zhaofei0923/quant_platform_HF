@@ -90,12 +90,13 @@ ctp:
   # --- execution params ---
   execution_mode: "direct"   # direct | sliced
   execution_algo: "direct"   # direct | sliced | twap | vwap_lite
+  execution_price_mode: "marketable_limit"  # signal_limit | marketable_limit
   slice_size: 2
   slice_interval_ms: 120
   twap_duration_ms: 0
   vwap_lookback_bars: 20
   throttle_reject_ratio: 0.0
-  cancel_after_ms: 0
+  cancel_after_ms: 2000
   cancel_check_interval_ms: 200
 
   # --- default risk policy ---

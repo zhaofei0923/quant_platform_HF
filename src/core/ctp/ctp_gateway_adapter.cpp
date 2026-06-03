@@ -314,6 +314,28 @@ char ToCtpOrderPriceType(OrderType type) {
     return type == OrderType::kMarket ? THOST_FTDC_OPT_AnyPrice : THOST_FTDC_OPT_LimitPrice;
 }
 
+char ToCtpTimeCondition(TimeCondition condition) {
+    switch (condition) {
+        case TimeCondition::kIOC:
+            return THOST_FTDC_TC_IOC;
+        case TimeCondition::kGTC:
+            return THOST_FTDC_TC_GTC;
+        case TimeCondition::kGFD:
+        default:
+            return THOST_FTDC_TC_GFD;
+    }
+}
+
+char ToCtpVolumeCondition(VolumeCondition condition) {
+    switch (condition) {
+        case VolumeCondition::kMV:
+            return THOST_FTDC_VC_MV;
+        case VolumeCondition::kAV:
+        default:
+            return THOST_FTDC_VC_AV;
+    }
+}
+
 std::string BuildCtpTradeId(const std::string& exchange_id, Side side,
                             const std::string& trade_id) {
     if (trade_id.empty()) {
@@ -2304,8 +2326,8 @@ bool CtpGatewayAdapter::PlaceOrder(const OrderIntent& intent) {
             req.CombHedgeFlag[0] = THOST_FTDC_HF_Speculation;
             req.LimitPrice = intent.price;
             req.VolumeTotalOriginal = intent.volume;
-            req.TimeCondition = THOST_FTDC_TC_GFD;
-            req.VolumeCondition = THOST_FTDC_VC_AV;
+            req.TimeCondition = ToCtpTimeCondition(intent.time_condition);
+            req.VolumeCondition = ToCtpVolumeCondition(intent.volume_condition);
             req.ContingentCondition = THOST_FTDC_CC_Immediately;
             req.ForceCloseReason = THOST_FTDC_FCC_NotForceClose;
             req.MinVolume = 1;

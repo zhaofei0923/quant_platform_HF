@@ -488,6 +488,7 @@ TEST(CtpConfigLoaderTest, LoadsExecutionAndRiskRuleConfigs) {
         "  password: \"plain-secret\"\n"
         "  execution_mode: \"sliced\"\n"
         "  execution_algo: \"twap\"\n"
+        "  execution_price_mode: \"marketable_limit\"\n"
         "  slice_size: 3\n"
         "  slice_interval_ms: 120\n"
         "  twap_duration_ms: 2500\n"
@@ -545,6 +546,7 @@ TEST(CtpConfigLoaderTest, LoadsExecutionAndRiskRuleConfigs) {
 
     EXPECT_EQ(config.execution.mode, ExecutionMode::kSliced);
     EXPECT_EQ(config.execution.algo, ExecutionAlgo::kTwap);
+    EXPECT_EQ(config.execution.price_mode, ExecutionPriceMode::kMarketableLimit);
     EXPECT_EQ(config.execution.slice_size, 3);
     EXPECT_EQ(config.execution.slice_interval_ms, 120);
     EXPECT_EQ(config.execution.twap_duration_ms, 2500);
@@ -705,6 +707,22 @@ TEST(CtpConfigLoaderTest, RejectsInvalidCancelExecutionConfigs) {
     EXPECT_FALSE(CtpConfigLoader::LoadFromYaml(bad_execution_algo.string(), &config, &error));
     EXPECT_NE(error.find("execution_algo"), std::string::npos);
     std::filesystem::remove(bad_execution_algo);
+
+    const auto bad_execution_price_mode = WriteTempConfig(
+        "ctp:\n"
+        "  environment: sim\n"
+        "  is_production_mode: false\n"
+        "  broker_id: \"9999\"\n"
+        "  user_id: \"191202\"\n"
+        "  investor_id: \"191202\"\n"
+        "  market_front: \"tcp://127.0.0.1:40011\"\n"
+        "  trader_front: \"tcp://127.0.0.1:40001\"\n"
+        "  password: \"plain-secret\"\n"
+        "  execution_price_mode: \"invalid_mode\"\n");
+    error.clear();
+    EXPECT_FALSE(CtpConfigLoader::LoadFromYaml(bad_execution_price_mode.string(), &config, &error));
+    EXPECT_NE(error.find("execution_price_mode"), std::string::npos);
+    std::filesystem::remove(bad_execution_price_mode);
 
     const auto bad_reject_ratio = WriteTempConfig(
         "ctp:\n"

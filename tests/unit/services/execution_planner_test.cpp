@@ -20,6 +20,15 @@ SignalIntent MakeSignal(std::int32_t volume, const std::string& trace_id = "trac
     return signal;
 }
 
+MarketSnapshot MakeMarket(double bid, double ask) {
+    MarketSnapshot snapshot;
+    snapshot.instrument_id = "SHFE.ag2406";
+    snapshot.bid_price_1 = bid;
+    snapshot.ask_price_1 = ask;
+    snapshot.volume = 100;
+    return snapshot;
+}
+
 TEST(ExecutionPlannerTest, BuildsDirectPlanAsSingleOrder) {
     ExecutionPlanner planner;
     ExecutionConfig cfg;
@@ -33,6 +42,39 @@ TEST(ExecutionPlannerTest, BuildsDirectPlanAsSingleOrder) {
     EXPECT_EQ(plan[0].slice_total, 1);
     EXPECT_EQ(plan[0].intent.client_order_id, "trace-1");
     EXPECT_EQ(plan[0].intent.trace_id, "trace-1");
+    EXPECT_DOUBLE_EQ(plan[0].intent.price, 4500.0);
+}
+
+TEST(ExecutionPlannerTest, MarketableLimitUsesAskForBuyAndBidForSell) {
+    ExecutionPlanner planner;
+    ExecutionConfig cfg;
+    cfg.price_mode = ExecutionPriceMode::kMarketableLimit;
+    const std::vector<MarketSnapshot> recent_market{MakeMarket(4499.0, 4501.0)};
+
+    SignalIntent buy = MakeSignal(5, "trace-buy");
+    buy.side = Side::kBuy;
+    buy.offset = OffsetFlag::kClose;
+    auto buy_plan = planner.BuildPlan(buy, "acc-1", cfg, recent_market);
+    ASSERT_EQ(buy_plan.size(), 1U);
+    EXPECT_DOUBLE_EQ(buy_plan[0].intent.price, 4501.0);
+    EXPECT_EQ(buy_plan[0].intent.offset, OffsetFlag::kClose);
+
+    SignalIntent sell = MakeSignal(5, "trace-sell");
+    sell.side = Side::kSell;
+    sell.offset = OffsetFlag::kOpen;
+    auto sell_plan = planner.BuildPlan(sell, "acc-1", cfg, recent_market);
+    ASSERT_EQ(sell_plan.size(), 1U);
+    EXPECT_DOUBLE_EQ(sell_plan[0].intent.price, 4499.0);
+    EXPECT_EQ(sell_plan[0].intent.offset, OffsetFlag::kOpen);
+}
+
+TEST(ExecutionPlannerTest, MarketableLimitRequiresValidQuote) {
+    ExecutionPlanner planner;
+    ExecutionConfig cfg;
+    cfg.price_mode = ExecutionPriceMode::kMarketableLimit;
+
+    EXPECT_TRUE(planner.BuildPlan(MakeSignal(5), "acc-1", cfg, {}).empty());
+    EXPECT_TRUE(planner.BuildPlan(MakeSignal(5), "acc-1", cfg, {MakeMarket(0.0, 0.0)}).empty());
 }
 
 TEST(ExecutionPlannerTest, ReturnsEmptyPlanWhenTraceIdIsMissing) {

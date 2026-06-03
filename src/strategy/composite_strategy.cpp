@@ -369,6 +369,25 @@ double ComputeRiskBudgetR(const AtomicStrategyContext& ctx, double risk_per_trad
     return std::isfinite(risk_budget) ? risk_budget : 0.0;
 }
 
+bool IsTerminalOrderStatus(OrderStatus status) {
+    return status == OrderStatus::kCanceled || status == OrderStatus::kFilled ||
+           status == OrderStatus::kRejected;
+}
+
+std::vector<std::string> PendingOrderAliases(const OrderEvent& event) {
+    std::vector<std::string> aliases;
+    auto add_alias = [&aliases](const std::string& value) {
+        if (value.empty() || std::find(aliases.begin(), aliases.end(), value) != aliases.end()) {
+            return;
+        }
+        aliases.push_back(value);
+    };
+    add_alias(event.client_order_id);
+    add_alias(event.exchange_order_id);
+    add_alias(event.order_ref);
+    return aliases;
+}
+
 }  // namespace
 
 CompositeStrategy::CompositeStrategy() = default;
@@ -387,6 +406,8 @@ void CompositeStrategy::Initialize(const StrategyContext& ctx) {
     atomic_context_.log_level = "info";
     atomic_context_.log_sink = "stderr";
     last_filled_volume_by_order_.clear();
+    pending_open_orders_by_product_.clear();
+    pending_open_product_by_order_id_.clear();
     position_owner_by_instrument_.clear();
     active_force_close_window_by_instrument_.clear();
     risk_guard_state_by_strategy_.clear();
@@ -529,6 +550,7 @@ void CompositeStrategy::OnOrderEvent(const OrderEvent& event) {
     if (!MatchesProduct(event.instrument_id)) {
         return;
     }
+    TrackPendingOpenOrder(event);
     const std::string order_id =
         !event.exchange_order_id.empty() ? event.exchange_order_id : event.client_order_id;
     if (order_id.empty() || event.instrument_id.empty()) {
@@ -627,6 +649,20 @@ void CompositeStrategy::OnAccountSnapshot(const TradingAccountSnapshot& snapshot
 std::vector<SignalIntent> CompositeStrategy::OnTimer(EpochNanos now_ns) {
     (void)now_ns;
     return {};
+}
+
+std::vector<SignalIntent> CompositeStrategy::OnMarketTick(const MarketSnapshot& snapshot) {
+    if (snapshot.instrument_id.empty() || !std::isfinite(snapshot.last_price)) {
+        return {};
+    }
+    EpochNanos tick_ts_ns = snapshot.recv_ts_ns;
+    if (tick_ts_ns <= 0) {
+        tick_ts_ns = snapshot.exchange_ts_ns;
+    }
+    if (tick_ts_ns <= 0) {
+        tick_ts_ns = NowEpochNanos();
+    }
+    return OnBacktestTick(snapshot.instrument_id, tick_ts_ns, snapshot.last_price);
 }
 
 std::vector<SignalIntent> CompositeStrategy::OnBacktestTick(const std::string& instrument_id,
@@ -775,6 +811,8 @@ bool CompositeStrategy::LoadState(const StrategyState& state, std::string* error
     atomic_context_.net_positions.clear();
     atomic_context_.avg_open_prices.clear();
     atomic_context_.contract_multipliers.clear();
+    pending_open_orders_by_product_.clear();
+    pending_open_product_by_order_id_.clear();
     position_owner_by_instrument_.clear();
     active_force_close_window_by_instrument_.clear();
     risk_guard_state_by_strategy_.clear();
@@ -1055,6 +1093,8 @@ void CompositeStrategy::Shutdown() {
     atomic_context_.contract_multipliers.clear();
     atomic_context_.risk_limits.clear();
     last_filled_volume_by_order_.clear();
+    pending_open_orders_by_product_.clear();
+    pending_open_product_by_order_id_.clear();
     position_owner_by_instrument_.clear();
     active_force_close_window_by_instrument_.clear();
     risk_guard_state_by_strategy_.clear();
@@ -1274,6 +1314,15 @@ CompositeStrategy::OpeningGateResult CompositeStrategy::ApplyOpeningGate(
             owner_it != position_owner_by_instrument_.end() && !owner_it->second.empty();
 
         if (position == 0) {
+            const std::string product_id = ExtractProductIdFromInstrumentId(signal.instrument_id);
+            if (HasPendingOpenForProduct(product_id)) {
+                last_blocked_reason_by_strategy_[signal.strategy_id] = "pending_open_exists";
+                continue;
+            }
+            if (HasOpenPositionForProduct(product_id)) {
+                last_blocked_reason_by_strategy_[signal.strategy_id] = "existing_product_position";
+                continue;
+            }
             last_blocked_reason_by_strategy_[signal.strategy_id] = "none";
             gated.immediate_open_signals.push_back(signal);
             continue;
@@ -1318,6 +1367,83 @@ CompositeStrategy::OpeningGateResult CompositeStrategy::ApplyOpeningGate(
     }
 
     return gated;
+}
+
+void CompositeStrategy::TrackPendingOpenOrder(const OrderEvent& event) {
+    if (event.offset != OffsetFlag::kOpen || event.instrument_id.empty()) {
+        return;
+    }
+    const std::vector<std::string> aliases = PendingOrderAliases(event);
+    if (aliases.empty()) {
+        return;
+    }
+
+    auto remove_alias = [this](const std::string& alias) {
+        const auto product_it = pending_open_product_by_order_id_.find(alias);
+        if (product_it == pending_open_product_by_order_id_.end()) {
+            return;
+        }
+        const std::string product_id = product_it->second;
+        const auto orders_it = pending_open_orders_by_product_.find(product_id);
+        if (orders_it != pending_open_orders_by_product_.end()) {
+            orders_it->second.erase(alias);
+            if (orders_it->second.empty()) {
+                pending_open_orders_by_product_.erase(orders_it);
+            }
+        }
+        pending_open_product_by_order_id_.erase(product_it);
+    };
+
+    if (IsTerminalOrderStatus(event.status)) {
+        for (const std::string& alias : aliases) {
+            remove_alias(alias);
+        }
+        return;
+    }
+
+    const bool has_remaining_volume = event.total_volume <= 0
+                                          ? event.filled_volume == 0
+                                          : event.filled_volume < event.total_volume;
+    if (!has_remaining_volume) {
+        for (const std::string& alias : aliases) {
+            remove_alias(alias);
+        }
+        return;
+    }
+
+    const std::string product_id = ExtractProductIdFromInstrumentId(event.instrument_id);
+    if (product_id.empty()) {
+        return;
+    }
+    for (const std::string& alias : aliases) {
+        const auto existing_it = pending_open_product_by_order_id_.find(alias);
+        if (existing_it != pending_open_product_by_order_id_.end() &&
+            existing_it->second != product_id) {
+            pending_open_orders_by_product_[existing_it->second].erase(alias);
+        }
+        pending_open_product_by_order_id_[alias] = product_id;
+        pending_open_orders_by_product_[product_id].insert(alias);
+    }
+}
+
+bool CompositeStrategy::HasPendingOpenForProduct(const std::string& product_id) const {
+    if (product_id.empty()) {
+        return false;
+    }
+    const auto it = pending_open_orders_by_product_.find(product_id);
+    return it != pending_open_orders_by_product_.end() && !it->second.empty();
+}
+
+bool CompositeStrategy::HasOpenPositionForProduct(const std::string& product_id) const {
+    if (product_id.empty()) {
+        return false;
+    }
+    for (const auto& [instrument_id, position] : atomic_context_.net_positions) {
+        if (position != 0 && ExtractProductIdFromInstrumentId(instrument_id) == product_id) {
+            return true;
+        }
+    }
+    return false;
 }
 
 std::vector<SignalIntent> CompositeStrategy::MergeSignals(

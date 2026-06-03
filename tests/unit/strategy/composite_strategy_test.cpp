@@ -301,6 +301,23 @@ OrderEvent MakeOrderEvent(const std::string& strategy_id, const std::string& ins
     return event;
 }
 
+OrderEvent MakePendingOpenEvent(const std::string& strategy_id, const std::string& instrument_id,
+                                const std::string& client_order_id,
+                                OrderStatus status = OrderStatus::kAccepted) {
+    OrderEvent event;
+    event.strategy_id = strategy_id;
+    event.instrument_id = instrument_id;
+    event.side = Side::kBuy;
+    event.offset = OffsetFlag::kOpen;
+    event.status = status;
+    event.total_volume = 1;
+    event.filled_volume = 0;
+    event.avg_fill_price = 100.0;
+    event.client_order_id = client_order_id;
+    event.order_ref = client_order_id;
+    return event;
+}
+
 AtomicParams MakeTrendParams() {
     return {{"id", "trend_1"},       {"er_period", "2"},         {"fast_period", "2"},
             {"slow_period", "4"},    {"kama_filter", "0.0"},     {"risk_per_trade_pct", "0.01"},
@@ -369,6 +386,79 @@ TEST(CompositeStrategyTest, FiltersStateAndOrderEventsByProductId) {
     strategy.OnOrderEvent(
         MakeOrderEvent("s1", "SHFE.rb2405", Side::kBuy, OffsetFlag::kOpen, 1, 100.0, "rb-order"));
     EXPECT_EQ(strategy.GetBacktestPositionOwner("SHFE.rb2405"), "s1");
+}
+
+TEST(CompositeStrategyTest, PendingOpenGateBlocksSameProductUntilTerminalEvent) {
+    const std::string scripted_type = UniqueType("pending_open_gate");
+    RegisterScriptedType(scripted_type);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {MakeSubStrategy(
+        "s1", scripted_type, {{"id", "s1"}, {"emit_open", "1"}, {"open_side", "buy"}})};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+
+    ASSERT_EQ(strategy.OnState(MakeState("rb2405", 10)).size(), 1U);
+    strategy.OnOrderEvent(MakePendingOpenEvent("s1", "rb2405", "pending-rb-open"));
+
+    EXPECT_TRUE(strategy.OnState(MakeState("rb2405", 20)).empty());
+    std::vector<CompositeAtomicTraceRow> rows = strategy.CollectAtomicIndicatorTrace();
+    ASSERT_EQ(rows.size(), 1U);
+    EXPECT_EQ(rows.front().blocked_reason, "pending_open_exists");
+
+    strategy.OnOrderEvent(
+        MakePendingOpenEvent("s1", "rb2405", "pending-rb-open", OrderStatus::kCanceled));
+
+    const std::vector<SignalIntent> after_cancel = strategy.OnState(MakeState("rb2405", 30));
+    ASSERT_EQ(after_cancel.size(), 1U);
+    rows = strategy.CollectAtomicIndicatorTrace();
+    ASSERT_EQ(rows.size(), 1U);
+    EXPECT_EQ(rows.front().blocked_reason, "none");
+}
+
+TEST(CompositeStrategyTest, PendingOpenGateIsProductScoped) {
+    const std::string scripted_type = UniqueType("pending_open_product_scope");
+    RegisterScriptedType(scripted_type);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {MakeSubStrategy(
+        "s1", scripted_type, {{"id", "s1"}, {"emit_open", "1"}, {"open_side", "buy"}})};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+    strategy.OnOrderEvent(MakePendingOpenEvent("s1", "rb2405", "pending-rb-open"));
+
+    const std::vector<SignalIntent> m_signals = strategy.OnState(MakeState("m2405", 20));
+    ASSERT_EQ(m_signals.size(), 1U);
+    EXPECT_EQ(m_signals.front().instrument_id, "m2405");
+
+    EXPECT_TRUE(strategy.OnState(MakeState("rb2406", 30)).empty());
+    const std::vector<CompositeAtomicTraceRow> rows = strategy.CollectAtomicIndicatorTrace();
+    ASSERT_EQ(rows.size(), 1U);
+    EXPECT_EQ(rows.front().blocked_reason, "pending_open_exists");
+}
+
+TEST(CompositeStrategyTest, ExistingProductPositionBlocksDifferentContractOpen) {
+    const std::string scripted_type = UniqueType("product_position_gate");
+    RegisterScriptedType(scripted_type);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {MakeSubStrategy(
+        "s1", scripted_type, {{"id", "s1"}, {"emit_open", "1"}, {"open_side", "buy"}})};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+    strategy.OnOrderEvent(
+        MakeOrderEvent("s1", "rb2405", Side::kBuy, OffsetFlag::kOpen, 1, 100.0, "rb-fill"));
+
+    EXPECT_TRUE(strategy.OnState(MakeState("rb2406", 20)).empty());
+    const std::vector<CompositeAtomicTraceRow> rows = strategy.CollectAtomicIndicatorTrace();
+    ASSERT_EQ(rows.size(), 1U);
+    EXPECT_EQ(rows.front().blocked_reason, "existing_product_position");
 }
 
 TEST(CompositeStrategyTest, DispatchesSubStrategiesByTimeframeMinutes) {
@@ -631,6 +721,36 @@ TEST(CompositeStrategyTest, TickAwareSubStrategySignalsExitThroughCompositeBackt
     EXPECT_EQ(tick_signals.front().signal_type, SignalType::kTakeProfit);
     EXPECT_EQ(tick_signals.front().offset, OffsetFlag::kClose);
     EXPECT_EQ(tick_signals.front().side, Side::kSell);
+}
+
+TEST(CompositeStrategyTest, TickAwareSubStrategySignalsExitThroughCompositeMarketTick) {
+    const std::string tick_type = UniqueType("live_tick_exit");
+    RegisterScriptedType(tick_type);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "sim";
+    definition.enable_non_backtest = true;
+    definition.sub_strategies = {MakeSubStrategy(
+        "tick", tick_type, {{"id", "tick"}, {"emit_tick_stop_loss", "1"}, {"volume", "1"}})};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext("sim"));
+    strategy.OnOrderEvent(
+        MakeOrderEvent("tick", "rb2405", Side::kBuy, OffsetFlag::kOpen, 1, 100.0, "tick-open"));
+
+    MarketSnapshot tick;
+    tick.instrument_id = "rb2405";
+    tick.last_price = 95.0;
+    tick.recv_ts_ns = 2000;
+
+    const std::vector<SignalIntent> tick_signals = strategy.OnMarketTick(tick);
+    ASSERT_EQ(tick_signals.size(), 1U);
+    EXPECT_EQ(tick_signals.front().strategy_id, "tick");
+    EXPECT_EQ(tick_signals.front().signal_type, SignalType::kStopLoss);
+    EXPECT_EQ(tick_signals.front().offset, OffsetFlag::kClose);
+    EXPECT_EQ(tick_signals.front().side, Side::kSell);
+    EXPECT_EQ(tick_signals.front().limit_price, 95.0);
+    EXPECT_EQ(tick_signals.front().ts_ns, 2000);
 }
 
 TEST(CompositeStrategyTest, MergesByPriorityThenVolumeThenTimestampThenTraceId) {

@@ -207,6 +207,13 @@ void StrategyEngine::EnqueueState(const StateSnapshot7D& state) {
     EnqueueEvent(std::move(event));
 }
 
+void StrategyEngine::EnqueueMarketTick(const MarketSnapshot& snapshot) {
+    EngineEvent event;
+    event.type = EventType::kMarketTick;
+    event.market_tick = snapshot;
+    EnqueueEvent(std::move(event));
+}
+
 void StrategyEngine::EnqueueOrderEvent(const OrderEvent& event) {
     EngineEvent engine_event;
     engine_event.type = EventType::kOrderEvent;
@@ -273,6 +280,8 @@ void StrategyEngine::WorkerLoop() {
         if (has_event) {
             if (event.type == EventType::kState) {
                 DispatchState(event.state);
+            } else if (event.type == EventType::kMarketTick) {
+                DispatchMarketTick(event.market_tick);
             } else if (event.type == EventType::kOrderEvent) {
                 DispatchOrderEvent(event.order_event);
             } else {
@@ -329,6 +338,34 @@ void StrategyEngine::DispatchState(const StateSnapshot7D& state) {
         } catch (...) {
             EmitStrategyExceptionLog("strategy_callback_exception", "state", entry.strategy_id,
                                      "unknown exception");
+            std::lock_guard<std::mutex> lock(mutex_);
+            ++stats_.strategy_callback_exceptions;
+        }
+    }
+}
+
+void StrategyEngine::DispatchMarketTick(const MarketSnapshot& snapshot) {
+    std::vector<SignalIntent> intents;
+    for (auto& entry : strategies_) {
+        try {
+            auto* composite = dynamic_cast<CompositeStrategy*>(entry.strategy.get());
+            if (composite != nullptr && config_.contract_multiplier_resolver) {
+                const double multiplier =
+                    config_.contract_multiplier_resolver(snapshot.instrument_id);
+                if (std::isfinite(multiplier) && multiplier > 0.0) {
+                    composite->SetContractMultiplier(snapshot.instrument_id, multiplier);
+                }
+            }
+            intents = entry.strategy->OnMarketTick(snapshot);
+            EmitIntents(entry.strategy_id, std::move(intents));
+        } catch (const std::exception& ex) {
+            EmitStrategyExceptionLog("strategy_callback_exception", "market_tick",
+                                     entry.strategy_id, ex.what());
+            std::lock_guard<std::mutex> lock(mutex_);
+            ++stats_.strategy_callback_exceptions;
+        } catch (...) {
+            EmitStrategyExceptionLog("strategy_callback_exception", "market_tick",
+                                     entry.strategy_id, "unknown exception");
             std::lock_guard<std::mutex> lock(mutex_);
             ++stats_.strategy_callback_exceptions;
         }

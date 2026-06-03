@@ -61,6 +61,7 @@ class StrategyEngine {
     void Stop();
 
     void EnqueueState(const StateSnapshot7D& state);
+    void EnqueueMarketTick(const MarketSnapshot& snapshot);
     void EnqueueOrderEvent(const OrderEvent& event);
     void EnqueueAccountSnapshot(const TradingAccountSnapshot& snapshot);
     std::vector<StrategyMetric> CollectAllMetrics() const;
@@ -70,6 +71,7 @@ class StrategyEngine {
    private:
     enum class EventType {
         kState,
+        kMarketTick,
         kOrderEvent,
         kAccountSnapshot,
     };
@@ -77,6 +79,7 @@ class StrategyEngine {
     struct EngineEvent {
         EventType type{EventType::kState};
         StateSnapshot7D state;
+        MarketSnapshot market_tick;
         OrderEvent order_event;
         TradingAccountSnapshot account_snapshot;
     };
@@ -90,6 +93,7 @@ class StrategyEngine {
     void EnqueueEvent(EngineEvent event);
     void WorkerLoop();
     void DispatchState(const StateSnapshot7D& state);
+    void DispatchMarketTick(const MarketSnapshot& snapshot);
     void DispatchOrderEvent(const OrderEvent& event);
     void DispatchAccountSnapshot(const TradingAccountSnapshot& snapshot);
     void DispatchTimer(EpochNanos now_ns);

@@ -241,7 +241,7 @@ TEST(AtomicStrategiesTest, KamaTrendStrategyProductionParamsRequireKamaSideAndMi
     EXPECT_GT(closes.back(), snapshot->kama.value());
 }
 
-TEST(AtomicStrategiesTest, KamaTrendStrategyTrailingStopTightensOnBarsAndTriggersOnTick) {
+TEST(AtomicStrategiesTest, KamaTrendStrategyTrailingStopRefreshesAndTriggersOnTick) {
     KamaTrendStrategy strategy;
     AtomicParams params = MakeKamaParams();
     params["take_profit_mode"] = "none";
@@ -263,22 +263,39 @@ TEST(AtomicStrategiesTest, KamaTrendStrategyTrailingStopTightensOnBarsAndTrigger
     const auto snapshot_after_tighten = provider->IndicatorSnapshot();
     ASSERT_TRUE(snapshot_after_tighten.has_value());
     ASSERT_TRUE(snapshot_after_tighten->stop_loss_price.has_value());
-    const double tightened_stop = snapshot_after_tighten->stop_loss_price.value();
+    const double bar_stop = snapshot_after_tighten->stop_loss_price.value();
 
-    EXPECT_TRUE(strategy.OnState(MakeBarState("IF2406", 103.0, 101.0, 102.0, 4), ctx).empty());
-    const auto snapshot_after_pullback = provider->IndicatorSnapshot();
-    ASSERT_TRUE(snapshot_after_pullback.has_value());
-    ASSERT_TRUE(snapshot_after_pullback->stop_loss_price.has_value());
-    EXPECT_DOUBLE_EQ(snapshot_after_pullback->stop_loss_price.value(), tightened_stop);
+    EXPECT_TRUE(strategy.OnState(MakeBarState("IF2406", 106.0, 104.0, 105.0, 4), ctx).empty());
+    const auto snapshot_after_bar_rally = provider->IndicatorSnapshot();
+    ASSERT_TRUE(snapshot_after_bar_rally.has_value());
+    ASSERT_TRUE(snapshot_after_bar_rally->stop_loss_price.has_value());
+    EXPECT_DOUBLE_EQ(snapshot_after_bar_rally->stop_loss_price.value(), bar_stop);
+
+    const double rally_tick_price = bar_stop + 25.0;
+    EXPECT_TRUE(tick_aware->OnBacktestTick(MakeTick("IF2406", rally_tick_price, 5), ctx).empty());
+    const auto snapshot_after_tick_refresh = provider->IndicatorSnapshot();
+    ASSERT_TRUE(snapshot_after_tick_refresh.has_value());
+    ASSERT_TRUE(snapshot_after_tick_refresh->stop_loss_price.has_value());
+    EXPECT_GT(snapshot_after_tick_refresh->stop_loss_price.value(), bar_stop);
+    const double tick_refreshed_stop = snapshot_after_tick_refresh->stop_loss_price.value();
+
+    const std::vector<SignalIntent> bar_cross_signals = strategy.OnState(
+        MakeBarState("IF2406", tick_refreshed_stop + 1.0, tick_refreshed_stop - 1.0,
+                     tick_refreshed_stop - 0.5, 6),
+        ctx);
+    for (const SignalIntent& signal : bar_cross_signals) {
+        EXPECT_NE(signal.signal_type, SignalType::kStopLoss);
+        EXPECT_NE(signal.signal_type, SignalType::kTakeProfit);
+    }
 
     const std::vector<SignalIntent> trigger =
-        tick_aware->OnBacktestTick(MakeTick("IF2406", tightened_stop - 0.5, 5), ctx);
+        tick_aware->OnBacktestTick(MakeTick("IF2406", tick_refreshed_stop - 0.5, 7), ctx);
     ASSERT_EQ(trigger.size(), 1U);
     EXPECT_EQ(trigger.front().signal_type, SignalType::kStopLoss);
     EXPECT_EQ(trigger.front().side, Side::kSell);
     EXPECT_EQ(trigger.front().offset, OffsetFlag::kClose);
     EXPECT_EQ(trigger.front().volume, 1);
-    EXPECT_EQ(trigger.front().trace_id, "kama_1-stop_loss-IF2406-5");
+    EXPECT_EQ(trigger.front().trace_id, "kama_1-stop_loss-IF2406-7");
 }
 
 TEST(AtomicStrategiesTest, TrendStrategyEmitsOpenAndTakeProfitSignalsOnTick) {
@@ -299,6 +316,13 @@ TEST(AtomicStrategiesTest, TrendStrategyEmitsOpenAndTakeProfitSignalsOnTick) {
     ctx.net_positions["rb2405"] = 1;
     ctx.avg_open_prices["rb2405"] = 100.0;
     FeedCloses(&strategy, "rb2405", &ctx, {104, 105});
+
+    const std::vector<SignalIntent> bar_take_signals =
+        strategy.OnState(MakeBarState("rb2405", 108.0, 106.0, 107.0, 99), ctx);
+    for (const SignalIntent& signal : bar_take_signals) {
+        EXPECT_NE(signal.signal_type, SignalType::kStopLoss);
+        EXPECT_NE(signal.signal_type, SignalType::kTakeProfit);
+    }
 
     const std::vector<SignalIntent> take_profit_signals =
         tick_aware->OnBacktestTick(MakeTick("rb2405", 107.0, 100), ctx);

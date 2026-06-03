@@ -25,6 +25,7 @@ struct Probe {
     std::vector<std::string> initialized_strategy_ids;
     std::vector<std::string> initialized_composite_paths;
     std::vector<EpochNanos> observed_state_ts;
+    std::vector<std::string> observed_market_ticks;
     std::vector<std::string> observed_order_events;
     std::vector<std::string> observed_account_snapshots;
     std::vector<std::string> observed_timer_strategies;
@@ -116,6 +117,25 @@ class RecordingStrategy final : public ILiveStrategy {
         intent.ts_ns = state.ts_ns;
         intent.trace_id = strategy_id_ + "-" + std::to_string(state.ts_ns) +
                           (loaded_from_state_ ? "-loaded" : "-fresh");
+        return {intent};
+    }
+
+    std::vector<SignalIntent> OnMarketTick(const MarketSnapshot& snapshot) override {
+        if (g_probe != nullptr) {
+            std::lock_guard<std::mutex> lock(g_probe->mutex);
+            g_probe->observed_market_ticks.push_back(strategy_id_ + ":" + snapshot.instrument_id);
+        }
+
+        SignalIntent intent;
+        intent.strategy_id = strategy_id_;
+        intent.instrument_id = snapshot.instrument_id;
+        intent.signal_type = SignalType::kTakeProfit;
+        intent.side = Side::kSell;
+        intent.offset = OffsetFlag::kClose;
+        intent.volume = 1;
+        intent.limit_price = snapshot.last_price;
+        intent.ts_ns = snapshot.recv_ts_ns;
+        intent.trace_id = strategy_id_ + "-tick-" + std::to_string(snapshot.recv_ts_ns);
         return {intent};
     }
 
@@ -298,6 +318,66 @@ TEST(StrategyEngineTest, DispatchesStateAndOrderEventsToAllStrategies) {
     const auto stats = engine.GetStats();
     EXPECT_EQ(stats.broadcast_order_events, 1U);
     EXPECT_EQ(stats.unmatched_order_events, 0U);
+}
+
+TEST(StrategyEngineTest, DispatchesMarketTicksToAllStrategies) {
+    Probe probe;
+    g_probe = &probe;
+    ResetThrowingBehavior();
+
+    std::string error;
+    const auto factory_name = UniqueFactoryName();
+    ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
+        factory_name, []() { return std::make_unique<RecordingStrategy>(); }, &error))
+        << error;
+
+    std::mutex sink_mutex;
+    std::vector<SignalIntent> emitted_intents;
+    StrategyEngineConfig cfg;
+    cfg.queue_capacity = 64;
+    cfg.timer_interval_ns = 1000 * 1000 * 1000;
+    StrategyEngine engine(cfg, [&](const SignalIntent& intent) {
+        std::lock_guard<std::mutex> lock(sink_mutex);
+        emitted_intents.push_back(intent);
+    });
+
+    StrategyContext base_context;
+    base_context.account_id = "sim-account";
+    ASSERT_TRUE(engine.Start({"alpha", "beta"}, factory_name, base_context, &error)) << error;
+
+    MarketSnapshot tick;
+    tick.instrument_id = "rb2405";
+    tick.last_price = 105.5;
+    tick.recv_ts_ns = 2001;
+    engine.EnqueueMarketTick(tick);
+
+    ASSERT_TRUE(WaitUntil(
+        [&]() {
+            std::lock_guard<std::mutex> sink_lock(sink_mutex);
+            std::lock_guard<std::mutex> probe_lock(probe.mutex);
+            return emitted_intents.size() >= 2 && probe.observed_market_ticks.size() >= 2;
+        },
+        std::chrono::milliseconds(500)));
+
+    engine.Stop();
+    g_probe = nullptr;
+
+    std::vector<std::string> strategy_ids;
+    {
+        std::lock_guard<std::mutex> lock(sink_mutex);
+        ASSERT_EQ(emitted_intents.size(), 2U);
+        strategy_ids.push_back(emitted_intents[0].strategy_id);
+        strategy_ids.push_back(emitted_intents[1].strategy_id);
+        EXPECT_EQ(emitted_intents[0].signal_type, SignalType::kTakeProfit);
+        EXPECT_EQ(emitted_intents[1].signal_type, SignalType::kTakeProfit);
+    }
+    std::sort(strategy_ids.begin(), strategy_ids.end());
+    EXPECT_EQ(strategy_ids[0], "alpha");
+    EXPECT_EQ(strategy_ids[1], "beta");
+
+    std::lock_guard<std::mutex> probe_lock(probe.mutex);
+    EXPECT_TRUE(ContainsEvent(probe.observed_market_ticks, "alpha:rb2405"));
+    EXPECT_TRUE(ContainsEvent(probe.observed_market_ticks, "beta:rb2405"));
 }
 
 TEST(StrategyEngineTest, StartsLaunchSpecsWithPerStrategyMetadata) {

@@ -28,6 +28,10 @@ public:
 
     virtual void Initialize(const StrategyContext& ctx) = 0;
     virtual std::vector<SignalIntent> OnState(const StateSnapshot7D& state) = 0;
+    virtual std::vector<SignalIntent> OnMarketTick(const MarketSnapshot& snapshot) {
+        (void)snapshot;
+        return {};
+    }
     virtual void OnOrderEvent(const OrderEvent& event) = 0;
     virtual void OnAccountSnapshot(const TradingAccountSnapshot& snapshot) { (void)snapshot; }
     virtual std::vector<SignalIntent> OnTimer(EpochNanos now_ns) = 0;

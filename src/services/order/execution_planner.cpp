@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 
 namespace quant_hft {
 
@@ -22,15 +23,14 @@ std::vector<std::int32_t> BuildUniformSlices(std::int32_t total_volume, int slic
     return slices;
 }
 
-std::vector<std::int32_t> BuildVwapSlices(std::int32_t total_volume,
-                                          int max_slices,
+std::vector<std::int32_t> BuildVwapSlices(std::int32_t total_volume, int max_slices,
                                           const std::vector<MarketSnapshot>& recent_market) {
     std::vector<std::int32_t> slices;
     if (total_volume <= 0 || max_slices <= 0 || recent_market.empty()) {
         return slices;
     }
-    const std::size_t usable = std::min<std::size_t>(recent_market.size(),
-                                                     static_cast<std::size_t>(max_slices));
+    const std::size_t usable =
+        std::min<std::size_t>(recent_market.size(), static_cast<std::size_t>(max_slices));
     double weight_sum = 0.0;
     std::vector<double> weights(usable, 1.0);
     for (std::size_t i = 0; i < usable; ++i) {
@@ -63,15 +63,30 @@ std::vector<std::int32_t> BuildVwapSlices(std::int32_t total_volume,
     return slices;
 }
 
+std::optional<double> ResolveExecutionPrice(const SignalIntent& signal,
+                                            const ExecutionConfig& config,
+                                            const std::vector<MarketSnapshot>& recent_market) {
+    if (config.price_mode == ExecutionPriceMode::kSignalLimit) {
+        return signal.limit_price;
+    }
+    if (recent_market.empty()) {
+        return std::nullopt;
+    }
+    const MarketSnapshot& snapshot = recent_market.back();
+    const double price = signal.side == Side::kBuy ? snapshot.ask_price_1 : snapshot.bid_price_1;
+    if (!std::isfinite(price) || price <= 0.0) {
+        return std::nullopt;
+    }
+    return price;
+}
+
 }  // namespace
 
 ExecutionPlanner::ExecutionPlanner(std::size_t throttle_window_size)
     : throttle_window_size_(std::max<std::size_t>(5, throttle_window_size)) {}
 
 std::vector<PlannedOrder> ExecutionPlanner::BuildPlan(
-    const SignalIntent& signal,
-    const std::string& account_id,
-    const ExecutionConfig& config,
+    const SignalIntent& signal, const std::string& account_id, const ExecutionConfig& config,
     const std::vector<MarketSnapshot>& recent_market) const {
     std::vector<PlannedOrder> out;
     if (signal.volume <= 0 || signal.trace_id.empty()) {
@@ -79,6 +94,10 @@ std::vector<PlannedOrder> ExecutionPlanner::BuildPlan(
     }
     const auto volume_plan = BuildVolumePlan(signal, config, recent_market);
     if (volume_plan.empty()) {
+        return out;
+    }
+    const auto order_price = ResolveExecutionPrice(signal, config, recent_market);
+    if (!order_price.has_value()) {
         return out;
     }
     const auto base_ts = signal.ts_ns == 0 ? NowEpochNanos() : signal.ts_ns;
@@ -94,14 +113,13 @@ std::vector<PlannedOrder> ExecutionPlanner::BuildPlan(
         planned.intent.offset = signal.offset;
         planned.intent.type = OrderType::kLimit;
         planned.intent.volume = volume_plan[idx];
-        planned.intent.price = signal.limit_price;
+        planned.intent.price = *order_price;
         planned.intent.ts_ns = base_ts + static_cast<EpochNanos>(idx + 1);
         planned.slice_index = static_cast<std::int32_t>(idx + 1);
         planned.slice_total = total;
         planned.execution_algo_id = algo_id;
         if (total > 1) {
-            planned.intent.client_order_id =
-                signal.trace_id + "#slice-" + std::to_string(idx + 1);
+            planned.intent.client_order_id = signal.trace_id + "#slice-" + std::to_string(idx + 1);
             planned.intent.trace_id = planned.intent.client_order_id;
         } else {
             planned.intent.client_order_id = signal.trace_id;
@@ -136,8 +154,7 @@ double ExecutionPlanner::CurrentRejectRatio() const {
             ++rejected;
         }
     }
-    return static_cast<double>(rejected) /
-           static_cast<double>(reject_history_.size());
+    return static_cast<double>(rejected) / static_cast<double>(reject_history_.size());
 }
 
 std::string ExecutionPlanner::AlgoToId(ExecutionAlgo algo) {
@@ -155,8 +172,7 @@ std::string ExecutionPlanner::AlgoToId(ExecutionAlgo algo) {
 }
 
 std::vector<std::int32_t> ExecutionPlanner::BuildVolumePlan(
-    const SignalIntent& signal,
-    const ExecutionConfig& config,
+    const SignalIntent& signal, const ExecutionConfig& config,
     const std::vector<MarketSnapshot>& recent_market) {
     switch (config.algo) {
         case ExecutionAlgo::kDirect:
@@ -176,8 +192,7 @@ std::vector<std::int32_t> ExecutionPlanner::BuildVolumePlan(
             return BuildUniformSlices(signal.volume, dynamic_slice);
         }
         case ExecutionAlgo::kVwapLite: {
-            auto vwap = BuildVwapSlices(signal.volume,
-                                        std::max(1, config.vwap_lookback_bars),
+            auto vwap = BuildVwapSlices(signal.volume, std::max(1, config.vwap_lookback_bars),
                                         recent_market);
             if (!vwap.empty()) {
                 return vwap;

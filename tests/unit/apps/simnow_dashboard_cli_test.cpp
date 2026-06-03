@@ -25,6 +25,16 @@ std::string ReadFile(const std::filesystem::path& path) {
     return buffer.str();
 }
 
+std::size_t CountOccurrences(const std::string& text, const std::string& needle) {
+    std::size_t count = 0;
+    std::size_t pos = 0;
+    while ((pos = text.find(needle, pos)) != std::string::npos) {
+        ++count;
+        pos += needle.size();
+    }
+    return count;
+}
+
 void WriteFile(const std::filesystem::path& path, const std::string& content) {
     std::filesystem::create_directories(path.parent_path());
     std::ofstream out(path);
@@ -91,6 +101,50 @@ void WriteSampleMarketData(const std::filesystem::path& root) {
         "volume,ts_ns\n"
         "c2607,DCE,20260515,20260514,20260515 21:00,2365,2366,2363,2365,"
         "2365,2366,2363,2365,0,16655,1778763659736134827\n");
+}
+
+void WriteStaleTwoProductMarketData(const std::filesystem::path& root) {
+    const auto c_tick_file =
+        root / "market" / "trading_day=20260529" / "varieties" / "c" / "market" / "ticks.csv";
+    const auto c_bar_file =
+        root / "market" / "trading_day=20260529" / "varieties" / "c" / "market" / "bars_1m.csv";
+    const auto hc_tick_file =
+        root / "market" / "trading_day=20260529" / "varieties" / "hc" / "market" / "ticks.csv";
+    const auto hc_bar_file =
+        root / "market" / "trading_day=20260529" / "varieties" / "hc" / "market" / "bars_1m.csv";
+
+    WriteFile(c_tick_file,
+              "instrument_id,exchange_id,trading_day,action_day,update_time,update_millisec,"
+              "last_price,bid_price_1,ask_price_1,bid_volume_1,ask_volume_1,volume,"
+              "open_interest,settlement_price,average_price_raw,average_price_norm,"
+              "is_valid_settlement,exchange_ts_ns,recv_ts_ns\n"
+              "c2607,DCE,20260529,20260529,23:00:01,0,2324,2323,2324,91,14,326725,"
+              "1223500,0,23658,23658,0,0,1778763619820649828\n");
+    WriteFile(c_bar_file,
+              "instrument_id,exchange_id,trading_day,action_day,minute,open,high,low,close,"
+              "analysis_open,analysis_high,analysis_low,analysis_close,analysis_price_offset,"
+              "volume,ts_ns\n"
+              "c2607,DCE,20260529,20260529,20260529 23:00,2320,2324,2319,2324,"
+              "2320,2324,2319,2324,0,326725,1778763659736134827\n");
+    WriteFile(hc_tick_file,
+              "instrument_id,exchange_id,trading_day,action_day,update_time,update_millisec,"
+              "last_price,bid_price_1,ask_price_1,bid_volume_1,ask_volume_1,volume,"
+              "open_interest,settlement_price,average_price_raw,average_price_norm,"
+              "is_valid_settlement,exchange_ts_ns,recv_ts_ns\n"
+              "hc2610,SHFE,20260529,20260529,23:00:02,0,3369,3368,3369,91,14,107698,"
+              "1223500,0,33690,33690,0,0,1778763619820649828\n");
+    WriteFile(hc_bar_file,
+              "instrument_id,exchange_id,trading_day,action_day,minute,open,high,low,close,"
+              "analysis_open,analysis_high,analysis_low,analysis_close,analysis_price_offset,"
+              "volume,ts_ns\n"
+              "hc2610,SHFE,20260529,20260529,20260529 23:00,3365,3370,3364,3369,"
+              "3365,3370,3364,3369,0,107698,1778763659736134827\n");
+
+    const auto stale_time = std::filesystem::file_time_type::clock::now() - std::chrono::minutes(5);
+    std::filesystem::last_write_time(c_tick_file, stale_time);
+    std::filesystem::last_write_time(c_bar_file, stale_time);
+    std::filesystem::last_write_time(hc_tick_file, stale_time);
+    std::filesystem::last_write_time(hc_bar_file, stale_time);
 }
 
 void WriteDayCloseMarketData(const std::filesystem::path& root) {
@@ -209,9 +263,49 @@ void WriteSampleCtpWal(const std::filesystem::path& root) {
               "\"reason\":\"结算结果未确认\"}\n"
               "{\"seq\":2,\"schema_version\":2,\"kind\":\"trade\","
               "\"event_type\":\"trade_fill\","
-              "\"trace_id\":\"kama_candidate_c-open-c2607-2\","
-              "\"client_order_id\":\"kama_candidate_c-0002-2\","
-              "\"trade_id\":\"trade-1\"}\n");
+              "\"strategy_id\":\"kama_trend_production\","
+              "\"trace_id\":\"kama_trend_production-open-c2607-2\","
+              "\"client_order_id\":\"kama_trend_production-0002-2\","
+              "\"instrument_id\":\"c2607\",\"exchange_id\":\"DCE\","
+              "\"side\":0,\"offset\":0,\"last_trade_volume\":1,"
+              "\"avg_fill_price\":2320,\"order_ref\":\"0002\","
+              "\"trade_id\":\"trade-1\",\"ts_ns\":1780291227262046132}\n");
+}
+
+void WriteCtpReplayDuplicateWal(const std::filesystem::path& root,
+                                const std::string& current_run_id) {
+    std::ostringstream wal;
+    wal << "{\"seq\":1,\"schema_version\":2,\"kind\":\"trade\","
+           "\"event_type\":\"trade_fill\","
+           "\"run_id\":\"simnow-auto-20260602-day_am-090000-r1\","
+           "\"strategy_id\":\"kama_trend_production\","
+           "\"trace_id\":\"kama_trend_production-open-c2607-1\","
+           "\"client_order_id\":\"kama_trend_production-0001-1\","
+           "\"instrument_id\":\"c2607\",\"exchange_id\":\"DCE\","
+           "\"side\":0,\"offset\":0,\"last_trade_volume\":1,"
+           "\"avg_fill_price\":2320,\"order_ref\":\"0001\","
+           "\"trade_id\":\"trade-dup\",\"ts_ns\":1780291227262046132}\n";
+    wal << "{\"seq\":2,\"schema_version\":2,\"kind\":\"trade\","
+           "\"event_type\":\"trade_fill\",\"run_id\":\""
+        << current_run_id
+        << "\",\"strategy_id\":\"kama_trend_production\","
+           "\"trace_id\":\"kama_trend_production-open-c2607-1\","
+           "\"client_order_id\":\"kama_trend_production-0001-1\","
+           "\"instrument_id\":\"c2607\",\"exchange_id\":\"DCE\","
+           "\"side\":0,\"offset\":0,\"last_trade_volume\":1,"
+           "\"avg_fill_price\":2320,\"order_ref\":\"0001\","
+           "\"trade_id\":\"trade-dup\",\"ts_ns\":1780291327262046132}\n";
+    wal << "{\"seq\":3,\"schema_version\":2,\"kind\":\"trade\","
+           "\"event_type\":\"trade_fill\",\"run_id\":\""
+        << current_run_id
+        << "\",\"strategy_id\":\"kama_trend_production\","
+           "\"trace_id\":\"kama_trend_production-open-c2607-2\","
+           "\"client_order_id\":\"kama_trend_production-0002-2\","
+           "\"instrument_id\":\"c2607\",\"exchange_id\":\"DCE\","
+           "\"side\":0,\"offset\":0,\"last_trade_volume\":1,"
+           "\"avg_fill_price\":2321,\"order_ref\":\"0002\","
+           "\"trade_id\":\"trade-new\",\"ts_ns\":1780291427262046132}\n";
+    WriteFile(root / "wal" / "events.wal", wal.str());
 }
 
 TEST(SimnowDashboardCli, EmptyWalAndDailyReportsRenderHtmlAndState) {
@@ -244,10 +338,29 @@ TEST(SimnowDashboardCli, EmptyWalAndDailyReportsRenderHtmlAndState) {
     EXPECT_NE(json.find("signal_without_order_submitted"), std::string::npos);
     EXPECT_NE(json.find("<redacted>"), std::string::npos);
     EXPECT_NE(html.find("SimNow Dashboard"), std::string::npos);
+    EXPECT_NE(html.find("SimNow Trading Cockpit"), std::string::npos);
+    EXPECT_NE(html.find("Price Board"), std::string::npos);
     EXPECT_NE(html.find("Signal Execution"), std::string::npos);
     EXPECT_NE(html.find("signal_without_order_submitted"), std::string::npos);
     EXPECT_NE(html.find("missing_pid"), std::string::npos);
     EXPECT_NE(html.find("20260514"), std::string::npos);
+}
+
+TEST(SimnowDashboardCli, PriceBoardDoesNotRenderBarStatusAsBadge) {
+    const auto root = MakeTempDir("price_board_stale_badges");
+    const auto output_dir = root / "dashboard";
+    const auto stdout_log = root / "stdout.log";
+
+    WriteFile(root / "wal" / "events.wal", "");
+    WriteStaleTwoProductMarketData(root);
+
+    const int rc = RunCommandCapture(DashboardCommand(root, output_dir), stdout_log);
+
+    EXPECT_EQ(rc, 0);
+    const std::string html = ReadFile(output_dir / "index.html");
+    EXPECT_EQ(CountOccurrences(html, "<span class=\"badge bad\">stale</span>"), 2U);
+    EXPECT_EQ(html.find("Bar <span class=\"badge bad\">stale</span>"), std::string::npos);
+    EXPECT_NE(html.find("Bar stale at 20260529 23:00"), std::string::npos);
 }
 
 TEST(SimnowDashboardCli, RendersCtpConnectionAndOrderFlowPanels) {
@@ -276,15 +389,63 @@ TEST(SimnowDashboardCli, RendersCtpConnectionAndOrderFlowPanels) {
     EXPECT_NE(json.find("\"ctp_callbacks\": 1"), std::string::npos);
     EXPECT_NE(json.find("\"wal_rejected\": 1"), std::string::npos);
     EXPECT_NE(json.find("\"wal_fills\": 1"), std::string::npos);
+    EXPECT_NE(json.find("\"wal_fills_raw\": 1"), std::string::npos);
+    EXPECT_NE(json.find("\"wal_duplicate_fills\": 0"), std::string::npos);
     EXPECT_NE(json.find("\"last_error_id\": \"42\""), std::string::npos);
     EXPECT_NE(json.find("\"last_reject_reason\": \"settlement_unconfirmed\""), std::string::npos);
+    EXPECT_NE(json.find("\"trade_fills\""), std::string::npos);
+    EXPECT_NE(json.find("\"instrument_id\": \"c2607\""), std::string::npos);
+    EXPECT_NE(json.find("\"side\": \"buy\""), std::string::npos);
+    EXPECT_NE(json.find("\"offset\": \"open\""), std::string::npos);
+    EXPECT_NE(json.find("\"price\": \"2320\""), std::string::npos);
+    EXPECT_NE(json.find("\"strategy_id\": \"kama_trend_production\""), std::string::npos);
+    EXPECT_NE(json.find("\"attribution\": \"strategy_matched\""), std::string::npos);
     EXPECT_NE(html.find("CTP Connection"), std::string::npos);
-    EXPECT_NE(html.find("Signal To CTP Flow"), std::string::npos);
+    EXPECT_NE(html.find("Orders And Fills"), std::string::npos);
+    EXPECT_NE(html.find("Fill Details"), std::string::npos);
+    EXPECT_NE(html.find("Seq"), std::string::npos);
+    EXPECT_NE(html.find("Attribution"), std::string::npos);
+    EXPECT_NE(html.find("kama_trend_production"), std::string::npos);
+    EXPECT_NE(html.find("strategy_matched"), std::string::npos);
+    EXPECT_NE(html.find("DCE"), std::string::npos);
+    EXPECT_NE(html.find("trade-1"), std::string::npos);
+    EXPECT_NE(html.find("2320"), std::string::npos);
+    EXPECT_NE(html.find("buy"), std::string::npos);
+    EXPECT_EQ(html.find("Signal To CTP Flow"), std::string::npos);
     EXPECT_NE(html.find("CTP Orders And Rejects"), std::string::npos);
-    EXPECT_NE(html.find("settlement_unconfirmed"), std::string::npos);
     EXPECT_NE(html.find("结算结果未确认"), std::string::npos);
     EXPECT_EQ(html.find("????????"), std::string::npos);
     EXPECT_EQ(html.find("auth_code"), std::string::npos);
+}
+
+TEST(SimnowDashboardCli, DeduplicatesCtpReplayFillsAcrossRuns) {
+    const auto root = MakeTempDir("ctp_replay_dedup");
+    const auto output_dir = root / "dashboard";
+    const auto stdout_log = root / "stdout.log";
+    const auto run_id = std::string("simnow-auto-20260602-day_pm-150000-r2");
+    const auto run_dir = root / "runs" / run_id;
+    const auto core_log = run_dir / "core_engine.log";
+
+    WriteSampleCtpRuntime(root, core_log);
+    WriteSampleCtpSignalMonitor(root);
+    WriteFile(root / "runs" / "current_run_dir", run_dir.string() + "\n");
+    WriteCtpReplayDuplicateWal(root, run_id);
+
+    const int rc = RunCommandCapture(DashboardCommand(root, output_dir), stdout_log);
+
+    EXPECT_EQ(rc, 0);
+    const std::string json = ReadFile(output_dir / "dashboard_state.json");
+    const std::string html = ReadFile(output_dir / "index.html");
+    EXPECT_NE(json.find("\"wal_fills\": 1"), std::string::npos);
+    EXPECT_NE(json.find("\"wal_fills_raw\": 2"), std::string::npos);
+    EXPECT_NE(json.find("\"wal_duplicate_fills\": 1"), std::string::npos);
+    EXPECT_NE(json.find("\"replay_duplicate_fills\""), std::string::npos);
+    EXPECT_NE(json.find("\"trade_id\": \"trade-new\""), std::string::npos);
+    EXPECT_NE(json.find("\"trade_id\": \"trade-dup\""), std::string::npos);
+    EXPECT_NE(html.find("Suppressed CTP Replay Fills"), std::string::npos);
+    EXPECT_NE(html.find("trade-new"), std::string::npos);
+    EXPECT_NE(html.find("trade-dup"), std::string::npos);
+    EXPECT_NE(html.find("CTP replay duplicates 1 filtered"), std::string::npos);
 }
 
 TEST(SimnowDashboardCli, LiveHealthIgnoresStaleOrderFlowBeforeCurrentMonitorEpoch) {

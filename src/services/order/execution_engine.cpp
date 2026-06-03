@@ -98,6 +98,7 @@ std::future<OrderResult> ExecutionEngine::PlaceOrderAsync(const OrderIntent& int
 
         OrderIntent order_intent = intent;
         order_intent.client_order_id = order_ref;
+        order_intent.ts_ns = NowEpochNanos();
         if (order_manager_ != nullptr) {
             (void)order_manager_->CreateOrder(order_intent);
         }

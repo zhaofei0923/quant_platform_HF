@@ -247,6 +247,24 @@ bool ParseExecutionAlgo(const std::string& raw, ExecutionAlgo* out) {
     return false;
 }
 
+bool ParseExecutionPriceMode(const std::string& raw, ExecutionPriceMode* out) {
+    if (out == nullptr) {
+        return false;
+    }
+    const auto normalized = Lowercase(Trim(raw));
+    if (normalized.empty() || normalized == "signal_limit" || normalized == "signal-limit" ||
+        normalized == "limit") {
+        *out = ExecutionPriceMode::kSignalLimit;
+        return true;
+    }
+    if (normalized == "marketable_limit" || normalized == "marketable-limit" ||
+        normalized == "market") {
+        *out = ExecutionPriceMode::kMarketableLimit;
+        return true;
+    }
+    return false;
+}
+
 constexpr std::array<const char*, 12> kMarketStateDetectorFields = {
     "adx_period",         "adx_strong_threshold", "adx_weak_lower",        "adx_weak_upper",
     "kama_er_period",     "kama_fast_period",     "kama_slow_period",      "kama_er_strong",
@@ -1309,6 +1327,13 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* confi
         !ParseExecutionAlgo(execution_algo_raw, &loaded.execution.algo)) {
         if (error != nullptr) {
             *error = "execution_algo must be one of direct|sliced|twap|vwap_lite";
+        }
+        return false;
+    }
+    const auto execution_price_mode_raw = get_value("execution_price_mode");
+    if (!ParseExecutionPriceMode(execution_price_mode_raw, &loaded.execution.price_mode)) {
+        if (error != nullptr) {
+            *error = "execution_price_mode must be signal_limit or marketable_limit";
         }
         return false;
     }

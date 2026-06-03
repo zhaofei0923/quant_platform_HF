@@ -38,6 +38,7 @@ constexpr std::int64_t kCommodityDayCloseSeconds = 5 * 60 * 60 + 45 * 60;
 constexpr std::size_t kRecentAlertLimit = 24;
 constexpr std::size_t kRecentSignalMonitorLimit = 12;
 constexpr std::size_t kRecentCtpEventLimit = 16;
+constexpr std::size_t kHistoricalTradeFillIndex = static_cast<std::size_t>(-1);
 
 struct DashboardOptions {
     std::string run_root;
@@ -181,6 +182,27 @@ struct CtpConnectionStatus {
     std::vector<std::string> recent_events;
 };
 
+struct TradeFillDetail {
+    std::string seq;
+    std::string time;
+    std::string ts_ns;
+    std::string instrument_id;
+    std::string exchange_id;
+    std::string side;
+    std::string offset;
+    std::string volume;
+    std::string price;
+    std::string strategy_id;
+    std::string client_order_id;
+    std::string order_ref;
+    std::string trade_id;
+    std::string trace_id;
+    std::string attribution;
+    std::string trade_day_bucket;
+    std::string replay_status{"unique"};
+    std::int64_t replay_count{1};
+};
+
 struct CtpOrderFlowStatus {
     std::string status{"unknown"};
     bool healthy{false};
@@ -194,10 +216,15 @@ struct CtpOrderFlowStatus {
     std::int64_t ctp_callbacks{0};
     std::int64_t wal_rejected{0};
     std::int64_t wal_fills{0};
+    std::int64_t wal_fills_raw{0};
+    std::int64_t wal_duplicate_fills{0};
     std::string last_error_id;
     std::string last_reject_reason;
+    std::vector<TradeFillDetail> trade_fills;
+    std::vector<TradeFillDetail> replay_duplicate_fills;
     std::vector<std::string> recent_events;
     std::vector<std::string> recent_rejections;
+    std::map<std::string, std::size_t> trade_fill_index_by_key;
 };
 
 struct DashboardState {
@@ -282,6 +309,24 @@ std::string FormatLocalTime(std::int64_t ts_ns) {
 #endif
     char buffer[32] = {0};
     if (std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S %z", &tm) == 0) {
+        return "";
+    }
+    return std::string(buffer);
+}
+
+std::string FormatLocalDateBucket(std::int64_t ts_ns) {
+    if (ts_ns <= 0) {
+        return "";
+    }
+    std::time_t seconds = static_cast<std::time_t>(ts_ns / 1'000'000'000LL);
+    std::tm tm{};
+#if defined(_WIN32)
+    localtime_s(&tm, &seconds);
+#else
+    localtime_r(&seconds, &tm);
+#endif
+    char buffer[16] = {0};
+    if (std::strftime(buffer, sizeof(buffer), "%Y%m%d", &tm) == 0) {
         return "";
     }
     return std::string(buffer);
@@ -1661,6 +1706,151 @@ void UpdateCtpOrderFlowFromLine(const std::string& line, const std::string& sour
     }
 }
 
+std::string TradeSideText(const std::string& side) {
+    if (side == "0") {
+        return "buy";
+    }
+    if (side == "1") {
+        return "sell";
+    }
+    return side;
+}
+
+std::string TradeOffsetText(const std::string& offset) {
+    if (offset == "0") {
+        return "open";
+    }
+    if (offset == "1") {
+        return "close";
+    }
+    if (offset == "3") {
+        return "close_today";
+    }
+    if (offset == "4") {
+        return "close_yesterday";
+    }
+    return offset;
+}
+
+std::string LocalTimeFromNanos(const std::string& ts_ns) {
+    if (ts_ns.empty()) {
+        return "";
+    }
+    try {
+        return FormatLocalTime(std::stoll(ts_ns));
+    } catch (...) {
+        return "";
+    }
+}
+
+std::string LocalDateBucketFromNanos(const std::string& ts_ns) {
+    if (ts_ns.empty()) {
+        return "";
+    }
+    try {
+        return FormatLocalDateBucket(std::stoll(ts_ns));
+    } catch (...) {
+        return "";
+    }
+}
+
+std::string TradeFillAttribution(const std::string& strategy_id, const std::string& trace_id) {
+    if (!strategy_id.empty() || !trace_id.empty()) {
+        return "strategy_matched";
+    }
+    return "external_or_private_stream";
+}
+
+TradeFillDetail ExtractTradeFillDetail(const std::string& line) {
+    TradeFillDetail fill;
+    fill.seq = ExtractEventField(line, "seq");
+    fill.ts_ns = ExtractEventField(line, "ts_ns");
+    fill.time = LocalTimeFromNanos(fill.ts_ns);
+    fill.trade_day_bucket = LocalDateBucketFromNanos(fill.ts_ns);
+    fill.instrument_id = ExtractEventField(line, "instrument_id");
+    fill.exchange_id = ExtractEventField(line, "exchange_id");
+    fill.side = TradeSideText(ExtractEventField(line, "side"));
+    fill.offset = TradeOffsetText(ExtractEventField(line, "offset"));
+    fill.volume = ExtractEventField(line, "last_trade_volume");
+    if (fill.volume.empty()) {
+        fill.volume = ExtractEventField(line, "filled_volume");
+    }
+    fill.price = ExtractEventField(line, "avg_fill_price");
+    fill.strategy_id = ExtractEventField(line, "strategy_id");
+    fill.client_order_id = ExtractEventField(line, "client_order_id");
+    fill.order_ref = ExtractEventField(line, "order_ref");
+    fill.trade_id = ExtractEventField(line, "trade_id");
+    fill.trace_id = ExtractEventField(line, "trace_id");
+    fill.attribution = TradeFillAttribution(fill.strategy_id, fill.trace_id);
+    return fill;
+}
+
+std::string BuildTradeFillDedupKey(const TradeFillDetail& fill) {
+    if (fill.trade_id.empty()) {
+        return "";
+    }
+    return fill.trade_day_bucket + "|" + fill.exchange_id + "|" + fill.instrument_id + "|" +
+           fill.side + "|" + fill.offset + "|" + fill.trade_id;
+}
+
+void PushLimitedTradeFill(std::vector<TradeFillDetail>* items, TradeFillDetail value,
+                          std::size_t limit) {
+    if (items == nullptr) {
+        return;
+    }
+    items->push_back(std::move(value));
+    while (items->size() > limit) {
+        items->erase(items->begin());
+    }
+}
+
+void SeedTradeFillDedupKeyFromWalLine(const std::string& line, CtpOrderFlowStatus* flow) {
+    if (flow == nullptr || line.empty()) {
+        return;
+    }
+    const std::string lower = ToLower(line);
+    const bool trade_line = lower.find("\"event_type\":\"trade_fill\"") != std::string::npos ||
+                            lower.find("\"event_type\": \"trade_fill\"") != std::string::npos ||
+                            lower.find("\"kind\":\"trade\"") != std::string::npos ||
+                            lower.find("\"kind\": \"trade\"") != std::string::npos;
+    if (!trade_line) {
+        return;
+    }
+    const std::string key = BuildTradeFillDedupKey(ExtractTradeFillDetail(line));
+    if (!key.empty()) {
+        flow->trade_fill_index_by_key.emplace(key, kHistoricalTradeFillIndex);
+    }
+}
+
+void RecordTradeFillDetail(TradeFillDetail fill, CtpOrderFlowStatus* flow) {
+    if (flow == nullptr) {
+        return;
+    }
+    ++flow->wal_fills_raw;
+    const std::string key = BuildTradeFillDedupKey(fill);
+    if (!key.empty()) {
+        const auto existing = flow->trade_fill_index_by_key.find(key);
+        if (existing != flow->trade_fill_index_by_key.end()) {
+            ++flow->wal_duplicate_fills;
+            fill.replay_status = "ctp_replay_duplicate";
+            PushLimitedTradeFill(&flow->replay_duplicate_fills, std::move(fill),
+                                 kRecentCtpEventLimit);
+            if (existing->second != kHistoricalTradeFillIndex &&
+                existing->second < flow->trade_fills.size()) {
+                TradeFillDetail& original = flow->trade_fills[existing->second];
+                ++original.replay_count;
+                original.replay_status = "replayed " + std::to_string(original.replay_count) + "x";
+            }
+            return;
+        }
+        flow->trade_fill_index_by_key.emplace(key, flow->trade_fills.size());
+    }
+    fill.replay_status = "unique";
+    fill.replay_count = 1;
+    ++flow->wal_fills;
+    flow->trade_fills.push_back(std::move(fill));
+}
+
 void UpdateCtpOrderFlowFromWalLine(const std::string& line, CtpOrderFlowStatus* flow) {
     if (flow == nullptr || line.empty()) {
         return;
@@ -1698,7 +1888,7 @@ void UpdateCtpOrderFlowFromWalLine(const std::string& line, CtpOrderFlowStatus* 
         }
     }
     if (trade_event) {
-        ++flow->wal_fills;
+        RecordTradeFillDetail(ExtractTradeFillDetail(line), flow);
     }
 }
 
@@ -1711,15 +1901,6 @@ CtpOrderFlowStatus CollectCtpOrderFlowStatus(const DashboardOptions& options,
     flow.active = signal_monitor.active;
     flow.monitor_filled = signal_monitor.filled;
     flow.monitor_incidents = signal_monitor.incidents;
-
-    const bool current_monitor_idle = signal_monitor.status == "alive" &&
-                                      signal_monitor.signals == 0 && signal_monitor.active == 0 &&
-                                      signal_monitor.filled == 0 && signal_monitor.incidents == 0;
-    if (current_monitor_idle && process.status == "waiting_for_trading_window") {
-        flow.status = "idle";
-        flow.healthy = true;
-        return flow;
-    }
 
     std::int64_t signal_passed_events = 0;
     for (const auto& line : CurrentSignalMonitorEpochLines(signal_monitor.event_log_path)) {
@@ -1746,7 +1927,9 @@ CtpOrderFlowStatus CollectCtpOrderFlowStatus(const DashboardOptions& options,
         std::ifstream wal_input(options.wal_file);
         std::string line;
         while (std::getline(wal_input, line)) {
-            if (!current_run_id.empty() && ExtractJsonString(line, "run_id") != current_run_id) {
+            const std::string line_run_id = ExtractJsonString(line, "run_id");
+            if (!current_run_id.empty() && line_run_id != current_run_id) {
+                SeedTradeFillDedupKeyFromWalLine(line, &flow);
                 continue;
             }
             UpdateCtpOrderFlowFromWalLine(line, &flow);
@@ -2014,9 +2197,59 @@ std::string RenderStateJson(const DashboardState& state) {
     out << "    \"ctp_callbacks\": " << state.ctp_order_flow.ctp_callbacks << ",\n";
     out << "    \"wal_rejected\": " << state.ctp_order_flow.wal_rejected << ",\n";
     out << "    \"wal_fills\": " << state.ctp_order_flow.wal_fills << ",\n";
+    out << "    \"wal_fills_raw\": " << state.ctp_order_flow.wal_fills_raw << ",\n";
+    out << "    \"wal_duplicate_fills\": " << state.ctp_order_flow.wal_duplicate_fills << ",\n";
     out << "    \"last_error_id\": " << JsonString(state.ctp_order_flow.last_error_id) << ",\n";
     out << "    \"last_reject_reason\": " << JsonString(state.ctp_order_flow.last_reject_reason)
         << ",\n";
+    out << "    \"trade_fills\": [\n";
+    for (std::size_t i = 0; i < state.ctp_order_flow.trade_fills.size(); ++i) {
+        const auto& fill = state.ctp_order_flow.trade_fills[i];
+        out << "      {\"seq\": " << JsonString(fill.seq) << ", \"time\": " << JsonString(fill.time)
+            << ", \"ts_ns\": " << JsonString(fill.ts_ns)
+            << ", \"instrument_id\": " << JsonString(fill.instrument_id)
+            << ", \"exchange_id\": " << JsonString(fill.exchange_id)
+            << ", \"side\": " << JsonString(fill.side)
+            << ", \"offset\": " << JsonString(fill.offset)
+            << ", \"volume\": " << JsonString(fill.volume)
+            << ", \"price\": " << JsonString(fill.price)
+            << ", \"strategy_id\": " << JsonString(fill.strategy_id)
+            << ", \"client_order_id\": " << JsonString(fill.client_order_id)
+            << ", \"order_ref\": " << JsonString(fill.order_ref)
+            << ", \"trade_id\": " << JsonString(fill.trade_id)
+            << ", \"trace_id\": " << JsonString(fill.trace_id)
+            << ", \"attribution\": " << JsonString(fill.attribution)
+            << ", \"replay_status\": " << JsonString(fill.replay_status)
+            << ", \"replay_count\": " << fill.replay_count << "}";
+        if (i + 1 < state.ctp_order_flow.trade_fills.size()) {
+            out << ',';
+        }
+        out << "\n";
+    }
+    out << "    ],\n";
+    out << "    \"replay_duplicate_fills\": [\n";
+    for (std::size_t i = 0; i < state.ctp_order_flow.replay_duplicate_fills.size(); ++i) {
+        const auto& fill = state.ctp_order_flow.replay_duplicate_fills[i];
+        out << "      {\"seq\": " << JsonString(fill.seq) << ", \"time\": " << JsonString(fill.time)
+            << ", \"instrument_id\": " << JsonString(fill.instrument_id)
+            << ", \"exchange_id\": " << JsonString(fill.exchange_id)
+            << ", \"side\": " << JsonString(fill.side)
+            << ", \"offset\": " << JsonString(fill.offset)
+            << ", \"volume\": " << JsonString(fill.volume)
+            << ", \"price\": " << JsonString(fill.price)
+            << ", \"strategy_id\": " << JsonString(fill.strategy_id)
+            << ", \"client_order_id\": " << JsonString(fill.client_order_id)
+            << ", \"order_ref\": " << JsonString(fill.order_ref)
+            << ", \"trade_id\": " << JsonString(fill.trade_id)
+            << ", \"trace_id\": " << JsonString(fill.trace_id)
+            << ", \"attribution\": " << JsonString(fill.attribution)
+            << ", \"replay_status\": " << JsonString(fill.replay_status) << "}";
+        if (i + 1 < state.ctp_order_flow.replay_duplicate_fills.size()) {
+            out << ',';
+        }
+        out << "\n";
+    }
+    out << "    ],\n";
     out << "    \"recent_events\": [\n";
     for (std::size_t i = 0; i < state.ctp_order_flow.recent_events.size(); ++i) {
         out << "      " << JsonString(state.ctp_order_flow.recent_events[i]);
@@ -2100,6 +2333,43 @@ std::string RenderMetric(const std::string& label, std::int64_t value) {
     return RenderMetric(label, std::to_string(value));
 }
 
+std::string AgeText(const std::optional<std::int64_t>& age_seconds) {
+    return age_seconds.has_value() ? std::to_string(*age_seconds) + "s" : "n/a";
+}
+
+std::string InstrumentLabel(const MarketFileStatus& item) {
+    return EmptyAsDash(item.tick.instrument_id.empty() ? item.bar.instrument_id
+                                                       : item.tick.instrument_id);
+}
+
+std::string JoinOrDash(const std::vector<std::string>& values) {
+    if (values.empty()) {
+        return "-";
+    }
+    std::ostringstream out;
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        if (i > 0) {
+            out << ", ";
+        }
+        out << values[i];
+    }
+    return out.str();
+}
+
+std::string RenderLogList(const std::vector<std::string>& lines, const std::string& empty_text) {
+    std::ostringstream out;
+    out << "<ul class=\"logs\">";
+    if (lines.empty()) {
+        out << "<li>" << HtmlEscape(empty_text) << "</li>";
+    } else {
+        for (const auto& line : lines) {
+            out << "<li>" << HtmlEscape(line) << "</li>";
+        }
+    }
+    out << "</ul>";
+    return out.str();
+}
+
 std::string RenderPathTable(const std::map<std::string, std::string>& paths) {
     std::ostringstream out;
     out << "<table><thead><tr><th>Name</th><th>Path</th></tr></thead><tbody>";
@@ -2112,6 +2382,14 @@ std::string RenderPathTable(const std::map<std::string, std::string>& paths) {
 }
 
 std::string RenderHtml(const DashboardState& state) {
+    const std::string headline_instrument =
+        state.markets.empty() ? "-" : InstrumentLabel(state.markets.front());
+    const std::string headline_price =
+        state.markets.empty() ? "-" : EmptyAsDash(state.markets.front().tick.last_price);
+    const std::int64_t reject_count =
+        state.ctp_order_flow.wal_rejected + state.ctp_order_flow.ctp_submit_rejected;
+    const std::string active_instruments = JoinOrDash(state.ctp_connection.active_instruments);
+
     std::ostringstream html;
     html << "<!doctype html>\n<html lang=\"en\">\n<head>\n";
     html << "<meta charset=\"utf-8\">\n";
@@ -2119,156 +2397,189 @@ std::string RenderHtml(const DashboardState& state) {
     html << "<meta http-equiv=\"refresh\" content=\"30\">\n";
     html << "<title>SimNow Dashboard</title>\n";
     html << "<style>\n";
-    html << ":root{color-scheme:light;--paper:#f4efe6;--surface:#fbf8f1;--surface-2:#efe7da;"
-            "--ink:#201f1a;--muted:#675f55;--line:#d8cdbc;--line-strong:#292822;"
-            "--ok:#28724f;--bad:#b24432;--warn:#8a5f16;--blue:#405f8d;--soft:#f7f1e8;}\n";
-    html << "*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);"
-            "font:13px/1.35 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"
-            "\"Segoe UI\",sans-serif;}\n";
-    html << ".topbar{height:58px;padding:0 28px;border-bottom:1px solid var(--line-strong);"
-            "background:var(--paper);display:flex;align-items:center;justify-content:space-between;"
-            "gap:16px;}"
-            ".brand{display:flex;align-items:center;gap:10px;font-weight:700;}"
-            ".brand-mark{width:18px;height:18px;border:1px solid "
-            "var(--line-strong);background:var(--ink);"
-            "box-shadow:6px 6px 0 var(--surface-2);}"
-            ".nav{display:flex;gap:18px;align-items:center;color:var(--muted);font-size:12px;}"
-            ".nav span{white-space:nowrap;}\n";
-    html << ".hero{border-bottom:1px solid var(--line-strong);padding:24px 0 "
-            "18px;margin-bottom:14px;"
-            "display:grid;grid-template-columns:minmax(0,1fr) auto;gap:24px;align-items:end;}"
-            ".eyebrow{color:var(--muted);font:700 12px/1.2 "
-            "ui-monospace,SFMono-Regular,Menlo,monospace;"
-            "text-transform:uppercase;}"
-            "h1{font-family:Georgia,\"Times New "
-            "Roman\",serif;font-size:40px;line-height:1.04;margin:7px 0 0;"
-            "font-weight:500;letter-spacing:0;max-width:920px;}"
-            "h2{font-size:13px;margin:0 0 "
-            "10px;font-weight:800;letter-spacing:0;text-transform:uppercase;"
-            "font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);}\n";
-    html << "main{max-width:1520px;margin:0 auto;padding:0 20px 30px;}"
-            ".grid{display:grid;grid-template-columns:repeat(12,1fr);gap:10px;}"
-            ".panel{background:var(--surface);border:1px solid var(--line-strong);border-radius:0;"
-            "padding:12px;min-width:0;box-shadow:4px 4px 0 var(--surface-2);}"
-            ".span-3{grid-column:span 3}.span-4{grid-column:span 4}.span-5{grid-column:span 5}"
-            ".span-6{grid-column:span 6}.span-7{grid-column:span 7}.span-8{grid-column:span 8}"
-            ".span-12{grid-column:span 12}\n";
-    html
-        << ".badge{display:inline-flex;align-items:center;min-height:20px;border-radius:0;"
-           "padding:1px 7px;font-weight:800;font-size:10px;line-height:1.1;border:1px solid "
-           "currentColor;"
-           "background:transparent;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}"
-           ".badge.ok{color:var(--ok)}.badge.bad{color:var(--bad)}.badge.warn{color:var(--warn)}\n";
-    html << ".metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;border-top:"
-            "1px solid "
-            "var(--line);border-left:1px solid var(--line);}"
-            ".metric{background:transparent;border-right:1px solid var(--line);border-bottom:1px "
-            "solid var(--line);"
-            "padding:9px 10px;min-height:58px;min-width:0;}"
-            ".metric-label{color:var(--muted);font:700 10px/1.15 "
-            "ui-monospace,SFMono-Regular,Menlo,monospace;"
-            "text-transform:uppercase;margin-bottom:6px;white-space:nowrap;overflow:hidden;"
-            "text-overflow:ellipsis;}"
-            ".metric-value{font-size:16px;line-height:1.18;font-weight:740;white-space:nowrap;"
-            "overflow:hidden;text-overflow:ellipsis;}\n";
-    html << "table{width:100%;border-collapse:collapse;table-layout:fixed;border-top:1px solid "
-            "var(--line);"
-            "border-left:1px solid var(--line);}th,td{padding:7px 8px;border-right:1px solid "
-            "var(--line);"
-            "border-bottom:1px solid "
-            "var(--line);text-align:left;vertical-align:top;white-space:nowrap;overflow:hidden;"
-            "text-overflow:ellipsis;}"
-            "th{font:800 10px/1.15 "
+    html << ":root{color-scheme:dark;--bg:#070807;--surface:#101312;--surface-2:#151a18;"
+            "--surface-3:#1b211f;--ink:#edf4ef;--muted:#8c9a94;--line:#27312d;"
+            "--line-strong:#3d4b45;--ok:#38d484;--bad:#ff6860;--warn:#f0b84a;"
+            "--cyan:#43d8e8;--steel:#a6b5ae;--soft:#0c0f0e;}\n";
+    html << "*{box-sizing:border-box}body{margin:0;background-color:var(--bg);"
+            "background-image:linear-gradient(rgba(130,150,141,.08) 1px,transparent 1px),"
+            "linear-gradient(90deg,rgba(130,150,141,.08) 1px,transparent 1px);"
+            "background-size:28px 28px;color:var(--ink);font:13px/1.38 "
+            "Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,\"Segoe UI\","
+            "sans-serif;font-feature-settings:\"tnum\" 1;}\n";
+    html << ".topbar{height:56px;padding:0 28px;border-bottom:1px solid var(--line);"
+            "background:rgba(7,8,7,.92);backdrop-filter:blur(14px);display:flex;"
+            "align-items:center;justify-content:space-between;gap:16px;position:sticky;top:0;"
+            "z-index:2}.brand{display:flex;align-items:center;gap:11px;font-weight:800;"
+            "letter-spacing:0}.brand-mark{width:18px;height:18px;border-radius:4px;"
+            "border:1px solid var(--cyan);background:linear-gradient(135deg,#163330,#0a1110);"
+            "box-shadow:0 0 18px rgba(67,216,232,.26)}.nav{display:flex;gap:16px;"
+            "align-items:center;color:var(--muted);font-size:12px}.nav span{white-space:nowrap}\n";
+    html << "main{max-width:1540px;margin:0 auto;padding:22px 22px 34px}.hero{padding:10px 0 "
+            "18px;margin-bottom:12px;display:grid;grid-template-columns:minmax(0,1fr) auto;"
+            "gap:24px;align-items:end}.eyebrow{color:var(--cyan);font:800 11px/1.2 "
             "ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:uppercase;"
-            "color:var(--muted);background:var(--soft);}"
-            "td{background:#fffaf2;}"
-            "code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;}"
-            ".scroll{max-height:230px;overflow:auto;border:1px solid "
-            "var(--line);background:#fffaf2;}"
-            ".scroll table{border-top:0;border-left:0}.scroll .logs{padding:8px;}"
-            ".logs{margin:0;padding:0;list-style:none;display:grid;gap:7px;}"
-            ".logs li{background:#fffaf2;border:1px solid var(--line);border-radius:0;padding:9px "
-            "10px;"
-            "font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;overflow-wrap:"
-            "anywhere;}"
-            ".subtle{color:var(--muted);white-space:nowrap}.hero-meta{display:grid;gap:8px;justify-"
-            "items:end;}"
-            ".hero-meta .subtle{text-align:right;max-width:320px;}.section-note{color:var(--muted);"
-            "margin:-4px 0 10px;font-size:12px;}\n";
-    html
-        << "@media(max-width:980px){.span-3,.span-4,.span-5,.span-6,.span-7,.span-8{grid-column:"
-           "span 12}"
-           ".metrics{grid-template-columns:repeat(2,minmax(0,1fr));}.topbar,main{padding-left:14px;"
-           "padding-right:14px;}.hero{grid-template-columns:1fr;}.hero-meta{justify-items:start;}"
-           ".hero-meta .subtle{text-align:left;}h1{font-size:32px;}}"
-           "@media(max-width:560px){.metrics{grid-template-columns:1fr;}.nav{display:none;}}\n";
+            "letter-spacing:0}h1{font-size:36px;line-height:1.05;margin:7px 0 7px;"
+            "font-weight:780;letter-spacing:0}.intro{margin:0;color:var(--muted);"
+            "max-width:720px;font-size:14px}.hero-meta{display:grid;gap:8px;justify-items:end}"
+            ".hero-meta .subtle{text-align:right;max-width:360px}.grid{display:grid;"
+            "grid-template-columns:repeat(12,minmax(0,1fr));gap:12px}.panel{background:"
+            "linear-gradient(180deg,rgba(21,26,24,.96),rgba(12,15,14,.96));border:1px solid "
+            "var(--line);border-radius:8px;padding:14px;min-width:0;box-shadow:0 14px 42px "
+            "rgba(0,0,0,.22)}.panel-head{display:flex;align-items:flex-start;"
+            "justify-content:space-between;gap:12px;margin-bottom:12px}.span-3{grid-column:span 3}"
+            ".span-4{grid-column:span 4}.span-5{grid-column:span 5}.span-6{grid-column:span 6}"
+            ".span-7{grid-column:span 7}.span-8{grid-column:span 8}.span-12{grid-column:span 12}\n";
+    html << "h2{font-size:12px;margin:0 0 10px;font-weight:850;letter-spacing:0;"
+            "text-transform:uppercase;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
+            "color:var(--steel)}.caption,.section-note,.subtle{color:var(--muted)}"
+            ".section-note{margin:-4px 0 10px;font-size:12px;overflow-wrap:anywhere}.badge{"
+            "display:inline-flex;align-items:center;min-height:20px;border-radius:4px;padding:"
+            "2px 7px;font-weight:850;font-size:10px;line-height:1.1;border:1px solid "
+            "currentColor;background:transparent;font-family:ui-monospace,SFMono-Regular,Menlo,"
+            "monospace;white-space:nowrap}.badge.ok{color:var(--ok);background:rgba(56,212,132,"
+            ".09)}.badge.bad{color:var(--bad);background:rgba(255,104,96,.09)}.badge.warn{"
+            "color:var(--warn);background:rgba(240,184,74,.1)}\n";
+    html << ".metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}"
+            ".metric{background:var(--surface-2);border:1px solid var(--line);border-radius:6px;"
+            "padding:10px 11px;min-height:64px;min-width:0}.metric-label{color:var(--muted);"
+            "font:800 10px/1.15 ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:"
+            "uppercase;margin-bottom:7px;white-space:nowrap;overflow:hidden;text-overflow:"
+            "ellipsis;letter-spacing:0}.metric-value{font-size:18px;line-height:1.15;"
+            "font-weight:820;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}"
+            ".hero-stat .metrics,.session-panel .metrics{grid-template-columns:repeat(2,minmax(0,"
+            "1fr))}.hero-stat .metric-value{font-size:21px}.price-grid{display:grid;"
+            "grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.price-card{background:"
+            "var(--soft);border:1px solid var(--line-strong);border-radius:8px;padding:12px;"
+            "min-width:0}.price-card-head{display:flex;justify-content:space-between;gap:10px;"
+            "align-items:flex-start}.symbol{display:grid;gap:3px;min-width:0}.symbol strong{"
+            "font-size:18px;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:"
+            "ellipsis}.symbol span{color:var(--muted);font-size:12px;white-space:nowrap;"
+            "overflow:hidden;text-overflow:ellipsis}.last-price{margin:12px 0 10px;color:"
+            "var(--cyan);font-size:34px;line-height:1;font-weight:860;white-space:nowrap;"
+            "overflow:hidden;text-overflow:ellipsis}.quote-row,.mini-grid{display:grid;gap:8px}"
+            ".quote-row{grid-template-columns:repeat(2,minmax(0,1fr));margin-bottom:8px}"
+            ".quote-box{border:1px solid var(--line);border-radius:6px;padding:8px;background:"
+            "var(--surface)}.quote-label{display:block;color:var(--muted);font:800 10px/1.1 "
+            "ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:uppercase}.quote-value{"
+            "display:block;margin-top:4px;font-size:16px;font-weight:760;white-space:nowrap;"
+            "overflow:hidden;text-overflow:ellipsis}.mini-grid{grid-template-columns:repeat(3,"
+            "minmax(0,1fr))}.mini{border-top:1px solid var(--line);padding-top:8px;min-width:0}"
+            ".mini b{display:block;font-size:13px;white-space:nowrap;overflow:hidden;"
+            "text-overflow:ellipsis}.mini span{display:block;color:var(--muted);font-size:11px;"
+            "white-space:nowrap;overflow:hidden;text-overflow:ellipsis}\n";
+    html << ".flowline{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;"
+            "margin-top:10px}.step{border:1px solid var(--line);background:var(--surface-2);"
+            "border-radius:6px;padding:10px;min-height:68px}.step span{display:block;color:"
+            "var(--muted);font:800 10px/1.15 ui-monospace,SFMono-Regular,Menlo,monospace;"
+            "text-transform:uppercase}.step b{display:block;margin-top:8px;font-size:20px}"
+            "table{width:100%;border-collapse:collapse;table-layout:fixed;border-top:1px solid "
+            "var(--line);border-left:1px solid var(--line)}th,td{padding:8px 9px;border-right:"
+            "1px solid var(--line);border-bottom:1px solid var(--line);text-align:left;"
+            "vertical-align:top;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}"
+            "th{font:850 10px/1.15 ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:"
+            "uppercase;color:var(--muted);background:var(--surface-2)}td{background:var(--soft)}"
+            "code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:"
+            "var(--cyan);overflow-wrap:anywhere;word-break:break-word}.scroll{max-height:248px;"
+            "overflow:auto;border:1px solid var(--line);border-radius:6px;background:var(--soft)}"
+            ".scroll table{border-top:0;border-left:0}.logs{margin:0;padding:8px;list-style:"
+            "none;display:grid;gap:7px}.logs li{background:var(--surface);border:1px solid "
+            "var(--line);border-radius:6px;padding:9px 10px;font-family:ui-monospace,"
+            "SFMono-Regular,Menlo,monospace;font-size:12px;overflow-wrap:anywhere}.empty-state{"
+            "border:1px dashed var(--line-strong);border-radius:8px;padding:22px;color:"
+            "var(--muted);background:var(--soft)}details.panel summary{cursor:pointer;color:"
+            "var(--steel);font:850 12px/1.2 "
+            "ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:uppercase}\n";
+    html << "@media(max-width:1100px){.span-3,.span-4,.span-5,.span-6,.span-7,.span-8{"
+            "grid-column:span 12}.price-grid{grid-template-columns:1fr}.hero{grid-template-"
+            "columns:1fr}.hero-meta{justify-items:start}.hero-meta .subtle{text-align:left}"
+            ".metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.flowline{grid-template-"
+            "columns:repeat(2,minmax(0,1fr))}}@media(max-width:620px){.topbar,main{padding-left:"
+            "14px;padding-right:14px}.nav{display:none}.metrics,.mini-grid,.quote-row,.flowline{"
+            "grid-template-columns:1fr}h1{font-size:29px}.last-price{font-size:29px}}\n";
     html << "</style>\n</head>\n<body>\n";
 
     html << "<header class=\"topbar\"><div class=\"brand\"><span class=\"brand-mark\"></span>"
-            "<span>quant_hft</span></div><nav class=\"nav\"><span>Local HTML</span><span>No "
-            "DB</span>"
-            "<span>30s refresh</span></nav></header>\n";
-    html << "<main><section class=\"hero\"><div><div class=\"eyebrow\">SimNow operations</div>"
-            "<h1>Trading console for live status, market freshness, and audit evidence.</h1></div>"
-            "<div class=\"hero-meta\">"
+            "<span>quant_hft / SimNow</span></div><nav class=\"nav\"><span>Prices</span>"
+            "<span>Orders</span><span>Fills</span><span>30s refresh</span></nav></header>\n";
+    html << "<main><section class=\"hero\"><div><div class=\"eyebrow\">SimNow live trading</div>"
+            "<h1>SimNow Trading Cockpit</h1><p class=\"intro\">Focused view of latest prices, "
+            "order flow, fills, rejects, and CTP execution evidence.</p></div><div "
+            "class=\"hero-meta\">"
          << RenderBadge(state.live_healthy ? "live healthy" : "live unhealthy", state.live_healthy)
          << "<div class=\"subtle\">Generated " << HtmlEscape(state.generated_at_local)
          << "</div></div></section><div class=\"grid\">\n";
 
-    html << "<section class=\"panel span-4\"><h2>Runtime</h2><div class=\"metrics\">";
+    html << "<section class=\"panel span-3 hero-stat\"><h2>Live State</h2><div class=\"metrics\">";
     html << RenderMetric("core_engine", state.process.status);
-    html << RenderMetric("pid", state.process.pid);
-    html << RenderMetric("supervisor",
-                         state.process.supervisor_pids.empty()
-                             ? "not_running"
-                             : std::to_string(state.process.supervisor_pids.size()) + " running");
-    html << RenderMetric("live warnings", state.live_warning_count);
-    html << RenderMetric("history risks", state.historical_risk_count);
+    html << RenderMetric("warnings", state.live_warning_count);
     html << "</div></section>\n";
 
-    html << "<section class=\"panel span-4\"><h2>WAL</h2><div class=\"metrics\">";
-    html << RenderMetric("file", state.wal.exists ? "present" : "missing");
-    html << RenderMetric("lines", state.wal.lines_total);
-    html << RenderMetric("orders", state.wal.order_events);
-    html << RenderMetric("fills", state.wal.trade_or_fill_events);
+    html << "<section class=\"panel span-3 hero-stat\"><h2>Lead Contract</h2><div "
+            "class=\"metrics\">";
+    html << RenderMetric("instrument", headline_instrument);
+    html << RenderMetric("last price", headline_price);
     html << "</div></section>\n";
 
-    html << "<section class=\"panel span-4\"><h2>Latest Day</h2><div class=\"metrics\">";
-    html << RenderMetric("trading day", state.daily.trading_day);
-    html << RenderMetric("report", state.daily.report_found ? "present" : "missing");
-    html << RenderMetric("export orders", state.daily.exported_order_events);
-    html << RenderMetric("export fills", state.daily.exported_trade_fills);
+    html << "<section class=\"panel span-3 hero-stat\"><h2>Order Book</h2><div class=\"metrics\">";
+    html << RenderMetric("WAL orders", state.wal.order_events);
+    html << RenderMetric("WAL fills", state.wal.trade_or_fill_events);
     html << "</div></section>\n";
 
-    html << "<section class=\"panel span-7\"><h2>Market Freshness</h2>"
-            "<div class=\"section-note\">Latest trading_day partitioned CSV observations by "
-            "product.</div>";
-    html << "<table><thead><tr><th>Product</th><th>Instrument</th><th>Tick</th><th>Bar</th>"
-            "<th>Last</th><th>Bid / Ask</th><th>Bar Close</th></tr></thead><tbody>";
+    html << "<section class=\"panel span-3 hero-stat\"><h2>Risk Tape</h2><div class=\"metrics\">";
+    html << RenderMetric("rejects", reject_count);
+    html << RenderMetric("incidents", state.signal_monitor.incidents);
+    html << "</div></section>\n";
+
+    html << "<section class=\"panel span-8\"><div class=\"panel-head\"><div><h2>Price Board</h2>"
+            "<div class=\"caption\">Latest trading_day market observations by product.</div></div>"
+            "<div>"
+         << RenderBadge(state.markets.empty() ? "missing" : "market feed",
+                        !state.markets.empty() && state.live_healthy)
+         << "</div></div><div class=\"price-grid\">";
     if (state.markets.empty()) {
-        html << "<tr><td colspan=\"7\">No market CSV files found</td></tr>";
+        html << "<div class=\"empty-state\">No market CSV files found</div>";
     }
     for (const auto& item : state.markets) {
-        html << "<tr><td>" << HtmlEscape(item.product) << "</td><td>"
-             << HtmlEscape(EmptyAsDash(item.tick.instrument_id.empty() ? item.bar.instrument_id
-                                                                       : item.tick.instrument_id))
-             << "</td><td>"
+        html << "<article class=\"price-card\"><div class=\"price-card-head\"><div "
+                "class=\"symbol\"><strong>"
+             << HtmlEscape(EmptyAsDash(item.product)) << "</strong><span>"
+             << HtmlEscape(InstrumentLabel(item)) << " / "
+             << HtmlEscape(EmptyAsDash(item.tick.exchange_id.empty() ? item.bar.exchange_id
+                                                                     : item.tick.exchange_id))
+             << "</span></div>"
              << RenderBadge(item.tick_status, MarketObservationHealthy(item.tick_status))
-             << " <span class=\"subtle\">"
-             << (item.tick_age_seconds.has_value() ? std::to_string(*item.tick_age_seconds) + "s"
-                                                   : "n/a")
-             << "</span></td><td>"
-             << RenderBadge(item.bar_status, MarketObservationHealthy(item.bar_status))
-             << " <span class=\"subtle\">"
-             << (item.bar_age_seconds.has_value() ? std::to_string(*item.bar_age_seconds) + "s"
-                                                  : "n/a")
-             << "</span></td><td>" << HtmlEscape(EmptyAsDash(item.tick.last_price)) << "</td><td>"
-             << HtmlEscape(EmptyAsDash(item.tick.bid_price_1)) << " / "
-             << HtmlEscape(EmptyAsDash(item.tick.ask_price_1)) << "</td><td>"
-             << HtmlEscape(EmptyAsDash(item.bar.close)) << " <span class=\"subtle\">"
-             << HtmlEscape(EmptyAsDash(item.bar.minute)) << "</span></td></tr>";
+             << "</div><div class=\"last-price\">" << HtmlEscape(EmptyAsDash(item.tick.last_price))
+             << "</div><div class=\"quote-row\">"
+             << "<div class=\"quote-box\"><span class=\"quote-label\">Bid</span><span "
+                "class=\"quote-value\">"
+             << HtmlEscape(EmptyAsDash(item.tick.bid_price_1)) << "</span></div>"
+             << "<div class=\"quote-box\"><span class=\"quote-label\">Ask</span><span "
+                "class=\"quote-value\">"
+             << HtmlEscape(EmptyAsDash(item.tick.ask_price_1)) << "</span></div></div>"
+             << "<div class=\"mini-grid\"><div class=\"mini\"><b>"
+             << HtmlEscape(EmptyAsDash(item.bar.close)) << "</b><span>bar close</span></div>"
+             << "<div class=\"mini\"><b>" << HtmlEscape(EmptyAsDash(item.tick.volume))
+             << "</b><span>volume</span></div><div class=\"mini\"><b>"
+             << HtmlEscape(AgeText(item.tick_age_seconds)) << "</b><span>tick age</span></div>"
+             << "</div><div class=\"section-note\">Bar " << HtmlEscape(item.bar_status) << " at "
+             << HtmlEscape(EmptyAsDash(item.bar.minute)) << "; age "
+             << HtmlEscape(AgeText(item.bar_age_seconds)) << ".</div></article>";
     }
-    html << "</tbody></table></section>\n";
+    html << "</div></section>\n";
+
+    html << "<section class=\"panel span-4 session-panel\"><h2>Trading Session</h2><div "
+            "class=\"metrics\">";
+    html << RenderMetric("trading day", state.daily.trading_day);
+    html << RenderMetric("pid", state.process.pid);
+    html << RenderMetric("WAL file", state.wal.exists ? "present" : "missing");
+    html << RenderMetric("WAL lines", state.wal.lines_total);
+    html << RenderMetric("CSV orders", state.daily.order_csv_rows);
+    html << RenderMetric("CSV fills", state.daily.fill_csv_rows);
+    html << RenderMetric("export orders", state.daily.exported_order_events);
+    html << RenderMetric("export fills", state.daily.exported_trade_fills);
+    html << "</div><div class=\"section-note\">Active instruments: <code>"
+         << HtmlEscape(active_instruments) << "</code></div></section>\n";
 
     html << "<section class=\"panel span-5\"><h2>Dominant Contracts</h2>";
     html << "<table><thead><tr><th>Product</th><th>Instrument</th><th>Exchange</th><th>Metric</"
@@ -2284,12 +2595,43 @@ std::string RenderHtml(const DashboardState& state) {
     }
     html << "</tbody></table></section>\n";
 
-    html << "<section class=\"panel span-6\"><h2>Orders And Fills</h2><div class=\"metrics\">";
+    html << "<section class=\"panel span-7\"><h2>Orders And Fills</h2><div class=\"metrics\">";
     html << RenderMetric("WAL orders", state.wal.order_events);
     html << RenderMetric("WAL fills", state.wal.trade_or_fill_events);
     html << RenderMetric("CSV orders", state.daily.order_csv_rows);
     html << RenderMetric("CSV fills", state.daily.fill_csv_rows);
-    html << "</div></section>\n";
+    html << RenderMetric("submit rate", FormatPercent(state.ctp_order_flow.ctp_submitted,
+                                                      state.ctp_order_flow.signals));
+    html << RenderMetric("rejects", reject_count);
+    html << RenderMetric("callbacks", state.ctp_order_flow.ctp_callbacks);
+    html << RenderMetric("unique fills", state.ctp_order_flow.wal_fills);
+    html << RenderMetric("replay dupes", state.ctp_order_flow.wal_duplicate_fills);
+    html << RenderMetric("monitor fills", state.ctp_order_flow.monitor_filled);
+    html << "</div><div class=\"flowline\"><div class=\"step\"><span>Signal Execution</span><b>"
+         << state.ctp_order_flow.signals << "</b></div><div class=\"step\"><span>Order logs</span>"
+         << "<b>" << state.ctp_order_flow.order_submitted_logs << "</b></div>"
+         << "<div class=\"step\"><span>CTP submit</span><b>" << state.ctp_order_flow.ctp_submitted
+         << "</b></div><div class=\"step\"><span>Callbacks</span><b>"
+         << state.ctp_order_flow.ctp_callbacks << "</b></div><div class=\"step\"><span>Fills</span>"
+         << "<b>" << state.ctp_order_flow.wal_fills << "</b></div></div></section>\n";
+
+    html << "<section class=\"panel span-6\"><h2>CTP Connection</h2><div class=\"metrics\">";
+    html << RenderMetric("status", state.ctp_connection.status);
+    html << RenderMetric("TD front", state.ctp_connection.td_front);
+    html << RenderMetric("MD front", state.ctp_connection.md_front);
+    html << RenderMetric("settlement", state.ctp_connection.settlement_status);
+    html << RenderMetric("login", state.ctp_connection.login_status);
+    html << RenderMetric("auth", state.ctp_connection.auth_status);
+    html << RenderMetric("probe", state.ctp_connection.probe_status);
+    html << RenderMetric("reconnects", state.ctp_connection.reconnect_attempts);
+    html << "</div><div class=\"section-note\">Probe <code>"
+         << HtmlEscape(EmptyAsDash(state.ctp_connection.latest_probe_log)) << "</code>";
+    if (state.ctp_connection.probe_age_seconds.has_value()) {
+        html << " updated " << *state.ctp_connection.probe_age_seconds << "s ago";
+    }
+    html << ".</div><div class=\"scroll\">"
+         << RenderLogList(state.ctp_connection.recent_events, "No CTP connection events found")
+         << "</div></section>\n";
 
     html << "<section class=\"panel span-6\"><h2>Signal Execution</h2><div class=\"metrics\">";
     html << RenderMetric("monitor", state.signal_monitor.status);
@@ -2301,78 +2643,10 @@ std::string RenderHtml(const DashboardState& state) {
     if (state.signal_monitor.event_log_age_seconds.has_value()) {
         html << " updated " << *state.signal_monitor.event_log_age_seconds << "s ago";
     }
-    html << ".</div>";
-    html << "<div class=\"scroll\"><ul class=\"logs\">";
-    if (state.signal_monitor.recent_events.empty()) {
-        html << "<li>No signal execution monitor events found</li>";
-    } else {
-        for (const auto& line : state.signal_monitor.recent_events) {
-            html << "<li>" << HtmlEscape(line) << "</li>";
-        }
-    }
-    html << "</ul></div></section>\n";
-
-    html << "<section class=\"panel span-6\"><h2>CTP Connection</h2><div class=\"metrics\">";
-    html << RenderMetric("status", state.ctp_connection.status);
-    html << RenderMetric("TD front", state.ctp_connection.td_front);
-    html << RenderMetric("MD front", state.ctp_connection.md_front);
-    html << RenderMetric("settlement", state.ctp_connection.settlement_status);
-    html << RenderMetric("login", state.ctp_connection.login_status);
-    html << RenderMetric("auth", state.ctp_connection.auth_status);
-    html << RenderMetric("probe", state.ctp_connection.probe_status);
-    html << RenderMetric("reconnects", state.ctp_connection.reconnect_attempts);
-    html << "</div><div class=\"section-note\">";
-    html << "Probe <code>" << HtmlEscape(EmptyAsDash(state.ctp_connection.latest_probe_log))
-         << "</code>";
-    if (state.ctp_connection.probe_age_seconds.has_value()) {
-        html << " updated " << *state.ctp_connection.probe_age_seconds << "s ago";
-    }
-    html << ". Active instruments: ";
-    if (state.ctp_connection.active_instruments.empty()) {
-        html << "-";
-    } else {
-        for (std::size_t i = 0; i < state.ctp_connection.active_instruments.size(); ++i) {
-            if (i > 0) {
-                html << ", ";
-            }
-            html << HtmlEscape(state.ctp_connection.active_instruments[i]);
-        }
-    }
-    html << "</div><div class=\"scroll\"><ul class=\"logs\">";
-    if (state.ctp_connection.recent_events.empty()) {
-        html << "<li>No CTP connection events found</li>";
-    } else {
-        for (const auto& line : state.ctp_connection.recent_events) {
-            html << "<li>" << HtmlEscape(line) << "</li>";
-        }
-    }
-    html << "</ul></div></section>\n";
-
-    html << "<section class=\"panel span-6\"><h2>Signal To CTP Flow</h2>"
-            "<div class=\"metrics\">";
-    html << RenderMetric("status", state.ctp_order_flow.status);
-    html << RenderMetric("signals", state.ctp_order_flow.signals);
-    html << RenderMetric("order logs", state.ctp_order_flow.order_submitted_logs);
-    html << RenderMetric("CTP submit", state.ctp_order_flow.ctp_submitted);
-    html << RenderMetric("callbacks", state.ctp_order_flow.ctp_callbacks);
-    html << RenderMetric("fills", state.ctp_order_flow.wal_fills);
-    html << RenderMetric(
-        "rejects", state.ctp_order_flow.wal_rejected + state.ctp_order_flow.ctp_submit_rejected);
-    html << RenderMetric("submit rate", FormatPercent(state.ctp_order_flow.ctp_submitted,
-                                                      state.ctp_order_flow.signals));
-    html << "</div><div class=\"section-note\">";
-    html << "Last error " << HtmlEscape(EmptyAsDash(state.ctp_order_flow.last_error_id))
-         << "; reason " << HtmlEscape(EmptyAsDash(state.ctp_order_flow.last_reject_reason))
-         << ". Monitor incidents " << state.ctp_order_flow.monitor_incidents << ".";
-    html << "</div><div class=\"scroll\"><ul class=\"logs\">";
-    if (state.ctp_order_flow.recent_events.empty()) {
-        html << "<li>No CTP order-flow events found</li>";
-    } else {
-        for (const auto& line : state.ctp_order_flow.recent_events) {
-            html << "<li>" << HtmlEscape(line) << "</li>";
-        }
-    }
-    html << "</ul></div></section>\n";
+    html << ".</div><div class=\"scroll\">"
+         << RenderLogList(state.signal_monitor.recent_events,
+                          "No signal execution monitor events found")
+         << "</div></section>\n";
 
     html << "<section class=\"panel span-12\"><h2>CTP Orders And Rejects</h2>";
     html << "<div class=\"scroll\"><table><thead><tr><th>Recent rejection / "
@@ -2386,24 +2660,78 @@ std::string RenderHtml(const DashboardState& state) {
     }
     html << "</tbody></table></div></section>\n";
 
-    html << "<section class=\"panel span-6\"><h2>Ops Reports</h2><div class=\"metrics\">";
-    html << RenderMetric("ops healthy", state.daily.ops_overall_healthy.has_value()
-                                            ? (*state.daily.ops_overall_healthy ? "true" : "false")
-                                            : "unknown");
-    html << RenderMetric("critical alerts", state.daily.critical_alerts);
-    html << RenderMetric("warn alerts", state.daily.warn_alerts);
-    html << RenderMetric("parse errors", state.daily.parse_errors);
-    html << "</div></section>\n";
+    html << "<section class=\"panel span-12\"><h2>Fill Details</h2>";
+    html << "<p class=\"section-note\">Unique fills " << state.ctp_order_flow.wal_fills
+         << " / raw fills " << state.ctp_order_flow.wal_fills_raw << "; CTP replay duplicates "
+         << state.ctp_order_flow.wal_duplicate_fills << " filtered.</p>";
+    html << "<div class=\"scroll\"><table><thead><tr><th>Seq</th><th>Time</th>"
+            "<th>Instrument</th><th>Exchange</th><th>Side</th><th>Offset</th><th>Volume</th>"
+            "<th>Price</th><th>Strategy</th><th>Attribution</th><th>Order Ref</th>"
+            "<th>Client Order</th><th>Trade "
+            "ID</th><th>Replay</th><th>Trace</th></tr></thead><tbody>";
+    if (state.ctp_order_flow.trade_fills.empty()) {
+        html << "<tr><td colspan=\"15\">No unique trade fills found</td></tr>";
+    } else {
+        for (const auto& fill : state.ctp_order_flow.trade_fills) {
+            html << "<tr><td>" << HtmlEscape(EmptyAsDash(fill.seq)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.time)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.instrument_id)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.exchange_id)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.side)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.offset)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.volume)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.price)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.strategy_id)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.attribution)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.order_ref)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.client_order_id)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.trade_id)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.replay_status)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.trace_id)) << "</td></tr>";
+        }
+    }
+    html << "</tbody></table></div></section>\n";
+
+    html << "<section class=\"panel span-12\"><h2>Suppressed CTP Replay Fills</h2>";
+    html << "<div class=\"scroll\"><table><thead><tr><th>Seq</th><th>Time</th>"
+            "<th>Instrument</th><th>Exchange</th><th>Side</th><th>Offset</th><th>Volume</th>"
+            "<th>Price</th><th>Strategy</th><th>Order Ref</th><th>Client Order</th>"
+            "<th>Trade ID</th><th>Trace</th></tr></thead><tbody>";
+    if (state.ctp_order_flow.replay_duplicate_fills.empty()) {
+        html << "<tr><td colspan=\"13\">No CTP replay duplicates filtered</td></tr>";
+    } else {
+        for (const auto& fill : state.ctp_order_flow.replay_duplicate_fills) {
+            html << "<tr><td>" << HtmlEscape(EmptyAsDash(fill.seq)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.time)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.instrument_id)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.exchange_id)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.side)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.offset)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.volume)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.price)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.strategy_id)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.order_ref)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.client_order_id)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.trade_id)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.trace_id)) << "</td></tr>";
+        }
+    }
+    html << "</tbody></table></div></section>\n";
 
     html << "<section class=\"panel span-12\"><h2>Recent Alerts</h2><div class=\"scroll\"><ul "
             "class=\"logs\">";
-    for (const auto& line : state.recent_alerts) {
-        html << "<li>" << HtmlEscape(line) << "</li>";
+    if (state.recent_alerts.empty()) {
+        html << "<li>No alerts found</li>";
+    } else {
+        for (const auto& line : state.recent_alerts) {
+            html << "<li>" << HtmlEscape(line) << "</li>";
+        }
     }
     html << "</ul></div></section>\n";
 
-    html << "<section class=\"panel span-12\"><h2>Paths</h2><div class=\"scroll\">"
-         << RenderPathTable(state.paths) << "</div></section>\n";
+    html << "<details class=\"panel span-12\"><summary>Data Paths</summary>"
+         << "<div class=\"section-note\">Source files backing this dashboard.</div>"
+         << "<div class=\"scroll\">" << RenderPathTable(state.paths) << "</div></details>\n";
 
     html << "</div></main>\n</body>\n</html>\n";
     return html.str();

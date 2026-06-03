@@ -214,10 +214,6 @@ std::vector<SignalIntent> TrendStrategy::OnState(const StateSnapshot7D& state,
                 direction_it->second == direction) {
                 stop_price = stop_it->second;
             }
-            const double candidate = direction > 0 ? (state.bar_close - stop_distance)
-                                                   : (state.bar_close + stop_distance);
-            stop_price = direction > 0 ? std::max(stop_price, candidate)
-                                       : std::min(stop_price, candidate);
             trailing_stop_by_instrument_[state.instrument_id] = stop_price;
             trailing_direction_by_instrument_[state.instrument_id] = direction;
             last_stop_loss_price_ = stop_price;
@@ -234,11 +230,6 @@ std::vector<SignalIntent> TrendStrategy::OnState(const StateSnapshot7D& state,
             last_take_profit_price_ = take_price;
         }
 
-        signals = EvaluateRiskSignals(ctx, state.instrument_id, state.bar_close, state.ts_ns);
-
-        if (!signals.empty()) {
-            return signals;
-        }
         if (!has_entry_signal) {
             return {};
         }
@@ -259,9 +250,60 @@ std::vector<SignalIntent> TrendStrategy::OnState(const StateSnapshot7D& state,
 
 std::vector<SignalIntent> TrendStrategy::OnBacktestTick(const AtomicTickSnapshot& tick,
                                                         const AtomicStrategyContext& ctx) {
-    if (tick.instrument_id.empty() || !std::isfinite(tick.last_price)) {
+    if (tick.instrument_id.empty() || !std::isfinite(tick.last_price) || tick.last_price <= 0.0) {
         return {};
     }
+    const std::int32_t position = ResolvePosition(ctx, tick.instrument_id);
+    if (position == 0) {
+        trailing_stop_by_instrument_.erase(tick.instrument_id);
+        trailing_direction_by_instrument_.erase(tick.instrument_id);
+        return {};
+    }
+
+    const auto avg_price_it = ctx.avg_open_prices.find(tick.instrument_id);
+    if (avg_price_it == ctx.avg_open_prices.end() || !std::isfinite(avg_price_it->second)) {
+        return {};
+    }
+
+    const double avg_open_price = avg_price_it->second;
+    const int direction = position > 0 ? 1 : -1;
+    if (stop_loss_mode_ == "trailing_atr") {
+        if (last_stop_atr_.has_value() && std::isfinite(*last_stop_atr_) &&
+            *last_stop_atr_ > 0.0) {
+            const double stop_distance = stop_loss_atr_multiplier_ * (*last_stop_atr_);
+            double stop_price =
+                direction > 0 ? (avg_open_price - stop_distance) : (avg_open_price + stop_distance);
+            const auto stop_it = trailing_stop_by_instrument_.find(tick.instrument_id);
+            const auto direction_it = trailing_direction_by_instrument_.find(tick.instrument_id);
+            if (stop_it != trailing_stop_by_instrument_.end() &&
+                direction_it != trailing_direction_by_instrument_.end() &&
+                direction_it->second == direction) {
+                stop_price = stop_it->second;
+            }
+            const double candidate = direction > 0 ? (tick.last_price - stop_distance)
+                                                   : (tick.last_price + stop_distance);
+            stop_price =
+                direction > 0 ? std::max(stop_price, candidate) : std::min(stop_price, candidate);
+            trailing_stop_by_instrument_[tick.instrument_id] = stop_price;
+            trailing_direction_by_instrument_[tick.instrument_id] = direction;
+            last_stop_loss_price_ = stop_price;
+        }
+    } else {
+        trailing_stop_by_instrument_.erase(tick.instrument_id);
+        trailing_direction_by_instrument_.erase(tick.instrument_id);
+        last_stop_loss_price_.reset();
+    }
+
+    if (take_profit_mode_ == "atr_target" && last_take_atr_.has_value() &&
+        std::isfinite(*last_take_atr_) && *last_take_atr_ > 0.0) {
+        const double take_distance = take_profit_atr_multiplier_ * (*last_take_atr_);
+        const double take_price =
+            direction > 0 ? (avg_open_price + take_distance) : (avg_open_price - take_distance);
+        last_take_profit_price_ = take_price;
+    } else if (take_profit_mode_ != "atr_target") {
+        last_take_profit_price_.reset();
+    }
+
     return EvaluateRiskSignals(ctx, tick.instrument_id, tick.last_price, tick.ts_ns);
 }
 

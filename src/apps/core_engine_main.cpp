@@ -6,7 +6,9 @@
 #include <cmath>
 #include <condition_variable>
 #include <csignal>
+#include <cstdint>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -532,6 +534,159 @@ std::string ExtractJsonScalarValue(const std::string& line) {
     return value;
 }
 
+std::string TrimAscii(std::string value) {
+    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())) != 0) {
+        value.erase(value.begin());
+    }
+    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())) != 0) {
+        value.pop_back();
+    }
+    return value;
+}
+
+std::int64_t ParseInt64OrZero(const std::string& value) {
+    if (value.empty()) {
+        return 0;
+    }
+    try {
+        return std::stoll(value);
+    } catch (...) {
+        return 0;
+    }
+}
+
+std::string LocalDateBucketFromEpochNs(std::int64_t ts_ns) {
+    if (ts_ns <= 0) {
+        return "";
+    }
+    const std::time_t seconds = static_cast<std::time_t>(ts_ns / 1'000'000'000LL);
+    std::tm tm{};
+#if defined(_WIN32)
+    localtime_s(&tm, &seconds);
+#else
+    localtime_r(&seconds, &tm);
+#endif
+    char buffer[16] = {0};
+    if (std::strftime(buffer, sizeof(buffer), "%Y%m%d", &tm) == 0) {
+        return "";
+    }
+    return std::string(buffer);
+}
+
+std::string ExtractWalJsonField(const std::string& line, const std::string& key) {
+    const std::string marker = "\"" + key + "\":";
+    const auto marker_pos = line.find(marker);
+    if (marker_pos == std::string::npos) {
+        return "";
+    }
+    std::size_t pos = marker_pos + marker.size();
+    while (pos < line.size() && std::isspace(static_cast<unsigned char>(line[pos])) != 0) {
+        ++pos;
+    }
+    if (pos >= line.size()) {
+        return "";
+    }
+    if (line[pos] != '"') {
+        std::size_t end = pos;
+        while (end < line.size() && line[end] != ',' && line[end] != '}') {
+            ++end;
+        }
+        return TrimAscii(line.substr(pos, end - pos));
+    }
+
+    std::string value;
+    bool escaped = false;
+    for (++pos; pos < line.size(); ++pos) {
+        const char ch = line[pos];
+        if (escaped) {
+            switch (ch) {
+                case 'n':
+                    value.push_back('\n');
+                    break;
+                case 'r':
+                    value.push_back('\r');
+                    break;
+                case 't':
+                    value.push_back('\t');
+                    break;
+                default:
+                    value.push_back(ch);
+                    break;
+            }
+            escaped = false;
+            continue;
+        }
+        if (ch == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (ch == '"') {
+            break;
+        }
+        value.push_back(ch);
+    }
+    return value;
+}
+
+std::string BuildTradeReplayDedupKey(const std::string& account_id, const std::string& exchange_id,
+                                     const std::string& instrument_id,
+                                     const std::string& trade_day_bucket, const std::string& side,
+                                     const std::string& offset, const std::string& trade_id) {
+    if (trade_id.empty()) {
+        return "";
+    }
+    return account_id + "|" + trade_day_bucket + "|" + exchange_id + "|" + instrument_id + "|" +
+           side + "|" + offset + "|" + trade_id;
+}
+
+std::string BuildTradeReplayDedupKey(const quant_hft::OrderEvent& event) {
+    if (event.event_source != "OnRtnTrade") {
+        return "";
+    }
+    const std::int64_t event_ts_ns = event.ts_ns > 0 ? event.ts_ns : event.recv_ts_ns;
+    return BuildTradeReplayDedupKey(event.account_id, event.exchange_id, event.instrument_id,
+                                    LocalDateBucketFromEpochNs(event_ts_ns),
+                                    std::to_string(static_cast<int>(event.side)),
+                                    std::to_string(static_cast<int>(event.offset)), event.trade_id);
+}
+
+std::string WalTradeDayBucket(const std::string& line) {
+    const std::int64_t ts_ns = ParseInt64OrZero(ExtractWalJsonField(line, "ts_ns"));
+    if (ts_ns > 0) {
+        return LocalDateBucketFromEpochNs(ts_ns);
+    }
+    const std::int64_t recv_ts_ns = ParseInt64OrZero(ExtractWalJsonField(line, "recv_ts_ns"));
+    if (recv_ts_ns > 0) {
+        return LocalDateBucketFromEpochNs(recv_ts_ns);
+    }
+    return LocalDateBucketFromEpochNs(
+        ParseInt64OrZero(ExtractWalJsonField(line, "exchange_ts_ns")));
+}
+
+std::unordered_set<std::string> LoadWalTradeReplayDedupKeys(const std::string& wal_path) {
+    std::unordered_set<std::string> keys;
+    std::ifstream input(wal_path);
+    if (!input.is_open()) {
+        return keys;
+    }
+    std::string line;
+    while (std::getline(input, line)) {
+        if (line.find("\"event_type\":\"trade_fill\"") == std::string::npos &&
+            line.find("\"event_type\": \"trade_fill\"") == std::string::npos) {
+            continue;
+        }
+        const std::string key = BuildTradeReplayDedupKey(
+            ExtractWalJsonField(line, "account_id"), ExtractWalJsonField(line, "exchange_id"),
+            ExtractWalJsonField(line, "instrument_id"), WalTradeDayBucket(line),
+            ExtractWalJsonField(line, "side"), ExtractWalJsonField(line, "offset"),
+            ExtractWalJsonField(line, "trade_id"));
+        if (!key.empty()) {
+            keys.insert(key);
+        }
+    }
+    return keys;
+}
+
 bool LoadInstrumentMetaCache(const std::string& product_id,
                              std::vector<quant_hft::InstrumentMetaSnapshot>* snapshots,
                              std::string* error) {
@@ -1054,10 +1209,55 @@ quant_hft::PositionDirection ResolveLedgerDirection(const quant_hft::OrderIntent
 
 std::string InferExchangeFromInstrumentId(const std::string& instrument_id) {
     const auto dot = instrument_id.find('.');
-    if (dot == std::string::npos || dot == 0) {
+    if (dot != std::string::npos && dot > 0) {
+        return instrument_id.substr(0, dot);
+    }
+
+    std::string product;
+    for (const char ch : instrument_id) {
+        if (std::isalpha(static_cast<unsigned char>(ch))) {
+            product.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+        } else if (!product.empty()) {
+            break;
+        }
+    }
+    if (product.empty()) {
         return "";
     }
-    return instrument_id.substr(0, dot);
+    if (product == "ag" || product == "al" || product == "ao" || product == "au" ||
+        product == "br" || product == "bu" || product == "cu" || product == "fu" ||
+        product == "hc" || product == "ni" || product == "pb" || product == "rb" ||
+        product == "ru" || product == "sn" || product == "sp" || product == "ss" ||
+        product == "wr" || product == "zn") {
+        return "SHFE";
+    }
+    if (product == "a" || product == "b" || product == "bb" || product == "c" || product == "cs" ||
+        product == "eb" || product == "eg" || product == "fb" || product == "i" || product == "j" ||
+        product == "jd" || product == "jm" || product == "l" || product == "lh" || product == "m" ||
+        product == "p" || product == "pg" || product == "pp" || product == "rr" || product == "v" ||
+        product == "y") {
+        return "DCE";
+    }
+    if (product == "ap" || product == "cf" || product == "cj" || product == "cy" ||
+        product == "fg" || product == "jr" || product == "lr" || product == "ma" ||
+        product == "oi" || product == "pf" || product == "pk" || product == "pm" ||
+        product == "ri" || product == "rm" || product == "rs" || product == "sa" ||
+        product == "sf" || product == "sh" || product == "sm" || product == "sr" ||
+        product == "ta" || product == "ur" || product == "wh" || product == "zc") {
+        return "CZCE";
+    }
+    if (product == "bc" || product == "ec" || product == "lu" || product == "nr" ||
+        product == "sc") {
+        return "INE";
+    }
+    if (product == "if" || product == "ih" || product == "im" || product == "ic" ||
+        product == "t" || product == "tf" || product == "tl" || product == "ts") {
+        return "CFFEX";
+    }
+    if (product == "lc" || product == "si") {
+        return "GFEX";
+    }
+    return "";
 }
 
 std::string HedgeFlagToCtpText(quant_hft::HedgeFlag hedge_flag) {
@@ -1465,6 +1665,13 @@ int main(int argc, char** argv) {
                   << " submit_mappings=" << replay_stats.submit_mappings_loaded << '\n';
     }
 
+    std::mutex seen_trade_fill_mutex;
+    std::unordered_set<std::string> seen_trade_fill_keys = LoadWalTradeReplayDedupKeys(wal_path);
+    if (!seen_trade_fill_keys.empty()) {
+        EmitStructuredLog(&config, "core_engine", "info", "trade_replay_dedup_seeded",
+                          {{"known_trade_fills", std::to_string(seen_trade_fill_keys.size())}});
+    }
+
     auto process_order_event = [&](const OrderEvent& raw_event) {
         OrderEvent event = raw_event;
         if (event.recv_ts_ns <= 0) {
@@ -1515,6 +1722,30 @@ int main(int argc, char** argv) {
                 if (std::fabs(event.impact_cost) < 1e-9) {
                     event.impact_cost = it->second.impact_cost;
                 }
+            }
+        }
+
+        const std::string trade_replay_key = BuildTradeReplayDedupKey(event);
+        if (!trade_replay_key.empty()) {
+            bool duplicate_trade_replay = false;
+            {
+                std::lock_guard<std::mutex> lock(seen_trade_fill_mutex);
+                duplicate_trade_replay = !seen_trade_fill_keys.insert(trade_replay_key).second;
+            }
+            if (duplicate_trade_replay) {
+                EmitStructuredLog(&config, "core_engine", "info",
+                                  "ctp_trade_replay_duplicate_suppressed",
+                                  {{"client_order_id", event.client_order_id},
+                                   {"trace_id", event.trace_id},
+                                   {"strategy_id", event.strategy_id},
+                                   {"instrument_id", event.instrument_id},
+                                   {"exchange_id", event.exchange_id},
+                                   {"trade_id", event.trade_id},
+                                   {"side", std::to_string(static_cast<int>(event.side))},
+                                   {"offset", std::to_string(static_cast<int>(event.offset))},
+                                   {"filled_volume", std::to_string(event.filled_volume)},
+                                   {"last_trade_volume", std::to_string(event.last_trade_volume)}});
+                return;
             }
         }
 
@@ -2021,6 +2252,10 @@ int main(int argc, char** argv) {
             return;
         }
         process_market_snapshot(snapshot);
+        if (strategy_engine != nullptr && std::isfinite(snapshot.last_price) &&
+            snapshot.last_price > 0.0) {
+            strategy_engine->EnqueueMarketTick(snapshot);
+        }
     });
     ctp_trader->RegisterTradingAccountSnapshotCallback([&](const TradingAccountSnapshot& snapshot) {
         {
@@ -3104,7 +3339,9 @@ int main(int argc, char** argv) {
                         static_cast<EpochNanos>(execution_config.cancel_after_ms) * 1'000'000;
                     const auto cutoff_ns = now_ns - cancel_after_ns;
                     for (const auto& order : execution_engine.GetActiveOrders()) {
-                        if (order.updated_at_ns == 0 || order.updated_at_ns > cutoff_ns) {
+                        const EpochNanos timeout_basis_ns =
+                            order.created_at_ns > 0 ? order.created_at_ns : order.updated_at_ns;
+                        if (timeout_basis_ns == 0 || timeout_basis_ns > cutoff_ns) {
                             continue;
                         }
 
@@ -3117,9 +3354,22 @@ int main(int argc, char** argv) {
                             continue;
                         }
 
+                        EmitStructuredLog(
+                            &config, "core_engine", "warn", "order_timeout_cancel_requested",
+                            {{"client_order_id", order.order_id},
+                             {"strategy_id", order.strategy_id},
+                             {"instrument_id", order.symbol},
+                             {"age_ms", std::to_string((now_ns - timeout_basis_ns) / 1'000'000)},
+                             {"filled_quantity", std::to_string(order.filled_quantity)},
+                             {"quantity", std::to_string(order.quantity)}});
                         if (!execution_engine.CancelOrderAsync(order.order_id).get()) {
                             std::lock_guard<std::mutex> lock(cancel_pending_mutex);
                             cancel_pending_orders.erase(order.order_id);
+                            EmitStructuredLog(&config, "core_engine", "warn",
+                                              "order_timeout_cancel_failed",
+                                              {{"client_order_id", order.order_id},
+                                               {"strategy_id", order.strategy_id},
+                                               {"instrument_id", order.symbol}});
                         }
                     }
 

@@ -228,6 +228,16 @@ void StrategyEngine::EnqueueAccountSnapshot(const TradingAccountSnapshot& snapsh
     EnqueueEvent(std::move(event));
 }
 
+void StrategyEngine::EnqueueReconcilePositions(
+    const std::string& account_id,
+    const std::unordered_map<std::string, std::int32_t>& authoritative_net) {
+    EngineEvent event;
+    event.type = EventType::kReconcilePositions;
+    event.reconcile_account_id = account_id;
+    event.reconcile_net = authoritative_net;
+    EnqueueEvent(std::move(event));
+}
+
 std::vector<StrategyMetric> StrategyEngine::CollectAllMetrics() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return cached_metrics_;
@@ -284,6 +294,8 @@ void StrategyEngine::WorkerLoop() {
                 DispatchMarketTick(event.market_tick);
             } else if (event.type == EventType::kOrderEvent) {
                 DispatchOrderEvent(event.order_event);
+            } else if (event.type == EventType::kReconcilePositions) {
+                DispatchReconcilePositions(event.reconcile_account_id, event.reconcile_net);
             } else {
                 DispatchAccountSnapshot(event.account_snapshot);
             }
@@ -431,6 +443,50 @@ void StrategyEngine::DispatchAccountSnapshot(const TradingAccountSnapshot& snaps
             ++stats_.strategy_callback_exceptions;
         } catch (...) {
             EmitStrategyExceptionLog("strategy_callback_exception", "account_snapshot",
+                                     entry.strategy_id, "unknown exception");
+            std::lock_guard<std::mutex> lock(mutex_);
+            ++stats_.strategy_callback_exceptions;
+        }
+    }
+}
+
+void StrategyEngine::DispatchReconcilePositions(
+    const std::string& account_id,
+    const std::unordered_map<std::string, std::int32_t>& authoritative_net) {
+    for (auto& entry : strategies_) {
+        if (!account_id.empty() && entry.account_id != account_id) {
+            continue;
+        }
+        try {
+            std::vector<std::string> adjustments;
+            const std::size_t adjusted =
+                entry.strategy->ReconcileNetPositions(authoritative_net, &adjustments);
+            if (adjusted > 0) {
+                std::string joined;
+                for (std::size_t i = 0; i < adjustments.size(); ++i) {
+                    if (i != 0) {
+                        joined += ",";
+                    }
+                    joined += adjustments[i];
+                }
+                EmitStructuredLog(nullptr, "strategy_engine", "warn",
+                                  "startup_position_reconcile_applied",
+                                  {{"strategy_id", entry.strategy_id},
+                                   {"account_id", entry.account_id},
+                                   {"adjusted_count", std::to_string(adjusted)},
+                                   {"adjustments", joined}});
+            } else {
+                EmitStructuredLog(
+                    nullptr, "strategy_engine", "info", "startup_position_reconcile_noop",
+                    {{"strategy_id", entry.strategy_id}, {"account_id", entry.account_id}});
+            }
+        } catch (const std::exception& ex) {
+            EmitStrategyExceptionLog("strategy_callback_exception", "reconcile_positions",
+                                     entry.strategy_id, ex.what());
+            std::lock_guard<std::mutex> lock(mutex_);
+            ++stats_.strategy_callback_exceptions;
+        } catch (...) {
+            EmitStrategyExceptionLog("strategy_callback_exception", "reconcile_positions",
                                      entry.strategy_id, "unknown exception");
             std::lock_guard<std::mutex> lock(mutex_);
             ++stats_.strategy_callback_exceptions;

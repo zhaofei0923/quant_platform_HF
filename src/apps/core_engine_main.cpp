@@ -2279,9 +2279,17 @@ int main(int argc, char** argv) {
             strategy_engine->EnqueueAccountSnapshot(snapshot);
         }
     });
+    // Authoritative (broker-truth) signed net position snapshot, refreshed on every
+    // InvestorPosition query completion. Used by the startup one-shot position
+    // reconcile to correct any stale strategy position belief left behind by manual
+    // broker flattens (whose trades carry no strategy attribution).
+    std::mutex authoritative_position_mutex;
+    std::unordered_map<std::string, std::int32_t> authoritative_net_by_instrument;
+    bool authoritative_position_received = false;
     ctp_trader->RegisterInvestorPositionSnapshotCallback(
         [&](const std::vector<InvestorPositionSnapshot>& snapshots) {
             std::string ctp_ledger_error;
+            std::unordered_map<std::string, std::int32_t> net_by_instrument;
             for (const auto& snapshot : snapshots) {
                 {
                     std::lock_guard<std::mutex> lock(ctp_ledger_mutex);
@@ -2304,6 +2312,18 @@ int main(int argc, char** argv) {
                                        {"failure_count", std::to_string(failure_count)}});
                 }
                 ctp_query_snapshot_store.AppendInvestorPositionSnapshot(snapshot);
+
+                // CTP PosiDirection: "2"/"long"/"l" = long, otherwise short.
+                const std::string& dir = snapshot.posi_direction;
+                const bool is_long = (dir == "2" || dir == "long" || dir == "l" || dir == "L");
+                const std::int32_t signed_position =
+                    is_long ? snapshot.position : -snapshot.position;
+                net_by_instrument[snapshot.instrument_id] += signed_position;
+            }
+            {
+                std::lock_guard<std::mutex> lock(authoritative_position_mutex);
+                authoritative_net_by_instrument = std::move(net_by_instrument);
+                authoritative_position_received = true;
             }
         });
     ctp_trader->RegisterInstrumentMetaSnapshotCallback(
@@ -2851,10 +2871,29 @@ int main(int argc, char** argv) {
     std::atomic<bool> query_loop_stop{false};
     std::atomic<bool> execution_loop_stop{false};
     std::atomic<bool> dominant_recheck_loop_stop{false};
+    // Startup one-shot position reconcile: after a grace delay (to let same-day
+    // trade replay finish flowing through the strategy FIFO queue), enqueue the
+    // authoritative broker net positions so strategies correct any stale belief.
+    const bool startup_reconcile_enabled =
+        quant_hft::GetEnvOrDefault("QUANT_HFT_STARTUP_POSITION_RECONCILE", "1") != "0";
+    int startup_reconcile_delay_ms = 8000;
+    try {
+        startup_reconcile_delay_ms = std::stoi(
+            quant_hft::GetEnvOrDefault("QUANT_HFT_STARTUP_POSITION_RECONCILE_DELAY_MS", "8000"));
+    } catch (...) {
+        startup_reconcile_delay_ms = 8000;
+    }
+    if (startup_reconcile_delay_ms < 0) {
+        startup_reconcile_delay_ms = 0;
+    }
     std::thread query_poll_thread([&]() {
         auto next_account_query = std::chrono::steady_clock::now();
         auto next_position_query = std::chrono::steady_clock::now();
         auto next_instrument_query = std::chrono::steady_clock::now();
+        const auto startup_reconcile_deadline =
+            std::chrono::steady_clock::now() +
+            std::chrono::milliseconds(startup_reconcile_delay_ms);
+        bool startup_reconcile_done = false;
         while (!query_loop_stop.load()) {
             const auto now = std::chrono::steady_clock::now();
             if (now >= next_account_query) {
@@ -2872,6 +2911,24 @@ int main(int argc, char** argv) {
                 }
                 next_position_query = now + std::chrono::milliseconds(std::max(
                                                 1, file_config.position_query_interval_ms));
+            }
+            if (startup_reconcile_enabled && !startup_reconcile_done &&
+                strategy_engine != nullptr && now >= startup_reconcile_deadline) {
+                std::unordered_map<std::string, std::int32_t> authoritative_snapshot;
+                bool received = false;
+                {
+                    std::lock_guard<std::mutex> lock(authoritative_position_mutex);
+                    received = authoritative_position_received;
+                    authoritative_snapshot = authoritative_net_by_instrument;
+                }
+                if (received) {
+                    strategy_engine->EnqueueReconcilePositions(account_id, authoritative_snapshot);
+                    startup_reconcile_done = true;
+                    EmitStructuredLog(
+                        &config, "core_engine", "info", "startup_position_reconcile_enqueued",
+                        {{"account_id", account_id},
+                         {"instrument_count", std::to_string(authoritative_snapshot.size())}});
+                }
             }
             if (now >= next_instrument_query) {
                 (void)ctp_trader->EnqueueBrokerTradingParamsQuery(next_query_request_id());

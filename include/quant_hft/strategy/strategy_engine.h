@@ -9,6 +9,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "quant_hft/contracts/types.h"
@@ -64,6 +65,13 @@ class StrategyEngine {
     void EnqueueMarketTick(const MarketSnapshot& snapshot);
     void EnqueueOrderEvent(const OrderEvent& event);
     void EnqueueAccountSnapshot(const TradingAccountSnapshot& snapshot);
+    // Enqueue an authoritative (broker-truth) signed net position snapshot so the
+    // matching strategies reconcile their believed net positions. Routed through
+    // the same FIFO queue as order events, which guarantees it is processed after
+    // any already-enqueued replay order events (no double counting).
+    void EnqueueReconcilePositions(
+        const std::string& account_id,
+        const std::unordered_map<std::string, std::int32_t>& authoritative_net);
     std::vector<StrategyMetric> CollectAllMetrics() const;
 
     Stats GetStats() const;
@@ -74,6 +82,7 @@ class StrategyEngine {
         kMarketTick,
         kOrderEvent,
         kAccountSnapshot,
+        kReconcilePositions,
     };
 
     struct EngineEvent {
@@ -82,6 +91,8 @@ class StrategyEngine {
         MarketSnapshot market_tick;
         OrderEvent order_event;
         TradingAccountSnapshot account_snapshot;
+        std::string reconcile_account_id;
+        std::unordered_map<std::string, std::int32_t> reconcile_net;
     };
 
     struct StrategyEntry {
@@ -96,6 +107,9 @@ class StrategyEngine {
     void DispatchMarketTick(const MarketSnapshot& snapshot);
     void DispatchOrderEvent(const OrderEvent& event);
     void DispatchAccountSnapshot(const TradingAccountSnapshot& snapshot);
+    void DispatchReconcilePositions(
+        const std::string& account_id,
+        const std::unordered_map<std::string, std::int32_t>& authoritative_net);
     void DispatchTimer(EpochNanos now_ns);
     void MaybeSnapshotStates(EpochNanos now_ns);
     void SnapshotStates(EpochNanos now_ns);

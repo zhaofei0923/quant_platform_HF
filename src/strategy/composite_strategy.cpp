@@ -646,6 +646,60 @@ void CompositeStrategy::OnAccountSnapshot(const TradingAccountSnapshot& snapshot
     atomic_context_.margin_used = snapshot.curr_margin;
 }
 
+std::size_t CompositeStrategy::ReconcileNetPositions(
+    const std::unordered_map<std::string, std::int32_t>& authoritative_net,
+    std::vector<std::string>* adjustments) {
+    // Build the union of instruments the strategy currently believes it holds
+    // and instruments present in the authoritative (broker-truth) snapshot.
+    std::vector<std::string> instruments;
+    instruments.reserve(atomic_context_.net_positions.size() + authoritative_net.size());
+    for (const auto& [instrument, position] : atomic_context_.net_positions) {
+        if (position != 0) {
+            instruments.push_back(instrument);
+        }
+    }
+    for (const auto& [instrument, position] : authoritative_net) {
+        if (atomic_context_.net_positions.find(instrument) == atomic_context_.net_positions.end()) {
+            instruments.push_back(instrument);
+        }
+    }
+    std::sort(instruments.begin(), instruments.end());
+    instruments.erase(std::unique(instruments.begin(), instruments.end()), instruments.end());
+
+    std::size_t adjusted = 0;
+    for (const std::string& instrument : instruments) {
+        const auto strat_it = atomic_context_.net_positions.find(instrument);
+        const std::int32_t believed =
+            strat_it == atomic_context_.net_positions.end() ? 0 : strat_it->second;
+        const auto auth_it = authoritative_net.find(instrument);
+        const std::int32_t authoritative = auth_it == authoritative_net.end() ? 0 : auth_it->second;
+        if (believed == authoritative) {
+            continue;
+        }
+
+        // Override the strategy belief with the authoritative position. When the
+        // authoritative position is flat, replicate the OnOrderEvent flatten
+        // cleanup so dependent state does not linger. Atomic sub-strategies clear
+        // their position-dependent state (e.g. trailing stops) on the next tick
+        // once they observe position == 0, so no synthetic events are required.
+        if (authoritative == 0) {
+            atomic_context_.net_positions.erase(instrument);
+            atomic_context_.avg_open_prices.erase(instrument);
+            position_owner_by_instrument_.erase(instrument);
+            active_force_close_window_by_instrument_.erase(instrument);
+        } else {
+            atomic_context_.net_positions[instrument] = authoritative;
+        }
+
+        ++adjusted;
+        if (adjustments != nullptr) {
+            adjustments->push_back(instrument + ":" + std::to_string(believed) + "->" +
+                                   std::to_string(authoritative));
+        }
+    }
+    return adjusted;
+}
+
 std::vector<SignalIntent> CompositeStrategy::OnTimer(EpochNanos now_ns) {
     (void)now_ns;
     return {};

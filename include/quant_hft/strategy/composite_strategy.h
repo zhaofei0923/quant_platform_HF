@@ -76,6 +76,9 @@ class CompositeStrategy : public ILiveStrategy {
     std::vector<SignalIntent> OnMarketTick(const MarketSnapshot& snapshot) override;
     void OnOrderEvent(const OrderEvent& event) override;
     void OnAccountSnapshot(const TradingAccountSnapshot& snapshot) override;
+    std::size_t ReconcileNetPositions(
+        const std::unordered_map<std::string, std::int32_t>& authoritative_net,
+        std::vector<std::string>* adjustments) override;
     std::vector<SignalIntent> OnTimer(EpochNanos now_ns) override;
     std::vector<StrategyMetric> CollectMetrics() const override;
     bool SaveState(StrategyState* out, std::string* error) const override;

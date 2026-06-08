@@ -461,6 +461,56 @@ TEST(CompositeStrategyTest, ExistingProductPositionBlocksDifferentContractOpen) 
     EXPECT_EQ(rows.front().blocked_reason, "existing_product_position");
 }
 
+TEST(CompositeStrategyTest, ReconcileNetPositionsFlattensStaleBelief) {
+    const std::string scripted_type = UniqueType("reconcile_flatten");
+    RegisterScriptedType(scripted_type);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {MakeSubStrategy(
+        "s1", scripted_type, {{"id", "s1"}, {"emit_open", "1"}, {"open_side", "buy"}})};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+    strategy.OnOrderEvent(
+        MakeOrderEvent("s1", "rb2405", Side::kBuy, OffsetFlag::kOpen, 1, 100.0, "rb-fill"));
+    ASSERT_EQ(strategy.GetBacktestPositionOwner("rb2405"), "s1");
+
+    // Authoritative broker truth says the account is flat (instrument absent => 0).
+    std::vector<std::string> adjustments;
+    const std::size_t adjusted = strategy.ReconcileNetPositions({}, &adjustments);
+    EXPECT_EQ(adjusted, 1U);
+    ASSERT_EQ(adjustments.size(), 1U);
+    EXPECT_EQ(adjustments.front(), "rb2405:1->0");
+
+    // Stale belief cleared: owner gone and a different contract may now open.
+    EXPECT_EQ(strategy.GetBacktestPositionOwner("rb2405"), "");
+    const std::vector<SignalIntent> after = strategy.OnState(MakeState("rb2406", 20));
+    EXPECT_FALSE(after.empty());
+}
+
+TEST(CompositeStrategyTest, ReconcileNetPositionsNoopWhenBeliefMatchesAuthoritative) {
+    const std::string scripted_type = UniqueType("reconcile_match");
+    RegisterScriptedType(scripted_type);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {MakeSubStrategy(
+        "s1", scripted_type, {{"id", "s1"}, {"emit_open", "1"}, {"open_side", "buy"}})};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+    strategy.OnOrderEvent(
+        MakeOrderEvent("s1", "rb2405", Side::kBuy, OffsetFlag::kOpen, 1, 100.0, "rb-fill"));
+    ASSERT_EQ(strategy.GetBacktestPositionOwner("rb2405"), "s1");
+
+    std::vector<std::string> adjustments;
+    const std::size_t adjusted = strategy.ReconcileNetPositions({{"rb2405", 1}}, &adjustments);
+    EXPECT_EQ(adjusted, 0U);
+    EXPECT_TRUE(adjustments.empty());
+    EXPECT_EQ(strategy.GetBacktestPositionOwner("rb2405"), "s1");
+}
+
 TEST(CompositeStrategyTest, DispatchesSubStrategiesByTimeframeMinutes) {
     const std::string tf1_type = UniqueType("tf1");
     const std::string tf5_type = UniqueType("tf5");

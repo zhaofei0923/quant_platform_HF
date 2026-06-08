@@ -529,6 +529,8 @@ void KamaTrendStrategy::Init(const AtomicParams& params) {
     kama_window_sum_sq_ = 0.0;
     trailing_stop_by_instrument_.clear();
     trailing_direction_by_instrument_.clear();
+    initial_stop_by_instrument_.clear();
+    take_profit_by_instrument_.clear();
     last_kama_.reset();
     last_er_.reset();
     last_adx_.reset();
@@ -568,6 +570,8 @@ void KamaTrendStrategy::Reset() {
     kama_window_sum_sq_ = 0.0;
     trailing_stop_by_instrument_.clear();
     trailing_direction_by_instrument_.clear();
+    initial_stop_by_instrument_.clear();
+    take_profit_by_instrument_.clear();
     last_kama_.reset();
     last_er_.reset();
     last_adx_.reset();
@@ -722,14 +726,18 @@ std::vector<SignalIntent> KamaTrendStrategy::OnState(const StateSnapshot7D& stat
         if (stop_loss_mode_ == "trailing_atr" && last_stop_atr_.has_value() &&
             std::isfinite(*last_stop_atr_) && *last_stop_atr_ > 0.0) {
             const double stop_distance = stop_loss_atr_multiplier_ * (*last_stop_atr_);
-            double stop_price =
+            const double base_stop =
                 direction > 0 ? (avg_open_price - stop_distance) : (avg_open_price + stop_distance);
+            double stop_price = base_stop;
             const auto stop_it = trailing_stop_by_instrument_.find(state.instrument_id);
             const auto direction_it = trailing_direction_by_instrument_.find(state.instrument_id);
-            if (stop_it != trailing_stop_by_instrument_.end() &&
-                direction_it != trailing_direction_by_instrument_.end() &&
-                direction_it->second == direction) {
+            const bool continuing = stop_it != trailing_stop_by_instrument_.end() &&
+                                    direction_it != trailing_direction_by_instrument_.end() &&
+                                    direction_it->second == direction;
+            if (continuing) {
                 stop_price = stop_it->second;
+            } else {
+                initial_stop_by_instrument_[state.instrument_id] = base_stop;
             }
             trailing_stop_by_instrument_[state.instrument_id] = stop_price;
             trailing_direction_by_instrument_[state.instrument_id] = direction;
@@ -737,6 +745,7 @@ std::vector<SignalIntent> KamaTrendStrategy::OnState(const StateSnapshot7D& stat
         } else {
             trailing_stop_by_instrument_.erase(state.instrument_id);
             trailing_direction_by_instrument_.erase(state.instrument_id);
+            initial_stop_by_instrument_.erase(state.instrument_id);
         }
 
         if (take_profit_mode_ == "atr_target" && last_take_atr_.has_value() &&
@@ -745,6 +754,9 @@ std::vector<SignalIntent> KamaTrendStrategy::OnState(const StateSnapshot7D& stat
             const double take_price =
                 direction > 0 ? (avg_open_price + take_distance) : (avg_open_price - take_distance);
             last_take_profit_price_ = take_price;
+            take_profit_by_instrument_[state.instrument_id] = take_price;
+        } else {
+            take_profit_by_instrument_.erase(state.instrument_id);
         }
 
         if (!has_entry_signal) {
@@ -759,6 +771,8 @@ std::vector<SignalIntent> KamaTrendStrategy::OnState(const StateSnapshot7D& stat
 
     trailing_stop_by_instrument_.erase(state.instrument_id);
     trailing_direction_by_instrument_.erase(state.instrument_id);
+    initial_stop_by_instrument_.erase(state.instrument_id);
+    take_profit_by_instrument_.erase(state.instrument_id);
     if (!has_entry_signal) {
         return {};
     }
@@ -774,6 +788,8 @@ std::vector<SignalIntent> KamaTrendStrategy::OnBacktestTick(const AtomicTickSnap
     if (position == 0) {
         trailing_stop_by_instrument_.erase(tick.instrument_id);
         trailing_direction_by_instrument_.erase(tick.instrument_id);
+        initial_stop_by_instrument_.erase(tick.instrument_id);
+        take_profit_by_instrument_.erase(tick.instrument_id);
         return {};
     }
 
@@ -788,14 +804,18 @@ std::vector<SignalIntent> KamaTrendStrategy::OnBacktestTick(const AtomicTickSnap
         if (last_stop_atr_.has_value() && std::isfinite(*last_stop_atr_) &&
             *last_stop_atr_ > 0.0) {
             const double stop_distance = stop_loss_atr_multiplier_ * (*last_stop_atr_);
-            double stop_price =
+            const double base_stop =
                 direction > 0 ? (avg_open_price - stop_distance) : (avg_open_price + stop_distance);
+            double stop_price = base_stop;
             const auto stop_it = trailing_stop_by_instrument_.find(tick.instrument_id);
             const auto direction_it = trailing_direction_by_instrument_.find(tick.instrument_id);
-            if (stop_it != trailing_stop_by_instrument_.end() &&
-                direction_it != trailing_direction_by_instrument_.end() &&
-                direction_it->second == direction) {
+            const bool continuing = stop_it != trailing_stop_by_instrument_.end() &&
+                                    direction_it != trailing_direction_by_instrument_.end() &&
+                                    direction_it->second == direction;
+            if (continuing) {
                 stop_price = stop_it->second;
+            } else {
+                initial_stop_by_instrument_[tick.instrument_id] = base_stop;
             }
             const double candidate = direction > 0 ? (tick.last_price - stop_distance)
                                                    : (tick.last_price + stop_distance);
@@ -808,6 +828,7 @@ std::vector<SignalIntent> KamaTrendStrategy::OnBacktestTick(const AtomicTickSnap
     } else {
         trailing_stop_by_instrument_.erase(tick.instrument_id);
         trailing_direction_by_instrument_.erase(tick.instrument_id);
+        initial_stop_by_instrument_.erase(tick.instrument_id);
         last_stop_loss_price_.reset();
     }
 
@@ -817,8 +838,10 @@ std::vector<SignalIntent> KamaTrendStrategy::OnBacktestTick(const AtomicTickSnap
         const double take_price =
             direction > 0 ? (avg_open_price + take_distance) : (avg_open_price - take_distance);
         last_take_profit_price_ = take_price;
+        take_profit_by_instrument_[tick.instrument_id] = take_price;
     } else if (take_profit_mode_ != "atr_target") {
         last_take_profit_price_.reset();
+        take_profit_by_instrument_.erase(tick.instrument_id);
     }
 
     return EvaluateRiskSignals(ctx, tick.instrument_id, tick.last_price, tick.ts_ns);
@@ -848,6 +871,21 @@ std::optional<AtomicIndicatorSnapshot> KamaTrendStrategy::IndicatorSnapshot() co
     snapshot.take_profit_price = last_take_profit_price_;
     snapshot.raw_signal = last_raw_signal_;
     return snapshot;
+}
+
+std::unordered_map<std::string, AtomicRiskPrices> KamaTrendStrategy::RiskPricesByInstrument()
+    const {
+    std::unordered_map<std::string, AtomicRiskPrices> prices;
+    for (const auto& [instrument_id, stop_price] : trailing_stop_by_instrument_) {
+        prices[instrument_id].trailing_stop = stop_price;
+    }
+    for (const auto& [instrument_id, stop_price] : initial_stop_by_instrument_) {
+        prices[instrument_id].initial_stop = stop_price;
+    }
+    for (const auto& [instrument_id, take_price] : take_profit_by_instrument_) {
+        prices[instrument_id].take_profit = take_price;
+    }
+    return prices;
 }
 
 bool KamaTrendStrategy::SaveState(AtomicState* out, std::string* error) const {
@@ -894,6 +932,23 @@ bool KamaTrendStrategy::SaveState(AtomicState* out, std::string* error) const {
         (*out)[prefix + ".instrument"] = instrument_id;
         (*out)[prefix + ".direction"] = std::to_string(direction);
         ++direction_index;
+    }
+
+    (*out)["initial_stop.count"] = std::to_string(initial_stop_by_instrument_.size());
+    std::size_t initial_stop_index = 0;
+    for (const auto& [instrument_id, stop_price] : initial_stop_by_instrument_) {
+        const std::string prefix = "initial_stop." + std::to_string(initial_stop_index);
+        (*out)[prefix + ".instrument"] = instrument_id;
+        (*out)[prefix + ".price"] = FormatStateDouble(stop_price);
+        ++initial_stop_index;
+    }
+    (*out)["take_profit.count"] = std::to_string(take_profit_by_instrument_.size());
+    std::size_t take_profit_index = 0;
+    for (const auto& [instrument_id, take_price] : take_profit_by_instrument_) {
+        const std::string prefix = "take_profit." + std::to_string(take_profit_index);
+        (*out)[prefix + ".instrument"] = instrument_id;
+        (*out)[prefix + ".price"] = FormatStateDouble(take_price);
+        ++take_profit_index;
     }
 
     WriteOptionalDouble(out, "last_kama", last_kama_);
@@ -1014,6 +1069,48 @@ bool KamaTrendStrategy::LoadState(const AtomicState& state, std::string* error) 
         trailing_direction_by_instrument[*instrument] = direction;
     }
 
+    // initial_stop / take_profit maps are display-only and were added later; treat
+    // a missing count as an empty map so older state files load without error.
+    std::unordered_map<std::string, double> initial_stop_by_instrument;
+    if (state.find("initial_stop.count") != state.end()) {
+        std::size_t initial_stop_count = 0;
+        if (!ReadStateSize(state, "initial_stop.count", &initial_stop_count, error)) {
+            return false;
+        }
+        for (std::size_t i = 0; i < initial_stop_count; ++i) {
+            const std::string prefix = "initial_stop." + std::to_string(i);
+            const std::string* instrument = FindStateValue(state, prefix + ".instrument", error);
+            if (instrument == nullptr || instrument->empty()) {
+                return false;
+            }
+            double price = 0.0;
+            if (!ReadStateDouble(state, prefix + ".price", &price, error)) {
+                return false;
+            }
+            initial_stop_by_instrument[*instrument] = price;
+        }
+    }
+
+    std::unordered_map<std::string, double> take_profit_by_instrument;
+    if (state.find("take_profit.count") != state.end()) {
+        std::size_t take_profit_count = 0;
+        if (!ReadStateSize(state, "take_profit.count", &take_profit_count, error)) {
+            return false;
+        }
+        for (std::size_t i = 0; i < take_profit_count; ++i) {
+            const std::string prefix = "take_profit." + std::to_string(i);
+            const std::string* instrument = FindStateValue(state, prefix + ".instrument", error);
+            if (instrument == nullptr || instrument->empty()) {
+                return false;
+            }
+            double price = 0.0;
+            if (!ReadStateDouble(state, prefix + ".price", &price, error)) {
+                return false;
+            }
+            take_profit_by_instrument[*instrument] = price;
+        }
+    }
+
     std::optional<double> last_kama;
     std::optional<double> last_er;
     std::optional<double> last_adx;
@@ -1075,6 +1172,8 @@ bool KamaTrendStrategy::LoadState(const AtomicState& state, std::string* error) 
     kama_window_sum_sq_ = loaded_window_sum_sq;
     trailing_stop_by_instrument_ = std::move(trailing_stop_by_instrument);
     trailing_direction_by_instrument_ = std::move(trailing_direction_by_instrument);
+    initial_stop_by_instrument_ = std::move(initial_stop_by_instrument);
+    take_profit_by_instrument_ = std::move(take_profit_by_instrument);
     last_kama_ = last_kama;
     last_er_ = last_er;
     last_adx_ = last_adx;

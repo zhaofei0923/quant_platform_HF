@@ -158,4 +158,18 @@ class IAtomicIndicatorTraceProvider {
     virtual std::optional<AtomicIndicatorSnapshot> IndicatorSnapshot() const = 0;
 };
 
+// Per-instrument risk price levels exposed for monitoring (dashboard). These are
+// read-only derived quantities; absent fields mean the level is not tracked.
+struct AtomicRiskPrices {
+    std::optional<double> initial_stop;
+    std::optional<double> trailing_stop;
+    std::optional<double> take_profit;
+};
+
+class IAtomicRiskPriceProvider {
+   public:
+    virtual ~IAtomicRiskPriceProvider() = default;
+    virtual std::unordered_map<std::string, AtomicRiskPrices> RiskPricesByInstrument() const = 0;
+};
+
 }  // namespace quant_hft

@@ -298,6 +298,54 @@ TEST(AtomicStrategiesTest, KamaTrendStrategyTrailingStopRefreshesAndTriggersOnTi
     EXPECT_EQ(trigger.front().trace_id, "kama_1-stop_loss-IF2406-7");
 }
 
+TEST(AtomicStrategiesTest, KamaTrendStrategyExposesInitialAndTrailingRiskPrices) {
+    KamaTrendStrategy strategy;
+    strategy.Init(MakeKamaParams());
+
+    auto* risk_provider = dynamic_cast<IAtomicRiskPriceProvider*>(&strategy);
+    ASSERT_NE(risk_provider, nullptr);
+    auto* tick_aware = dynamic_cast<IAtomicBacktestTickAware*>(&strategy);
+    ASSERT_NE(tick_aware, nullptr);
+
+    // No position yet: no risk prices reported.
+    EXPECT_TRUE(risk_provider->RiskPricesByInstrument().empty());
+
+    AtomicStrategyContext ctx = MakeContext("acct");
+    ctx.net_positions["IF2406"] = 1;
+    ctx.avg_open_prices["IF2406"] = 100.0;
+
+    EXPECT_TRUE(strategy.OnState(MakeBarState("IF2406", 101.0, 99.0, 100.0, 1), ctx).empty());
+    EXPECT_TRUE(strategy.OnState(MakeBarState("IF2406", 102.0, 100.0, 101.0, 2), ctx).empty());
+    EXPECT_TRUE(strategy.OnState(MakeBarState("IF2406", 104.0, 102.0, 103.0, 3), ctx).empty());
+
+    const auto prices_after_entry = risk_provider->RiskPricesByInstrument();
+    ASSERT_EQ(prices_after_entry.count("IF2406"), 1U);
+    const auto& entry_levels = prices_after_entry.at("IF2406");
+    ASSERT_TRUE(entry_levels.initial_stop.has_value());
+    ASSERT_TRUE(entry_levels.trailing_stop.has_value());
+    ASSERT_TRUE(entry_levels.take_profit.has_value());
+    const double initial_stop = entry_levels.initial_stop.value();
+    const double trailing_stop_at_entry = entry_levels.trailing_stop.value();
+
+    // A favorable tick ratchets the trailing stop up; the initial stop is fixed.
+    // The tick may also emit a take-profit signal, which is irrelevant here.
+    const double rally_tick_price = trailing_stop_at_entry + 25.0;
+    (void)tick_aware->OnBacktestTick(MakeTick("IF2406", rally_tick_price, 4), ctx);
+
+    const auto prices_after_rally = risk_provider->RiskPricesByInstrument();
+    ASSERT_EQ(prices_after_rally.count("IF2406"), 1U);
+    const auto& rally_levels = prices_after_rally.at("IF2406");
+    ASSERT_TRUE(rally_levels.initial_stop.has_value());
+    ASSERT_TRUE(rally_levels.trailing_stop.has_value());
+    EXPECT_DOUBLE_EQ(rally_levels.initial_stop.value(), initial_stop);
+    EXPECT_GT(rally_levels.trailing_stop.value(), trailing_stop_at_entry);
+
+    // Flattening the position clears all reported risk levels.
+    ctx.net_positions["IF2406"] = 0;
+    (void)tick_aware->OnBacktestTick(MakeTick("IF2406", rally_tick_price, 5), ctx);
+    EXPECT_TRUE(risk_provider->RiskPricesByInstrument().empty());
+}
+
 TEST(AtomicStrategiesTest, TrendStrategyEmitsOpenAndTakeProfitSignalsOnTick) {
     TrendStrategy strategy;
     strategy.Init(MakeTrendParams());

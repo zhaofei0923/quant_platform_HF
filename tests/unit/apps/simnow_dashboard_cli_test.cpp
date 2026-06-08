@@ -640,4 +640,57 @@ TEST(SimnowDashboardCli, MissingInputsStillProduceDashboardFiles) {
     EXPECT_NE(html.find("No market CSV files found"), std::string::npos);
 }
 
+TEST(SimnowDashboardCli, PositionsRenderPriceLevelsFromStrategyState) {
+    const auto root = MakeTempDir("position_price_levels");
+    const auto output_dir = root / "dashboard";
+    const auto state_dir = root / "state";
+    const auto stdout_log = root / "stdout.log";
+
+    WriteFile(root / "wal" / "events.wal", "");
+    // A persisted strategy state carrying a live net position plus the flat
+    // per-instrument risk price levels surfaced for the dashboard.
+    WriteFile(state_dir / "strategy_state__kama_trend_production.json",
+              "{\n"
+              "  \"saved_epoch_seconds\": 1780291427,\n"
+              "  \"account_id\": \"acct\",\n"
+              "  \"strategy_id\": \"kama_trend_production\",\n"
+              "  \"state\": {\n"
+              "    \"net_pos.rb\": \"3\",\n"
+              "    \"avg_open.rb\": \"4500.500000\",\n"
+              "    \"init_stop.rb\": \"4460.000000\",\n"
+              "    \"trailing_stop.rb\": \"4488.250000\",\n"
+              "    \"take_profit.rb\": \"4560.750000\",\n"
+              "    \"atomic.kama_trend_production.trailing_stop.count\": \"1\",\n"
+              "    \"atomic.kama_trend_production.trailing_stop.0.instrument\": \"rb\",\n"
+              "    \"atomic.kama_trend_production.trailing_stop.0.price\": \"9999.000000\"\n"
+              "  }\n"
+              "}\n");
+
+    const std::string command =
+        DashboardCommand(root, output_dir) + " --state-dir \"" + state_dir.string() + "\"";
+    const int rc = RunCommandCapture(command, stdout_log);
+
+    EXPECT_EQ(rc, 0);
+    const std::string json = ReadFile(output_dir / "dashboard_state.json");
+    const std::string html = ReadFile(output_dir / "index.html");
+
+    // JSON exposes the four price levels for the live position.
+    EXPECT_NE(json.find("\"instrument_id\": \"rb\""), std::string::npos);
+    EXPECT_NE(json.find("\"avg_open\": 4500.5000"), std::string::npos);
+    EXPECT_NE(json.find("\"initial_stop\": 4460.0000"), std::string::npos);
+    EXPECT_NE(json.find("\"trailing_stop\": 4488.2500"), std::string::npos);
+    EXPECT_NE(json.find("\"take_profit\": 4560.7500"), std::string::npos);
+
+    // HTML table gains the new price columns with formatted values.
+    EXPECT_NE(html.find("Init Stop"), std::string::npos);
+    EXPECT_NE(html.find("Take Profit"), std::string::npos);
+    EXPECT_NE(html.find("Trailing Stop"), std::string::npos);
+    EXPECT_NE(html.find("4500.50"), std::string::npos);
+    EXPECT_NE(html.find("4460.00"), std::string::npos);
+    EXPECT_NE(html.find("4488.25"), std::string::npos);
+    EXPECT_NE(html.find("4560.75"), std::string::npos);
+    // The nested atomic trailing-stop value must not leak into the position row.
+    EXPECT_EQ(html.find("9999.00"), std::string::npos);
+}
+
 }  // namespace

@@ -53,7 +53,8 @@ std::optional<double> ParseOptionalDouble(const AtomicParams& params, const std:
 class ScriptedSubStrategy final : public ISubStrategy,
                                   public IAtomicBacktestTickAware,
                                   public IAtomicOrderAware,
-                                  public IAtomicIndicatorTraceProvider {
+                                  public IAtomicIndicatorTraceProvider,
+                                  public IAtomicRiskPriceProvider {
    public:
     void Init(const AtomicParams& params) override {
         id_ = GetOrDefault(params, "id", "scripted");
@@ -78,6 +79,11 @@ class ScriptedSubStrategy final : public ISubStrategy,
         snapshot_er_ = ParseOptionalDouble(params, "snapshot_er");
         snapshot_stop_loss_price_ = ParseOptionalDouble(params, "snapshot_stop_loss_price");
         snapshot_take_profit_price_ = ParseOptionalDouble(params, "snapshot_take_profit_price");
+
+        risk_instrument_ = GetOrDefault(params, "risk_instrument", "");
+        risk_initial_stop_ = ParseOptionalDouble(params, "risk_initial_stop");
+        risk_trailing_stop_ = ParseOptionalDouble(params, "risk_trailing_stop");
+        risk_take_profit_ = ParseOptionalDouble(params, "risk_take_profit");
     }
 
     std::string GetId() const override { return id_; }
@@ -191,6 +197,19 @@ class ScriptedSubStrategy final : public ISubStrategy,
         return snapshot;
     }
 
+    std::unordered_map<std::string, AtomicRiskPrices> RiskPricesByInstrument() const override {
+        std::unordered_map<std::string, AtomicRiskPrices> prices;
+        if (risk_instrument_.empty()) {
+            return prices;
+        }
+        AtomicRiskPrices levels;
+        levels.initial_stop = risk_initial_stop_;
+        levels.trailing_stop = risk_trailing_stop_;
+        levels.take_profit = risk_take_profit_;
+        prices[risk_instrument_] = levels;
+        return prices;
+    }
+
    private:
     std::string id_;
     bool emit_open_{false};
@@ -211,6 +230,10 @@ class ScriptedSubStrategy final : public ISubStrategy,
     std::optional<double> snapshot_er_;
     std::optional<double> snapshot_stop_loss_price_;
     std::optional<double> snapshot_take_profit_price_;
+    std::string risk_instrument_;
+    std::optional<double> risk_initial_stop_;
+    std::optional<double> risk_trailing_stop_;
+    std::optional<double> risk_take_profit_;
 };
 
 std::string UniqueType(const std::string& stem) {
@@ -1260,6 +1283,63 @@ TEST(CompositeStrategyTest, SaveAndLoadStateRestoresPositionGate) {
     const std::vector<SignalIntent> signals = restored.OnState(MakeState("rb2405", 80));
     ASSERT_EQ(signals.size(), 1U);
     EXPECT_EQ(signals.front().signal_type, SignalType::kClose);
+}
+
+TEST(CompositeStrategyTest, SaveStateEmitsPerInstrumentRiskPriceLevels) {
+    const std::string sub_type = UniqueType("risk_prices");
+    RegisterScriptedType(sub_type);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {MakeSubStrategy("risk", sub_type,
+                                                 {{"id", "risk"},
+                                                  {"risk_instrument", "rb2405"},
+                                                  {"risk_initial_stop", "4460.0"},
+                                                  {"risk_trailing_stop", "4488.25"},
+                                                  {"risk_take_profit", "4560.75"}})};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+    strategy.OnOrderEvent(
+        MakeOrderEvent("risk", "rb2405", Side::kBuy, OffsetFlag::kOpen, 2, 4500.5, "risk-open"));
+
+    StrategyState snapshot;
+    std::string error;
+    ASSERT_TRUE(strategy.SaveState(&snapshot, &error)) << error;
+
+    ASSERT_EQ(snapshot.count("net_pos.rb2405"), 1U);
+    ASSERT_EQ(snapshot.count("init_stop.rb2405"), 1U);
+    ASSERT_EQ(snapshot.count("trailing_stop.rb2405"), 1U);
+    ASSERT_EQ(snapshot.count("take_profit.rb2405"), 1U);
+    EXPECT_DOUBLE_EQ(std::stod(snapshot.at("init_stop.rb2405")), 4460.0);
+    EXPECT_DOUBLE_EQ(std::stod(snapshot.at("trailing_stop.rb2405")), 4488.25);
+    EXPECT_DOUBLE_EQ(std::stod(snapshot.at("take_profit.rb2405")), 4560.75);
+}
+
+TEST(CompositeStrategyTest, SaveStateOmitsRiskPriceLevelsWhenFlat) {
+    const std::string sub_type = UniqueType("risk_prices_flat");
+    RegisterScriptedType(sub_type);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {MakeSubStrategy("risk", sub_type,
+                                                 {{"id", "risk"},
+                                                  {"risk_instrument", "rb2405"},
+                                                  {"risk_initial_stop", "4460.0"},
+                                                  {"risk_trailing_stop", "4488.25"},
+                                                  {"risk_take_profit", "4560.75"}})};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+
+    StrategyState snapshot;
+    std::string error;
+    ASSERT_TRUE(strategy.SaveState(&snapshot, &error)) << error;
+
+    // No live position, so the display-only risk levels are not emitted.
+    EXPECT_EQ(snapshot.count("init_stop.rb2405"), 0U);
+    EXPECT_EQ(snapshot.count("trailing_stop.rb2405"), 0U);
+    EXPECT_EQ(snapshot.count("take_profit.rb2405"), 0U);
 }
 
 TEST(CompositeStrategyTest, PropagatesBacktestSnapshotIntoAtomicContext) {

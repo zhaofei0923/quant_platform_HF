@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
@@ -49,6 +50,7 @@ struct DashboardOptions {
     std::string monitor_root;
     std::string ctp_instrument_dir;
     std::string probe_log_dir;
+    std::string state_dir;
     std::string output_dir;
     int watch_seconds{0};
     bool strict_exit{false};
@@ -227,6 +229,16 @@ struct CtpOrderFlowStatus {
     std::map<std::string, std::size_t> trade_fill_index_by_key;
 };
 
+struct PositionRow {
+    std::string instrument_id;
+    std::int64_t net{0};
+    std::string source;
+    std::optional<double> avg_open;
+    std::optional<double> initial_stop;
+    std::optional<double> take_profit;
+    std::optional<double> trailing_stop;
+};
+
 struct DashboardState {
     std::int64_t generated_ts_ns{0};
     std::string generated_at_local;
@@ -243,6 +255,8 @@ struct DashboardState {
     SignalMonitorStatus signal_monitor;
     CtpConnectionStatus ctp_connection;
     CtpOrderFlowStatus ctp_order_flow;
+    std::vector<PositionRow> positions;
+    std::string positions_source;
     std::vector<std::string> recent_alerts;
     std::map<std::string, std::string> paths;
 };
@@ -1979,6 +1993,25 @@ std::string JsonOptionalBool(const std::optional<bool>& value) {
     return *value ? "true" : "false";
 }
 
+std::string JsonOptionalDouble(const std::optional<double>& value) {
+    if (!value.has_value() || !std::isfinite(*value)) {
+        return "null";
+    }
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(4) << *value;
+    return out.str();
+}
+
+// Render a price level for HTML cells: fixed precision, or a dash when absent.
+std::string FormatPriceCell(const std::optional<double>& value) {
+    if (!value.has_value() || !std::isfinite(*value)) {
+        return "-";
+    }
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(2) << *value;
+    return out.str();
+}
+
 std::string RenderStateJson(const DashboardState& state) {
     std::ostringstream out;
     out << "{\n";
@@ -2278,6 +2311,23 @@ std::string RenderStateJson(const DashboardState& state) {
         }
         out << "\n";
     }
+    out << "  ],\n";
+
+    out << "  \"positions_source\": " << JsonString(state.positions_source) << ",\n";
+    out << "  \"positions\": [\n";
+    for (std::size_t i = 0; i < state.positions.size(); ++i) {
+        const auto& pos = state.positions[i];
+        out << "    {\"instrument_id\": " << JsonString(pos.instrument_id)
+            << ", \"net\": " << pos.net << ", \"source\": " << JsonString(pos.source)
+            << ", \"avg_open\": " << JsonOptionalDouble(pos.avg_open)
+            << ", \"initial_stop\": " << JsonOptionalDouble(pos.initial_stop)
+            << ", \"take_profit\": " << JsonOptionalDouble(pos.take_profit)
+            << ", \"trailing_stop\": " << JsonOptionalDouble(pos.trailing_stop) << "}";
+        if (i + 1 < state.positions.size()) {
+            out << ',';
+        }
+        out << "\n";
+    }
     out << "  ]\n";
     out << "}\n";
     return out.str();
@@ -2382,10 +2432,6 @@ std::string RenderPathTable(const std::map<std::string, std::string>& paths) {
 }
 
 std::string RenderHtml(const DashboardState& state) {
-    const std::string headline_instrument =
-        state.markets.empty() ? "-" : InstrumentLabel(state.markets.front());
-    const std::string headline_price =
-        state.markets.empty() ? "-" : EmptyAsDash(state.markets.front().tick.last_price);
     const std::int64_t reject_count =
         state.ctp_order_flow.wal_rejected + state.ctp_order_flow.ctp_submit_rejected;
     const std::string active_instruments = JoinOrDash(state.ctp_connection.active_instruments);
@@ -2468,12 +2514,7 @@ std::string RenderHtml(const DashboardState& state) {
             ".mini b{display:block;font-size:13px;white-space:nowrap;overflow:hidden;"
             "text-overflow:ellipsis}.mini span{display:block;color:var(--muted);font-size:11px;"
             "white-space:nowrap;overflow:hidden;text-overflow:ellipsis}\n";
-    html << ".flowline{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;"
-            "margin-top:10px}.step{border:1px solid var(--line);background:var(--surface-2);"
-            "border-radius:6px;padding:10px;min-height:68px}.step span{display:block;color:"
-            "var(--muted);font:800 10px/1.15 ui-monospace,SFMono-Regular,Menlo,monospace;"
-            "text-transform:uppercase}.step b{display:block;margin-top:8px;font-size:20px}"
-            "table{width:100%;border-collapse:collapse;table-layout:fixed;border-top:1px solid "
+    html << "table{width:100%;border-collapse:collapse;table-layout:fixed;border-top:1px solid "
             "var(--line);border-left:1px solid var(--line)}th,td{padding:8px 9px;border-right:"
             "1px solid var(--line);border-bottom:1px solid var(--line);text-align:left;"
             "vertical-align:top;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}"
@@ -2493,44 +2534,88 @@ std::string RenderHtml(const DashboardState& state) {
     html << "@media(max-width:1100px){.span-3,.span-4,.span-5,.span-6,.span-7,.span-8{"
             "grid-column:span 12}.price-grid{grid-template-columns:1fr}.hero{grid-template-"
             "columns:1fr}.hero-meta{justify-items:start}.hero-meta .subtle{text-align:left}"
-            ".metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.flowline{grid-template-"
-            "columns:repeat(2,minmax(0,1fr))}}@media(max-width:620px){.topbar,main{padding-left:"
-            "14px;padding-right:14px}.nav{display:none}.metrics,.mini-grid,.quote-row,.flowline{"
+            ".metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}"
+            "@media(max-width:620px){.topbar,main{padding-left:"
+            "14px;padding-right:14px}.nav{display:none}.metrics,.mini-grid,.quote-row{"
             "grid-template-columns:1fr}h1{font-size:29px}.last-price{font-size:29px}}\n";
     html << "</style>\n</head>\n<body>\n";
 
     html << "<header class=\"topbar\"><div class=\"brand\"><span class=\"brand-mark\"></span>"
-            "<span>quant_hft / SimNow</span></div><nav class=\"nav\"><span>Prices</span>"
-            "<span>Orders</span><span>Fills</span><span>30s refresh</span></nav></header>\n";
+            "<span>quant_hft / SimNow</span></div><nav class=\"nav\"><span>Status</span>"
+            "<span>Positions</span><span>Prices</span><span>Fills</span>"
+            "<span>30s refresh</span></nav></header>\n";
     html << "<main><section class=\"hero\"><div><div class=\"eyebrow\">SimNow live trading</div>"
-            "<h1>SimNow Trading Cockpit</h1><p class=\"intro\">Focused view of latest prices, "
-            "order flow, fills, rejects, and CTP execution evidence.</p></div><div "
+            "<h1>SimNow Trading Cockpit</h1><p class=\"intro\">Key live state: system health, "
+            "positions, prices, order flow, and fills.</p></div><div "
             "class=\"hero-meta\">"
          << RenderBadge(state.live_healthy ? "live healthy" : "live unhealthy", state.live_healthy)
          << "<div class=\"subtle\">Generated " << HtmlEscape(state.generated_at_local)
          << "</div></div></section><div class=\"grid\">\n";
 
-    html << "<section class=\"panel span-3 hero-stat\"><h2>Live State</h2><div class=\"metrics\">";
+    // Panel 0: Recent fills (newest first) — surfaced at the top for quick review.
+    html << "<section class=\"panel span-12\"><h2>Recent Fills</h2>";
+    html << "<p class=\"section-note\">Unique fills " << state.ctp_order_flow.wal_fills << " / raw "
+         << state.ctp_order_flow.wal_fills_raw << "; " << state.ctp_order_flow.wal_duplicate_fills
+         << " replay duplicates filtered. Newest first.</p>";
+    html << "<div class=\"scroll\"><table><thead><tr><th>Time</th><th>Instrument</th>"
+            "<th>Side</th><th>Offset</th><th>Volume</th><th>Price</th>"
+            "<th>Strategy</th></tr></thead><tbody>";
+    if (state.ctp_order_flow.trade_fills.empty()) {
+        html << "<tr><td colspan=\"7\">No unique trade fills found</td></tr>";
+    } else {
+        for (auto it = state.ctp_order_flow.trade_fills.rbegin();
+             it != state.ctp_order_flow.trade_fills.rend(); ++it) {
+            const auto& fill = *it;
+            html << "<tr><td>" << HtmlEscape(EmptyAsDash(fill.time)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.instrument_id)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.side)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.offset)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.volume)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.price)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(fill.strategy_id)) << "</td></tr>";
+        }
+    }
+    html << "</tbody></table></div></section>\n";
+
+    // Panel 1: Status bar — consolidated system health.
+    html << "<section class=\"panel span-12\"><h2>System Status</h2><div class=\"metrics\">";
     html << RenderMetric("core_engine", state.process.status);
+    html << RenderMetric("CTP", state.ctp_connection.status);
+    html << RenderMetric("settlement", state.ctp_connection.settlement_status);
+    html << RenderMetric("signal monitor", state.signal_monitor.status);
+    html << RenderMetric("trading day", state.daily.trading_day);
     html << RenderMetric("warnings", state.live_warning_count);
-    html << "</div></section>\n";
-
-    html << "<section class=\"panel span-3 hero-stat\"><h2>Lead Contract</h2><div "
-            "class=\"metrics\">";
-    html << RenderMetric("instrument", headline_instrument);
-    html << RenderMetric("last price", headline_price);
-    html << "</div></section>\n";
-
-    html << "<section class=\"panel span-3 hero-stat\"><h2>Order Book</h2><div class=\"metrics\">";
-    html << RenderMetric("WAL orders", state.wal.order_events);
-    html << RenderMetric("WAL fills", state.wal.trade_or_fill_events);
-    html << "</div></section>\n";
-
-    html << "<section class=\"panel span-3 hero-stat\"><h2>Risk Tape</h2><div class=\"metrics\">";
     html << RenderMetric("rejects", reject_count);
     html << RenderMetric("incidents", state.signal_monitor.incidents);
-    html << "</div></section>\n";
+    html << "</div><div class=\"section-note\">Active instruments: <code>"
+         << HtmlEscape(active_instruments) << "</code></div></section>\n";
 
+    // Panel 2: Current positions — strategy net positions persisted to disk.
+    html << "<section class=\"panel span-12\"><div class=\"panel-head\"><div><h2>Current "
+            "Positions</h2><div class=\"caption\">Strategy net positions from "
+         << HtmlEscape(EmptyAsDash(state.positions_source))
+         << "; open/stop/take-profit levels from strategy state, reconciled to CTP truth at "
+            "session start.</div></div></div>";
+    html << "<table><thead><tr><th>Instrument</th><th>Net</th><th>Direction</th>"
+            "<th>Open</th><th>Init Stop</th><th>Take Profit</th><th>Trailing Stop</th>"
+            "</tr></thead><tbody>";
+    if (state.positions.empty()) {
+        html << "<tr><td colspan=\"7\">Flat / no strategy positions found</td></tr>";
+    } else {
+        for (const auto& pos : state.positions) {
+            const std::string direction = pos.net > 0 ? "LONG" : (pos.net < 0 ? "SHORT" : "FLAT");
+            const bool is_long = pos.net > 0;
+            html << "<tr><td>" << HtmlEscape(EmptyAsDash(pos.instrument_id)) << "</td><td>"
+                 << pos.net << "</td><td>" << RenderBadge(direction, is_long) << "</td><td>"
+                 << HtmlEscape(FormatPriceCell(pos.avg_open)) << "</td><td>"
+                 << HtmlEscape(FormatPriceCell(pos.initial_stop)) << "</td><td>"
+                 << HtmlEscape(FormatPriceCell(pos.take_profit)) << "</td><td>"
+                 << HtmlEscape(FormatPriceCell(pos.trailing_stop)) << "</td></tr>";
+        }
+    }
+    html << "</tbody></table></section>\n";
+
+    // Panel 3: Price board.
     html << "<section class=\"panel span-8\"><div class=\"panel-head\"><div><h2>Price Board</h2>"
             "<div class=\"caption\">Latest trading_day market observations by product.</div></div>"
             "<div>"
@@ -2568,167 +2653,32 @@ std::string RenderHtml(const DashboardState& state) {
     }
     html << "</div></section>\n";
 
-    html << "<section class=\"panel span-4 session-panel\"><h2>Trading Session</h2><div "
-            "class=\"metrics\">";
-    html << RenderMetric("trading day", state.daily.trading_day);
-    html << RenderMetric("pid", state.process.pid);
-    html << RenderMetric("WAL file", state.wal.exists ? "present" : "missing");
-    html << RenderMetric("WAL lines", state.wal.lines_total);
-    html << RenderMetric("CSV orders", state.daily.order_csv_rows);
-    html << RenderMetric("CSV fills", state.daily.fill_csv_rows);
-    html << RenderMetric("export orders", state.daily.exported_order_events);
-    html << RenderMetric("export fills", state.daily.exported_trade_fills);
-    html << "</div><div class=\"section-note\">Active instruments: <code>"
-         << HtmlEscape(active_instruments) << "</code></div></section>\n";
-
-    html << "<section class=\"panel span-5\"><h2>Dominant Contracts</h2>";
-    html << "<table><thead><tr><th>Product</th><th>Instrument</th><th>Exchange</th><th>Metric</"
-            "th></tr></thead><tbody>";
-    if (state.contracts.empty()) {
-        html << "<tr><td colspan=\"4\">No dominant contract files found</td></tr>";
-    }
-    for (const auto& item : state.contracts) {
-        html << "<tr><td>" << HtmlEscape(item.product) << "</td><td>"
-             << HtmlEscape(EmptyAsDash(item.instrument_id)) << "</td><td>"
-             << HtmlEscape(EmptyAsDash(item.exchange_id)) << "</td><td>"
-             << HtmlEscape(EmptyAsDash(item.selection_metric)) << "</td></tr>";
-    }
-    html << "</tbody></table></section>\n";
-
-    html << "<section class=\"panel span-7\"><h2>Orders And Fills</h2><div class=\"metrics\">";
+    // Panel 5: Orders & fills summary (condensed metrics only).
+    html << "<section class=\"panel span-4\"><h2>Orders And Fills</h2><div class=\"metrics\">";
     html << RenderMetric("WAL orders", state.wal.order_events);
-    html << RenderMetric("WAL fills", state.wal.trade_or_fill_events);
-    html << RenderMetric("CSV orders", state.daily.order_csv_rows);
-    html << RenderMetric("CSV fills", state.daily.fill_csv_rows);
-    html << RenderMetric("submit rate", FormatPercent(state.ctp_order_flow.ctp_submitted,
-                                                      state.ctp_order_flow.signals));
+    html << RenderMetric("unique fills", state.ctp_order_flow.wal_fills);
     html << RenderMetric("rejects", reject_count);
     html << RenderMetric("callbacks", state.ctp_order_flow.ctp_callbacks);
-    html << RenderMetric("unique fills", state.ctp_order_flow.wal_fills);
-    html << RenderMetric("replay dupes", state.ctp_order_flow.wal_duplicate_fills);
-    html << RenderMetric("monitor fills", state.ctp_order_flow.monitor_filled);
-    html << "</div><div class=\"flowline\"><div class=\"step\"><span>Signal Execution</span><b>"
-         << state.ctp_order_flow.signals << "</b></div><div class=\"step\"><span>Order logs</span>"
-         << "<b>" << state.ctp_order_flow.order_submitted_logs << "</b></div>"
-         << "<div class=\"step\"><span>CTP submit</span><b>" << state.ctp_order_flow.ctp_submitted
-         << "</b></div><div class=\"step\"><span>Callbacks</span><b>"
-         << state.ctp_order_flow.ctp_callbacks << "</b></div><div class=\"step\"><span>Fills</span>"
-         << "<b>" << state.ctp_order_flow.wal_fills << "</b></div></div></section>\n";
+    html << RenderMetric("submit rate", FormatPercent(state.ctp_order_flow.ctp_submitted,
+                                                      state.ctp_order_flow.signals));
+    html << RenderMetric("export fills", state.daily.exported_trade_fills);
+    html << "</div></section>\n";
 
-    html << "<section class=\"panel span-6\"><h2>CTP Connection</h2><div class=\"metrics\">";
-    html << RenderMetric("status", state.ctp_connection.status);
-    html << RenderMetric("TD front", state.ctp_connection.td_front);
-    html << RenderMetric("MD front", state.ctp_connection.md_front);
-    html << RenderMetric("settlement", state.ctp_connection.settlement_status);
-    html << RenderMetric("login", state.ctp_connection.login_status);
-    html << RenderMetric("auth", state.ctp_connection.auth_status);
-    html << RenderMetric("probe", state.ctp_connection.probe_status);
-    html << RenderMetric("reconnects", state.ctp_connection.reconnect_attempts);
-    html << "</div><div class=\"section-note\">Probe <code>"
-         << HtmlEscape(EmptyAsDash(state.ctp_connection.latest_probe_log)) << "</code>";
-    if (state.ctp_connection.probe_age_seconds.has_value()) {
-        html << " updated " << *state.ctp_connection.probe_age_seconds << "s ago";
+    // Panel 6: Issues — alerts + signal incidents + CTP rejections combined.
+    std::vector<std::string> issues;
+    for (const auto& line : state.ctp_order_flow.recent_rejections) {
+        issues.push_back("reject: " + line);
     }
-    html << ".</div><div class=\"scroll\">"
-         << RenderLogList(state.ctp_connection.recent_events, "No CTP connection events found")
-         << "</div></section>\n";
-
-    html << "<section class=\"panel span-6\"><h2>Signal Execution</h2><div class=\"metrics\">";
-    html << RenderMetric("monitor", state.signal_monitor.status);
-    html << RenderMetric("signals", state.signal_monitor.signals);
-    html << RenderMetric("active", state.signal_monitor.active);
-    html << RenderMetric("incidents", state.signal_monitor.incidents);
-    html << "</div><div class=\"section-note\">";
-    html << "Event log <code>" << HtmlEscape(state.signal_monitor.event_log_path) << "</code>";
-    if (state.signal_monitor.event_log_age_seconds.has_value()) {
-        html << " updated " << *state.signal_monitor.event_log_age_seconds << "s ago";
+    for (const auto& line : state.signal_monitor.recent_incidents) {
+        issues.push_back("incident: " + line);
     }
-    html << ".</div><div class=\"scroll\">"
-         << RenderLogList(state.signal_monitor.recent_events,
-                          "No signal execution monitor events found")
-         << "</div></section>\n";
-
-    html << "<section class=\"panel span-12\"><h2>CTP Orders And Rejects</h2>";
-    html << "<div class=\"scroll\"><table><thead><tr><th>Recent rejection / "
-            "incident</th></tr></thead><tbody>";
-    if (state.ctp_order_flow.recent_rejections.empty()) {
-        html << "<tr><td>No CTP rejections or order incidents found</td></tr>";
-    } else {
-        for (const auto& line : state.ctp_order_flow.recent_rejections) {
-            html << "<tr><td>" << HtmlEscape(line) << "</td></tr>";
-        }
+    for (const auto& line : state.recent_alerts) {
+        issues.push_back(line);
     }
-    html << "</tbody></table></div></section>\n";
+    html << "<section class=\"panel span-12\"><h2>Issues And Alerts</h2><div class=\"scroll\">"
+         << RenderLogList(issues, "No issues, rejections, or alerts") << "</div></section>\n";
 
-    html << "<section class=\"panel span-12\"><h2>Fill Details</h2>";
-    html << "<p class=\"section-note\">Unique fills " << state.ctp_order_flow.wal_fills
-         << " / raw fills " << state.ctp_order_flow.wal_fills_raw << "; CTP replay duplicates "
-         << state.ctp_order_flow.wal_duplicate_fills << " filtered.</p>";
-    html << "<div class=\"scroll\"><table><thead><tr><th>Seq</th><th>Time</th>"
-            "<th>Instrument</th><th>Exchange</th><th>Side</th><th>Offset</th><th>Volume</th>"
-            "<th>Price</th><th>Strategy</th><th>Attribution</th><th>Order Ref</th>"
-            "<th>Client Order</th><th>Trade "
-            "ID</th><th>Replay</th><th>Trace</th></tr></thead><tbody>";
-    if (state.ctp_order_flow.trade_fills.empty()) {
-        html << "<tr><td colspan=\"15\">No unique trade fills found</td></tr>";
-    } else {
-        for (const auto& fill : state.ctp_order_flow.trade_fills) {
-            html << "<tr><td>" << HtmlEscape(EmptyAsDash(fill.seq)) << "</td><td>"
-                 << HtmlEscape(EmptyAsDash(fill.time)) << "</td><td>"
-                 << HtmlEscape(EmptyAsDash(fill.instrument_id)) << "</td><td>"
-                 << HtmlEscape(EmptyAsDash(fill.exchange_id)) << "</td><td>"
-                 << HtmlEscape(EmptyAsDash(fill.side)) << "</td><td>"
-                 << HtmlEscape(EmptyAsDash(fill.offset)) << "</td><td>"
-                 << HtmlEscape(EmptyAsDash(fill.volume)) << "</td><td>"
-                 << HtmlEscape(EmptyAsDash(fill.price)) << "</td><td>"
-                 << HtmlEscape(EmptyAsDash(fill.strategy_id)) << "</td><td>"
-                 << HtmlEscape(EmptyAsDash(fill.attribution)) << "</td><td>"
-                 << HtmlEscape(EmptyAsDash(fill.order_ref)) << "</td><td>"
-                 << HtmlEscape(EmptyAsDash(fill.client_order_id)) << "</td><td>"
-                 << HtmlEscape(EmptyAsDash(fill.trade_id)) << "</td><td>"
-                 << HtmlEscape(EmptyAsDash(fill.replay_status)) << "</td><td>"
-                 << HtmlEscape(EmptyAsDash(fill.trace_id)) << "</td></tr>";
-        }
-    }
-    html << "</tbody></table></div></section>\n";
-
-    html << "<section class=\"panel span-12\"><h2>Suppressed CTP Replay Fills</h2>";
-    html << "<div class=\"scroll\"><table><thead><tr><th>Seq</th><th>Time</th>"
-            "<th>Instrument</th><th>Exchange</th><th>Side</th><th>Offset</th><th>Volume</th>"
-            "<th>Price</th><th>Strategy</th><th>Order Ref</th><th>Client Order</th>"
-            "<th>Trade ID</th><th>Trace</th></tr></thead><tbody>";
-    if (state.ctp_order_flow.replay_duplicate_fills.empty()) {
-        html << "<tr><td colspan=\"13\">No CTP replay duplicates filtered</td></tr>";
-    } else {
-        for (const auto& fill : state.ctp_order_flow.replay_duplicate_fills) {
-            html << "<tr><td>" << HtmlEscape(EmptyAsDash(fill.seq)) << "</td><td>"
-                 << HtmlEscape(EmptyAsDash(fill.time)) << "</td><td>"
-                 << HtmlEscape(EmptyAsDash(fill.instrument_id)) << "</td><td>"
-                 << HtmlEscape(EmptyAsDash(fill.exchange_id)) << "</td><td>"
-                 << HtmlEscape(EmptyAsDash(fill.side)) << "</td><td>"
-                 << HtmlEscape(EmptyAsDash(fill.offset)) << "</td><td>"
-                 << HtmlEscape(EmptyAsDash(fill.volume)) << "</td><td>"
-                 << HtmlEscape(EmptyAsDash(fill.price)) << "</td><td>"
-                 << HtmlEscape(EmptyAsDash(fill.strategy_id)) << "</td><td>"
-                 << HtmlEscape(EmptyAsDash(fill.order_ref)) << "</td><td>"
-                 << HtmlEscape(EmptyAsDash(fill.client_order_id)) << "</td><td>"
-                 << HtmlEscape(EmptyAsDash(fill.trade_id)) << "</td><td>"
-                 << HtmlEscape(EmptyAsDash(fill.trace_id)) << "</td></tr>";
-        }
-    }
-    html << "</tbody></table></div></section>\n";
-
-    html << "<section class=\"panel span-12\"><h2>Recent Alerts</h2><div class=\"scroll\"><ul "
-            "class=\"logs\">";
-    if (state.recent_alerts.empty()) {
-        html << "<li>No alerts found</li>";
-    } else {
-        for (const auto& line : state.recent_alerts) {
-            html << "<li>" << HtmlEscape(line) << "</li>";
-        }
-    }
-    html << "</ul></div></section>\n";
-
+    // Panel 7: Data paths (collapsible, ops use).
     html << "<details class=\"panel span-12\"><summary>Data Paths</summary>"
          << "<div class=\"section-note\">Source files backing this dashboard.</div>"
          << "<div class=\"scroll\">" << RenderPathTable(state.paths) << "</div></details>\n";
@@ -2756,6 +2706,8 @@ DashboardOptions ParseOptions(int argc, char** argv, std::string* error) {
         args, "ctp-instrument-dir", DefaultPathFromRoot("runtime/ctp_instruments"));
     options.probe_log_dir = quant_hft::apps::GetArg(
         args, "probe-log-dir", DefaultPathFromRoot("runtime/verify_simnow_login"));
+    options.state_dir = quant_hft::apps::GetArg(
+        args, "state-dir", DefaultPathFromRoot("runtime/trading/state/simnow"));
     options.output_dir = quant_hft::apps::GetArg(
         args, "output-dir", DefaultPathFromRoot("runtime/trading/dashboard/simnow"));
     options.strict_exit = ParseBoolArg(args, "strict-exit", false);
@@ -2766,6 +2718,191 @@ DashboardOptions ParseOptions(int argc, char** argv, std::string* error) {
         }
     }
     return options;
+}
+
+// Parse the strategy net positions persisted to the strategy state files. The
+// CompositeStrategy persists a flat `net_pos.<instrument>` map; both strategy
+// files carry the merged map, so we take the entry from the file with the
+// newest saved_epoch_seconds. Entries with a zero net are treated as flat and
+// dropped. This source survives restarts and reflects the startup reconcile.
+// Parse all `"<prefix><instrument>": "<value>"` entries in a strategy state JSON
+// document into a per-instrument double map. The leading quote in the search
+// token prevents matching nested atomic keys such as
+// `atomic.<id>.trailing_stop.0.price`, which are never preceded by a quote.
+std::map<std::string, double> ParsePrefixedQuotedDoubles(const std::string& text,
+                                                         const std::string& prefix) {
+    std::map<std::string, double> values;
+    const std::string token = "\"" + prefix;
+    std::size_t pos = 0;
+    while ((pos = text.find(token, pos)) != std::string::npos) {
+        const std::size_t key_start = pos + token.size();
+        const std::size_t key_end = text.find('"', key_start);
+        if (key_end == std::string::npos) {
+            break;
+        }
+        const std::string instrument = text.substr(key_start, key_end - key_start);
+        std::size_t colon = text.find(':', key_end);
+        pos = key_end + 1;
+        if (colon == std::string::npos) {
+            continue;
+        }
+        ++colon;
+        while (colon < text.size() && std::isspace(static_cast<unsigned char>(text[colon])) != 0) {
+            ++colon;
+        }
+        // Values are serialized as quoted strings (e.g. "4500.500000").
+        if (colon < text.size() && text[colon] == '"') {
+            ++colon;
+        }
+        std::size_t value_end = colon;
+        while (value_end < text.size() &&
+               (std::isdigit(static_cast<unsigned char>(text[value_end])) != 0 ||
+                text[value_end] == '-' || text[value_end] == '+' || text[value_end] == '.' ||
+                text[value_end] == 'e' || text[value_end] == 'E')) {
+            ++value_end;
+        }
+        if (value_end == colon || instrument.empty()) {
+            continue;
+        }
+        try {
+            values[instrument] = std::stod(text.substr(colon, value_end - colon));
+        } catch (...) {
+            continue;
+        }
+    }
+    return values;
+}
+
+std::vector<PositionRow> CollectPositions(const DashboardOptions& options, std::string* source) {
+    std::map<std::string, std::pair<std::int64_t, std::int64_t>> net_by_instrument;  // net, epoch
+    // Per-instrument price levels keyed alongside the newest epoch seen, so a
+    // later snapshot overrides an earlier one consistently with net positions.
+    std::map<std::string, std::pair<double, std::int64_t>> avg_open_by_instrument;
+    std::map<std::string, std::pair<double, std::int64_t>> init_stop_by_instrument;
+    std::map<std::string, std::pair<double, std::int64_t>> take_profit_by_instrument;
+    std::map<std::string, std::pair<double, std::int64_t>> trailing_stop_by_instrument;
+    const fs::path state_dir(options.state_dir);
+    std::error_code ec;
+    if (!fs::is_directory(state_dir, ec)) {
+        if (source != nullptr) {
+            *source = "no state dir";
+        }
+        return {};
+    }
+    bool any_file = false;
+    for (const auto& entry : fs::directory_iterator(state_dir, ec)) {
+        if (ec) {
+            break;
+        }
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+        const std::string name = entry.path().filename().string();
+        if (name.rfind("strategy_state__", 0) != 0 ||
+            entry.path().extension().string() != ".json" ||
+            name.find("timeframe_state_fanout") != std::string::npos) {
+            continue;
+        }
+        const auto content = ReadTextFile(entry.path());
+        if (!content.has_value()) {
+            continue;
+        }
+        any_file = true;
+        const std::string& text = *content;
+        std::int64_t saved_epoch = 0;
+        if (const auto epoch = ExtractJsonInt(text, "saved_epoch_seconds")) {
+            saved_epoch = *epoch;
+        }
+        const auto merge_prices =
+            [saved_epoch](std::map<std::string, std::pair<double, std::int64_t>>& target,
+                          const std::map<std::string, double>& parsed) {
+                for (const auto& [instrument, value] : parsed) {
+                    auto it = target.find(instrument);
+                    if (it == target.end() || saved_epoch >= it->second.second) {
+                        target[instrument] = {value, saved_epoch};
+                    }
+                }
+            };
+        merge_prices(avg_open_by_instrument, ParsePrefixedQuotedDoubles(text, "avg_open."));
+        merge_prices(init_stop_by_instrument, ParsePrefixedQuotedDoubles(text, "init_stop."));
+        merge_prices(take_profit_by_instrument, ParsePrefixedQuotedDoubles(text, "take_profit."));
+        merge_prices(trailing_stop_by_instrument,
+                     ParsePrefixedQuotedDoubles(text, "trailing_stop."));
+        std::size_t pos = 0;
+        const std::string token = "\"net_pos.";
+        while ((pos = text.find(token, pos)) != std::string::npos) {
+            const std::size_t key_start = pos + token.size();
+            const std::size_t key_end = text.find('"', key_start);
+            if (key_end == std::string::npos) {
+                break;
+            }
+            const std::string instrument = text.substr(key_start, key_end - key_start);
+            std::size_t colon = text.find(':', key_end);
+            pos = key_end;
+            if (colon == std::string::npos) {
+                continue;
+            }
+            ++colon;
+            while (colon < text.size() && (text[colon] == ' ' || text[colon] == '\t')) {
+                ++colon;
+            }
+            // The state map serializes values as quoted strings (e.g. "19"); skip
+            // an optional opening quote before reading the signed integer.
+            if (colon < text.size() && text[colon] == '"') {
+                ++colon;
+            }
+            std::size_t value_end = colon;
+            while (value_end < text.size() &&
+                   (std::isdigit(static_cast<unsigned char>(text[value_end])) != 0 ||
+                    text[value_end] == '-' || text[value_end] == '+')) {
+                ++value_end;
+            }
+            if (value_end == colon) {
+                continue;
+            }
+            std::int64_t net = 0;
+            try {
+                net = std::stoll(text.substr(colon, value_end - colon));
+            } catch (...) {
+                continue;
+            }
+            auto it = net_by_instrument.find(instrument);
+            if (it == net_by_instrument.end() || saved_epoch >= it->second.second) {
+                net_by_instrument[instrument] = {net, saved_epoch};
+            }
+        }
+    }
+    if (source != nullptr) {
+        *source = any_file ? "strategy_state" : "no state files";
+    }
+    std::vector<PositionRow> rows;
+    for (const auto& [instrument, value] : net_by_instrument) {
+        if (value.first == 0) {
+            continue;
+        }
+        PositionRow row;
+        row.instrument_id = instrument;
+        row.net = value.first;
+        row.source = "strategy_state";
+        if (const auto it = avg_open_by_instrument.find(instrument);
+            it != avg_open_by_instrument.end()) {
+            row.avg_open = it->second.first;
+        }
+        if (const auto it = init_stop_by_instrument.find(instrument);
+            it != init_stop_by_instrument.end()) {
+            row.initial_stop = it->second.first;
+        }
+        if (const auto it = take_profit_by_instrument.find(instrument);
+            it != take_profit_by_instrument.end()) {
+            row.take_profit = it->second.first;
+        }
+        if (const auto it = trailing_stop_by_instrument.find(instrument);
+            it != trailing_stop_by_instrument.end()) {
+            row.trailing_stop = it->second.first;
+        }
+        rows.push_back(row);
+    }
+    return rows;
 }
 
 DashboardState CollectState(const DashboardOptions& options) {
@@ -2782,6 +2919,7 @@ DashboardState CollectState(const DashboardOptions& options) {
         {"monitor_root", options.monitor_root},
         {"ctp_instrument_dir", options.ctp_instrument_dir},
         {"probe_log_dir", options.probe_log_dir},
+        {"state_dir", options.state_dir},
     };
 
     state.process = CollectProcessStatus(options);
@@ -2793,6 +2931,7 @@ DashboardState CollectState(const DashboardOptions& options) {
     state.ctp_connection = CollectCtpConnectionStatus(options, state.process, state.contracts);
     state.ctp_order_flow =
         CollectCtpOrderFlowStatus(options, state.signal_monitor, state.wal, state.process);
+    state.positions = CollectPositions(options, &state.positions_source);
     state.recent_alerts = CollectRecentAlerts(state.process.core_log);
 
     const bool waiting_for_window = state.process.status == "waiting_for_trading_window";

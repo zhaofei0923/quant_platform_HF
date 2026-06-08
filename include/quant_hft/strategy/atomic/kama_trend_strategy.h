@@ -17,6 +17,7 @@ namespace quant_hft {
 class KamaTrendStrategy final : public ISubStrategy,
                                 public IAtomicBacktestTickAware,
                                 public IAtomicIndicatorTraceProvider,
+                                public IAtomicRiskPriceProvider,
                                 public IAtomicStateSerializable {
    public:
     KamaTrendStrategy() = default;
@@ -29,6 +30,7 @@ class KamaTrendStrategy final : public ISubStrategy,
     std::vector<SignalIntent> OnBacktestTick(const AtomicTickSnapshot& tick,
                                              const AtomicStrategyContext& ctx) override;
     std::optional<AtomicIndicatorSnapshot> IndicatorSnapshot() const override;
+    std::unordered_map<std::string, AtomicRiskPrices> RiskPricesByInstrument() const override;
     bool SaveState(AtomicState* out, std::string* error) const override;
     bool LoadState(const AtomicState& state, std::string* error) override;
 
@@ -73,7 +75,8 @@ class KamaTrendStrategy final : public ISubStrategy,
     double kama_window_sum_sq_{0.0};
     std::unordered_map<std::string, double> trailing_stop_by_instrument_;
     std::unordered_map<std::string, int> trailing_direction_by_instrument_;
-
+    std::unordered_map<std::string, double> initial_stop_by_instrument_;
+    std::unordered_map<std::string, double> take_profit_by_instrument_;
     std::optional<double> last_kama_;
     std::optional<double> last_er_;
     std::optional<double> last_adx_;

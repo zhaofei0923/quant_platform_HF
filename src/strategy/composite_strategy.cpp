@@ -32,6 +32,10 @@ constexpr const char* kStateAvgOpenPrefix = "avg_open.";
 constexpr const char* kStateMultiplierPrefix = "multiplier.";
 constexpr const char* kStateOwnerPrefix = "owner.";
 constexpr const char* kStateAtomicPrefix = "atomic.";
+// Display-only per-instrument risk price levels surfaced to the dashboard.
+constexpr const char* kStateInitStopPrefix = "init_stop.";
+constexpr const char* kStateTrailingStopPrefix = "trailing_stop.";
+constexpr const char* kStateTakeProfitPrefix = "take_profit.";
 constexpr std::int64_t kNanosPerSecond = 1'000'000'000LL;
 constexpr std::int64_t kSecondsPerMinute = 60LL;
 constexpr std::int64_t kSecondsPerHour = 60LL * kSecondsPerMinute;
@@ -856,6 +860,47 @@ bool CompositeStrategy::SaveState(StrategyState* out, std::string* error) const 
         const std::string prefix = std::string(kStateAtomicPrefix) + strategy->GetId() + ".";
         for (const auto& [key, value] : atomic_state) {
             (*out)[prefix + key] = value;
+        }
+    }
+
+    // Surface per-instrument risk price levels (initial stop / trailing stop /
+    // take profit) as flat top-level keys for the monitoring dashboard. Only
+    // instruments with a live net position are emitted to avoid stale noise.
+    std::unordered_map<std::string, AtomicRiskPrices> risk_prices_by_instrument;
+    for (const auto& strategy : owned_atomic_strategies_) {
+        auto* provider = dynamic_cast<IAtomicRiskPriceProvider*>(strategy.get());
+        if (provider == nullptr) {
+            continue;
+        }
+        for (const auto& [instrument_id, prices] : provider->RiskPricesByInstrument()) {
+            auto& merged = risk_prices_by_instrument[instrument_id];
+            if (prices.initial_stop.has_value()) {
+                merged.initial_stop = prices.initial_stop;
+            }
+            if (prices.trailing_stop.has_value()) {
+                merged.trailing_stop = prices.trailing_stop;
+            }
+            if (prices.take_profit.has_value()) {
+                merged.take_profit = prices.take_profit;
+            }
+        }
+    }
+    for (const auto& [instrument_id, prices] : risk_prices_by_instrument) {
+        const auto net_it = atomic_context_.net_positions.find(instrument_id);
+        if (net_it == atomic_context_.net_positions.end() || net_it->second == 0) {
+            continue;
+        }
+        if (prices.initial_stop.has_value()) {
+            (*out)[std::string(kStateInitStopPrefix) + instrument_id] =
+                std::to_string(*prices.initial_stop);
+        }
+        if (prices.trailing_stop.has_value()) {
+            (*out)[std::string(kStateTrailingStopPrefix) + instrument_id] =
+                std::to_string(*prices.trailing_stop);
+        }
+        if (prices.take_profit.has_value()) {
+            (*out)[std::string(kStateTakeProfitPrefix) + instrument_id] =
+                std::to_string(*prices.take_profit);
         }
     }
     return true;

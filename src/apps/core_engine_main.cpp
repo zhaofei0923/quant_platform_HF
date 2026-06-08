@@ -2285,11 +2285,16 @@ int main(int argc, char** argv) {
     // broker flattens (whose trades carry no strategy attribution).
     std::mutex authoritative_position_mutex;
     std::unordered_map<std::string, std::int32_t> authoritative_net_by_instrument;
+    std::unordered_map<std::string, double> authoritative_avg_open_by_instrument;
     bool authoritative_position_received = false;
     ctp_trader->RegisterInvestorPositionSnapshotCallback(
         [&](const std::vector<InvestorPositionSnapshot>& snapshots) {
             std::string ctp_ledger_error;
             std::unordered_map<std::string, std::int32_t> net_by_instrument;
+            // Accumulate broker open cost and volume per instrument to derive an
+            // average open price for reconcile-sourced positions.
+            std::unordered_map<std::string, double> open_cost_by_instrument;
+            std::unordered_map<std::string, std::int64_t> open_volume_by_instrument;
             for (const auto& snapshot : snapshots) {
                 {
                     std::lock_guard<std::mutex> lock(ctp_ledger_mutex);
@@ -2319,10 +2324,33 @@ int main(int argc, char** argv) {
                 const std::int32_t signed_position =
                     is_long ? snapshot.position : -snapshot.position;
                 net_by_instrument[snapshot.instrument_id] += signed_position;
+
+                // Aggregate open cost / volume so a volume-weighted average open
+                // price can be derived below. Prefer open_cost (entry basis);
+                // fall back to position_cost when open_cost is unavailable.
+                const double cost = (std::isfinite(snapshot.open_cost) && snapshot.open_cost > 0.0)
+                                        ? snapshot.open_cost
+                                        : snapshot.position_cost;
+                if (std::isfinite(cost) && cost > 0.0 && snapshot.position > 0) {
+                    open_cost_by_instrument[snapshot.instrument_id] += cost;
+                    open_volume_by_instrument[snapshot.instrument_id] += snapshot.position;
+                }
+            }
+            std::unordered_map<std::string, double> avg_open_by_instrument;
+            for (const auto& [instrument, cost_sum] : open_cost_by_instrument) {
+                const std::int64_t volume = open_volume_by_instrument[instrument];
+                const double multiplier = resolve_contract_multiplier(instrument);
+                if (volume > 0 && std::isfinite(multiplier) && multiplier > 0.0) {
+                    const double avg_open = cost_sum / (static_cast<double>(volume) * multiplier);
+                    if (std::isfinite(avg_open) && avg_open > 0.0) {
+                        avg_open_by_instrument[instrument] = avg_open;
+                    }
+                }
             }
             {
                 std::lock_guard<std::mutex> lock(authoritative_position_mutex);
                 authoritative_net_by_instrument = std::move(net_by_instrument);
+                authoritative_avg_open_by_instrument = std::move(avg_open_by_instrument);
                 authoritative_position_received = true;
             }
         });
@@ -2915,14 +2943,17 @@ int main(int argc, char** argv) {
             if (startup_reconcile_enabled && !startup_reconcile_done &&
                 strategy_engine != nullptr && now >= startup_reconcile_deadline) {
                 std::unordered_map<std::string, std::int32_t> authoritative_snapshot;
+                std::unordered_map<std::string, double> authoritative_avg_open_snapshot;
                 bool received = false;
                 {
                     std::lock_guard<std::mutex> lock(authoritative_position_mutex);
                     received = authoritative_position_received;
                     authoritative_snapshot = authoritative_net_by_instrument;
+                    authoritative_avg_open_snapshot = authoritative_avg_open_by_instrument;
                 }
                 if (received) {
-                    strategy_engine->EnqueueReconcilePositions(account_id, authoritative_snapshot);
+                    strategy_engine->EnqueueReconcilePositions(account_id, authoritative_snapshot,
+                                                               authoritative_avg_open_snapshot);
                     startup_reconcile_done = true;
                     EmitStructuredLog(
                         &config, "core_engine", "info", "startup_position_reconcile_enqueued",

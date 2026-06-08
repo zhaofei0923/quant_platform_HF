@@ -37,12 +37,17 @@ class ILiveStrategy {
     virtual void OnAccountSnapshot(const TradingAccountSnapshot& snapshot) { (void)snapshot; }
     // Reconcile the strategy's believed net positions against an authoritative
     // (broker-truth) signed net position map keyed by instrument id. Returns the
-    // number of instruments adjusted. `adjustments`, when non-null, receives a
-    // human-readable description of each adjustment for auditing.
+    // number of instruments adjusted. `authoritative_avg_open`, when populated,
+    // provides broker-derived average open prices used to backfill the open price
+    // of reconcile-sourced positions so risk logic (e.g. trailing stops) can run.
+    // `adjustments`, when non-null, receives a human-readable description of each
+    // adjustment for auditing.
     virtual std::size_t ReconcileNetPositions(
         const std::unordered_map<std::string, std::int32_t>& authoritative_net,
+        const std::unordered_map<std::string, double>& authoritative_avg_open,
         std::vector<std::string>* adjustments) {
         (void)authoritative_net;
+        (void)authoritative_avg_open;
         (void)adjustments;
         return 0;
     }

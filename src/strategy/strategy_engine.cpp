@@ -230,11 +230,13 @@ void StrategyEngine::EnqueueAccountSnapshot(const TradingAccountSnapshot& snapsh
 
 void StrategyEngine::EnqueueReconcilePositions(
     const std::string& account_id,
-    const std::unordered_map<std::string, std::int32_t>& authoritative_net) {
+    const std::unordered_map<std::string, std::int32_t>& authoritative_net,
+    const std::unordered_map<std::string, double>& authoritative_avg_open) {
     EngineEvent event;
     event.type = EventType::kReconcilePositions;
     event.reconcile_account_id = account_id;
     event.reconcile_net = authoritative_net;
+    event.reconcile_avg_open = authoritative_avg_open;
     EnqueueEvent(std::move(event));
 }
 
@@ -295,7 +297,8 @@ void StrategyEngine::WorkerLoop() {
             } else if (event.type == EventType::kOrderEvent) {
                 DispatchOrderEvent(event.order_event);
             } else if (event.type == EventType::kReconcilePositions) {
-                DispatchReconcilePositions(event.reconcile_account_id, event.reconcile_net);
+                DispatchReconcilePositions(event.reconcile_account_id, event.reconcile_net,
+                                           event.reconcile_avg_open);
             } else {
                 DispatchAccountSnapshot(event.account_snapshot);
             }
@@ -452,15 +455,16 @@ void StrategyEngine::DispatchAccountSnapshot(const TradingAccountSnapshot& snaps
 
 void StrategyEngine::DispatchReconcilePositions(
     const std::string& account_id,
-    const std::unordered_map<std::string, std::int32_t>& authoritative_net) {
+    const std::unordered_map<std::string, std::int32_t>& authoritative_net,
+    const std::unordered_map<std::string, double>& authoritative_avg_open) {
     for (auto& entry : strategies_) {
         if (!account_id.empty() && entry.account_id != account_id) {
             continue;
         }
         try {
             std::vector<std::string> adjustments;
-            const std::size_t adjusted =
-                entry.strategy->ReconcileNetPositions(authoritative_net, &adjustments);
+            const std::size_t adjusted = entry.strategy->ReconcileNetPositions(
+                authoritative_net, authoritative_avg_open, &adjustments);
             if (adjusted > 0) {
                 std::string joined;
                 for (std::size_t i = 0; i < adjustments.size(); ++i) {

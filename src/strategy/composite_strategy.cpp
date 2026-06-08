@@ -652,6 +652,7 @@ void CompositeStrategy::OnAccountSnapshot(const TradingAccountSnapshot& snapshot
 
 std::size_t CompositeStrategy::ReconcileNetPositions(
     const std::unordered_map<std::string, std::int32_t>& authoritative_net,
+    const std::unordered_map<std::string, double>& authoritative_avg_open,
     std::vector<std::string>* adjustments) {
     // Build the union of instruments the strategy currently believes it holds
     // and instruments present in the authoritative (broker-truth) snapshot.
@@ -670,6 +671,28 @@ std::size_t CompositeStrategy::ReconcileNetPositions(
     std::sort(instruments.begin(), instruments.end());
     instruments.erase(std::unique(instruments.begin(), instruments.end()), instruments.end());
 
+    // Backfill the open price of a held position from the broker-derived average
+    // when the strategy lacks its own finite entry price. Reconcile-sourced
+    // positions otherwise have no avg_open, which prevents sub-strategies from
+    // computing ATR-based stops (they early-return without an entry price),
+    // leaving the position without trailing-stop protection. Returns true when a
+    // backfill was applied. Never overwrites an existing finite price (the
+    // strategy's own fill-derived entry is preferred).
+    const auto backfill_avg_open = [&](const std::string& instrument) -> bool {
+        const auto existing = atomic_context_.avg_open_prices.find(instrument);
+        if (existing != atomic_context_.avg_open_prices.end() && std::isfinite(existing->second) &&
+            existing->second > 0.0) {
+            return false;
+        }
+        const auto avg_it = authoritative_avg_open.find(instrument);
+        if (avg_it == authoritative_avg_open.end() || !std::isfinite(avg_it->second) ||
+            avg_it->second <= 0.0) {
+            return false;
+        }
+        atomic_context_.avg_open_prices[instrument] = avg_it->second;
+        return true;
+    };
+
     std::size_t adjusted = 0;
     for (const std::string& instrument : instruments) {
         const auto strat_it = atomic_context_.net_positions.find(instrument);
@@ -678,6 +701,17 @@ std::size_t CompositeStrategy::ReconcileNetPositions(
         const auto auth_it = authoritative_net.find(instrument);
         const std::int32_t authoritative = auth_it == authoritative_net.end() ? 0 : auth_it->second;
         if (believed == authoritative) {
+            // Net matches, but a reconcile-sourced position carried over from a
+            // prior session (or restart) may still lack an entry price. Backfill
+            // it so risk logic can run; count it as an adjustment for auditing.
+            if (authoritative != 0 && backfill_avg_open(instrument)) {
+                ++adjusted;
+                if (adjustments != nullptr) {
+                    adjustments->push_back(
+                        instrument + ":avg_open_backfill=" +
+                        std::to_string(atomic_context_.avg_open_prices[instrument]));
+                }
+            }
             continue;
         }
 
@@ -693,6 +727,9 @@ std::size_t CompositeStrategy::ReconcileNetPositions(
             active_force_close_window_by_instrument_.erase(instrument);
         } else {
             atomic_context_.net_positions[instrument] = authoritative;
+            // Backfill the entry price so the adopted position is protected by
+            // trailing stops from the next tick onward.
+            backfill_avg_open(instrument);
         }
 
         ++adjusted;

@@ -69,9 +69,13 @@ class StrategyEngine {
     // matching strategies reconcile their believed net positions. Routed through
     // the same FIFO queue as order events, which guarantees it is processed after
     // any already-enqueued replay order events (no double counting).
+    // `authoritative_avg_open`, when populated, carries broker-derived average
+    // open prices keyed by instrument so reconcile-sourced positions can recover
+    // an entry price for risk logic (e.g. trailing stops).
     void EnqueueReconcilePositions(
         const std::string& account_id,
-        const std::unordered_map<std::string, std::int32_t>& authoritative_net);
+        const std::unordered_map<std::string, std::int32_t>& authoritative_net,
+        const std::unordered_map<std::string, double>& authoritative_avg_open = {});
     std::vector<StrategyMetric> CollectAllMetrics() const;
 
     Stats GetStats() const;
@@ -93,6 +97,7 @@ class StrategyEngine {
         TradingAccountSnapshot account_snapshot;
         std::string reconcile_account_id;
         std::unordered_map<std::string, std::int32_t> reconcile_net;
+        std::unordered_map<std::string, double> reconcile_avg_open;
     };
 
     struct StrategyEntry {
@@ -109,7 +114,8 @@ class StrategyEngine {
     void DispatchAccountSnapshot(const TradingAccountSnapshot& snapshot);
     void DispatchReconcilePositions(
         const std::string& account_id,
-        const std::unordered_map<std::string, std::int32_t>& authoritative_net);
+        const std::unordered_map<std::string, std::int32_t>& authoritative_net,
+        const std::unordered_map<std::string, double>& authoritative_avg_open);
     void DispatchTimer(EpochNanos now_ns);
     void MaybeSnapshotStates(EpochNanos now_ns);
     void SnapshotStates(EpochNanos now_ns);

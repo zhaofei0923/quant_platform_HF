@@ -501,7 +501,7 @@ TEST(CompositeStrategyTest, ReconcileNetPositionsFlattensStaleBelief) {
 
     // Authoritative broker truth says the account is flat (instrument absent => 0).
     std::vector<std::string> adjustments;
-    const std::size_t adjusted = strategy.ReconcileNetPositions({}, &adjustments);
+    const std::size_t adjusted = strategy.ReconcileNetPositions({}, {}, &adjustments);
     EXPECT_EQ(adjusted, 1U);
     ASSERT_EQ(adjustments.size(), 1U);
     EXPECT_EQ(adjustments.front(), "rb2405:1->0");
@@ -528,10 +528,68 @@ TEST(CompositeStrategyTest, ReconcileNetPositionsNoopWhenBeliefMatchesAuthoritat
     ASSERT_EQ(strategy.GetBacktestPositionOwner("rb2405"), "s1");
 
     std::vector<std::string> adjustments;
-    const std::size_t adjusted = strategy.ReconcileNetPositions({{"rb2405", 1}}, &adjustments);
+    const std::size_t adjusted = strategy.ReconcileNetPositions({{"rb2405", 1}}, {}, &adjustments);
     EXPECT_EQ(adjusted, 0U);
     EXPECT_TRUE(adjustments.empty());
     EXPECT_EQ(strategy.GetBacktestPositionOwner("rb2405"), "s1");
+}
+
+TEST(CompositeStrategyTest, ReconcileBackfillsAvgOpenForAdoptedPosition) {
+    const std::string scripted_type = UniqueType("reconcile_backfill");
+    RegisterScriptedType(scripted_type);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {
+        MakeSubStrategy("s1", scripted_type, {{"id", "s1"}, {"emit_open", "0"}})};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+
+    // Broker truth: we hold 1 lot that the strategy never opened itself (e.g. a
+    // position carried in from a prior session). Reconcile must adopt the net AND
+    // backfill the broker-derived open price so risk logic has an entry anchor.
+    std::vector<std::string> adjustments;
+    const std::size_t adjusted =
+        strategy.ReconcileNetPositions({{"rb2405", 1}}, {{"rb2405", 3050.0}}, &adjustments);
+    EXPECT_EQ(adjusted, 1U);
+
+    StrategyState snapshot;
+    std::string error;
+    ASSERT_TRUE(strategy.SaveState(&snapshot, &error)) << error;
+    ASSERT_EQ(snapshot.count("net_pos.rb2405"), 1U);
+    EXPECT_EQ(snapshot.at("net_pos.rb2405"), "1");
+    ASSERT_EQ(snapshot.count("avg_open.rb2405"), 1U);
+    EXPECT_DOUBLE_EQ(std::stod(snapshot.at("avg_open.rb2405")), 3050.0);
+}
+
+TEST(CompositeStrategyTest, ReconcileDoesNotOverwriteExistingAvgOpen) {
+    const std::string scripted_type = UniqueType("reconcile_keep_avg");
+    RegisterScriptedType(scripted_type);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {
+        MakeSubStrategy("s1", scripted_type, {{"id", "s1"}, {"emit_open", "0"}})};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+    // Strategy opened the position itself at 100.0, so it already has a precise
+    // entry price; reconcile with matching net must not overwrite it.
+    strategy.OnOrderEvent(
+        MakeOrderEvent("s1", "rb2405", Side::kBuy, OffsetFlag::kOpen, 1, 100.0, "rb-fill"));
+
+    std::vector<std::string> adjustments;
+    const std::size_t adjusted =
+        strategy.ReconcileNetPositions({{"rb2405", 1}}, {{"rb2405", 9999.0}}, &adjustments);
+    EXPECT_EQ(adjusted, 0U);
+    EXPECT_TRUE(adjustments.empty());
+
+    StrategyState snapshot;
+    std::string error;
+    ASSERT_TRUE(strategy.SaveState(&snapshot, &error)) << error;
+    ASSERT_EQ(snapshot.count("avg_open.rb2405"), 1U);
+    EXPECT_DOUBLE_EQ(std::stod(snapshot.at("avg_open.rb2405")), 100.0);
 }
 
 TEST(CompositeStrategyTest, DispatchesSubStrategiesByTimeframeMinutes) {

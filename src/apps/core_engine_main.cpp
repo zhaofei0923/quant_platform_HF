@@ -48,6 +48,7 @@
 #include "quant_hft/services/bar_aggregator.h"
 #include "quant_hft/services/basic_risk_engine.h"
 #include "quant_hft/services/ctp_account_ledger.h"
+#include "quant_hft/services/ctp_close_offset_resolver.h"
 #include "quant_hft/services/ctp_position_ledger.h"
 #include "quant_hft/services/execution_engine.h"
 #include "quant_hft/services/execution_planner.h"
@@ -1207,78 +1208,13 @@ quant_hft::PositionDirection ResolveLedgerDirection(const quant_hft::OrderIntent
                                                 : quant_hft::PositionDirection::kShort;
 }
 
-std::string InferExchangeFromInstrumentId(const std::string& instrument_id) {
-    const auto dot = instrument_id.find('.');
-    if (dot != std::string::npos && dot > 0) {
-        return instrument_id.substr(0, dot);
-    }
-
-    std::string product;
-    for (const char ch : instrument_id) {
-        if (std::isalpha(static_cast<unsigned char>(ch))) {
-            product.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
-        } else if (!product.empty()) {
-            break;
-        }
-    }
-    if (product.empty()) {
-        return "";
-    }
-    if (product == "ag" || product == "al" || product == "ao" || product == "au" ||
-        product == "br" || product == "bu" || product == "cu" || product == "fu" ||
-        product == "hc" || product == "ni" || product == "pb" || product == "rb" ||
-        product == "ru" || product == "sn" || product == "sp" || product == "ss" ||
-        product == "wr" || product == "zn") {
-        return "SHFE";
-    }
-    if (product == "a" || product == "b" || product == "bb" || product == "c" || product == "cs" ||
-        product == "eb" || product == "eg" || product == "fb" || product == "i" || product == "j" ||
-        product == "jd" || product == "jm" || product == "l" || product == "lh" || product == "m" ||
-        product == "p" || product == "pg" || product == "pp" || product == "rr" || product == "v" ||
-        product == "y") {
-        return "DCE";
-    }
-    if (product == "ap" || product == "cf" || product == "cj" || product == "cy" ||
-        product == "fg" || product == "jr" || product == "lr" || product == "ma" ||
-        product == "oi" || product == "pf" || product == "pk" || product == "pm" ||
-        product == "ri" || product == "rm" || product == "rs" || product == "sa" ||
-        product == "sf" || product == "sh" || product == "sm" || product == "sr" ||
-        product == "ta" || product == "ur" || product == "wh" || product == "zc") {
-        return "CZCE";
-    }
-    if (product == "bc" || product == "ec" || product == "lu" || product == "nr" ||
-        product == "sc") {
-        return "INE";
-    }
-    if (product == "if" || product == "ih" || product == "im" || product == "ic" ||
-        product == "t" || product == "tf" || product == "tl" || product == "ts") {
-        return "CFFEX";
-    }
-    if (product == "lc" || product == "si") {
-        return "GFEX";
-    }
-    return "";
-}
-
-std::string HedgeFlagToCtpText(quant_hft::HedgeFlag hedge_flag) {
-    switch (hedge_flag) {
-        case quant_hft::HedgeFlag::kArbitrage:
-            return "2";
-        case quant_hft::HedgeFlag::kHedge:
-            return "3";
-        case quant_hft::HedgeFlag::kSpeculation:
-        default:
-            return "1";
-    }
-}
-
 quant_hft::CtpOrderIntentForLedger BuildCtpLedgerIntent(const quant_hft::OrderIntent& intent) {
     quant_hft::CtpOrderIntentForLedger ledger_intent;
     ledger_intent.client_order_id = intent.client_order_id;
     ledger_intent.account_id = intent.account_id;
     ledger_intent.instrument_id = intent.instrument_id;
-    ledger_intent.exchange_id = InferExchangeFromInstrumentId(intent.instrument_id);
-    ledger_intent.hedge_flag = HedgeFlagToCtpText(intent.hedge_flag);
+    ledger_intent.exchange_id = quant_hft::InferCtpExchangeIdFromInstrumentId(intent.instrument_id);
+    ledger_intent.hedge_flag = quant_hft::CtpHedgeFlagToText(intent.hedge_flag);
     ledger_intent.direction = ResolveLedgerDirection(intent);
     ledger_intent.offset = intent.offset;
     ledger_intent.requested_volume = intent.volume;
@@ -1861,11 +1797,23 @@ int main(int argc, char** argv) {
                 recent_market = it->second;
             }
         }
-        const auto plans =
+        const auto raw_plans =
             execution_planner.BuildPlan(signal, account_id, execution_config, recent_market);
-        if (plans.empty()) {
+        if (raw_plans.empty()) {
             EmitSignalPlanRejectedLog(config, signal, "empty_execution_plan");
             return;
+        }
+
+        std::vector<PlannedOrder> plans;
+        std::string close_offset_error;
+        {
+            std::lock_guard<std::mutex> lock(ctp_ledger_mutex);
+            if (!ResolveCtpCloseOffsets(raw_plans, ctp_position_ledger, &plans,
+                                        &close_offset_error)) {
+                EmitSignalPlanRejectedLog(config, signal,
+                                          "ctp_close_offset_resolve_reject:" + close_offset_error);
+                return;
+            }
         }
 
         for (const auto& planned : plans) {
@@ -3256,7 +3204,7 @@ int main(int argc, char** argv) {
                     std::int32_t total_position = 0;
                     std::int32_t total_frozen = 0;
                     const auto current_exchange_id =
-                        InferExchangeFromInstrumentId(current_instrument_id);
+                        InferCtpExchangeIdFromInstrumentId(current_instrument_id);
                     {
                         std::lock_guard<std::mutex> lock(ctp_ledger_mutex);
                         const std::array<PositionDirection, 2> directions = {

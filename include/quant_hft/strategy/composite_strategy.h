@@ -160,6 +160,9 @@ class CompositeStrategy : public ILiveStrategy {
     void TrackPendingOpenOrder(const OrderEvent& event);
     bool HasPendingOpenForProduct(const std::string& product_id) const;
     bool HasOpenPositionForProduct(const std::string& product_id) const;
+    bool EnsurePositionOwnerForSingleSubStrategy(const std::string& instrument_id,
+                                                 std::string* owner_strategy_id,
+                                                 bool* owner_backfilled);
     std::vector<SignalIntent> MergeSignals(const std::vector<SignalIntent>& signals) const;
     static AtomicParams MergeParamsForRunMode(const SubStrategyDefinition& definition,
                                               RunMode run_mode);

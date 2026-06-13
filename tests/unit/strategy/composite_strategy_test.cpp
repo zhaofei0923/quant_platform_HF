@@ -512,6 +512,40 @@ TEST(CompositeStrategyTest, ReconcileNetPositionsFlattensStaleBelief) {
     EXPECT_FALSE(after.empty());
 }
 
+TEST(CompositeStrategyTest, ReconcileIgnoresAndClearsNonMatchingProductPositions) {
+    const std::string scripted_type = UniqueType("reconcile_product_filter");
+    RegisterScriptedType(scripted_type);
+
+    CompositeStrategyDefinition definition;
+    definition.product_id = "rb";
+    definition.run_type = "backtest";
+    definition.sub_strategies = {
+        MakeSubStrategy("s1", scripted_type, {{"id", "s1"}, {"emit_open", "0"}})};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+
+    StrategyState loaded;
+    loaded["net_pos.m2405"] = "1";
+    loaded["avg_open.m2405"] = "2500.0";
+    loaded["owner.m2405"] = "s1";
+    std::string error;
+    ASSERT_TRUE(strategy.LoadState(loaded, &error)) << error;
+
+    std::vector<std::string> adjustments;
+    const std::size_t adjusted =
+        strategy.ReconcileNetPositions({{"m2405", 1}}, {{"m2405", 2500.0}}, &adjustments);
+    EXPECT_EQ(adjusted, 1U);
+    ASSERT_EQ(adjustments.size(), 1U);
+    EXPECT_EQ(adjustments.front(), "m2405:ignored_non_matching_product");
+
+    StrategyState snapshot;
+    ASSERT_TRUE(strategy.SaveState(&snapshot, &error)) << error;
+    EXPECT_EQ(snapshot.count("net_pos.m2405"), 0U);
+    EXPECT_EQ(snapshot.count("avg_open.m2405"), 0U);
+    EXPECT_EQ(snapshot.count("owner.m2405"), 0U);
+}
+
 TEST(CompositeStrategyTest, ReconcileNetPositionsNoopWhenBeliefMatchesAuthoritative) {
     const std::string scripted_type = UniqueType("reconcile_match");
     RegisterScriptedType(scripted_type);
@@ -561,6 +595,94 @@ TEST(CompositeStrategyTest, ReconcileBackfillsAvgOpenForAdoptedPosition) {
     EXPECT_EQ(snapshot.at("net_pos.rb2405"), "1");
     ASSERT_EQ(snapshot.count("avg_open.rb2405"), 1U);
     EXPECT_DOUBLE_EQ(std::stod(snapshot.at("avg_open.rb2405")), 3050.0);
+    ASSERT_EQ(snapshot.count("owner.rb2405"), 1U);
+    EXPECT_EQ(snapshot.at("owner.rb2405"), "s1");
+}
+
+TEST(CompositeStrategyTest, ReconcileBackfillsMissingOwnerForMatchingSingleStrategyPosition) {
+    const std::string scripted_type = UniqueType("reconcile_owner_match");
+    RegisterScriptedType(scripted_type);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {MakeSubStrategy(
+        "s1", scripted_type, {{"id", "s1"}, {"emit_tick_stop_loss", "1"}, {"volume", "1"}})};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+
+    StrategyState loaded;
+    loaded["net_pos.rb2405"] = "1";
+    loaded["avg_open.rb2405"] = "3050.0";
+    std::string error;
+    ASSERT_TRUE(strategy.LoadState(loaded, &error)) << error;
+    ASSERT_EQ(strategy.GetBacktestPositionOwner("rb2405"), "");
+
+    std::vector<std::string> adjustments;
+    const std::size_t adjusted =
+        strategy.ReconcileNetPositions({{"rb2405", 1}}, {{"rb2405", 3050.0}}, &adjustments);
+    EXPECT_EQ(adjusted, 1U);
+    ASSERT_EQ(strategy.GetBacktestPositionOwner("rb2405"), "s1");
+    ASSERT_EQ(adjustments.size(), 1U);
+    EXPECT_EQ(adjustments.front(), "rb2405:owner_backfill=s1");
+
+    const std::vector<SignalIntent> tick_signals = strategy.OnBacktestTick("rb2405", 1000, 3040.0);
+    ASSERT_EQ(tick_signals.size(), 1U);
+    EXPECT_EQ(tick_signals.front().strategy_id, "s1");
+    EXPECT_EQ(tick_signals.front().signal_type, SignalType::kStopLoss);
+    EXPECT_EQ(tick_signals.front().offset, OffsetFlag::kClose);
+}
+
+TEST(CompositeStrategyTest, BacktestTickBackfillsMissingOwnerForSingleStrategyPosition) {
+    const std::string scripted_type = UniqueType("tick_owner_backfill");
+    RegisterScriptedType(scripted_type);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {MakeSubStrategy(
+        "s1", scripted_type, {{"id", "s1"}, {"emit_tick_stop_loss", "1"}, {"volume", "1"}})};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+
+    StrategyState loaded;
+    loaded["net_pos.rb2405"] = "1";
+    loaded["avg_open.rb2405"] = "3050.0";
+    std::string error;
+    ASSERT_TRUE(strategy.LoadState(loaded, &error)) << error;
+
+    const std::vector<SignalIntent> tick_signals = strategy.OnBacktestTick("rb2405", 1000, 3040.0);
+    ASSERT_EQ(tick_signals.size(), 1U);
+    EXPECT_EQ(tick_signals.front().strategy_id, "s1");
+    EXPECT_EQ(tick_signals.front().signal_type, SignalType::kStopLoss);
+    EXPECT_EQ(tick_signals.front().side, Side::kSell);
+    EXPECT_EQ(strategy.GetBacktestPositionOwner("rb2405"), "s1");
+}
+
+TEST(CompositeStrategyTest, BacktestTickKeepsMissingOwnerAmbiguousWithMultipleStrategies) {
+    const std::string type_a = UniqueType("tick_owner_ambiguous_a");
+    const std::string type_b = UniqueType("tick_owner_ambiguous_b");
+    RegisterScriptedType(type_a);
+    RegisterScriptedType(type_b);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {
+        MakeSubStrategy("s1", type_a, {{"id", "s1"}, {"emit_tick_stop_loss", "1"}}),
+        MakeSubStrategy("s2", type_b, {{"id", "s2"}, {"emit_tick_stop_loss", "1"}}),
+    };
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+
+    StrategyState loaded;
+    loaded["net_pos.rb2405"] = "1";
+    loaded["avg_open.rb2405"] = "3050.0";
+    std::string error;
+    ASSERT_TRUE(strategy.LoadState(loaded, &error)) << error;
+
+    EXPECT_TRUE(strategy.OnBacktestTick("rb2405", 1000, 3040.0).empty());
+    EXPECT_EQ(strategy.GetBacktestPositionOwner("rb2405"), "");
 }
 
 TEST(CompositeStrategyTest, ReconcileDoesNotOverwriteExistingAvgOpen) {

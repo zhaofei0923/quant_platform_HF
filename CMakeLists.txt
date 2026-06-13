@@ -133,6 +133,7 @@ add_library(quant_hft_core STATIC
     src/services/settlement/settlement_query_client.cpp
     src/services/settlement/daily_settlement_service.cpp
     src/services/portfolio/ctp_account_ledger.cpp
+    src/services/portfolio/ctp_close_offset_resolver.cpp
     src/services/portfolio/ctp_position_ledger.cpp
     src/services/portfolio/position_manager.cpp
     src/services/portfolio/in_memory_portfolio_ledger.cpp
@@ -398,6 +399,9 @@ if(QUANT_HFT_BUILD_TESTS)
 
     add_executable(ctp_position_ledger_test tests/unit/services/ctp_position_ledger_test.cpp)
     target_link_libraries(ctp_position_ledger_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(ctp_close_offset_resolver_test tests/unit/services/ctp_close_offset_resolver_test.cpp)
+    target_link_libraries(ctp_close_offset_resolver_test PRIVATE quant_hft_core GTest::gtest_main)
 
     add_executable(ctp_account_ledger_test tests/unit/services/ctp_account_ledger_test.cpp)
     target_link_libraries(ctp_account_ledger_test PRIVATE quant_hft_core GTest::gtest_main)
@@ -685,6 +689,7 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(risk_policy_engine_test)
     gtest_discover_tests(in_memory_portfolio_ledger_test)
     gtest_discover_tests(ctp_position_ledger_test)
+    gtest_discover_tests(ctp_close_offset_resolver_test)
     gtest_discover_tests(ctp_account_ledger_test)
     gtest_discover_tests(self_trade_risk_engine_test)
     gtest_discover_tests(risk_rule_executor_test)

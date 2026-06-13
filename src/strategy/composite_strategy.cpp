@@ -692,6 +692,11 @@ std::size_t CompositeStrategy::ReconcileNetPositions(
         atomic_context_.avg_open_prices[instrument] = avg_it->second;
         return true;
     };
+    const auto append_adjustment = [&](const std::string& text) {
+        if (adjustments != nullptr) {
+            adjustments->push_back(text);
+        }
+    };
 
     std::size_t adjusted = 0;
     for (const std::string& instrument : instruments) {
@@ -700,17 +705,40 @@ std::size_t CompositeStrategy::ReconcileNetPositions(
             strat_it == atomic_context_.net_positions.end() ? 0 : strat_it->second;
         const auto auth_it = authoritative_net.find(instrument);
         const std::int32_t authoritative = auth_it == authoritative_net.end() ? 0 : auth_it->second;
+        if (!MatchesProduct(instrument)) {
+            bool changed = false;
+            changed = atomic_context_.net_positions.erase(instrument) > 0 || changed;
+            changed = atomic_context_.avg_open_prices.erase(instrument) > 0 || changed;
+            changed = position_owner_by_instrument_.erase(instrument) > 0 || changed;
+            changed = active_force_close_window_by_instrument_.erase(instrument) > 0 || changed;
+            if (changed) {
+                ++adjusted;
+                append_adjustment(instrument + ":ignored_non_matching_product");
+            }
+            continue;
+        }
         if (believed == authoritative) {
             // Net matches, but a reconcile-sourced position carried over from a
             // prior session (or restart) may still lack an entry price. Backfill
-            // it so risk logic can run; count it as an adjustment for auditing.
+            // it so risk logic can run. It may also lack an owner, which prevents
+            // tick-level exits from being routed back to the atomic strategy.
+            bool changed = false;
             if (authoritative != 0 && backfill_avg_open(instrument)) {
+                changed = true;
+                append_adjustment(instrument + ":avg_open_backfill=" +
+                                  std::to_string(atomic_context_.avg_open_prices[instrument]));
+            }
+            std::string owner_strategy_id;
+            bool owner_backfilled = false;
+            if (authoritative != 0 &&
+                EnsurePositionOwnerForSingleSubStrategy(instrument, &owner_strategy_id,
+                                                        &owner_backfilled) &&
+                owner_backfilled) {
+                changed = true;
+                append_adjustment(instrument + ":owner_backfill=" + owner_strategy_id);
+            }
+            if (changed) {
                 ++adjusted;
-                if (adjustments != nullptr) {
-                    adjustments->push_back(
-                        instrument + ":avg_open_backfill=" +
-                        std::to_string(atomic_context_.avg_open_prices[instrument]));
-                }
             }
             continue;
         }
@@ -730,13 +758,18 @@ std::size_t CompositeStrategy::ReconcileNetPositions(
             // Backfill the entry price so the adopted position is protected by
             // trailing stops from the next tick onward.
             backfill_avg_open(instrument);
+            std::string owner_strategy_id;
+            bool owner_backfilled = false;
+            if (EnsurePositionOwnerForSingleSubStrategy(instrument, &owner_strategy_id,
+                                                        &owner_backfilled) &&
+                owner_backfilled) {
+                append_adjustment(instrument + ":owner_backfill=" + owner_strategy_id);
+            }
         }
 
         ++adjusted;
-        if (adjustments != nullptr) {
-            adjustments->push_back(instrument + ":" + std::to_string(believed) + "->" +
-                                   std::to_string(authoritative));
-        }
+        append_adjustment(instrument + ":" + std::to_string(believed) + "->" +
+                          std::to_string(authoritative));
     }
     return adjusted;
 }
@@ -777,13 +810,13 @@ std::vector<SignalIntent> CompositeStrategy::OnBacktestTick(const std::string& i
         return {};
     }
 
-    const auto owner_it = position_owner_by_instrument_.find(instrument_id);
-    if (owner_it == position_owner_by_instrument_.end() || owner_it->second.empty()) {
+    std::string owner_strategy_id;
+    if (!EnsurePositionOwnerForSingleSubStrategy(instrument_id, &owner_strategy_id, nullptr)) {
         active_force_close_window_by_instrument_.erase(instrument_id);
         return {};
     }
 
-    const SubStrategySlot* slot = FindSubStrategySlot(owner_it->second);
+    const SubStrategySlot* slot = FindSubStrategySlot(owner_strategy_id);
     if (slot == nullptr) {
         active_force_close_window_by_instrument_.erase(instrument_id);
         return {};
@@ -813,7 +846,7 @@ std::vector<SignalIntent> CompositeStrategy::OnBacktestTick(const std::string& i
 
     active_force_close_window_by_instrument_[instrument_id] = window_key;
     SignalIntent signal;
-    signal.strategy_id = owner_it->second;
+    signal.strategy_id = owner_strategy_id;
     signal.instrument_id = instrument_id;
     signal.signal_type = SignalType::kForceClose;
     signal.side = position > 0 ? Side::kSell : Side::kBuy;
@@ -821,7 +854,7 @@ std::vector<SignalIntent> CompositeStrategy::OnBacktestTick(const std::string& i
     signal.volume = std::abs(position);
     signal.limit_price = std::isfinite(last_price) ? last_price : 0.0;
     signal.ts_ns = now_ns;
-    signal.trace_id = owner_it->second + "-window-force-close-" + instrument_id + "-" + window_key;
+    signal.trace_id = owner_strategy_id + "-window-force-close-" + instrument_id + "-" + window_key;
     tick_signals.push_back(std::move(signal));
     return MergeSignals(ApplyNonOpenSignalGate(tick_signals));
 }
@@ -1580,6 +1613,43 @@ bool CompositeStrategy::HasOpenPositionForProduct(const std::string& product_id)
         }
     }
     return false;
+}
+
+bool CompositeStrategy::EnsurePositionOwnerForSingleSubStrategy(const std::string& instrument_id,
+                                                                std::string* owner_strategy_id,
+                                                                bool* owner_backfilled) {
+    if (owner_backfilled != nullptr) {
+        *owner_backfilled = false;
+    }
+    if (!MatchesProduct(instrument_id)) {
+        return false;
+    }
+    const auto owner_it = position_owner_by_instrument_.find(instrument_id);
+    if (owner_it != position_owner_by_instrument_.end() && !owner_it->second.empty()) {
+        if (owner_strategy_id != nullptr) {
+            *owner_strategy_id = owner_it->second;
+        }
+        return true;
+    }
+    if (sub_strategies_.size() != 1 || sub_strategies_.front().strategy_id.empty()) {
+        return false;
+    }
+
+    const std::string resolved_owner = sub_strategies_.front().strategy_id;
+    position_owner_by_instrument_[instrument_id] = resolved_owner;
+    if (owner_strategy_id != nullptr) {
+        *owner_strategy_id = resolved_owner;
+    }
+    if (owner_backfilled != nullptr) {
+        *owner_backfilled = true;
+    }
+    EmitCompositeLog(atomic_context_, "warn", "position_owner_backfilled",
+                     {{"strategy_id", strategy_context_.strategy_id},
+                      {"event_type", "position_owner_backfilled"},
+                      {"instrument_id", instrument_id},
+                      {"owner_strategy_id", resolved_owner},
+                      {"reason", "single_sub_strategy_position_adoption"}});
+    return true;
 }
 
 std::vector<SignalIntent> CompositeStrategy::MergeSignals(

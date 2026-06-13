@@ -1737,10 +1737,10 @@ std::string TradeOffsetText(const std::string& offset) {
     if (offset == "1") {
         return "close";
     }
-    if (offset == "3") {
+    if (offset == "2") {
         return "close_today";
     }
-    if (offset == "4") {
+    if (offset == "3") {
         return "close_yesterday";
     }
     return offset;

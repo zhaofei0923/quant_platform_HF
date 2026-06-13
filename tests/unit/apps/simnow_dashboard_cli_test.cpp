@@ -340,8 +340,8 @@ TEST(SimnowDashboardCli, EmptyWalAndDailyReportsRenderHtmlAndState) {
     EXPECT_NE(html.find("SimNow Dashboard"), std::string::npos);
     EXPECT_NE(html.find("SimNow Trading Cockpit"), std::string::npos);
     EXPECT_NE(html.find("Price Board"), std::string::npos);
-    EXPECT_NE(html.find("Signal Execution"), std::string::npos);
-    EXPECT_NE(html.find("signal_without_order_submitted"), std::string::npos);
+    EXPECT_NE(html.find("System Status"), std::string::npos);
+    EXPECT_NE(html.find("Orders And Fills"), std::string::npos);
     EXPECT_NE(html.find("missing_pid"), std::string::npos);
     EXPECT_NE(html.find("20260514"), std::string::npos);
 }
@@ -398,24 +398,61 @@ TEST(SimnowDashboardCli, RendersCtpConnectionAndOrderFlowPanels) {
     EXPECT_NE(json.find("\"side\": \"buy\""), std::string::npos);
     EXPECT_NE(json.find("\"offset\": \"open\""), std::string::npos);
     EXPECT_NE(json.find("\"price\": \"2320\""), std::string::npos);
+    EXPECT_NE(json.find("\"exchange_id\": \"DCE\""), std::string::npos);
+    EXPECT_NE(json.find("\"trade_id\": \"trade-1\""), std::string::npos);
     EXPECT_NE(json.find("\"strategy_id\": \"kama_trend_production\""), std::string::npos);
     EXPECT_NE(json.find("\"attribution\": \"strategy_matched\""), std::string::npos);
-    EXPECT_NE(html.find("CTP Connection"), std::string::npos);
+    EXPECT_NE(html.find("System Status"), std::string::npos);
     EXPECT_NE(html.find("Orders And Fills"), std::string::npos);
-    EXPECT_NE(html.find("Fill Details"), std::string::npos);
-    EXPECT_NE(html.find("Seq"), std::string::npos);
-    EXPECT_NE(html.find("Attribution"), std::string::npos);
+    EXPECT_NE(html.find("Recent Fills"), std::string::npos);
     EXPECT_NE(html.find("kama_trend_production"), std::string::npos);
-    EXPECT_NE(html.find("strategy_matched"), std::string::npos);
-    EXPECT_NE(html.find("DCE"), std::string::npos);
-    EXPECT_NE(html.find("trade-1"), std::string::npos);
     EXPECT_NE(html.find("2320"), std::string::npos);
     EXPECT_NE(html.find("buy"), std::string::npos);
+    EXPECT_NE(html.find("open"), std::string::npos);
     EXPECT_EQ(html.find("Signal To CTP Flow"), std::string::npos);
-    EXPECT_NE(html.find("CTP Orders And Rejects"), std::string::npos);
     EXPECT_NE(html.find("结算结果未确认"), std::string::npos);
     EXPECT_EQ(html.find("????????"), std::string::npos);
     EXPECT_EQ(html.find("auth_code"), std::string::npos);
+}
+
+TEST(SimnowDashboardCli, RendersInternalOffsetCodesAsCloseNames) {
+    const auto root = MakeTempDir("offset_codes");
+    const auto output_dir = root / "dashboard";
+    const auto stdout_log = root / "stdout.log";
+    const auto core_log = root / "runs" / "run_1" / "core_engine.log";
+
+    WriteSampleCtpRuntime(root, core_log);
+    WriteSampleCtpSignalMonitor(root);
+    WriteFile(root / "wal" / "events.wal",
+              "{\"seq\":1,\"schema_version\":2,\"kind\":\"trade\","
+              "\"event_type\":\"trade_fill\","
+              "\"strategy_id\":\"kama_trend_production\","
+              "\"trace_id\":\"kama_trend_production-close-today\","
+              "\"client_order_id\":\"kama_trend_production-close-today\","
+              "\"instrument_id\":\"hc2610\",\"exchange_id\":\"SHFE\","
+              "\"side\":1,\"offset\":2,\"last_trade_volume\":21,"
+              "\"avg_fill_price\":3374,\"order_ref\":\"0001\","
+              "\"trade_id\":\"trade-close-today\",\"ts_ns\":1781244400855416785}\n"
+              "{\"seq\":2,\"schema_version\":2,\"kind\":\"trade\","
+              "\"event_type\":\"trade_fill\","
+              "\"strategy_id\":\"kama_trend_production\","
+              "\"trace_id\":\"kama_trend_production-close-yesterday\","
+              "\"client_order_id\":\"kama_trend_production-close-yesterday\","
+              "\"instrument_id\":\"hc2610\",\"exchange_id\":\"SHFE\","
+              "\"side\":0,\"offset\":3,\"last_trade_volume\":17,"
+              "\"avg_fill_price\":3372,\"order_ref\":\"0002\","
+              "\"trade_id\":\"trade-close-yesterday\",\"ts_ns\":1781228444190765562}\n");
+
+    const int rc = RunCommandCapture(DashboardCommand(root, output_dir), stdout_log);
+
+    EXPECT_EQ(rc, 0);
+    const std::string json = ReadFile(output_dir / "dashboard_state.json");
+    EXPECT_NE(json.find("\"trade_id\": \"trade-close-today\""), std::string::npos);
+    EXPECT_NE(json.find("\"offset\": \"close_today\""), std::string::npos);
+    EXPECT_NE(json.find("\"trade_id\": \"trade-close-yesterday\""), std::string::npos);
+    EXPECT_NE(json.find("\"offset\": \"close_yesterday\""), std::string::npos);
+    EXPECT_EQ(json.find("\"offset\": \"2\""), std::string::npos);
+    EXPECT_EQ(json.find("\"offset\": \"3\""), std::string::npos);
 }
 
 TEST(SimnowDashboardCli, DeduplicatesCtpReplayFillsAcrossRuns) {
@@ -442,10 +479,10 @@ TEST(SimnowDashboardCli, DeduplicatesCtpReplayFillsAcrossRuns) {
     EXPECT_NE(json.find("\"replay_duplicate_fills\""), std::string::npos);
     EXPECT_NE(json.find("\"trade_id\": \"trade-new\""), std::string::npos);
     EXPECT_NE(json.find("\"trade_id\": \"trade-dup\""), std::string::npos);
-    EXPECT_NE(html.find("Suppressed CTP Replay Fills"), std::string::npos);
-    EXPECT_NE(html.find("trade-new"), std::string::npos);
-    EXPECT_NE(html.find("trade-dup"), std::string::npos);
-    EXPECT_NE(html.find("CTP replay duplicates 1 filtered"), std::string::npos);
+    EXPECT_NE(html.find("Recent Fills"), std::string::npos);
+    EXPECT_NE(html.find("1 replay duplicates filtered"), std::string::npos);
+    EXPECT_NE(html.find("c2607"), std::string::npos);
+    EXPECT_NE(html.find("2321"), std::string::npos);
 }
 
 TEST(SimnowDashboardCli, LiveHealthIgnoresStaleOrderFlowBeforeCurrentMonitorEpoch) {

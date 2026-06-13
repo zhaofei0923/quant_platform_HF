@@ -1218,6 +1218,37 @@ TEST(CompositeStrategyTest, ForbidOpenWindowsBlockOpenButAllowCloseSignals) {
     EXPECT_EQ(close_allowed.front().offset, OffsetFlag::kClose);
 }
 
+TEST(CompositeStrategyTest, SimForbidOpenWindowsUseMultiMinuteBarStartTime) {
+    const std::string open_type = UniqueType("sim_bar_start_window");
+    RegisterScriptedType(open_type);
+
+    SubStrategyDefinition open_sub = MakeSubStrategy("open", open_type,
+                                                     {{"id", "open"},
+                                                      {"emit_open", "1"},
+                                                      {"forbid_open_windows", "21:00-23:00"},
+                                                      {"window_timezone", "Asia/Shanghai"}});
+    open_sub.timeframe_minutes = 5;
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "sim";
+    definition.enable_non_backtest = true;
+    definition.sub_strategies = {open_sub};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext("sim"));
+
+    const EpochNanos local_2300_close_ts_ns = 15LL * 60LL * 60LL * 1'000'000'000LL;
+    const std::vector<SignalIntent> blocked =
+        strategy.OnState(MakeState("rb2405", local_2300_close_ts_ns, MarketRegime::kUnknown, 5));
+    EXPECT_TRUE(blocked.empty());
+
+    const EpochNanos local_2305_close_ts_ns = local_2300_close_ts_ns + 5LL * 60LL * 1'000'000'000LL;
+    const std::vector<SignalIntent> allowed =
+        strategy.OnState(MakeState("rb2405", local_2305_close_ts_ns, MarketRegime::kUnknown, 5));
+    ASSERT_EQ(allowed.size(), 1U);
+    EXPECT_EQ(allowed.front().signal_type, SignalType::kOpen);
+}
+
 TEST(CompositeStrategyTest, DailyMaxLossGuardBlocksOnlySameDayOpenSignals) {
     const std::string open_type = UniqueType("daily_loss_guard");
     RegisterScriptedType(open_type);

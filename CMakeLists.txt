@@ -129,6 +129,7 @@ add_library(quant_hft_core STATIC
     src/services/order/execution_router.cpp
     src/services/order/in_memory_order_gateway.cpp
     src/services/order/order_state_machine.cpp
+    src/services/order/timeout_cancel_tracker.cpp
     src/services/settlement/settlement_price_provider.cpp
     src/services/settlement/settlement_query_client.cpp
     src/services/settlement/daily_settlement_service.cpp
@@ -430,6 +431,9 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(order_state_machine_test tests/unit/services/order_state_machine_test.cpp)
     target_link_libraries(order_state_machine_test PRIVATE quant_hft_core GTest::gtest_main)
 
+    add_executable(timeout_cancel_tracker_test tests/unit/services/timeout_cancel_tracker_test.cpp)
+    target_link_libraries(timeout_cancel_tracker_test PRIVATE quant_hft_core GTest::gtest_main)
+
     add_executable(execution_planner_test tests/unit/services/execution_planner_test.cpp)
     target_link_libraries(execution_planner_test PRIVATE quant_hft_core GTest::gtest_main)
 
@@ -699,6 +703,7 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(market_data_csv_recorder_test)
     gtest_discover_tests(timeframe_state_fanout_test)
     gtest_discover_tests(order_state_machine_test)
+    gtest_discover_tests(timeout_cancel_tracker_test)
     gtest_discover_tests(execution_planner_test)
     gtest_discover_tests(execution_router_test)
     gtest_discover_tests(execution_engine_test)

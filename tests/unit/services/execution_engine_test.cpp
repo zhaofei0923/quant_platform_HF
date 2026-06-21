@@ -304,6 +304,54 @@ TEST(ExecutionEngineTest, OrderStateTransitionInvalidSequenceRejected) {
     EXPECT_EQ(order->status, OrderStatus::kCanceled);
 }
 
+TEST(ExecutionEngineTest, CancelActionRejectDoesNotBlockLateTradeFill) {
+    auto bundle = BuildEngineBundle();
+    auto submit = bundle.engine->PlaceOrderAsync(BuildOrder("ord-cancel-reject-late-fill")).get();
+    ASSERT_TRUE(submit.success);
+
+    OrderEvent accepted;
+    accepted.account_id = "acc1";
+    accepted.client_order_id = submit.client_order_id;
+    accepted.order_ref = submit.client_order_id;
+    accepted.instrument_id = "SHFE.ag2406";
+    accepted.front_id = 1;
+    accepted.session_id = 1;
+    accepted.status = OrderStatus::kAccepted;
+    accepted.total_volume = 1;
+    accepted.filled_volume = 0;
+    accepted.event_source = "OnRtnOrder";
+    accepted.exchange_ts_ns = 250;
+    accepted.ts_ns = 250;
+    bundle.engine->HandleOrderEvent(accepted);
+
+    OrderEvent cancel_rejected = accepted;
+    cancel_rejected.status = OrderStatus::kRejected;
+    cancel_rejected.reason = "cancel_error (ErrorID=26, ErrorMsg=order terminal unknown)";
+    cancel_rejected.event_source = "OnErrRtnOrderAction";
+    cancel_rejected.ts_ns = 251;
+    cancel_rejected.exchange_ts_ns = 251;
+    bundle.engine->HandleOrderEvent(cancel_rejected);
+
+    auto order = bundle.order_manager->GetOrder(submit.client_order_id);
+    ASSERT_TRUE(order.has_value());
+    EXPECT_EQ(order->status, OrderStatus::kAccepted);
+
+    OrderEvent late_fill = accepted;
+    late_fill.status = OrderStatus::kFilled;
+    late_fill.filled_volume = 1;
+    late_fill.last_trade_volume = 1;
+    late_fill.event_source = "OnRspQryTrade";
+    late_fill.trade_id = "late-query-trade";
+    late_fill.ts_ns = 252;
+    late_fill.exchange_ts_ns = 252;
+    bundle.engine->HandleOrderEvent(late_fill);
+
+    order = bundle.order_manager->GetOrder(submit.client_order_id);
+    ASSERT_TRUE(order.has_value());
+    EXPECT_EQ(order->status, OrderStatus::kFilled);
+    EXPECT_EQ(order->filled_quantity, 1);
+}
+
 TEST(ExecutionEngineTest, DuplicateOrderEventIgnored) {
     auto bundle = BuildEngineBundle();
     auto submit = bundle.engine->PlaceOrderAsync(BuildOrder("ord-dup")).get();

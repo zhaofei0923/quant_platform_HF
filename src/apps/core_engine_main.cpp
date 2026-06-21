@@ -60,6 +60,7 @@
 #include "quant_hft/services/position_manager.h"
 #include "quant_hft/services/rule_market_state_engine.h"
 #include "quant_hft/services/timeframe_state_fanout.h"
+#include "quant_hft/services/timeout_cancel_tracker.h"
 #include "quant_hft/strategy/composite_config_loader.h"
 #include "quant_hft/strategy/composite_strategy.h"
 #include "quant_hft/strategy/demo_live_strategy.h"
@@ -1087,6 +1088,15 @@ struct ExecutionMetadata {
     double impact_cost{0.0};
 };
 
+struct CancelReconcileRequest {
+    std::string client_order_id;
+    std::string strategy_id;
+    std::string instrument_id;
+    std::string reason;
+    std::int32_t attempts{0};
+    std::string age_ms;
+};
+
 quant_hft::OrderEvent BuildRejectedEvent(const quant_hft::OrderIntent& intent,
                                          const std::string& reason,
                                          const ExecutionMetadata& metadata) {
@@ -1227,6 +1237,11 @@ bool IsTerminalStatus(quant_hft::OrderStatus status) {
            status == quant_hft::OrderStatus::kRejected;
 }
 
+bool IsTerminalOrderEvent(const quant_hft::OrderEvent& event) {
+    return IsTerminalStatus(event.status) &&
+           !quant_hft::TimeoutCancelTracker::IsCancelActionFeedback(event);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1291,6 +1306,14 @@ int main(int argc, char** argv) {
                           {{"error", strategy_timeframe_error}});
     }
     const ExecutionConfig execution_config = file_config.execution;
+    TimeoutCancelTrackerConfig timeout_cancel_tracker_config;
+    timeout_cancel_tracker_config.max_attempts = config.cancel_retry_max;
+    timeout_cancel_tracker_config.retry_base_ns =
+        static_cast<EpochNanos>(std::max(1, config.cancel_retry_base_ms)) * 1'000'000;
+    timeout_cancel_tracker_config.retry_max_ns =
+        static_cast<EpochNanos>(
+            std::max(config.cancel_retry_base_ms, config.cancel_retry_max_delay_ms)) *
+        1'000'000;
     MetricsExporter metrics_exporter;
     if (config.metrics_enabled) {
         std::string metrics_error;
@@ -1392,8 +1415,10 @@ int main(int argc, char** argv) {
     std::mutex market_history_mutex;
     std::unordered_map<std::string, ExecutionMetadata> execution_metadata_by_order;
     std::unordered_map<std::string, std::vector<MarketSnapshot>> recent_market_history;
-    std::mutex cancel_pending_mutex;
-    std::unordered_set<std::string> cancel_pending_orders;
+    TimeoutCancelTracker timeout_cancel_tracker;
+    std::mutex cancel_reconcile_mutex;
+    std::vector<CancelReconcileRequest> cancel_reconcile_requests;
+    std::unordered_set<std::string> cancel_reconcile_order_ids;
     std::function<void(const SignalIntent&)> process_signal_intent;
     std::unique_ptr<StrategyEngine> strategy_engine;
     KamaTraceCsvWriter kama_trace_writer;
@@ -1608,6 +1633,60 @@ int main(int argc, char** argv) {
                           {{"known_trade_fills", std::to_string(seen_trade_fill_keys.size())}});
     }
 
+    auto enqueue_cancel_reconcile = [&](CancelReconcileRequest request) {
+        if (request.client_order_id.empty()) {
+            return;
+        }
+        bool inserted = false;
+        {
+            std::lock_guard<std::mutex> lock(cancel_reconcile_mutex);
+            inserted = cancel_reconcile_order_ids.insert(request.client_order_id).second;
+            if (inserted) {
+                cancel_reconcile_requests.push_back(request);
+            }
+        }
+        if (!inserted) {
+            return;
+        }
+        EmitStructuredLog(&config, "core_engine", "warn", "order_reconcile_requested",
+                          {{"client_order_id", request.client_order_id},
+                           {"strategy_id", request.strategy_id},
+                           {"instrument_id", request.instrument_id},
+                           {"attempts", std::to_string(request.attempts)},
+                           {"reason", request.reason},
+                           {"age_ms", request.age_ms}});
+    };
+
+    auto drain_cancel_reconcile_requests = [&]() {
+        std::vector<CancelReconcileRequest> batch;
+        {
+            std::lock_guard<std::mutex> lock(cancel_reconcile_mutex);
+            if (cancel_reconcile_requests.empty()) {
+                return;
+            }
+            batch.swap(cancel_reconcile_requests);
+        }
+
+        const int timeout_ms = std::max(1000, config.cancel_wait_ack_timeout_ms);
+        const bool ok = ctp_trader->RecoverOrdersAndTrades(timeout_ms);
+        for (const auto& request : batch) {
+            EmitStructuredLog(&config, "core_engine", ok ? "info" : "warn",
+                              ok ? "order_reconcile_completed" : "order_reconcile_failed",
+                              {{"client_order_id", request.client_order_id},
+                               {"strategy_id", request.strategy_id},
+                               {"instrument_id", request.instrument_id},
+                               {"attempts", std::to_string(request.attempts)},
+                               {"reason", request.reason},
+                               {"age_ms", request.age_ms}});
+        }
+        {
+            std::lock_guard<std::mutex> lock(cancel_reconcile_mutex);
+            for (const auto& request : batch) {
+                cancel_reconcile_order_ids.erase(request.client_order_id);
+            }
+        }
+    };
+
     auto process_order_event = [&](const OrderEvent& raw_event) {
         OrderEvent event = raw_event;
         if (event.recv_ts_ns <= 0) {
@@ -1632,7 +1711,8 @@ int main(int argc, char** argv) {
                                {"front_id", std::to_string(event.front_id)},
                                {"session_id", std::to_string(event.session_id)}});
         }
-        if (event.status == OrderStatus::kRejected && event.event_source != "internal") {
+        if (event.status == OrderStatus::kRejected && event.event_source != "internal" &&
+            !TimeoutCancelTracker::IsCancelActionFeedback(event)) {
             EmitOrderRejectedEventLog(config, event);
         }
         {
@@ -1659,6 +1739,38 @@ int main(int argc, char** argv) {
                     event.impact_cost = it->second.impact_cost;
                 }
             }
+        }
+
+        const auto cancel_tracker_decision = timeout_cancel_tracker.OnOrderEvent(
+            event, event.ts_ns > 0 ? event.ts_ns : NowEpochNanos(), timeout_cancel_tracker_config);
+        if (cancel_tracker_decision.action == TimeoutCancelAction::kSuppressAndReconcile) {
+            std::string strategy_id = event.strategy_id;
+            std::string instrument_id = event.instrument_id;
+            std::string age_ms = "0";
+            const auto tracked_order = order_manager->GetOrder(event.client_order_id);
+            if (tracked_order.has_value()) {
+                if (strategy_id.empty()) {
+                    strategy_id = tracked_order->strategy_id;
+                }
+                if (instrument_id.empty()) {
+                    instrument_id = tracked_order->symbol;
+                }
+                const EpochNanos created_at_ns = tracked_order->created_at_ns;
+                const EpochNanos now_ns = event.ts_ns > 0 ? event.ts_ns : NowEpochNanos();
+                if (created_at_ns > 0 && now_ns > created_at_ns) {
+                    age_ms = std::to_string((now_ns - created_at_ns) / 1'000'000);
+                }
+            }
+            EmitStructuredLog(&config, "core_engine", "warn", "order_timeout_cancel_suppressed",
+                              {{"client_order_id", event.client_order_id},
+                               {"strategy_id", strategy_id},
+                               {"instrument_id", instrument_id},
+                               {"attempts", std::to_string(cancel_tracker_decision.attempts)},
+                               {"reason", cancel_tracker_decision.reason},
+                               {"age_ms", age_ms}});
+            enqueue_cancel_reconcile(CancelReconcileRequest{
+                event.client_order_id, strategy_id, instrument_id, cancel_tracker_decision.reason,
+                cancel_tracker_decision.attempts, age_ms});
         }
 
         const std::string trade_replay_key = BuildTradeReplayDedupKey(event);
@@ -1700,9 +1812,8 @@ int main(int argc, char** argv) {
                 event.strategy_id = tracked_order->strategy_id;
             }
         }
-        if (IsTerminalStatus(event.status)) {
-            std::lock_guard<std::mutex> lock(cancel_pending_mutex);
-            cancel_pending_orders.erase(event.client_order_id);
+        if (IsTerminalOrderEvent(event)) {
+            timeout_cancel_tracker.ClearTerminalOrder(event.client_order_id);
             std::lock_guard<std::mutex> metadata_lock(execution_metadata_mutex);
             execution_metadata_by_order.erase(event.client_order_id);
         }
@@ -3367,6 +3478,7 @@ int main(int argc, char** argv) {
     std::thread execution_maintenance_thread([&]() {
         auto next_cancel_scan = std::chrono::steady_clock::now();
         while (!execution_loop_stop.load()) {
+            drain_cancel_reconcile_requests();
             if (execution_config.cancel_after_ms > 0) {
                 const auto now = std::chrono::steady_clock::now();
                 if (now >= next_cancel_scan) {
@@ -3381,12 +3493,25 @@ int main(int argc, char** argv) {
                             continue;
                         }
 
-                        bool first_request = false;
-                        {
-                            std::lock_guard<std::mutex> lock(cancel_pending_mutex);
-                            first_request = cancel_pending_orders.insert(order.order_id).second;
+                        const auto decision = timeout_cancel_tracker.OnOrderTimedOut(
+                            order.order_id, now_ns, timeout_cancel_tracker_config);
+                        if (decision.action == TimeoutCancelAction::kNone) {
+                            continue;
                         }
-                        if (!first_request) {
+                        const std::string age_ms =
+                            std::to_string((now_ns - timeout_basis_ns) / 1'000'000);
+                        if (decision.action == TimeoutCancelAction::kSuppressAndReconcile) {
+                            EmitStructuredLog(&config, "core_engine", "warn",
+                                              "order_timeout_cancel_suppressed",
+                                              {{"client_order_id", order.order_id},
+                                               {"strategy_id", order.strategy_id},
+                                               {"instrument_id", order.symbol},
+                                               {"attempts", std::to_string(decision.attempts)},
+                                               {"reason", decision.reason},
+                                               {"age_ms", age_ms}});
+                            enqueue_cancel_reconcile(CancelReconcileRequest{
+                                order.order_id, order.strategy_id, order.symbol, decision.reason,
+                                decision.attempts, age_ms});
                             continue;
                         }
 
@@ -3395,17 +3520,49 @@ int main(int argc, char** argv) {
                             {{"client_order_id", order.order_id},
                              {"strategy_id", order.strategy_id},
                              {"instrument_id", order.symbol},
-                             {"age_ms", std::to_string((now_ns - timeout_basis_ns) / 1'000'000)},
+                             {"attempts", std::to_string(decision.attempts)},
+                             {"age_ms", age_ms},
                              {"filled_quantity", std::to_string(order.filled_quantity)},
                              {"quantity", std::to_string(order.quantity)}});
-                        if (!execution_engine.CancelOrderAsync(order.order_id).get()) {
-                            std::lock_guard<std::mutex> lock(cancel_pending_mutex);
-                            cancel_pending_orders.erase(order.order_id);
+                        const bool cancel_ok =
+                            execution_engine.CancelOrderAsync(order.order_id).get();
+                        const auto completion = timeout_cancel_tracker.OnCancelRequestCompleted(
+                            order.order_id, cancel_ok, NowEpochNanos(),
+                            timeout_cancel_tracker_config,
+                            cancel_ok ? "" : "cancel_request_failed");
+                        if (!cancel_ok) {
                             EmitStructuredLog(&config, "core_engine", "warn",
                                               "order_timeout_cancel_failed",
                                               {{"client_order_id", order.order_id},
                                                {"strategy_id", order.strategy_id},
-                                               {"instrument_id", order.symbol}});
+                                               {"instrument_id", order.symbol},
+                                               {"attempts", std::to_string(decision.attempts)},
+                                               {"age_ms", age_ms}});
+                        }
+                        if (completion.retry_scheduled) {
+                            EmitStructuredLog(&config, "core_engine", "warn",
+                                              "order_timeout_cancel_retry_scheduled",
+                                              {{"client_order_id", order.order_id},
+                                               {"strategy_id", order.strategy_id},
+                                               {"instrument_id", order.symbol},
+                                               {"attempts", std::to_string(completion.attempts)},
+                                               {"reason", completion.reason},
+                                               {"age_ms", age_ms},
+                                               {"next_retry_ts_ns",
+                                                std::to_string(completion.next_retry_ts_ns)}});
+                        }
+                        if (completion.action == TimeoutCancelAction::kSuppressAndReconcile) {
+                            EmitStructuredLog(&config, "core_engine", "warn",
+                                              "order_timeout_cancel_suppressed",
+                                              {{"client_order_id", order.order_id},
+                                               {"strategy_id", order.strategy_id},
+                                               {"instrument_id", order.symbol},
+                                               {"attempts", std::to_string(completion.attempts)},
+                                               {"reason", completion.reason},
+                                               {"age_ms", age_ms}});
+                            enqueue_cancel_reconcile(CancelReconcileRequest{
+                                order.order_id, order.strategy_id, order.symbol, completion.reason,
+                                completion.attempts, age_ms});
                         }
                     }
 

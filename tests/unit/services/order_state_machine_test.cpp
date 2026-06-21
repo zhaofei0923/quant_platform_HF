@@ -1,7 +1,8 @@
+#include "quant_hft/services/order_state_machine.h"
+
 #include <gtest/gtest.h>
 
 #include "quant_hft/contracts/types.h"
-#include "quant_hft/services/order_state_machine.h"
 
 namespace quant_hft {
 
@@ -241,6 +242,50 @@ TEST(OrderStateMachineTest, KeepsOrderActiveWhenCancelActionIsRejected) {
     EXPECT_FALSE(snapshot.is_terminal);
     EXPECT_EQ(snapshot.message, "cancel_request_rejected");
     EXPECT_EQ(machine.ActiveOrderCount(), 1U);
+}
+
+TEST(OrderStateMachineTest, LateTradeAfterCancelActionRejectFillsOrder) {
+    OrderStateMachine machine;
+
+    OrderIntent intent;
+    intent.client_order_id = "ord-cancel-rejected-late-fill";
+    intent.account_id = "a1";
+    intent.instrument_id = "DCE.c2609";
+    intent.volume = 45;
+    intent.price = 2320.0;
+    intent.ts_ns = 1;
+    ASSERT_TRUE(machine.OnOrderIntent(intent));
+
+    OrderEvent accepted;
+    accepted.client_order_id = intent.client_order_id;
+    accepted.account_id = intent.account_id;
+    accepted.instrument_id = intent.instrument_id;
+    accepted.status = OrderStatus::kAccepted;
+    accepted.total_volume = intent.volume;
+    accepted.filled_volume = 0;
+    accepted.ts_ns = 2;
+    ASSERT_TRUE(machine.OnOrderEvent(accepted));
+
+    OrderEvent cancel_rejected = accepted;
+    cancel_rejected.status = OrderStatus::kRejected;
+    cancel_rejected.event_source = "OnErrRtnOrderAction";
+    cancel_rejected.reason = "cancel_error (ErrorID=26, ErrorMsg=order terminal unknown)";
+    cancel_rejected.ts_ns = 3;
+    ASSERT_TRUE(machine.OnOrderEvent(cancel_rejected));
+
+    OrderEvent late_fill = accepted;
+    late_fill.status = OrderStatus::kFilled;
+    late_fill.filled_volume = intent.volume;
+    late_fill.trade_id = "DCE|SELL|1657";
+    late_fill.event_source = "OnRtnTrade";
+    late_fill.ts_ns = 4;
+    ASSERT_TRUE(machine.OnOrderEvent(late_fill));
+
+    const auto snapshot = machine.GetOrderSnapshot(intent.client_order_id);
+    EXPECT_EQ(snapshot.status, OrderStatus::kFilled);
+    EXPECT_EQ(snapshot.filled_volume, intent.volume);
+    EXPECT_TRUE(snapshot.is_terminal);
+    EXPECT_EQ(machine.ActiveOrderCount(), 0U);
 }
 
 TEST(OrderStateMachineTest, AllowsOrderRejectAfterAccepted) {

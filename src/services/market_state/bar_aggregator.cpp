@@ -169,10 +169,39 @@ bool ParseSessionRanges(const std::string& raw,
 }
 
 bool IsMinuteInInterval(const BarAggregator::SessionInterval& interval, int minute_of_day) {
-    if (interval.start_minute <= interval.end_minute) {
-        return minute_of_day >= interval.start_minute && minute_of_day <= interval.end_minute;
+    if (interval.start_minute < interval.end_minute) {
+        return minute_of_day >= interval.start_minute && minute_of_day < interval.end_minute;
     }
-    return minute_of_day >= interval.start_minute || minute_of_day <= interval.end_minute;
+    if (interval.start_minute > interval.end_minute) {
+        return minute_of_day >= interval.start_minute || minute_of_day < interval.end_minute;
+    }
+    return false;
+}
+
+int PreviousMinuteOfDay(int minute_of_day) {
+    constexpr int kMinutesPerDay = 24 * 60;
+    return (minute_of_day + kMinutesPerDay - 1) % kMinutesPerDay;
+}
+
+bool IsLastMinuteInInterval(const BarAggregator::SessionInterval& interval, int minute_of_day) {
+    return IsMinuteInInterval(interval, minute_of_day) &&
+           minute_of_day == PreviousMinuteOfDay(interval.end_minute);
+}
+
+bool ParseSecondOfMinute(const std::string& update_time, int* second) {
+    if (second == nullptr) {
+        return false;
+    }
+    if (update_time.size() < 8) {
+        *second = 0;
+        return true;
+    }
+    if (update_time[5] != ':' || !std::isdigit(static_cast<unsigned char>(update_time[6])) ||
+        !std::isdigit(static_cast<unsigned char>(update_time[7]))) {
+        return false;
+    }
+    *second = (update_time[6] - '0') * 10 + (update_time[7] - '0');
+    return *second >= 0 && *second <= 59;
 }
 
 int SessionOrderKey(const BarAggregator::SessionInterval& interval) {
@@ -318,46 +347,49 @@ bool BarAggregator::ShouldProcessSnapshot(const MarketSnapshot& snapshot) const 
 
 std::vector<BarSnapshot> BarAggregator::OnMarketSnapshot(const MarketSnapshot& snapshot) {
     std::vector<BarSnapshot> emitted;
-    if (!ShouldProcessSnapshot(snapshot)) {
-        return emitted;
-    }
-
     const auto exchange_id = ResolveExchangeId(snapshot);
     const auto trading_day = ResolveTradingDay(snapshot);
     const auto action_day = ResolveActionDay(snapshot);
     const auto minute_key = BuildMinuteKey(trading_day, snapshot.update_time);
-    if (minute_key.empty()) {
-        return emitted;
-    }
-    const bool is_session_end_minute =
-        IsSessionEndMinute(exchange_id, snapshot.instrument_id, snapshot.update_time);
-    const std::string closed_boundary_key =
-        BuildClosedBoundaryMinuteKey(snapshot.instrument_id, minute_key);
+    const bool is_exact_session_end =
+        !snapshot.instrument_id.empty() && !minute_key.empty() &&
+        IsExactSessionEndTime(exchange_id, snapshot.instrument_id, ResolveProductCode(snapshot),
+                              snapshot.update_time);
 
-    std::lock_guard<std::mutex> lock(mutex_);
-    PruneClosedBoundaryMinutesLocked(snapshot.instrument_id, trading_day);
-    if (!closed_boundary_key.empty() &&
-        closed_session_boundary_minutes_.find(closed_boundary_key) !=
-            closed_session_boundary_minutes_.end()) {
-        return emitted;
-    }
-
-    auto& bucket = buckets_[snapshot.instrument_id];
-    auto emit_session_end_bucket = [&]() {
-        if (!is_session_end_minute || !bucket.initialized) {
-            return false;
+    if (!ShouldProcessSnapshot(snapshot)) {
+        if (!is_exact_session_end) {
+            return emitted;
         }
-        emitted.push_back(bucket.bar);
+        std::lock_guard<std::mutex> lock(mutex_);
+        PruneClosedBoundaryMinutesLocked(snapshot.instrument_id, trading_day);
+        const std::string closed_boundary_key =
+            BuildClosedBoundaryMinuteKey(snapshot.instrument_id, minute_key);
+        if (!closed_boundary_key.empty() &&
+            closed_session_boundary_minutes_.find(closed_boundary_key) !=
+                closed_session_boundary_minutes_.end()) {
+            return emitted;
+        }
+        auto bucket_it = buckets_.find(snapshot.instrument_id);
+        if (bucket_it != buckets_.end() && bucket_it->second.initialized) {
+            emitted.push_back(bucket_it->second.bar);
+            buckets_.erase(bucket_it);
+        }
         if (!closed_boundary_key.empty()) {
             closed_session_boundary_minutes_.insert(closed_boundary_key);
         }
-        buckets_.erase(snapshot.instrument_id);
-        return true;
-    };
+        return emitted;
+    }
 
+    if (minute_key.empty()) {
+        return emitted;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    PruneClosedBoundaryMinutesLocked(snapshot.instrument_id, trading_day);
+
+    auto& bucket = buckets_[snapshot.instrument_id];
     if (!bucket.initialized) {
         ResetBucketLocked(&bucket, snapshot, exchange_id, trading_day, action_day, minute_key);
-        (void)emit_session_end_bucket();
         return emitted;
     }
 
@@ -370,7 +402,6 @@ std::vector<BarSnapshot> BarAggregator::OnMarketSnapshot(const MarketSnapshot& s
     if (bucket.minute_key != minute_key) {
         emitted.push_back(bucket.bar);
         ResetBucketLocked(&bucket, snapshot, exchange_id, trading_day, action_day, minute_key);
-        (void)emit_session_end_bucket();
         return emitted;
     }
 
@@ -386,7 +417,6 @@ std::vector<BarSnapshot> BarAggregator::OnMarketSnapshot(const MarketSnapshot& s
     bucket.bar.analysis_price_offset = 0.0;
     bucket.bar.volume += volume_delta;
     bucket.bar.ts_ns = ResolveTimestamp(snapshot);
-    (void)emit_session_end_bucket();
     return emitted;
 }
 
@@ -579,7 +609,7 @@ bool BarAggregator::IsSessionEndMinute(const std::string& exchange_id,
                                 update_time, &interval)) {
         return false;
     }
-    return minute_of_day == interval.end_minute;
+    return IsLastMinuteInInterval(interval, minute_of_day);
 }
 
 std::string BarAggregator::ResolveSessionKey(const std::string& exchange_id,
@@ -805,6 +835,84 @@ bool BarAggregator::ResolveSessionInterval(const std::string& exchange_id,
                     if (interval != nullptr) {
                         *interval = rule_interval;
                     }
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+
+    const auto exchange = ToUpperAscii(exchange_id);
+    const auto it = session_rules_by_exchange_.find(exchange);
+    if (it != session_rules_by_exchange_.end()) {
+        return evaluate_rules(it->second);
+    }
+    const auto fallback = session_rules_by_exchange_.find("*");
+    if (fallback != session_rules_by_exchange_.end()) {
+        return evaluate_rules(fallback->second);
+    }
+    return false;
+}
+
+bool BarAggregator::IsExactSessionEndTime(const std::string& exchange_id,
+                                          const std::string& instrument_id,
+                                          const std::string& product,
+                                          const std::string& update_time) const {
+    int minute_of_day = 0;
+    if (!ParseMinuteOfDay(update_time, &minute_of_day)) {
+        return false;
+    }
+    int second = 0;
+    if (!ParseSecondOfMinute(update_time, &second) || second != 0) {
+        return false;
+    }
+
+    auto evaluate_rules = [&](const std::vector<SessionRule>& rules) {
+        if (instrument_id.empty() && product.empty()) {
+            for (const auto& rule : rules) {
+                for (const auto& rule_interval : rule.intervals) {
+                    if (minute_of_day == rule_interval.end_minute) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        const auto symbol_upper = ToUpperAscii(ExtractInstrumentSymbol(instrument_id));
+        const auto current_product = ToUpperAscii(product);
+        bool has_specific_match = false;
+        for (const auto& rule : rules) {
+            const bool has_selector = !rule.instrument_prefix.empty() || !rule.product.empty();
+            if (!has_selector) {
+                continue;
+            }
+
+            const auto prefix_upper = ToUpperAscii(rule.instrument_prefix);
+            const auto product_upper = ToUpperAscii(rule.product);
+            const bool prefix_match =
+                prefix_upper.empty() || StartsWith(symbol_upper, prefix_upper);
+            const bool product_match = product_upper.empty() || product_upper == current_product;
+            if (!prefix_match || !product_match) {
+                continue;
+            }
+            has_specific_match = true;
+            for (const auto& rule_interval : rule.intervals) {
+                if (minute_of_day == rule_interval.end_minute) {
+                    return true;
+                }
+            }
+        }
+        if (has_specific_match) {
+            return false;
+        }
+
+        for (const auto& rule : rules) {
+            if (!rule.instrument_prefix.empty() || !rule.product.empty()) {
+                continue;
+            }
+            for (const auto& rule_interval : rule.intervals) {
+                if (minute_of_day == rule_interval.end_minute) {
                     return true;
                 }
             }

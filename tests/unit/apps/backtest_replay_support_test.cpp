@@ -185,6 +185,42 @@ std::filesystem::path WriteInterleavedProductReplayCsv(const std::string& stem) 
     return path;
 }
 
+std::filesystem::path WriteBomHeaderReplayCsv(const std::string& stem) {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto path =
+        std::filesystem::temp_directory_path() / (stem + "_" + std::to_string(stamp) + ".csv");
+    std::ofstream out(path, std::ios::binary);
+    out << "\xEF\xBB\xBF"
+        << "TradingDay,UpdateTime,InstrumentID,LastPrice,Volume,BidPrice1,BidVolume1,AskPrice1,"
+           "AskVolume1\n";
+    out << "20240110,09:00:00,c2405,100,100,99,20,101,18\n";
+    out.close();
+    return path;
+}
+
+std::filesystem::path WriteBoundaryReplayCsv(const std::string& stem) {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto path =
+        std::filesystem::temp_directory_path() / (stem + "_" + std::to_string(stamp) + ".csv");
+    std::ofstream out(path);
+    out << "TradingDay,UpdateTime,InstrumentID,LastPrice,Volume,BidPrice1,BidVolume1,AskPrice1,"
+           "AskVolume1\n";
+    const std::vector<std::pair<std::string, double>> ticks = {
+        {"08:59:59", 99.0},  {"09:00:00", 100.0}, {"09:00:30", 101.0}, {"10:14:30", 102.0},
+        {"10:15:00", 103.0}, {"10:15:01", 104.0}, {"10:30:00", 105.0}, {"10:30:30", 106.0},
+        {"11:29:30", 107.0}, {"11:30:00", 108.0}, {"13:30:00", 109.0}, {"14:59:30", 110.0},
+        {"15:00:00", 111.0}, {"15:02:00", 112.0},
+    };
+    std::int64_t volume = 100;
+    for (const auto& [update_time, last_price] : ticks) {
+        out << "20240110," << update_time << ",c2405," << last_price << "," << volume << ","
+            << (last_price - 1.0) << ",20," << (last_price + 1.0) << ",18\n";
+        ++volume;
+    }
+    out.close();
+    return path;
+}
+
 std::filesystem::path WriteInstrumentSwitchReplayCsv(const std::string& stem) {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto path =
@@ -2236,6 +2272,46 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecReplaysInterleavedMultiProductStr
     std::filesystem::remove(rb_main, ec);
 }
 
+TEST(BacktestReplaySupportTest, LoadCsvTicksAcceptsUtf8BomHeader) {
+    const std::filesystem::path csv_path = WriteBomHeaderReplayCsv("quant_hft_bom_header");
+
+    BacktestCliSpec spec;
+    spec.engine_mode = "csv";
+    spec.csv_path = csv_path.string();
+
+    std::vector<ReplayTick> ticks;
+    std::string error;
+    ASSERT_TRUE(LoadCsvTicks(spec, &ticks, &error)) << error;
+    ASSERT_EQ(ticks.size(), 1U);
+    EXPECT_EQ(ticks.front().trading_day, "20240110");
+    EXPECT_EQ(ticks.front().instrument_id, "c2405");
+    EXPECT_EQ(ticks.front().update_time, "09:00:00");
+
+    std::error_code ec;
+    std::filesystem::remove(csv_path, ec);
+}
+
+TEST(BacktestReplaySupportTest, RunBacktestSpecIgnoresBoundaryTicksWithoutReplayContextLeak) {
+    const std::filesystem::path csv_path = WriteBoundaryReplayCsv("quant_hft_boundary_ticks");
+
+    BacktestCliSpec spec;
+    spec.engine_mode = "csv";
+    spec.csv_path = csv_path.string();
+    spec.symbols = {"c2405"};
+    spec.run_id = "boundary-ticks-test";
+    spec.strategy_factory = "demo";
+    spec.emit_orders = false;
+    spec.emit_trades = false;
+
+    BacktestCliResult result;
+    std::string error;
+    ASSERT_TRUE(RunBacktestSpec(spec, &result, &error)) << error;
+    EXPECT_EQ(result.deterministic.instrument_bars.at("c2405"), 6);
+
+    std::error_code ec;
+    std::filesystem::remove(csv_path, ec);
+}
+
 TEST(BacktestReplaySupportTest, ParseBacktestCliSpecRejectsExpiryCloseWithoutCalendarPath) {
     ArgMap args;
     args["engine_mode"] = "parquet";
@@ -3689,20 +3765,13 @@ TEST(BacktestReplaySupportTest, ReplayTimeframeFanoutFlushesFiveMinuteSessionEnd
         fanout.OnOneMinuteBar(make_bar("22:57", 2357.0), make_context("22:57:00", 2357.0)).empty());
     EXPECT_TRUE(
         fanout.OnOneMinuteBar(make_bar("22:58", 2358.0), make_context("22:58:00", 2358.0)).empty());
-    EXPECT_TRUE(
-        fanout.OnOneMinuteBar(make_bar("22:59", 2359.0), make_context("22:59:00", 2359.0)).empty());
-
     const auto emitted =
-        fanout.OnOneMinuteBar(make_bar("23:00", 2368.0), make_context("23:00:00", 2368.0));
-    ASSERT_EQ(emitted.size(), 2U);
+        fanout.OnOneMinuteBar(make_bar("22:59", 2359.0), make_context("22:59:00", 2359.0));
+    ASSERT_EQ(emitted.size(), 1U);
     EXPECT_EQ(emitted[0].timeframe_minutes, 5);
     EXPECT_EQ(emitted[0].bar.minute, "20240110 22:55");
     EXPECT_DOUBLE_EQ(emitted[0].bar.open, 2356.0);
     EXPECT_DOUBLE_EQ(emitted[0].bar.close, 2359.0);
-    EXPECT_EQ(emitted[1].timeframe_minutes, 5);
-    EXPECT_EQ(emitted[1].bar.minute, "20240110 23:00");
-    EXPECT_DOUBLE_EQ(emitted[1].bar.open, 2368.0);
-    EXPECT_DOUBLE_EQ(emitted[1].bar.close, 2368.0);
     EXPECT_TRUE(fanout.Flush().empty());
 }
 

@@ -96,12 +96,9 @@ TEST(BarAggregatorTest, EmitsSessionEndMinuteBarWithoutNextTick) {
 
     const auto bars = aggregator.OnMarketSnapshot(
         MakeSnapshot("DCE.c2607", "20260515", "20260514", "23:00:00", 500, 2368.0, 101));
-    ASSERT_EQ(bars.size(), 2U);
+    ASSERT_EQ(bars.size(), 1U);
     EXPECT_EQ(bars[0].minute, "20260515 22:59");
     EXPECT_DOUBLE_EQ(bars[0].close, 2367.0);
-    EXPECT_EQ(bars[1].minute, "20260515 23:00");
-    EXPECT_DOUBLE_EQ(bars[1].open, 2368.0);
-    EXPECT_DOUBLE_EQ(bars[1].close, 2368.0);
 
     EXPECT_TRUE(aggregator
                     .OnMarketSnapshot(MakeSnapshot("DCE.c2607", "20260515", "20260514", "23:00:01",
@@ -119,9 +116,10 @@ TEST(BarAggregatorTest, TradingSessionMatcherHandlesDayAndNightWindowsByExchange
     EXPECT_TRUE(aggregator.IsInTradingSession("SHFE", "00:59:59"));
     EXPECT_FALSE(aggregator.IsInTradingSession("SHFE", "03:10:00"));
     EXPECT_FALSE(aggregator.IsInTradingSession("CFFEX", "21:10:00"));
+    EXPECT_FALSE(aggregator.IsInTradingSession("DCE", "23:00:00"));
     EXPECT_FALSE(aggregator.IsInTradingSession("DCE", "23:10:00"));
-    EXPECT_TRUE(aggregator.IsSessionEndMinute("DCE", "DCE.c2607", "23:00:00"));
-    EXPECT_FALSE(aggregator.IsSessionEndMinute("DCE", "DCE.c2607", "22:59:59"));
+    EXPECT_TRUE(aggregator.IsSessionEndMinute("DCE", "DCE.c2607", "22:59:59"));
+    EXPECT_FALSE(aggregator.IsSessionEndMinute("DCE", "DCE.c2607", "23:00:00"));
 }
 
 TEST(BarAggregatorTest, ResolveTimestampUsesExchangeTimeInBacktestMode) {
@@ -212,6 +210,8 @@ TEST(BarAggregatorTest, SessionConfigSupportsCommaSeparatedDaySegments) {
     BarAggregator aggregator(config);
 
     EXPECT_TRUE(aggregator.ShouldProcessSnapshot(
+        MakeSnapshot("DCE.c2405", "20260211", "20260211", "11:29:59", 0, 2400.0, 1)));
+    EXPECT_FALSE(aggregator.ShouldProcessSnapshot(
         MakeSnapshot("DCE.c2405", "20260211", "20260211", "11:30:00", 0, 2400.0, 1)));
     EXPECT_FALSE(aggregator.ShouldProcessSnapshot(
         MakeSnapshot("DCE.c2405", "20260211", "20260211", "11:45:00", 0, 2400.0, 1)));
@@ -245,16 +245,14 @@ TEST(BarAggregatorTest, SessionEndFlushDoesNotDuplicateAlreadyClosedSegmentMinut
                     .OnMarketSnapshot(MakeSnapshot(instrument_id, "20260211", "20260211",
                                                    "11:29:30", 0, 2400.0, 100, 1'000'000'000))
                     .empty());
-    EXPECT_TRUE(
-        aggregator.FlushSessionEndBars({{instrument_id, 1'000'000'000}}, 1'000'000'000).empty());
+    const auto flushed_bars =
+        aggregator.FlushSessionEndBars({{instrument_id, 1'000'000'000}}, 1'000'000'000);
+    ASSERT_EQ(flushed_bars.size(), 1U);
+    EXPECT_EQ(flushed_bars[0].minute, "20260211 11:29");
 
     const auto rolled_bars = aggregator.OnMarketSnapshot(MakeSnapshot(
         instrument_id, "20260211", "20260211", "11:30:00", 0, 2401.0, 101, 2'000'000'000));
-    ASSERT_EQ(rolled_bars.size(), 2U);
-    EXPECT_EQ(rolled_bars[0].minute, "20260211 11:29");
-    EXPECT_EQ(rolled_bars[1].minute, "20260211 11:30");
-    EXPECT_DOUBLE_EQ(rolled_bars[1].open, 2401.0);
-    EXPECT_DOUBLE_EQ(rolled_bars[1].close, 2401.0);
+    EXPECT_TRUE(rolled_bars.empty());
 
     EXPECT_TRUE(
         aggregator.FlushSessionEndBars({{instrument_id, 2'000'000'000}}, 1'999'999'999).empty());
@@ -480,28 +478,12 @@ TEST(BarAggregatorTest, AggregateFromOneMinuteKeepsSessionEndPartialFiveMinuteBa
         one_minute.push_back(bar);
     }
 
-    BarSnapshot close_bar = one_minute.back();
-    close_bar.minute = "20260515 23:00";
-    close_bar.open = 2368.0;
-    close_bar.high = 2368.0;
-    close_bar.low = 2368.0;
-    close_bar.close = 2368.0;
-    close_bar.analysis_open = 2368.0;
-    close_bar.analysis_high = 2368.0;
-    close_bar.analysis_low = 2368.0;
-    close_bar.analysis_close = 2368.0;
-    close_bar.volume = 0;
-    one_minute.push_back(close_bar);
-
     const auto bars = BarAggregator::AggregateFromOneMinute(one_minute, 5);
-    ASSERT_EQ(bars.size(), 2U);
+    ASSERT_EQ(bars.size(), 1U);
     EXPECT_EQ(bars[0].minute, "20260515 22:55");
     EXPECT_DOUBLE_EQ(bars[0].open, 2356.0);
     EXPECT_DOUBLE_EQ(bars[0].close, 2359.0);
     EXPECT_EQ(bars[0].volume, 4);
-    EXPECT_EQ(bars[1].minute, "20260515 23:00");
-    EXPECT_DOUBLE_EQ(bars[1].open, 2368.0);
-    EXPECT_DOUBLE_EQ(bars[1].close, 2368.0);
 }
 
 }  // namespace

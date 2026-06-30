@@ -1003,7 +1003,7 @@ int main(int argc, char** argv) {
     const auto headers = detail::SplitCsvLine(header_line);
     std::map<std::string, std::size_t> header_index;
     for (std::size_t index = 0; index < headers.size(); ++index) {
-        header_index[headers[index]] = index;
+        header_index[qapps::detail::NormalizeCsvHeaderName(headers[index])] = index;
     }
 
     std::map<std::string, PartitionState> partition_state;

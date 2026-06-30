@@ -1218,14 +1218,14 @@ TEST(CompositeStrategyTest, ForbidOpenWindowsBlockOpenButAllowCloseSignals) {
     EXPECT_EQ(close_allowed.front().offset, OffsetFlag::kClose);
 }
 
-TEST(CompositeStrategyTest, SimForbidOpenWindowsUseMultiMinuteBarStartTime) {
-    const std::string open_type = UniqueType("sim_bar_start_window");
+TEST(CompositeStrategyTest, SimForbidOpenWindowsUseMultiMinuteSignalDecisionTime) {
+    const std::string open_type = UniqueType("sim_signal_time_window");
     RegisterScriptedType(open_type);
 
     SubStrategyDefinition open_sub = MakeSubStrategy("open", open_type,
                                                      {{"id", "open"},
                                                       {"emit_open", "1"},
-                                                      {"forbid_open_windows", "21:00-23:00"},
+                                                      {"forbid_open_windows", "09:00-09:30"},
                                                       {"window_timezone", "Asia/Shanghai"}});
     open_sub.timeframe_minutes = 5;
 
@@ -1237,14 +1237,51 @@ TEST(CompositeStrategyTest, SimForbidOpenWindowsUseMultiMinuteBarStartTime) {
     CompositeStrategy strategy(definition, &AtomicFactory::Instance());
     strategy.Initialize(MakeStrategyContext("sim"));
 
-    const EpochNanos local_2300_close_ts_ns = 15LL * 60LL * 60LL * 1'000'000'000LL;
-    const std::vector<SignalIntent> blocked =
-        strategy.OnState(MakeState("rb2405", local_2300_close_ts_ns, MarketRegime::kUnknown, 5));
+    auto asia_shanghai_wall_clock_ts_ns = [](int hour, int minute, int second) {
+        constexpr int kAsiaShanghaiUtcOffsetHours = 8;
+        const int utc_hour = (hour + 24 - kAsiaShanghaiUtcOffsetHours) % 24;
+        return PseudoLocalEpochNs(utc_hour, minute, second);
+    };
+
+    const std::vector<SignalIntent> blocked = strategy.OnState(
+        MakeState("rb2405", asia_shanghai_wall_clock_ts_ns(9, 4, 59), MarketRegime::kUnknown, 5));
     EXPECT_TRUE(blocked.empty());
 
-    const EpochNanos local_2305_close_ts_ns = local_2300_close_ts_ns + 5LL * 60LL * 1'000'000'000LL;
-    const std::vector<SignalIntent> allowed =
-        strategy.OnState(MakeState("rb2405", local_2305_close_ts_ns, MarketRegime::kUnknown, 5));
+    const std::vector<SignalIntent> still_blocked = strategy.OnState(
+        MakeState("rb2405", asia_shanghai_wall_clock_ts_ns(9, 29, 59), MarketRegime::kUnknown, 5));
+    EXPECT_TRUE(still_blocked.empty());
+
+    const std::vector<SignalIntent> allowed = strategy.OnState(
+        MakeState("rb2405", asia_shanghai_wall_clock_ts_ns(9, 30, 0), MarketRegime::kUnknown, 5));
+    ASSERT_EQ(allowed.size(), 1U);
+    EXPECT_EQ(allowed.front().signal_type, SignalType::kOpen);
+}
+
+TEST(CompositeStrategyTest, TimeFilterUsesMultiMinuteSignalDecisionTime) {
+    const std::string open_type = UniqueType("time_filter_signal_time");
+    RegisterScriptedType(open_type);
+
+    SubStrategyDefinition open_sub =
+        MakeSubStrategy("open", open_type, {{"id", "open"}, {"emit_open", "1"}});
+    open_sub.timeframe_minutes = 5;
+    SubStrategyDefinition time_filter_sub = MakeSubStrategy(
+        "time_filter", "TimeFilter",
+        {{"id", "time_filter"}, {"start_hour", "9"}, {"end_hour", "10"}, {"timezone", "UTC"}});
+    time_filter_sub.timeframe_minutes = 5;
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {open_sub, time_filter_sub};
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+
+    const std::vector<SignalIntent> blocked = strategy.OnState(
+        MakeState("rb2405", PseudoLocalEpochNs(9, 4, 59), MarketRegime::kUnknown, 5));
+    EXPECT_TRUE(blocked.empty());
+
+    const std::vector<SignalIntent> allowed = strategy.OnState(
+        MakeState("rb2405", PseudoLocalEpochNs(10, 0, 0), MarketRegime::kUnknown, 5));
     ASSERT_EQ(allowed.size(), 1U);
     EXPECT_EQ(allowed.front().signal_type, SignalType::kOpen);
 }

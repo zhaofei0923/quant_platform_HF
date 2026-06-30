@@ -477,7 +477,7 @@ std::vector<SignalIntent> CompositeStrategy::OnState(const StateSnapshot7D& stat
     std::vector<SignalIntent> opening_signals;
     const std::int32_t state_timeframe_minutes =
         state.timeframe_minutes > 0 ? state.timeframe_minutes : 1;
-    const EpochNanos open_window_ts_ns = OpenWindowEvaluationTsNs(state);
+    const EpochNanos open_window_ts_ns = state.ts_ns;
     const bool allow_opening_by_time_filter =
         AllowOpeningByTimeFilters(open_window_ts_ns, state_timeframe_minutes);
 
@@ -1299,17 +1299,6 @@ bool CompositeStrategy::AllowOpeningByTimeFilters(EpochNanos now_ns,
         }
     }
     return true;
-}
-
-EpochNanos CompositeStrategy::OpenWindowEvaluationTsNs(const StateSnapshot7D& state) const {
-    const std::int32_t timeframe_minutes =
-        state.timeframe_minutes > 0 ? state.timeframe_minutes : 1;
-    if (!state.has_bar || timeframe_minutes <= 1) {
-        return state.ts_ns;
-    }
-    const std::int64_t bar_span_ns =
-        static_cast<std::int64_t>(timeframe_minutes) * kSecondsPerMinute * kNanosPerSecond;
-    return state.ts_ns - bar_span_ns;
 }
 
 bool CompositeStrategy::IsOpenSignalBlockedByStrategyWindows(const SubStrategySlot& slot,

@@ -71,6 +71,19 @@ inline std::string Trim(std::string text) {
     return text;
 }
 
+inline std::string StripUtf8Bom(std::string text) {
+    if (text.size() >= 3 && static_cast<unsigned char>(text[0]) == 0xEF &&
+        static_cast<unsigned char>(text[1]) == 0xBB &&
+        static_cast<unsigned char>(text[2]) == 0xBF) {
+        text.erase(0, 3);
+    }
+    return text;
+}
+
+inline std::string NormalizeCsvHeaderName(std::string text) {
+    return Trim(StripUtf8Bom(std::move(text)));
+}
+
 inline std::uint64_t Fnv1a64(std::uint64_t seed, std::string_view text) {
     std::uint64_t hash = seed;
     for (unsigned char ch : text) {
@@ -2857,7 +2870,7 @@ inline bool LoadCsvTicks(const BacktestCliSpec& spec, std::vector<ReplayTick>* o
     const auto headers = detail::SplitCsvLine(header_line);
     std::map<std::string, std::size_t> header_index;
     for (std::size_t i = 0; i < headers.size(); ++i) {
-        header_index[headers[i]] = i;
+        header_index[detail::NormalizeCsvHeaderName(headers[i])] = i;
     }
     std::unordered_set<std::string> instrument_filter;
     for (const std::string& symbol : spec.symbols) {
@@ -5571,6 +5584,13 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
         snapshot.recv_ts_ns = tick.ts_ns;
 
         if (!replay_bar_aggregator->ShouldProcessSnapshot(snapshot)) {
+            const std::vector<BarSnapshot> emitted_bars =
+                replay_bar_aggregator->OnMarketSnapshot(snapshot);
+            for (const BarSnapshot& bar : emitted_bars) {
+                if (!process_one_minute_bar(bar)) {
+                    return false;
+                }
+            }
             continue;
         }
 
@@ -5669,12 +5689,6 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
             }
         }
 
-        ReplayTick context_tick = tick;
-        context_tick.trading_day = snapshot.trading_day;
-        if (!detail::TrackReplayBarTickContext(context_tick, &replay_bar_contexts, error)) {
-            return false;
-        }
-
         const std::vector<BarSnapshot> emitted_bars =
             replay_bar_aggregator->OnMarketSnapshot(snapshot);
         for (const BarSnapshot& bar : emitted_bars) {
@@ -5682,6 +5696,13 @@ inline bool RunBacktestSpec(const BacktestCliSpec& spec, BacktestCliResult* out,
                 return false;
             }
         }
+
+        ReplayTick context_tick = tick;
+        context_tick.trading_day = snapshot.trading_day;
+        if (!detail::TrackReplayBarTickContext(context_tick, &replay_bar_contexts, error)) {
+            return false;
+        }
+
         const std::vector<BarSnapshot> finished_one_minute_bars =
             replay_bar_aggregator->FlushFinished(instrument_last_tick_ts_ns, tick.ts_ns);
         for (const BarSnapshot& bar : finished_one_minute_bars) {

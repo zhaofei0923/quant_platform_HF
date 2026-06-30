@@ -150,7 +150,6 @@ class CompositeStrategy : public ILiveStrategy {
 
     bool IsOpenSignalAllowedByRegime(const SubStrategySlot& slot, MarketRegime regime) const;
     bool AllowOpeningByTimeFilters(EpochNanos now_ns, std::int32_t timeframe_minutes);
-    EpochNanos OpenWindowEvaluationTsNs(const StateSnapshot7D& state) const;
     bool IsOpenSignalBlockedByStrategyWindows(const SubStrategySlot& slot, EpochNanos now_ns) const;
     bool IsOpenSignalBlockedByRiskGuards(const SubStrategySlot& slot, EpochNanos now_ns);
     void ApplyRiskGuardRealizedPnl(const std::string& strategy_id, EpochNanos ts_ns,

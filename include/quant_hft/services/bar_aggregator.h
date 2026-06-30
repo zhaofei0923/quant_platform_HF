@@ -94,6 +94,8 @@ class BarAggregator {
     bool ResolveSessionInterval(const std::string& exchange_id, const std::string& instrument_id,
                                 const std::string& product, const std::string& update_time,
                                 SessionInterval* interval) const;
+    bool IsExactSessionEndTime(const std::string& exchange_id, const std::string& instrument_id,
+                               const std::string& product, const std::string& update_time) const;
     bool IsSessionEndMinuteKey(const std::string& exchange_id, const std::string& instrument_id,
                                const std::string& minute_key) const;
     void LoadTradingSessions();

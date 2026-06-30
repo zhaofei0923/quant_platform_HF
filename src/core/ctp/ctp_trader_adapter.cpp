@@ -24,6 +24,39 @@ std::string BuildOrderRefString(const std::string& strategy_id, std::uint64_t se
     return strategy_id + "_" + std::to_string(unix_ms) + "_" + std::to_string(seq);
 }
 
+std::string TraderSessionStateToString(TraderSessionState state) {
+    switch (state) {
+        case TraderSessionState::kDisconnected:
+            return "disconnected";
+        case TraderSessionState::kConnected:
+            return "connected";
+        case TraderSessionState::kAuthenticated:
+            return "authenticated";
+        case TraderSessionState::kLoggedIn:
+            return "logged_in";
+        case TraderSessionState::kSettlementConfirmed:
+            return "settlement_confirmed";
+        case TraderSessionState::kReady:
+            return "ready";
+    }
+    return "unknown";
+}
+
+void EmitOrderSubmitRejectedDiagnostic(const OrderIntent& intent, const std::string& reason,
+                                       TraderSessionState state, bool settlement_confirmed) {
+    EmitStructuredLog(nullptr, "ctp_trader_adapter", "warn", "ctp_order_submit_rejected",
+                      {{"strategy_id", intent.strategy_id},
+                       {"instrument_id", intent.instrument_id},
+                       {"side", intent.side == Side::kBuy ? "buy" : "sell"},
+                       {"offset", std::to_string(static_cast<int>(intent.offset))},
+                       {"volume", std::to_string(intent.volume)},
+                       {"client_order_id", intent.client_order_id},
+                       {"trace_id", intent.trace_id},
+                       {"reason", reason},
+                       {"session_state", TraderSessionStateToString(state)},
+                       {"settlement_confirmed", settlement_confirmed ? "true" : "false"}});
+}
+
 std::shared_ptr<MonitoringGauge> CtpConnectedGauge() {
     static auto metric = MetricRegistry::Instance().BuildGauge("quant_hft_ctp_connected",
                                                                "CTP connected state gauge");
@@ -474,20 +507,33 @@ bool CTPTraderAdapter::PlaceOrder(const OrderIntent& intent) {
 
 std::string CTPTraderAdapter::PlaceOrderWithRef(const OrderIntent& intent) {
     OrderIntent request = intent;
+    TraderSessionState observed_state = TraderSessionState::kDisconnected;
+    bool observed_settlement_confirmed = false;
+    std::string reject_reason;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (state_ != TraderSessionState::kReady || !settlement_confirmed_) {
-            return "";
+        observed_state = state_;
+        observed_settlement_confirmed = settlement_confirmed_;
+        if (state_ != TraderSessionState::kReady) {
+            reject_reason = "trader_not_ready";
+        } else if (!settlement_confirmed_) {
+            reject_reason = "settlement_unconfirmed";
+        } else if (request.strategy_id.empty()) {
+            reject_reason = "missing_strategy_id";
         }
-        if (request.strategy_id.empty()) {
-            return "";
-        }
-        if (request.client_order_id.empty()) {
+        if (reject_reason.empty() && request.client_order_id.empty()) {
             ++order_ref_seq_;
             request.client_order_id = BuildOrderRefString(request.strategy_id, order_ref_seq_);
         }
     }
+    if (!reject_reason.empty()) {
+        EmitOrderSubmitRejectedDiagnostic(request, reject_reason, observed_state,
+                                          observed_settlement_confirmed);
+        return "";
+    }
     if (!gateway_->PlaceOrder(request)) {
+        EmitOrderSubmitRejectedDiagnostic(request, "gateway_place_order_failed", observed_state,
+                                          observed_settlement_confirmed);
         return "";
     }
     return request.client_order_id;

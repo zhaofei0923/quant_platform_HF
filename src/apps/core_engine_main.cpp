@@ -1097,6 +1097,82 @@ struct CancelReconcileRequest {
     std::string age_ms;
 };
 
+struct ExecutionSubmitCooldown {
+    quant_hft::EpochNanos until_ns{0};
+    quant_hft::EpochNanos next_log_ns{0};
+    std::string reason;
+};
+
+struct SubmittedOrderAckWatch {
+    std::string client_order_id;
+    std::string submit_key;
+    std::string strategy_id;
+    std::string instrument_id;
+    std::string trace_id;
+    quant_hft::EpochNanos submitted_ts_ns{0};
+    quant_hft::EpochNanos next_reconcile_ts_ns{0};
+    quant_hft::EpochNanos next_suppress_log_ns{0};
+    std::int32_t attempts{0};
+};
+
+bool IsCloseLikeSignal(const quant_hft::SignalIntent& signal) {
+    return signal.offset == quant_hft::OffsetFlag::kClose ||
+           signal.offset == quant_hft::OffsetFlag::kCloseToday ||
+           signal.offset == quant_hft::OffsetFlag::kCloseYesterday ||
+           signal.signal_type == quant_hft::SignalType::kClose ||
+           signal.signal_type == quant_hft::SignalType::kStopLoss ||
+           signal.signal_type == quant_hft::SignalType::kTakeProfit ||
+           signal.signal_type == quant_hft::SignalType::kForceClose;
+}
+
+bool IsCloseLikeOrder(const quant_hft::OrderIntent& intent) {
+    return intent.offset == quant_hft::OffsetFlag::kClose ||
+           intent.offset == quant_hft::OffsetFlag::kCloseToday ||
+           intent.offset == quant_hft::OffsetFlag::kCloseYesterday;
+}
+
+std::string SubmitCooldownOffsetKey(quant_hft::OffsetFlag offset) {
+    if (offset == quant_hft::OffsetFlag::kClose || offset == quant_hft::OffsetFlag::kCloseToday ||
+        offset == quant_hft::OffsetFlag::kCloseYesterday) {
+        return "close";
+    }
+    return "open";
+}
+
+std::string BuildExecutionSubmitCooldownKey(const quant_hft::SignalIntent& signal) {
+    return signal.strategy_id + "|" + signal.instrument_id + "|" + SideToString(signal.side) + "|" +
+           SubmitCooldownOffsetKey(signal.offset);
+}
+
+std::string BuildExecutionSubmitCooldownKey(const quant_hft::OrderIntent& intent) {
+    return intent.strategy_id + "|" + intent.instrument_id + "|" + SideToString(intent.side) + "|" +
+           SubmitCooldownOffsetKey(intent.offset);
+}
+
+std::int64_t ExecutionSubmitCooldownNanos(const quant_hft::CtpRuntimeConfig& config) {
+    const int cooldown_ms =
+        std::max({1000, config.breaker_half_open_timeout_ms, config.recovery_quiet_period_ms});
+    return static_cast<std::int64_t>(cooldown_ms) * 1'000'000;
+}
+
+std::int64_t OrderSubmitAckTimeoutNanos(const quant_hft::CtpRuntimeConfig& config) {
+    const int timeout_ms = std::max(5000, config.cancel_wait_ack_timeout_ms);
+    return static_cast<std::int64_t>(timeout_ms) * 1'000'000;
+}
+
+std::int64_t OrderSubmitAckRetryNanos(const quant_hft::CtpRuntimeConfig& config) {
+    const int retry_ms =
+        std::max({5000, config.cancel_wait_ack_timeout_ms, config.recovery_quiet_period_ms});
+    return static_cast<std::int64_t>(retry_ms) * 1'000'000;
+}
+
+std::string CooldownRemainingMs(quant_hft::EpochNanos now_ns, quant_hft::EpochNanos until_ns) {
+    if (until_ns <= now_ns) {
+        return "0";
+    }
+    return std::to_string((until_ns - now_ns + 999'999) / 1'000'000);
+}
+
 quant_hft::OrderEvent BuildRejectedEvent(const quant_hft::OrderIntent& intent,
                                          const std::string& reason,
                                          const ExecutionMetadata& metadata) {
@@ -1419,6 +1495,11 @@ int main(int argc, char** argv) {
     std::mutex cancel_reconcile_mutex;
     std::vector<CancelReconcileRequest> cancel_reconcile_requests;
     std::unordered_set<std::string> cancel_reconcile_order_ids;
+    std::mutex execution_submit_cooldown_mutex;
+    std::unordered_map<std::string, ExecutionSubmitCooldown> execution_submit_cooldowns;
+    std::mutex submitted_order_ack_mutex;
+    std::unordered_map<std::string, SubmittedOrderAckWatch> submitted_order_ack_watches;
+    std::unordered_map<std::string, std::string> submitted_order_ack_by_submit_key;
     std::function<void(const SignalIntent&)> process_signal_intent;
     std::unique_ptr<StrategyEngine> strategy_engine;
     KamaTraceCsvWriter kama_trace_writer;
@@ -1687,6 +1768,256 @@ int main(int argc, char** argv) {
         }
     };
 
+    auto start_signal_submit_cooldown = [&](const SignalIntent& signal, const std::string& reason) {
+        if (!IsCloseLikeSignal(signal)) {
+            return false;
+        }
+        const EpochNanos now_ns = NowEpochNanos();
+        const std::int64_t cooldown_ns = ExecutionSubmitCooldownNanos(config);
+        const EpochNanos until_ns = now_ns + cooldown_ns;
+        const std::string key = BuildExecutionSubmitCooldownKey(signal);
+        {
+            std::lock_guard<std::mutex> lock(execution_submit_cooldown_mutex);
+            auto& entry = execution_submit_cooldowns[key];
+            entry.until_ns = std::max(entry.until_ns, until_ns);
+            entry.next_log_ns = entry.until_ns;
+            entry.reason = reason;
+        }
+        EmitStructuredLog(&config, "core_engine", "warn", "execution_submit_cooldown_set",
+                          {{"strategy_id", signal.strategy_id},
+                           {"instrument_id", signal.instrument_id},
+                           {"signal_type", SignalTypeToString(signal.signal_type)},
+                           {"side", SideToString(signal.side)},
+                           {"offset", OffsetToString(signal.offset)},
+                           {"reason", reason},
+                           {"cooldown_ms", std::to_string(cooldown_ns / 1'000'000)},
+                           {"trace_id", signal.trace_id}});
+        return true;
+    };
+
+    auto start_order_submit_cooldown = [&](const OrderIntent& intent, const std::string& reason) {
+        if (!IsCloseLikeOrder(intent)) {
+            return;
+        }
+        const EpochNanos now_ns = NowEpochNanos();
+        const std::int64_t cooldown_ns = ExecutionSubmitCooldownNanos(config);
+        const EpochNanos until_ns = now_ns + cooldown_ns;
+        const std::string key = BuildExecutionSubmitCooldownKey(intent);
+        {
+            std::lock_guard<std::mutex> lock(execution_submit_cooldown_mutex);
+            auto& entry = execution_submit_cooldowns[key];
+            entry.until_ns = std::max(entry.until_ns, until_ns);
+            entry.next_log_ns = entry.until_ns;
+            entry.reason = reason;
+        }
+        EmitStructuredLog(&config, "core_engine", "warn", "execution_submit_cooldown_set",
+                          {{"strategy_id", intent.strategy_id},
+                           {"instrument_id", intent.instrument_id},
+                           {"side", SideToString(intent.side)},
+                           {"offset", OffsetToString(intent.offset)},
+                           {"reason", reason},
+                           {"cooldown_ms", std::to_string(cooldown_ns / 1'000'000)},
+                           {"client_order_id", intent.client_order_id},
+                           {"trace_id", intent.trace_id}});
+    };
+
+    auto clear_order_submit_cooldown = [&](const OrderIntent& intent) {
+        if (!IsCloseLikeOrder(intent)) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(execution_submit_cooldown_mutex);
+        execution_submit_cooldowns.erase(BuildExecutionSubmitCooldownKey(intent));
+    };
+
+    auto should_suppress_signal_submit = [&](const SignalIntent& signal) {
+        if (!IsCloseLikeSignal(signal)) {
+            return false;
+        }
+        const EpochNanos now_ns = NowEpochNanos();
+        const std::int64_t cooldown_ns = ExecutionSubmitCooldownNanos(config);
+        const std::string key = BuildExecutionSubmitCooldownKey(signal);
+        LogFields fields;
+        bool should_log = false;
+        {
+            std::lock_guard<std::mutex> lock(execution_submit_cooldown_mutex);
+            const auto it = execution_submit_cooldowns.find(key);
+            if (it == execution_submit_cooldowns.end()) {
+                return false;
+            }
+            if (now_ns >= it->second.until_ns) {
+                execution_submit_cooldowns.erase(it);
+                return false;
+            }
+            if (now_ns >= it->second.next_log_ns) {
+                should_log = true;
+                it->second.next_log_ns = now_ns + cooldown_ns;
+                fields = {{"strategy_id", signal.strategy_id},
+                          {"instrument_id", signal.instrument_id},
+                          {"signal_type", SignalTypeToString(signal.signal_type)},
+                          {"side", SideToString(signal.side)},
+                          {"offset", OffsetToString(signal.offset)},
+                          {"reason", it->second.reason},
+                          {"remaining_ms", CooldownRemainingMs(now_ns, it->second.until_ns)},
+                          {"trace_id", signal.trace_id}};
+            }
+        }
+        if (should_log) {
+            EmitStructuredLog(&config, "core_engine", "warn", "execution_submit_retry_suppressed",
+                              fields);
+        }
+        return true;
+    };
+
+    auto track_submitted_order_ack = [&](const OrderIntent& intent, const OrderResult& result) {
+        const std::string client_order_id =
+            result.client_order_id.empty() ? intent.client_order_id : result.client_order_id;
+        if (client_order_id.empty()) {
+            return;
+        }
+        const EpochNanos now_ns = NowEpochNanos();
+        SubmittedOrderAckWatch watch;
+        watch.client_order_id = client_order_id;
+        watch.submit_key = BuildExecutionSubmitCooldownKey(intent);
+        watch.strategy_id = intent.strategy_id;
+        watch.instrument_id = intent.instrument_id;
+        watch.trace_id = intent.trace_id;
+        watch.submitted_ts_ns = now_ns;
+        watch.next_reconcile_ts_ns = now_ns + OrderSubmitAckTimeoutNanos(config);
+        watch.next_suppress_log_ns = now_ns;
+        {
+            std::lock_guard<std::mutex> lock(submitted_order_ack_mutex);
+            if (const auto existing_it = submitted_order_ack_watches.find(client_order_id);
+                existing_it != submitted_order_ack_watches.end()) {
+                submitted_order_ack_by_submit_key.erase(existing_it->second.submit_key);
+            }
+            if (const auto key_it = submitted_order_ack_by_submit_key.find(watch.submit_key);
+                key_it != submitted_order_ack_by_submit_key.end()) {
+                submitted_order_ack_watches.erase(key_it->second);
+            }
+            submitted_order_ack_by_submit_key[watch.submit_key] = client_order_id;
+            submitted_order_ack_watches[client_order_id] = std::move(watch);
+        }
+    };
+
+    auto clear_submitted_order_ack = [&](const std::string& client_order_id) {
+        if (client_order_id.empty()) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(submitted_order_ack_mutex);
+        const auto it = submitted_order_ack_watches.find(client_order_id);
+        if (it == submitted_order_ack_watches.end()) {
+            return;
+        }
+        submitted_order_ack_by_submit_key.erase(it->second.submit_key);
+        submitted_order_ack_watches.erase(it);
+    };
+
+    auto should_suppress_pending_order_ack = [&](const SignalIntent& signal) {
+        if (!IsCloseLikeSignal(signal)) {
+            return false;
+        }
+        const EpochNanos now_ns = NowEpochNanos();
+        const EpochNanos retry_ns = OrderSubmitAckRetryNanos(config);
+        const std::string submit_key = BuildExecutionSubmitCooldownKey(signal);
+        LogFields fields;
+        bool should_log = false;
+        {
+            std::lock_guard<std::mutex> lock(submitted_order_ack_mutex);
+            const auto key_it = submitted_order_ack_by_submit_key.find(submit_key);
+            if (key_it == submitted_order_ack_by_submit_key.end()) {
+                return false;
+            }
+            const auto watch_it = submitted_order_ack_watches.find(key_it->second);
+            if (watch_it == submitted_order_ack_watches.end()) {
+                submitted_order_ack_by_submit_key.erase(key_it);
+                return false;
+            }
+            auto& watch = watch_it->second;
+            if (now_ns >= watch.next_suppress_log_ns) {
+                should_log = true;
+                watch.next_suppress_log_ns = now_ns + retry_ns;
+                fields = {{"strategy_id", signal.strategy_id},
+                          {"instrument_id", signal.instrument_id},
+                          {"signal_type", SignalTypeToString(signal.signal_type)},
+                          {"side", SideToString(signal.side)},
+                          {"offset", OffsetToString(signal.offset)},
+                          {"reason", "order_ack_pending"},
+                          {"pending_client_order_id", watch.client_order_id},
+                          {"pending_trace_id", watch.trace_id},
+                          {"pending_age_ms",
+                           std::to_string((now_ns - watch.submitted_ts_ns) / 1'000'000)},
+                          {"trace_id", signal.trace_id}};
+            }
+        }
+        if (should_log) {
+            EmitStructuredLog(&config, "core_engine", "warn", "execution_submit_retry_suppressed",
+                              fields);
+        }
+        return true;
+    };
+
+    auto drain_submit_ack_reconcile_requests = [&]() {
+        const EpochNanos now_ns = NowEpochNanos();
+        const EpochNanos retry_ns = OrderSubmitAckRetryNanos(config);
+        const std::int32_t max_attempts = std::max(1, config.cancel_retry_max);
+        std::vector<SubmittedOrderAckWatch> due;
+        std::vector<SubmittedOrderAckWatch> exhausted;
+        {
+            std::lock_guard<std::mutex> lock(submitted_order_ack_mutex);
+            for (auto it = submitted_order_ack_watches.begin();
+                 it != submitted_order_ack_watches.end();) {
+                auto& watch = it->second;
+                if (now_ns < watch.next_reconcile_ts_ns) {
+                    ++it;
+                    continue;
+                }
+                if (watch.attempts >= max_attempts) {
+                    exhausted.push_back(watch);
+                    submitted_order_ack_by_submit_key.erase(watch.submit_key);
+                    it = submitted_order_ack_watches.erase(it);
+                    continue;
+                }
+                ++watch.attempts;
+                watch.next_reconcile_ts_ns = now_ns + retry_ns;
+                due.push_back(watch);
+                ++it;
+            }
+        }
+
+        for (const auto& watch : exhausted) {
+            EmitStructuredLog(
+                &config, "core_engine", "error", "order_submit_ack_reconcile_exhausted",
+                {{"client_order_id", watch.client_order_id},
+                 {"strategy_id", watch.strategy_id},
+                 {"instrument_id", watch.instrument_id},
+                 {"trace_id", watch.trace_id},
+                 {"attempts", std::to_string(watch.attempts)},
+                 {"age_ms", std::to_string((now_ns - watch.submitted_ts_ns) / 1'000'000)}});
+        }
+        if (due.empty()) {
+            return;
+        }
+
+        for (const auto& watch : due) {
+            EmitStructuredLog(
+                &config, "core_engine", "warn", "order_submit_ack_reconcile_requested",
+                {{"client_order_id", watch.client_order_id},
+                 {"strategy_id", watch.strategy_id},
+                 {"instrument_id", watch.instrument_id},
+                 {"trace_id", watch.trace_id},
+                 {"attempts", std::to_string(watch.attempts)},
+                 {"age_ms", std::to_string((now_ns - watch.submitted_ts_ns) / 1'000'000)}});
+        }
+
+        const int timeout_ms = std::max(10'000, config.cancel_wait_ack_timeout_ms);
+        const bool ok = ctp_trader->RecoverOrdersAndTrades(timeout_ms);
+        EmitStructuredLog(
+            &config, "core_engine", ok ? "info" : "warn",
+            ok ? "order_submit_ack_reconcile_completed" : "order_submit_ack_reconcile_failed",
+            {{"request_count", std::to_string(due.size())},
+             {"timeout_ms", std::to_string(timeout_ms)}});
+    };
+
     auto process_order_event = [&](const OrderEvent& raw_event) {
         OrderEvent event = raw_event;
         if (event.recv_ts_ns <= 0) {
@@ -1711,6 +2042,7 @@ int main(int argc, char** argv) {
                                {"front_id", std::to_string(event.front_id)},
                                {"session_id", std::to_string(event.session_id)}});
         }
+        clear_submitted_order_ack(event.client_order_id);
         if (event.status == OrderStatus::kRejected && event.event_source != "internal" &&
             !TimeoutCancelTracker::IsCancelActionFeedback(event)) {
             EmitOrderRejectedEventLog(config, event);
@@ -1899,6 +2231,18 @@ int main(int argc, char** argv) {
             EmitSignalPlanRejectedLog(config, signal, "missing_trace_id");
             return;
         }
+        if (should_suppress_signal_submit(signal)) {
+            return;
+        }
+        if (should_suppress_pending_order_ack(signal)) {
+            return;
+        }
+        if (config.enable_real_api && !ctp_trader->IsReady()) {
+            if (!start_signal_submit_cooldown(signal, "ctp_trader_not_ready")) {
+                EmitSignalPlanRejectedLog(config, signal, "ctp_trader_not_ready");
+            }
+            return;
+        }
 
         std::vector<MarketSnapshot> recent_market;
         {
@@ -2061,12 +2405,15 @@ int main(int argc, char** argv) {
                 const quant_hft::OrderResult order_result =
                     execution_engine.PlaceOrderAsync(intent).get();
                 if (!order_result.success) {
+                    start_order_submit_cooldown(intent, order_result.message);
                     EmitOrderRejectedIntentLog(config, intent, "gateway_reject:place_order_failed",
                                                metadata, order_result.message);
                     process_order_event(
                         BuildRejectedEvent(intent, "gateway_reject:place_order_failed", metadata));
                     continue;
                 }
+                clear_order_submit_cooldown(intent);
+                track_submitted_order_ack(intent, order_result);
                 EmitOrderSubmittedLog(config, intent, order_result, metadata);
                 std::lock_guard<std::mutex> lock(planner_mutex);
                 execution_planner.RecordOrderResult(false);
@@ -3479,6 +3826,7 @@ int main(int argc, char** argv) {
         auto next_cancel_scan = std::chrono::steady_clock::now();
         while (!execution_loop_stop.load()) {
             drain_cancel_reconcile_requests();
+            drain_submit_ack_reconcile_requests();
             if (execution_config.cancel_after_ms > 0) {
                 const auto now = std::chrono::steady_clock::now();
                 if (now >= next_cancel_scan) {

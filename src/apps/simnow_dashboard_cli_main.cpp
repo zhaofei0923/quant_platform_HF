@@ -166,6 +166,25 @@ struct SignalMonitorStatus {
     std::vector<std::string> recent_incidents;
 };
 
+struct SignalMonitorEpoch {
+    std::vector<std::string> lines;
+    bool reset_by_core_engine{false};
+};
+
+struct SignalMonitorEpochStats {
+    std::int64_t signals{0};
+    std::int64_t active{0};
+    std::int64_t filled{0};
+    std::int64_t incidents{0};
+    bool has_trace_events{false};
+    bool has_summary{false};
+    std::int64_t summary_signals{0};
+    std::int64_t summary_active{0};
+    std::int64_t summary_filled{0};
+    std::int64_t summary_incidents{0};
+    std::vector<std::string> incident_trace_ids;
+};
+
 struct CtpConnectionStatus {
     std::string status{"unknown"};
     bool healthy{false};
@@ -1027,22 +1046,141 @@ std::string RunIdFromRunDir(const std::string& run_dir) {
     return fs::path(run_dir).filename().string();
 }
 
-std::vector<std::string> CurrentSignalMonitorEpochLines(const std::string& event_log_path) {
+SignalMonitorEpoch CurrentSignalMonitorEpochFromLog(const std::string& event_log_path) {
     std::ifstream input(event_log_path);
     std::vector<std::string> all_lines;
-    std::vector<std::string> current_lines;
+    SignalMonitorEpoch epoch;
     std::string line;
     while (std::getline(input, line)) {
         if (line.empty()) {
             continue;
         }
         all_lines.push_back(line);
-        if (ExtractJsonString(line, "event") == "monitor_started") {
-            current_lines.clear();
+        const std::string event = ExtractJsonString(line, "event");
+        if (event == "monitor_started" || event == "core_engine_running") {
+            epoch.lines.clear();
+            epoch.reset_by_core_engine = event == "core_engine_running";
         }
-        current_lines.push_back(line);
+        epoch.lines.push_back(line);
     }
-    return current_lines.empty() ? all_lines : current_lines;
+    if (epoch.lines.empty()) {
+        epoch.lines = std::move(all_lines);
+        epoch.reset_by_core_engine = false;
+    }
+    return epoch;
+}
+
+std::vector<std::string> CurrentSignalMonitorEpochLines(const std::string& event_log_path) {
+    return CurrentSignalMonitorEpochFromLog(event_log_path).lines;
+}
+
+std::string ExtractSignalMonitorField(const std::string& line, const std::string& key) {
+    std::string value = ExtractJsonString(line, key);
+    if (!value.empty()) {
+        return value;
+    }
+    if (const auto number = ExtractJsonInt(line, key); number.has_value()) {
+        return std::to_string(*number);
+    }
+    return "";
+}
+
+bool IsPositiveIntegerText(const std::string& value) {
+    if (value.empty()) {
+        return false;
+    }
+    return std::all_of(value.begin(), value.end(),
+                       [](unsigned char ch) { return std::isdigit(ch) != 0; }) &&
+           value.find_first_not_of('0') != std::string::npos;
+}
+
+SignalMonitorEpochStats BuildSignalMonitorEpochStats(const SignalMonitorEpoch& epoch) {
+    SignalMonitorEpochStats stats;
+    std::map<std::string, std::string> trace_status;
+    for (const std::string& line : epoch.lines) {
+        const std::string event = ExtractJsonString(line, "event");
+        const std::string trace_id = ExtractJsonString(line, "trace_id");
+        if (event == "summary") {
+            stats.has_summary = true;
+            stats.summary_signals = ExtractJsonInt(line, "signals").value_or(stats.summary_signals);
+            stats.summary_active = ExtractJsonInt(line, "active").value_or(stats.summary_active);
+            stats.summary_filled = ExtractJsonInt(line, "filled").value_or(stats.summary_filled);
+            stats.summary_incidents =
+                ExtractJsonInt(line, "incidents").value_or(stats.summary_incidents);
+        }
+        if (trace_id.empty()) {
+            continue;
+        }
+        stats.has_trace_events = true;
+        auto& status = trace_status[trace_id];
+        if (status.empty()) {
+            status = "active";
+        }
+
+        if (event == "incident" || event == "order_rejected") {
+            status = "incident";
+            continue;
+        }
+        if (event == "trade_fill" || event == "wal_trade_fill") {
+            status = "filled";
+            continue;
+        }
+        if (event == "wal_order_update") {
+            const std::string order_status = ExtractSignalMonitorField(line, "status");
+            const std::string filled_volume = ExtractSignalMonitorField(line, "filled_volume");
+            if ((order_status == "2" || order_status == "3") &&
+                IsPositiveIntegerText(filled_volume)) {
+                status = "filled";
+            }
+        }
+    }
+
+    if (!stats.has_trace_events) {
+        if (stats.has_summary && !epoch.reset_by_core_engine) {
+            stats.signals = stats.summary_signals;
+            stats.active = stats.summary_active;
+            stats.filled = stats.summary_filled;
+            stats.incidents = stats.summary_incidents;
+        }
+        return stats;
+    }
+
+    for (const auto& [trace_id, status] : trace_status) {
+        ++stats.signals;
+        if (status == "filled") {
+            ++stats.filled;
+        } else if (status == "incident") {
+            ++stats.incidents;
+            stats.incident_trace_ids.push_back(trace_id);
+        } else {
+            ++stats.active;
+        }
+    }
+    return stats;
+}
+
+bool SignalMonitorSummaryDiffers(const SignalMonitorEpochStats& stats) {
+    return stats.has_summary &&
+           (stats.signals != stats.summary_signals || stats.active != stats.summary_active ||
+            stats.filled != stats.summary_filled || stats.incidents != stats.summary_incidents);
+}
+
+std::string SignalMonitorCountsMessage(const SignalMonitorEpochStats& stats) {
+    std::ostringstream out;
+    out << "current_epoch signals=" << stats.signals << " active=" << stats.active
+        << " filled=" << stats.filled << " incidents=" << stats.incidents;
+    return out.str();
+}
+
+std::string BriefSignalMonitorSummaryEvent(const std::string& line,
+                                           const SignalMonitorEpochStats& stats) {
+    const std::string ts = ExtractJsonString(line, "ts");
+    std::ostringstream out;
+    if (!ts.empty()) {
+        out << ts << ' ';
+    }
+    out << "summary - " << SignalMonitorCountsMessage(stats);
+    return out.str();
 }
 
 std::vector<ContractStatus> DiscoverContracts(const std::string& ctp_instrument_dir) {
@@ -1202,7 +1340,6 @@ ProcessStatus CollectProcessStatus(const DashboardOptions& options) {
     if (!status.supervisor_pids.empty()) {
         status.status = "waiting_for_trading_window";
         status.healthy = true;
-        status.run_dir.clear();
         status.core_log.clear();
         return status;
     }
@@ -1364,29 +1501,28 @@ SignalMonitorStatus CollectSignalMonitorStatus(const DashboardOptions& options) 
         status.status = "missing";
     }
 
-    std::ifstream input(event_log);
-    std::string line;
-    while (std::getline(input, line)) {
-        if (line.empty()) {
-            continue;
-        }
+    const SignalMonitorEpoch epoch = CurrentSignalMonitorEpochFromLog(event_log.string());
+    const SignalMonitorEpochStats epoch_stats = BuildSignalMonitorEpochStats(epoch);
+    status.signals = epoch_stats.signals;
+    status.active = epoch_stats.active;
+    status.filled = epoch_stats.filled;
+    status.incidents = epoch_stats.incidents;
+    const bool summary_rebased = SignalMonitorSummaryDiffers(epoch_stats);
+
+    for (const std::string& line : epoch.lines) {
         const std::string event = ExtractJsonString(line, "event");
-        const std::string message = ExtractJsonString(line, "message");
-        if (event == "summary") {
-            status.signals = ExtractJsonInt(line, "signals").value_or(status.signals);
-            status.active = ExtractJsonInt(line, "active").value_or(status.active);
-            status.filled = ExtractJsonInt(line, "filled").value_or(status.filled);
-            status.incidents = ExtractJsonInt(line, "incidents").value_or(status.incidents);
-        } else if (event == "incident") {
-            ++status.incidents;
-        }
+        const std::string message = event == "summary" && summary_rebased
+                                        ? SignalMonitorCountsMessage(epoch_stats)
+                                        : ExtractJsonString(line, "message");
         if (!event.empty()) {
             status.last_event = event;
         }
         if (!message.empty()) {
             status.last_message = message;
         }
-        status.recent_events.push_back(BriefSignalMonitorEvent(line));
+        status.recent_events.push_back(event == "summary" && summary_rebased
+                                           ? BriefSignalMonitorSummaryEvent(line, epoch_stats)
+                                           : BriefSignalMonitorEvent(line));
         if (status.recent_events.size() > kRecentSignalMonitorLimit) {
             status.recent_events.erase(status.recent_events.begin());
         }
@@ -1403,7 +1539,18 @@ SignalMonitorStatus CollectSignalMonitorStatus(const DashboardOptions& options) 
             if (!entry.is_regular_file(ec)) {
                 continue;
             }
-            incidents.push_back(entry.path().filename().string());
+            const std::string filename = entry.path().filename().string();
+            if (!epoch_stats.incident_trace_ids.empty()) {
+                const bool current_incident = std::any_of(
+                    epoch_stats.incident_trace_ids.begin(), epoch_stats.incident_trace_ids.end(),
+                    [&](const std::string& trace_id) {
+                        return !trace_id.empty() && filename.find(trace_id) != std::string::npos;
+                    });
+                if (!current_incident) {
+                    continue;
+                }
+            }
+            incidents.push_back(filename);
         }
         std::sort(incidents.begin(), incidents.end(), std::greater<>());
         for (const auto& item : incidents) {
@@ -1936,7 +2083,11 @@ CtpOrderFlowStatus CollectCtpOrderFlowStatus(const DashboardOptions& options,
         }
     }
 
-    const std::string current_run_id = RunIdFromRunDir(process.run_dir);
+    std::string current_run_id = RunIdFromRunDir(process.run_dir);
+    if (current_run_id.empty()) {
+        current_run_id =
+            RunIdFromRunDir(ReadFirstLine(fs::path(options.run_root) / "current_run_dir"));
+    }
     if (wal_status.exists) {
         std::ifstream wal_input(options.wal_file);
         std::string line;

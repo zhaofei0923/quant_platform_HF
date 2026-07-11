@@ -49,3 +49,4 @@ logs/
 ctp_flow*.con
 /docs/results/backtest_runs/
 /configs/ops/docs/results/
+*.csv

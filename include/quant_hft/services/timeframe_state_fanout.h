@@ -27,6 +27,11 @@ class TimeframeStateFanout {
 
     std::vector<TimeframeStateEmission> OnOneMinuteBar(const BarSnapshot& bar);
     std::vector<TimeframeStateEmission> Flush();
+    // Flush only the pending buckets for a specific instrument. Unlike Flush(),
+    // other instruments' in-progress buckets are preserved. Use this at session
+    // boundaries to emit a single instrument's section-end bar without prematurely
+    // flushing incomplete buckets for other instruments.
+    std::vector<TimeframeStateEmission> FlushInstrument(const std::string& instrument_id);
     void ResetInstrument(const std::string& instrument_id);
     void ResetInstrumentBuckets(const std::string& instrument_id);
 

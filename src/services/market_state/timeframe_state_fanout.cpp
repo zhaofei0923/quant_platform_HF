@@ -442,6 +442,30 @@ std::vector<TimeframeStateEmission> TimeframeStateFanout::Flush() {
     return emissions;
 }
 
+std::vector<TimeframeStateEmission> TimeframeStateFanout::FlushInstrument(
+    const std::string& instrument_id) {
+    if (instrument_id.empty()) {
+        return {};
+    }
+    std::vector<TimeframeStateEmission> emissions;
+    const std::string prefix = instrument_id + "|";
+    for (auto it = buckets_.begin(); it != buckets_.end();) {
+        if (it->first.rfind(prefix, 0) == 0 && it->second.initialized) {
+            emissions.push_back(BuildEmission(it->second.bar, it->second.timeframe_minutes));
+            it = buckets_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    std::sort(emissions.begin(), emissions.end(), [](const auto& lhs, const auto& rhs) {
+        if (lhs.timeframe_minutes != rhs.timeframe_minutes) {
+            return lhs.timeframe_minutes < rhs.timeframe_minutes;
+        }
+        return lhs.bar.minute < rhs.bar.minute;
+    });
+    return emissions;
+}
+
 void TimeframeStateFanout::ResetInstrument(const std::string& instrument_id) {
     if (instrument_id.empty()) {
         return;

@@ -2690,9 +2690,41 @@ int main(int argc, char** argv) {
             bars = bar_aggregator.FlushSessionEndBars(
                 instrument_last_tick_ts_ns, NowEpochNanos() - session_end_bar_flush_grace_ns);
         }
+        // Collect the set of instruments whose session-end 1m bar was just flushed.
+        // We use per-instrument fanout flush so that only the ready instrument's
+        // pending 5m bucket is emitted. A global Flush() would prematurely emit
+        // incomplete 5m buckets for other instruments whose last 1m bar hasn't
+        // been received yet (e.g. hc2610 being flushed triggers c2609's partial bar).
+        std::unordered_set<std::string> flushed_instruments;
+        for (const auto& bar : bars) {
+            flushed_instruments.insert(bar.instrument_id);
+        }
         record_market_bars(bars);
-        if (!bars.empty()) {
-            flush_timeframe_fanout();
+        if (!flushed_instruments.empty()) {
+            std::vector<TimeframeStateEmission> emissions;
+            StrategyState fanout_state;
+            bool has_fanout_state = false;
+            {
+                std::lock_guard<std::mutex> lock(timeframe_fanout_mutex);
+                for (const auto& instrument_id : flushed_instruments) {
+                    const auto inst_emissions =
+                        timeframe_state_fanout.FlushInstrument(instrument_id);
+                    emissions.insert(emissions.end(), inst_emissions.begin(),
+                                     inst_emissions.end());
+                }
+                std::string state_error;
+                if (timeframe_state_fanout.SaveState(&fanout_state, &state_error)) {
+                    has_fanout_state = true;
+                } else {
+                    EmitStructuredLog(&config, "core_engine", "warn",
+                                      "timeframe_fanout_state_build_failed",
+                                      {{"error", state_error}});
+                }
+            }
+            handle_timeframe_emissions(emissions);
+            if (has_fanout_state) {
+                persist_timeframe_fanout_state(fanout_state);
+            }
         }
     };
 

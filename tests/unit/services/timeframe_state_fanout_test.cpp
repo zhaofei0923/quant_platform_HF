@@ -202,4 +202,110 @@ TEST(TimeframeStateFanoutTest, SelectsDetectorConfigByInstrumentProductPrefix) {
     EXPECT_TRUE(std::isfinite(hc_emissions.back().state.market_state_atr_ratio));
 }
 
+// Regression test for the cross-instrument premature flush bug:
+// When two instruments share the same night session (e.g. 21:00-23:00), their
+// last 1m bars ("22:59") may become ready at different times. Previously,
+// flush_session_end_market_bars used a global Flush() — so when hc2610's "22:59"
+// was ready first, c2609's incomplete "22:55" bucket (missing "22:59" data) was
+// also emitted prematurely, causing a duplicate bar. FlushInstrument() must only
+// emit the specified instrument's buckets and leave others intact.
+TEST(TimeframeStateFanoutTest, FlushInstrumentDoesNotEmitOtherInstrumentPendingBuckets) {
+    TimeframeStateFanout fanout({5});
+
+    // Feed c2609: bars 22:55-22:58 (4 bars, "22:59" not yet arrived)
+    auto make_night_bar = [](const std::string& inst, const std::string& minute, int vol,
+                             EpochNanos ts) {
+        BarSnapshot bar;
+        bar.instrument_id = inst;
+        bar.exchange_id = inst.rfind("DCE", 0) == 0 ? "DCE" : "SHFE";
+        bar.trading_day = "20260710";
+        bar.action_day = "20260709";
+        bar.minute = "20260710 " + minute;
+        bar.open = bar.high = bar.low = bar.close = 2310.0;
+        bar.analysis_open = bar.analysis_high = bar.analysis_low = bar.analysis_close = 2310.0;
+        bar.volume = vol;
+        bar.ts_ns = ts;
+        return bar;
+    };
+
+    // c2609: receives 22:55 through 22:58 (4 bars → "22:55" bucket incomplete)
+    for (int m = 55; m <= 58; ++m) {
+        char buf[8];
+        std::snprintf(buf, sizeof(buf), "22:%02d", m);
+        EXPECT_TRUE(fanout.OnOneMinuteBar(make_night_bar("DCE.c2609", buf, 100 * m, m)).empty());
+    }
+
+    // hc2610: receives all 5 bars 22:55-22:59 (bucket complete)
+    for (int m = 55; m <= 59; ++m) {
+        char buf[8];
+        std::snprintf(buf, sizeof(buf), "22:%02d", m);
+        EXPECT_TRUE(fanout.OnOneMinuteBar(make_night_bar("SHFE.hc2610", buf, 200 * m, m)).empty());
+    }
+
+    // Simulate: hc2610's "22:59" becomes ready first → FlushInstrument("SHFE.hc2610")
+    const auto hc_emissions = fanout.FlushInstrument("SHFE.hc2610");
+    ASSERT_EQ(hc_emissions.size(), 1U) << "hc2610 22:55 should be emitted";
+    EXPECT_EQ(hc_emissions[0].bar.minute, "20260710 22:55");
+    EXPECT_EQ(hc_emissions[0].bar.instrument_id, "SHFE.hc2610");
+    EXPECT_EQ(hc_emissions[0].bar.volume, 200*55 + 200*56 + 200*57 + 200*58 + 200*59);
+
+    // c2609's bucket must still be in the fanout (not affected by hc flush)
+    const auto after_hc_flush = fanout.Flush();
+    // Still has c2609's partial "22:55" bucket (22:55-22:58 only)
+    ASSERT_EQ(after_hc_flush.size(), 1U) << "c2609 22:55 should still be pending after hc flush";
+    EXPECT_EQ(after_hc_flush[0].bar.instrument_id, "DCE.c2609");
+    EXPECT_EQ(after_hc_flush[0].bar.minute, "20260710 22:55");
+    // Volume should be the SUM of 22:55-22:58 only (4 bars), not including 22:59
+    const int64_t expected_c_vol = 100*55 + 100*56 + 100*57 + 100*58;
+    EXPECT_EQ(after_hc_flush[0].bar.volume, expected_c_vol);
+}
+
+// Verify the complete correct flow: c2609's "22:59" arrives after hc2610's flush,
+// then FlushInstrument("DCE.c2609") emits the COMPLETE "22:55" bar including 22:59.
+TEST(TimeframeStateFanoutTest, FlushInstrumentEmitsCompleteBarAfterLastMinuteArrives) {
+    TimeframeStateFanout fanout({5});
+
+    auto make_bar = [](const std::string& inst, const std::string& td_minute, int vol,
+                       EpochNanos ts) {
+        BarSnapshot bar;
+        bar.instrument_id = inst;
+        bar.trading_day = "20260710";
+        bar.action_day = "20260709";
+        bar.minute = td_minute;
+        bar.open = bar.high = bar.low = bar.close = 2310.0;
+        bar.analysis_open = bar.analysis_high = bar.analysis_low = bar.analysis_close = 2310.0;
+        bar.volume = vol;
+        bar.ts_ns = ts;
+        return bar;
+    };
+
+    // Both instruments: 22:55-22:58 in fanout
+    for (int m = 55; m <= 58; ++m) {
+        char key[32];
+        std::snprintf(key, sizeof(key), "20260710 22:%02d", m);
+        fanout.OnOneMinuteBar(make_bar("DCE.c2609", key, 100, m));
+        fanout.OnOneMinuteBar(make_bar("SHFE.hc2610", key, 200, m));
+    }
+
+    // hc2610 gets 22:59 first → hc flush happens
+    fanout.OnOneMinuteBar(make_bar("SHFE.hc2610", "20260710 22:59", 200, 59));
+    const auto hc_flush = fanout.FlushInstrument("SHFE.hc2610");
+    ASSERT_EQ(hc_flush.size(), 1U);
+    EXPECT_EQ(hc_flush[0].bar.volume, 200 * 5);  // 22:55-22:59, 5 bars × 200
+
+    // c2609 still has partial "22:55" (22:55-22:58 only)
+    // Now c2609's "22:59" arrives
+    fanout.OnOneMinuteBar(make_bar("DCE.c2609", "20260710 22:59", 100, 59));
+
+    // c2609 flush → must include the 22:59 data (complete bar)
+    const auto c_flush = fanout.FlushInstrument("DCE.c2609");
+    ASSERT_EQ(c_flush.size(), 1U);
+    EXPECT_EQ(c_flush[0].bar.minute, "20260710 22:55");
+    EXPECT_EQ(c_flush[0].bar.volume, 100 * 5);   // 22:55-22:59, 5 bars × 100 (complete!)
+    EXPECT_EQ(c_flush[0].bar.ts_ns, 59);          // ts_ns = last bar's ts_ns
+
+    // Fanout now empty
+    EXPECT_TRUE(fanout.Flush().empty());
+}
+
 }  // namespace quant_hft

@@ -246,6 +246,10 @@ struct CtpOrderFlowStatus {
     std::vector<std::string> recent_events;
     std::vector<std::string> recent_rejections;
     std::map<std::string, std::size_t> trade_fill_index_by_key;
+    // Stores fill data from previous-run WAL records keyed by dedup key.
+    // Used to recover the original exchange timestamp when the current run replays
+    // the same trade_id via OnRtnTrade (whose ts_ns reflects recv time, not trade time).
+    std::map<std::string, TradeFillDetail> historical_fill_by_key;
 };
 
 struct PositionRow {
@@ -1950,8 +1954,11 @@ std::string BuildTradeFillDedupKey(const TradeFillDetail& fill) {
     if (fill.trade_id.empty()) {
         return "";
     }
-    return fill.trade_day_bucket + "|" + fill.exchange_id + "|" + fill.instrument_id + "|" +
-           fill.side + "|" + fill.offset + "|" + fill.trade_id;
+    // Exclude trade_day_bucket: replayed fills from previous sessions receive a new
+    // ts_ns (recv time) that falls in a different calendar bucket, causing cross-session
+    // duplicates to bypass deduplication. trade_id is globally unique per exchange trade.
+    return fill.exchange_id + "|" + fill.instrument_id + "|" + fill.side + "|" +
+           fill.offset + "|" + fill.trade_id;
 }
 
 void PushLimitedTradeFill(std::vector<TradeFillDetail>* items, TradeFillDetail value,
@@ -1977,10 +1984,16 @@ void SeedTradeFillDedupKeyFromWalLine(const std::string& line, CtpOrderFlowStatu
     if (!trade_line) {
         return;
     }
-    const std::string key = BuildTradeFillDedupKey(ExtractTradeFillDetail(line));
-    if (!key.empty()) {
-        flow->trade_fill_index_by_key.emplace(key, kHistoricalTradeFillIndex);
+    TradeFillDetail fill = ExtractTradeFillDetail(line);
+    const std::string key = BuildTradeFillDedupKey(fill);
+    if (key.empty()) {
+        return;
     }
+    // Always keep the LATEST historical record for each trade_id (last writer wins).
+    // This ensures the most recent pre-session fill data is used when recovering
+    // the original exchange timestamp for replay detection.
+    flow->trade_fill_index_by_key.insert_or_assign(key, kHistoricalTradeFillIndex);
+    flow->historical_fill_by_key.insert_or_assign(key, std::move(fill));
 }
 
 void RecordTradeFillDetail(TradeFillDetail fill, CtpOrderFlowStatus* flow) {
@@ -1996,8 +2009,20 @@ void RecordTradeFillDetail(TradeFillDetail fill, CtpOrderFlowStatus* flow) {
             fill.replay_status = "ctp_replay_duplicate";
             PushLimitedTradeFill(&flow->replay_duplicate_fills, std::move(fill),
                                  kRecentCtpEventLimit);
-            if (existing->second != kHistoricalTradeFillIndex &&
-                existing->second < flow->trade_fills.size()) {
+            if (existing->second == kHistoricalTradeFillIndex) {
+                // The original trade was in a previous run. Recover its data from
+                // historical_fill_by_key so the correct exchange timestamp is displayed.
+                // Do NOT increment wal_fills: this is not a new fill in the current session.
+                const auto hist = flow->historical_fill_by_key.find(key);
+                if (hist != flow->historical_fill_by_key.end()) {
+                    TradeFillDetail recovered = hist->second;
+                    recovered.replay_status = "replayed_historical";
+                    recovered.replay_count = 2;
+                    flow->trade_fill_index_by_key.insert_or_assign(key, flow->trade_fills.size());
+                    PushLimitedTradeFill(&flow->trade_fills, std::move(recovered),
+                                         kRecentCtpEventLimit);
+                }
+            } else if (existing->second < flow->trade_fills.size()) {
                 TradeFillDetail& original = flow->trade_fills[existing->second];
                 ++original.replay_count;
                 original.replay_status = "replayed " + std::to_string(original.replay_count) + "x";

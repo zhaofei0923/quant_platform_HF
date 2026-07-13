@@ -184,8 +184,15 @@ int PreviousMinuteOfDay(int minute_of_day) {
 }
 
 bool IsLastMinuteInInterval(const BarAggregator::SessionInterval& interval, int minute_of_day) {
-    return IsMinuteInInterval(interval, minute_of_day) &&
-           minute_of_day == PreviousMinuteOfDay(interval.end_minute);
+    // The last in-session minute (e.g. 14:59 for a PM session ending at 15:00)
+    if (IsMinuteInInterval(interval, minute_of_day) &&
+        minute_of_day == PreviousMinuteOfDay(interval.end_minute)) {
+        return true;
+    }
+    // The end_minute itself (e.g. 15:00): the exchange sends a closing tick at
+    // exactly the end time. Although this minute is outside IsMinuteInInterval
+    // (exclusive upper bound), it forms a real bar with closing-auction data.
+    return minute_of_day == interval.end_minute;
 }
 
 bool ParseSecondOfMinute(const std::string& update_time, int* second) {
@@ -369,10 +376,19 @@ std::vector<BarSnapshot> BarAggregator::OnMarketSnapshot(const MarketSnapshot& s
                 closed_session_boundary_minutes_.end()) {
             return emitted;
         }
+        // Flush the in-progress bar (e.g. emit the "14:59" bar when 15:00:00 arrives).
         auto bucket_it = buckets_.find(snapshot.instrument_id);
         if (bucket_it != buckets_.end() && bucket_it->second.initialized) {
             emitted.push_back(bucket_it->second.bar);
             buckets_.erase(bucket_it);
+        }
+        // Start a new bar for the closing-auction tick itself (e.g. "15:00").
+        // This bar will be flushed by FlushSessionEndBars once the grace period elapses,
+        // because IsLastMinuteInInterval now recognises end_minute as a session-end minute.
+        if (!minute_key.empty()) {
+            auto& closing_bucket = buckets_[snapshot.instrument_id];
+            ResetBucketLocked(&closing_bucket, snapshot, exchange_id, trading_day, action_day,
+                              minute_key);
         }
         if (!closed_boundary_key.empty()) {
             closed_session_boundary_minutes_.insert(closed_boundary_key);
@@ -605,11 +621,15 @@ bool BarAggregator::IsSessionEndMinute(const std::string& exchange_id,
     SessionInterval interval;
     const std::string resolved_exchange =
         exchange_id.empty() ? InferExchangeId(instrument_id) : exchange_id;
-    if (!ResolveSessionInterval(resolved_exchange, instrument_id, ResolveProductCode(snapshot),
-                                update_time, &interval)) {
-        return false;
+    if (ResolveSessionInterval(resolved_exchange, instrument_id, ResolveProductCode(snapshot),
+                               update_time, &interval)) {
+        return IsLastMinuteInInterval(interval, minute_of_day);
     }
-    return IsLastMinuteInInterval(interval, minute_of_day);
+    // ResolveSessionInterval uses an exclusive upper bound, so ticks at exactly
+    // end_minute (e.g. 15:00, 23:00, 11:30, 10:15) are not matched by it. Check
+    // directly whether the minute equals any session's end_minute.
+    return IsExactSessionEndTime(resolved_exchange, instrument_id, ResolveProductCode(snapshot),
+                                 update_time);
 }
 
 std::string BarAggregator::ResolveSessionKey(const std::string& exchange_id,

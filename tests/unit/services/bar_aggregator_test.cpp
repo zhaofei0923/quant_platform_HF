@@ -94,17 +94,24 @@ TEST(BarAggregatorTest, EmitsSessionEndMinuteBarWithoutNextTick) {
                                                    0, 2367.0, 100))
                     .empty());
 
+    // 23:00:00 closing tick: flushes the pending "22:59" bar AND creates a new "23:00" bar.
     const auto bars = aggregator.OnMarketSnapshot(
         MakeSnapshot("DCE.c2607", "20260515", "20260514", "23:00:00", 500, 2368.0, 101));
     ASSERT_EQ(bars.size(), 1U);
     EXPECT_EQ(bars[0].minute, "20260515 22:59");
     EXPECT_DOUBLE_EQ(bars[0].close, 2367.0);
 
+    // Ticks after the exact end time (23:00:01) are still filtered.
     EXPECT_TRUE(aggregator
                     .OnMarketSnapshot(MakeSnapshot("DCE.c2607", "20260515", "20260514", "23:00:01",
                                                    500, 2369.0, 102))
                     .empty());
-    EXPECT_TRUE(aggregator.Flush().empty());
+    // The "23:00" closing-auction bar is still pending (not yet flushed).
+    const auto closing_bars = aggregator.Flush();
+    ASSERT_EQ(closing_bars.size(), 1U);
+    EXPECT_EQ(closing_bars[0].minute, "20260515 23:00");
+    EXPECT_DOUBLE_EQ(closing_bars[0].open, 2368.0);
+    EXPECT_DOUBLE_EQ(closing_bars[0].close, 2368.0);
 }
 
 TEST(BarAggregatorTest, TradingSessionMatcherHandlesDayAndNightWindowsByExchange) {
@@ -119,7 +126,10 @@ TEST(BarAggregatorTest, TradingSessionMatcherHandlesDayAndNightWindowsByExchange
     EXPECT_FALSE(aggregator.IsInTradingSession("DCE", "23:00:00"));
     EXPECT_FALSE(aggregator.IsInTradingSession("DCE", "23:10:00"));
     EXPECT_TRUE(aggregator.IsSessionEndMinute("DCE", "DCE.c2607", "22:59:59"));
-    EXPECT_FALSE(aggregator.IsSessionEndMinute("DCE", "DCE.c2607", "23:00:00"));
+    // 23:00:00 is the closing-auction minute: now recognised as a session-end minute.
+    EXPECT_TRUE(aggregator.IsSessionEndMinute("DCE", "DCE.c2607", "23:00:00"));
+    // Minutes strictly after the end are not session-end minutes.
+    EXPECT_FALSE(aggregator.IsSessionEndMinute("DCE", "DCE.c2607", "23:01:00"));
 }
 
 TEST(BarAggregatorTest, ResolveTimestampUsesExchangeTimeInBacktestMode) {
@@ -250,14 +260,21 @@ TEST(BarAggregatorTest, SessionEndFlushDoesNotDuplicateAlreadyClosedSegmentMinut
     ASSERT_EQ(flushed_bars.size(), 1U);
     EXPECT_EQ(flushed_bars[0].minute, "20260211 11:29");
 
+    // 11:30:00 closing tick: flushes "11:29" (already done above, so bucket erased)
+    // and creates a new "11:30" closing-auction bar.
     const auto rolled_bars = aggregator.OnMarketSnapshot(MakeSnapshot(
         instrument_id, "20260211", "20260211", "11:30:00", 0, 2401.0, 101, 2'000'000'000));
-    EXPECT_TRUE(rolled_bars.empty());
+    EXPECT_TRUE(rolled_bars.empty());  // "11:29" already flushed; "11:30" bar starts
 
+    // "11:30" bar should be flushed by FlushSessionEndBars (it IS a session-end minute).
     EXPECT_TRUE(
         aggregator.FlushSessionEndBars({{instrument_id, 2'000'000'000}}, 1'999'999'999).empty());
-    EXPECT_TRUE(
-        aggregator.FlushSessionEndBars({{instrument_id, 2'000'000'000}}, 2'000'000'000).empty());
+    const auto end_minute_bars =
+        aggregator.FlushSessionEndBars({{instrument_id, 2'000'000'000}}, 2'000'000'000);
+    ASSERT_EQ(end_minute_bars.size(), 1U);
+    EXPECT_EQ(end_minute_bars[0].minute, "20260211 11:30");
+    EXPECT_DOUBLE_EQ(end_minute_bars[0].open, 2401.0);
+
     EXPECT_TRUE(aggregator.Flush().empty());
 
     std::remove(config_path.c_str());

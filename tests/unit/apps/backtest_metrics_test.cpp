@@ -175,5 +175,42 @@ TEST(BacktestMetricsTest, ComputeRegimePerformanceUsesTradeTradingDayWhenProvide
     EXPECT_EQ(performance[0].total_days, 1);
 }
 
+TEST(BacktestMetricsTest, ComputeRegimePerformanceExcludesOpenLegsFromWinRate) {
+    // One winning close, one losing close, plus two opening legs that must not
+    // count toward trades_count or win_rate.
+    TradeRecord open_win{
+        "t-ow", "o-ow", "c2405", "", "Buy", "Open", 1, 100.0, 1704840000000000000LL, ""};
+    open_win.regime_at_entry = "kStrongTrend";
+    open_win.realized_pnl = 0.0;
+    open_win.trading_day = "20240110";
+
+    TradeRecord close_win{
+        "t-cw", "o-cw", "c2405", "", "Sell", "Close", 1, 110.0, 1704840100000000000LL, ""};
+    close_win.regime_at_entry = "kStrongTrend";
+    close_win.realized_pnl = 100.0;
+    close_win.trading_day = "20240110";
+
+    TradeRecord open_loss{
+        "t-ol", "o-ol", "c2405", "", "Buy", "Open", 1, 100.0, 1704840200000000000LL, ""};
+    open_loss.regime_at_entry = "kStrongTrend";
+    open_loss.realized_pnl = 0.0;
+    open_loss.trading_day = "20240110";
+
+    TradeRecord close_loss{
+        "t-cl", "o-cl", "c2405", "", "Sell", "Close", 1, 90.0, 1704840300000000000LL, ""};
+    close_loss.regime_at_entry = "kStrongTrend";
+    close_loss.realized_pnl = -50.0;
+    close_loss.trading_day = "20240110";
+
+    const std::vector<RegimePerformance> performance =
+        ComputeRegimePerformance({open_win, close_win, open_loss, close_loss});
+
+    ASSERT_EQ(performance.size(), 1U);
+    EXPECT_EQ(performance[0].regime, "kStrongTrend");
+    EXPECT_EQ(performance[0].trades_count, 2);
+    EXPECT_DOUBLE_EQ(performance[0].win_rate, 0.5);
+    EXPECT_DOUBLE_EQ(performance[0].total_pnl, 50.0);
+}
+
 }  // namespace
 }  // namespace quant_hft::apps

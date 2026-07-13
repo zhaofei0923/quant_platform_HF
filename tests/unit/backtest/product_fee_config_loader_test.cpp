@@ -52,8 +52,10 @@ TEST(ProductFeeConfigLoaderTest, LoadsYamlAndSupportsInstrumentAndSymbolLookup) 
     EXPECT_EQ(fallback->instrument_id, "rb2405");
 
     EXPECT_NEAR(ProductFeeBook::ComputeCommission(*exact, OffsetFlag::kOpen, 2, 100.0), 0.2, 1e-12);
-    EXPECT_NEAR(ProductFeeBook::ComputeCommission(*exact, OffsetFlag::kClose, 3, 100.0), 6.0, 1e-12);
-    EXPECT_NEAR(ProductFeeBook::ComputeCommission(*exact, OffsetFlag::kCloseToday, 1, 100.0), 3.0, 1e-12);
+    EXPECT_NEAR(ProductFeeBook::ComputeCommission(*exact, OffsetFlag::kClose, 3, 100.0), 0.6,
+                1e-12);
+    EXPECT_NEAR(ProductFeeBook::ComputeCommission(*exact, OffsetFlag::kCloseToday, 1, 100.0), 0.3,
+                1e-12);
     EXPECT_NEAR(ProductFeeBook::ComputePerLotMargin(*exact, Side::kBuy, 100.0), 160.0, 1e-12);
     EXPECT_NEAR(ProductFeeBook::ComputePerLotMargin(*exact, Side::kSell, 100.0), 170.0, 1e-12);
     EXPECT_NEAR(ProductFeeBook::ComputeRequiredMargin(*exact, Side::kSell, 3, 100.0), 510.0, 1e-12);
@@ -90,7 +92,7 @@ TEST(ProductFeeConfigLoaderTest, LoadsJsonConfig) {
     EXPECT_DOUBLE_EQ(exact->contract_multiplier, 15.0);
     EXPECT_DOUBLE_EQ(exact->long_margin_ratio, 0.12);
     EXPECT_DOUBLE_EQ(exact->short_margin_ratio, 0.13);
-    EXPECT_NEAR(ProductFeeBook::ComputeCommission(*exact, OffsetFlag::kOpen, 2, 5000.0), 3.0,
+    EXPECT_NEAR(ProductFeeBook::ComputeCommission(*exact, OffsetFlag::kOpen, 2, 5000.0), 0.2,
                 1e-12);
     EXPECT_NEAR(ProductFeeBook::ComputeCommission(*exact, OffsetFlag::kClose, 1, 5000.0), 15.0,
                 1e-12);
@@ -284,7 +286,7 @@ TEST(ProductFeeConfigLoaderTest, AllowsCommissionMoneyAndVolumeBothPositiveAndAd
     const ProductFeeEntry* entry = book.Find("rb2405");
     ASSERT_NE(entry, nullptr);
     const double fee = ProductFeeBook::ComputeCommission(*entry, OffsetFlag::kOpen, 2, 100.0);
-    EXPECT_NEAR(fee, 2.2, 1e-12);
+    EXPECT_NEAR(fee, 0.4, 1e-12);
 
     std::filesystem::remove(path);
 }

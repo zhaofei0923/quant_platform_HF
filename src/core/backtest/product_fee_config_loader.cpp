@@ -1039,8 +1039,10 @@ double ProductFeeBook::ComputeCommission(const ProductFeeEntry& entry, OffsetFla
     const double notional =
         fill_price * static_cast<double>(volume) * std::max(0.0, entry.contract_multiplier);
     const double fee_by_money = notional * ratio_by_money;
-    const double fee_by_volume =
-        static_cast<double>(volume) * std::max(0.0, entry.contract_multiplier) * ratio_by_volume;
+    // ratio_by_volume follows the CTP convention of yuan-per-lot
+    // (OpenRatioByVolume/CloseRatioByVolume), so it must NOT be multiplied by the
+    // contract multiplier; only the by-money term scales with notional.
+    const double fee_by_volume = static_cast<double>(volume) * ratio_by_volume;
     return std::max(0.0, fee_by_money) + std::max(0.0, fee_by_volume);
 }
 

@@ -139,6 +139,8 @@ runtime/ctp_instruments/<product>_dominant_contract.json
 
 如果缓存存在，`simnow_probe` 和 `core_engine` 不再每次启动全量查询所有 CTP 合约；它们只用缓存中的候选合约订阅行情并选择主力。选出交易合约后，仅对当前交易合约执行一次 `ReqQryInstrument`，并继续查询该合约的保证金率、手续费率和报单手续费率。运行中发生主力切换时，也只对新主力合约补查一次合约元数据。
 
+费率（保证金率 / 手续费率 / 报单手续费率）在会话内基本稳定，因此 `core_engine` 只在缺口时查询：启动首查、主力换月补查，以及后台轮询中仅对尚未缓存到的合约补查一次；一旦所有活跃合约的费率均已缓存，轮询不再重复查询。查询到的费率会写入本地文件 `runtime/ctp_instruments/fee_rates.json`（按合约汇总 margin/commission/order_comm，含 `account_id`、`trading_day`、`ts_ns`），供后续复盘离线读取。该文件为写入用途；下单时读取的是内存缓存，进程内始终以实时查询结果为准。
+
 如果产品缓存不存在或为空，会做一次全量合约查询作为兜底，并重新写入 `<product>_contracts.json`。首次接入新品种或交易所合约规则变更后，可先运行一次：
 
 ```bash

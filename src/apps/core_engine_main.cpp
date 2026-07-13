@@ -472,6 +472,137 @@ bool WriteDominantContractJson(const std::filesystem::path& output_path,
     return true;
 }
 
+// Persist the currently cached CTP fee rates (margin / commission / order
+// commission) to a local JSON file. Because SimNow runs with database
+// projection disabled, this file is the only durable, offline-readable source of
+// the queried rates and is used for post-trade analysis / 复盘. Writes go to a
+// temporary sibling file and are atomically renamed into place so concurrent
+// readers never observe a partially written document.
+bool WriteFeeRatesJson(
+    const std::filesystem::path& output_path, const std::string& account_id,
+    const std::string& trading_day,
+    const std::unordered_map<std::string, quant_hft::InstrumentMarginRateSnapshot>& margin_map,
+    const std::unordered_map<std::string, quant_hft::InstrumentCommissionRateSnapshot>&
+        commission_map,
+    const std::unordered_map<std::string, quant_hft::InstrumentOrderCommRateSnapshot>&
+        order_comm_map,
+    std::string* error) {
+    std::error_code ec;
+    std::filesystem::create_directories(output_path.parent_path(), ec);
+    if (ec) {
+        if (error != nullptr) {
+            *error = "failed to create directory: " + ec.message();
+        }
+        return false;
+    }
+
+    auto fmt = [](double value) {
+        std::ostringstream out;
+        out.precision(12);
+        out << value;
+        return out.str();
+    };
+
+    std::vector<std::string> instrument_ids;
+    instrument_ids.reserve(margin_map.size() + commission_map.size() + order_comm_map.size());
+    for (const auto& [instrument_id, unused] : margin_map) {
+        instrument_ids.push_back(instrument_id);
+    }
+    for (const auto& [instrument_id, unused] : commission_map) {
+        instrument_ids.push_back(instrument_id);
+    }
+    for (const auto& [instrument_id, unused] : order_comm_map) {
+        instrument_ids.push_back(instrument_id);
+    }
+    std::sort(instrument_ids.begin(), instrument_ids.end());
+    instrument_ids.erase(std::unique(instrument_ids.begin(), instrument_ids.end()),
+                         instrument_ids.end());
+
+    const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count();
+
+    const std::filesystem::path tmp_path = output_path.string() + ".tmp";
+    {
+        std::ofstream out(tmp_path);
+        if (!out.is_open()) {
+            if (error != nullptr) {
+                *error = "failed to open output file";
+            }
+            return false;
+        }
+
+        out << "{\n";
+        out << "  \"account_id\": \"" << JsonEscape(account_id) << "\",\n";
+        out << "  \"trading_day\": \"" << JsonEscape(trading_day) << "\",\n";
+        out << "  \"generated_ts_ns\": " << now_ns << ",\n";
+        out << "  \"instruments\": {\n";
+        for (std::size_t i = 0; i < instrument_ids.size(); ++i) {
+            const std::string& instrument_id = instrument_ids[i];
+            out << "    \"" << JsonEscape(instrument_id) << "\": {\n";
+
+            const auto margin_it = margin_map.find(instrument_id);
+            if (margin_it != margin_map.end()) {
+                const auto& m = margin_it->second;
+                out << "      \"margin\": {";
+                out << "\"long_ratio_by_money\": " << fmt(m.long_margin_ratio_by_money) << ", ";
+                out << "\"long_ratio_by_volume\": " << fmt(m.long_margin_ratio_by_volume) << ", ";
+                out << "\"short_ratio_by_money\": " << fmt(m.short_margin_ratio_by_money) << ", ";
+                out << "\"short_ratio_by_volume\": " << fmt(m.short_margin_ratio_by_volume) << ", ";
+                out << "\"is_relative\": " << (m.is_relative ? "true" : "false") << ", ";
+                out << "\"ts_ns\": " << m.ts_ns << ", ";
+                out << "\"source\": \"" << JsonEscape(m.source) << "\"},\n";
+            }
+
+            const auto commission_it = commission_map.find(instrument_id);
+            if (commission_it != commission_map.end()) {
+                const auto& c = commission_it->second;
+                out << "      \"commission\": {";
+                out << "\"open_ratio_by_money\": " << fmt(c.open_ratio_by_money) << ", ";
+                out << "\"open_ratio_by_volume\": " << fmt(c.open_ratio_by_volume) << ", ";
+                out << "\"close_ratio_by_money\": " << fmt(c.close_ratio_by_money) << ", ";
+                out << "\"close_ratio_by_volume\": " << fmt(c.close_ratio_by_volume) << ", ";
+                out << "\"close_today_ratio_by_money\": " << fmt(c.close_today_ratio_by_money)
+                    << ", ";
+                out << "\"close_today_ratio_by_volume\": " << fmt(c.close_today_ratio_by_volume)
+                    << ", ";
+                out << "\"ts_ns\": " << c.ts_ns << ", ";
+                out << "\"source\": \"" << JsonEscape(c.source) << "\"},\n";
+            }
+
+            const auto order_comm_it = order_comm_map.find(instrument_id);
+            if (order_comm_it != order_comm_map.end()) {
+                const auto& o = order_comm_it->second;
+                out << "      \"order_comm\": {";
+                out << "\"order_comm_by_volume\": " << fmt(o.order_comm_by_volume) << ", ";
+                out << "\"order_action_comm_by_volume\": " << fmt(o.order_action_comm_by_volume)
+                    << ", ";
+                out << "\"ts_ns\": " << o.ts_ns << ", ";
+                out << "\"source\": \"" << JsonEscape(o.source) << "\"}\n";
+            } else {
+                // Ensure the object closes cleanly even when order_comm is absent
+                // by emitting a trailing empty marker only if nothing was written.
+                out << "      \"_\": null\n";
+            }
+
+            out << "    }" << (i + 1 < instrument_ids.size() ? "," : "") << "\n";
+        }
+        out << "  }\n";
+        out << "}\n";
+    }
+
+    std::filesystem::rename(tmp_path, output_path, ec);
+    if (ec) {
+        std::error_code remove_ec;
+        std::filesystem::remove(tmp_path, remove_ec);
+        if (error != nullptr) {
+            *error = "failed to rename temp file: " + ec.message();
+        }
+        return false;
+    }
+    return true;
+}
+
 std::filesystem::path InstrumentMetaCachePath(const std::string& product_id) {
     return std::filesystem::path("runtime/ctp_instruments") /
            (ToLowerAscii(product_id) + "_contracts.json");
@@ -2776,12 +2907,39 @@ int main(int argc, char** argv) {
                 ctp_query_snapshot_store.AppendInstrumentMetaSnapshot(snapshot);
             }
         });
+    // Once broker trading params (margin price type) are known they do not change
+    // within a session, so the periodic query loop below only re-queries while
+    // this flag is still false.
+    std::atomic<bool> broker_trading_params_ready{false};
+    // Durable, offline-readable snapshot of the queried CTP fee rates for
+    // post-trade analysis / 复盘. Rewritten whenever a fee-rate cache updates.
+    const std::filesystem::path fee_rates_output_path =
+        std::filesystem::path("runtime/ctp_instruments") / "fee_rates.json";
+    auto persist_fee_rates = [&]() {
+        std::unordered_map<std::string, InstrumentMarginRateSnapshot> margin_copy;
+        std::unordered_map<std::string, InstrumentCommissionRateSnapshot> commission_copy;
+        std::unordered_map<std::string, InstrumentOrderCommRateSnapshot> order_comm_copy;
+        {
+            std::lock_guard<std::mutex> lock(fee_rate_mutex);
+            margin_copy = margin_rate_by_instrument;
+            commission_copy = commission_rate_by_instrument;
+            order_comm_copy = order_comm_rate_by_instrument;
+        }
+        const std::string trading_day_snapshot = ctp_account_ledger.trading_day();
+        std::string persist_error;
+        if (!WriteFeeRatesJson(fee_rates_output_path, account_id, trading_day_snapshot, margin_copy,
+                               commission_copy, order_comm_copy, &persist_error)) {
+            EmitStructuredLog(&config, "core_engine", "warn", "fee_rates_persist_failed",
+                              {{"path", fee_rates_output_path.string()}, {"error", persist_error}});
+        }
+    };
     ctp_trader->RegisterBrokerTradingParamsSnapshotCallback(
         [&](const BrokerTradingParamsSnapshot& snapshot) {
             if (!snapshot.margin_price_type.empty()) {
                 std::lock_guard<std::mutex> lock(ctp_ledger_mutex);
                 ctp_account_ledger.SetMarginPriceType(snapshot.margin_price_type.front());
             }
+            broker_trading_params_ready.store(true);
             ctp_query_snapshot_store.AppendBrokerTradingParamsSnapshot(snapshot);
         });
     ctp_trader->RegisterInstrumentMarginRateSnapshotCallback(
@@ -2795,6 +2953,7 @@ int main(int argc, char** argv) {
             for (const auto& snapshot : snapshots) {
                 ctp_query_snapshot_store.AppendInstrumentMarginRateSnapshot(snapshot);
             }
+            persist_fee_rates();
         });
     ctp_trader->RegisterInstrumentCommissionRateSnapshotCallback(
         [&](const std::vector<InstrumentCommissionRateSnapshot>& snapshots) {
@@ -2807,6 +2966,7 @@ int main(int argc, char** argv) {
             for (const auto& snapshot : snapshots) {
                 ctp_query_snapshot_store.AppendInstrumentCommissionRateSnapshot(snapshot);
             }
+            persist_fee_rates();
         });
     ctp_trader->RegisterInstrumentOrderCommRateSnapshotCallback(
         [&](const std::vector<InstrumentOrderCommRateSnapshot>& snapshots) {
@@ -2819,6 +2979,7 @@ int main(int argc, char** argv) {
             for (const auto& snapshot : snapshots) {
                 ctp_query_snapshot_store.AppendInstrumentOrderCommRateSnapshot(snapshot);
             }
+            persist_fee_rates();
         });
     auto query_selected_instrument_meta = [&](const std::string& instrument_id,
                                               const std::string& event_prefix) {
@@ -3368,15 +3529,39 @@ int main(int argc, char** argv) {
                 }
             }
             if (now >= next_instrument_query) {
-                (void)ctp_trader->EnqueueBrokerTradingParamsQuery(next_query_request_id());
+                if (!broker_trading_params_ready.load()) {
+                    (void)ctp_trader->EnqueueBrokerTradingParamsQuery(next_query_request_id());
+                }
                 const auto active_instruments = get_active_instruments_snapshot();
                 for (const auto& instrument_id : active_instruments) {
-                    (void)ctp_trader->EnqueueInstrumentMarginRateQuery(next_query_request_id(),
-                                                                       instrument_id);
-                    (void)ctp_trader->EnqueueInstrumentCommissionRateQuery(next_query_request_id(),
+                    // Fee rates are stable within a session, so only query the
+                    // ones still missing from the cache. This keeps retry-until-
+                    // populated resilience while removing steady-state churn once
+                    // every active instrument has been resolved.
+                    bool need_margin = false;
+                    bool need_commission = false;
+                    bool need_order_comm = false;
+                    {
+                        std::lock_guard<std::mutex> lock(fee_rate_mutex);
+                        need_margin = margin_rate_by_instrument.find(instrument_id) ==
+                                      margin_rate_by_instrument.end();
+                        need_commission = commission_rate_by_instrument.find(instrument_id) ==
+                                          commission_rate_by_instrument.end();
+                        need_order_comm = order_comm_rate_by_instrument.find(instrument_id) ==
+                                          order_comm_rate_by_instrument.end();
+                    }
+                    if (need_margin) {
+                        (void)ctp_trader->EnqueueInstrumentMarginRateQuery(next_query_request_id(),
                                                                            instrument_id);
-                    (void)ctp_trader->EnqueueInstrumentOrderCommRateQuery(next_query_request_id(),
-                                                                          instrument_id);
+                    }
+                    if (need_commission) {
+                        (void)ctp_trader->EnqueueInstrumentCommissionRateQuery(
+                            next_query_request_id(), instrument_id);
+                    }
+                    if (need_order_comm) {
+                        (void)ctp_trader->EnqueueInstrumentOrderCommRateQuery(next_query_request_id(),
+                                                                             instrument_id);
+                    }
                 }
                 next_instrument_query = now + std::chrono::milliseconds(std::max(
                                                   1, file_config.instrument_query_interval_ms));

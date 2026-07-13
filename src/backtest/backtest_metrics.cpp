@@ -418,7 +418,22 @@ std::vector<RegimePerformance> ComputeRegimePerformance(const std::vector<TradeR
     };
 
     std::map<std::string, RegimeAggregate> grouped;
+    // Regime performance measures the outcome of each closed round trip. Only the
+    // closing leg carries realized PnL; the opening leg has realized_pnl == 0 and
+    // must be excluded so it does not dilute win_rate, average return, and Sharpe.
+    auto is_closing_leg = [](const TradeRecord& trade) {
+        std::string offset = trade.offset;
+        std::transform(offset.begin(), offset.end(), offset.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        if (!offset.empty()) {
+            return offset != "open";
+        }
+        return trade.realized_pnl != 0.0;
+    };
     for (const TradeRecord& trade : trades) {
+        if (!is_closing_leg(trade)) {
+            continue;
+        }
         const std::string key = trade.regime_at_entry.empty() ? "kUnknown" : trade.regime_at_entry;
         RegimeAggregate& agg = grouped[key];
         agg.trades_count += 1;

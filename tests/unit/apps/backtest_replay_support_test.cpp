@@ -1613,7 +1613,7 @@ TEST(BacktestReplaySupportTest,
     EXPECT_EQ(expiry_close_trade->trading_day, "20240103");
     EXPECT_EQ(expiry_close_trade->update_time, "09:00:00");
     EXPECT_DOUBLE_EQ(expiry_close_trade->price, 109.0);
-    EXPECT_DOUBLE_EQ(expiry_close_trade->commission, 2.0);
+    EXPECT_DOUBLE_EQ(expiry_close_trade->commission, 0.2);
     EXPECT_DOUBLE_EQ(expiry_close_trade->risk_budget_r, 0.0);
 
     ASSERT_NE(reopened_trade, nullptr);

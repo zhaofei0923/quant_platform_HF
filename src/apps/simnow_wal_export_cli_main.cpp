@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "quant_hft/apps/cli_support.h"
+#include "quant_hft/backtest/product_fee_config_loader.h"
 #include "quant_hft/contracts/types.h"
 #include "quant_hft/core/storage_client_factory.h"
 #include "quant_hft/core/storage_connection_config.h"
@@ -50,6 +51,7 @@ struct ExportSpec {
     std::string summary_md;
     std::string reconcile_json;
     std::string reconcile_md;
+    std::string fee_config;
     bool project_db{false};
     bool query_db{false};
     bool strict_reconcile{false};
@@ -68,11 +70,16 @@ struct ExportStats {
     std::int64_t db_order_events{-1};
     std::int64_t db_trade_fills{-1};
     std::int64_t max_seq{0};
+    std::int64_t unpriced_fills{0};
+    double total_commission{0.0};
     bool wal_missing{false};
     bool db_queried{false};
+    bool fee_config_loaded{false};
     std::string db_error;
+    std::string fee_config_error;
     std::map<std::string, std::int64_t> orders_by_instrument;
     std::map<std::string, std::int64_t> fills_by_instrument;
+    std::map<std::string, double> commission_by_instrument;
 };
 
 std::string GetEnvOrDefault(const char* key, const std::string& fallback) {
@@ -436,11 +443,11 @@ void WriteOrderCsvRow(std::ostream& out, const WalRecord& record) {
 void WriteFillCsvHeader(std::ostream& out) {
     out << "seq,event_type,run_id,trading_day,account_id,strategy_id,client_order_id,"
            "exchange_order_id,instrument_id,exchange_id,side,offset,trade_id,filled_volume,"
-           "last_trade_volume,avg_fill_price,event_source,trace_id,exchange_ts_ns,recv_ts_ns,ts_"
-           "ns\n";
+           "last_trade_volume,avg_fill_price,commission,event_source,trace_id,exchange_ts_ns,"
+           "recv_ts_ns,ts_ns\n";
 }
 
-void WriteFillCsvRow(std::ostream& out, const WalRecord& record) {
+void WriteFillCsvRow(std::ostream& out, const WalRecord& record, double commission) {
     const auto& event = record.event;
     out << record.seq << ',' << CsvEscape(record.event_type) << ',' << CsvEscape(record.run_id)
         << ',' << CsvEscape(record.trading_day) << ',' << CsvEscape(event.account_id) << ','
@@ -449,9 +456,9 @@ void WriteFillCsvRow(std::ostream& out, const WalRecord& record) {
         << CsvEscape(event.exchange_id) << ',' << static_cast<int>(event.side) << ','
         << static_cast<int>(event.offset) << ',' << CsvEscape(event.trade_id) << ','
         << event.filled_volume << ',' << event.last_trade_volume << ','
-        << ToText(event.avg_fill_price) << ',' << CsvEscape(event.event_source) << ','
-        << CsvEscape(event.trace_id) << ',' << event.exchange_ts_ns << ',' << event.recv_ts_ns
-        << ',' << event.ts_ns << '\n';
+        << ToText(event.avg_fill_price) << ',' << ToText(commission) << ','
+        << CsvEscape(event.event_source) << ',' << CsvEscape(event.trace_id) << ','
+        << event.exchange_ts_ns << ',' << event.recv_ts_ns << ',' << event.ts_ns << '\n';
 }
 
 std::string JsonCountMap(const std::map<std::string, std::int64_t>& counts) {
@@ -469,6 +476,21 @@ std::string JsonCountMap(const std::map<std::string, std::int64_t>& counts) {
     return out.str();
 }
 
+std::string JsonDoubleMap(const std::map<std::string, double>& values) {
+    std::ostringstream out;
+    out << "{";
+    bool first = true;
+    for (const auto& [key, value] : values) {
+        if (!first) {
+            out << ",";
+        }
+        first = false;
+        out << "\"" << quant_hft::apps::JsonEscape(key) << "\":" << ToText(value);
+    }
+    out << "}";
+    return out.str();
+}
+
 std::string RenderSummaryJson(const ExportSpec& spec, const ExportStats& stats) {
     std::ostringstream out;
     out << "{\n"
@@ -480,12 +502,19 @@ std::string RenderSummaryJson(const ExportSpec& spec, const ExportStats& stats) 
         << "  \"ignored_lines\": " << stats.ignored_lines << ",\n"
         << "  \"order_events\": " << stats.exported_order_events << ",\n"
         << "  \"trade_fills\": " << stats.exported_trade_fills << ",\n"
+        << "  \"total_commission\": " << ToText(stats.total_commission) << ",\n"
+        << "  \"unpriced_fills\": " << stats.unpriced_fills << ",\n"
+        << "  \"fee_config\": \"" << quant_hft::apps::JsonEscape(spec.fee_config) << "\",\n"
+        << "  \"fee_config_loaded\": " << (stats.fee_config_loaded ? "true" : "false")
+        << ",\n"
         << "  \"project_db\": " << (spec.project_db ? "true" : "false") << ",\n"
         << "  \"projected_order_events\": " << stats.projected_order_events << ",\n"
         << "  \"projected_trade_fills\": " << stats.projected_trade_fills << ",\n"
         << "  \"db_projection_failures\": " << stats.db_projection_failures << ",\n"
         << "  \"orders_by_instrument\": " << JsonCountMap(stats.orders_by_instrument) << ",\n"
         << "  \"fills_by_instrument\": " << JsonCountMap(stats.fills_by_instrument) << ",\n"
+        << "  \"commission_by_instrument\": " << JsonDoubleMap(stats.commission_by_instrument)
+        << ",\n"
         << "  \"outputs\": {\n"
         << "    \"orders_csv\": \"" << quant_hft::apps::JsonEscape(spec.orders_csv) << "\",\n"
         << "    \"trade_fills_csv\": \"" << quant_hft::apps::JsonEscape(spec.fills_csv) << "\",\n"
@@ -532,6 +561,9 @@ std::string RenderSummaryMd(const ExportSpec& spec, const ExportStats& stats) {
         << "- Lines: " << stats.lines_total << "\n"
         << "- Order events: " << stats.exported_order_events << "\n"
         << "- Trade fills: " << stats.exported_trade_fills << "\n"
+        << "- Total commission: " << ToText(stats.total_commission) << "\n"
+        << "- Unpriced fills: " << stats.unpriced_fills << "\n"
+        << "- Fee config: " << (stats.fee_config_loaded ? spec.fee_config : "disabled") << "\n"
         << "- Parse errors: " << stats.parse_errors << "\n"
         << "- DB projection: " << (spec.project_db ? "enabled" : "disabled") << "\n"
         << "- DB projection failures: " << stats.db_projection_failures << "\n";
@@ -589,6 +621,10 @@ ExportSpec ParseSpec(const quant_hft::apps::ArgMap& args) {
                                    (reconcile_day_dir / "reconcile.json").string());
     spec.reconcile_md = quant_hft::apps::GetArgAny(args, {"reconcile-md", "reconcile_md"},
                                                    (reconcile_day_dir / "reconcile.md").string());
+    spec.fee_config = quant_hft::apps::GetArgAny(
+        args, {"fee-config", "fee_config"},
+        GetEnvOrDefault("SIMNOW_FEE_CONFIG",
+                        DefaultPathFromRoot("configs/strategies/instrument_info.json")));
     spec.project_db =
         ParseBoolText(quant_hft::apps::GetArgAny(args, {"project-db", "project_db"}), false);
     spec.query_db =
@@ -661,6 +697,21 @@ int RunExport(const ExportSpec& spec) {
     }
 
     ExportStats stats;
+
+    // Load per-product fee config so trade fills can be priced. A missing or invalid
+    // config is non-fatal: commission defaults to 0 and unpriced fills are counted.
+    quant_hft::ProductFeeBook fee_book;
+    if (!spec.fee_config.empty()) {
+        std::string fee_error;
+        if (quant_hft::LoadProductFeeConfig(spec.fee_config, &fee_book, &fee_error)) {
+            stats.fee_config_loaded = true;
+        } else {
+            stats.fee_config_error = fee_error;
+            std::cerr << "simnow_wal_export_cli: fee config not loaded (" << fee_error
+                      << "); commissions default to 0\n";
+        }
+    }
+
     std::ofstream orders_out(spec.orders_csv, std::ios::out | std::ios::trunc);
     std::ofstream fills_out(spec.fills_csv, std::ios::out | std::ios::trunc);
     std::ofstream events_out(spec.events_jsonl, std::ios::out | std::ios::trunc);
@@ -733,9 +784,25 @@ int RunExport(const ExportSpec& spec) {
                 }
             }
             if (IsTradeFill(record)) {
-                WriteFillCsvRow(fills_out, record);
+                const auto& event = record.event;
+                // Each trade_fill record represents a single exchange trade, so price the
+                // incremental last_trade_volume (fall back to filled_volume when absent).
+                std::int32_t fill_volume =
+                    event.last_trade_volume > 0 ? event.last_trade_volume : event.filled_volume;
+                double commission = 0.0;
+                const quant_hft::ProductFeeEntry* fee_entry =
+                    fee_book.Find(event.instrument_id);
+                if (fee_entry != nullptr) {
+                    commission = quant_hft::ProductFeeBook::ComputeCommission(
+                        *fee_entry, event.offset, fill_volume, event.avg_fill_price);
+                } else if (fill_volume > 0) {
+                    ++stats.unpriced_fills;
+                }
+                stats.total_commission += commission;
+                stats.commission_by_instrument[event.instrument_id] += commission;
+                WriteFillCsvRow(fills_out, record, commission);
                 ++stats.exported_trade_fills;
-                ++stats.fills_by_instrument[record.event.instrument_id];
+                ++stats.fills_by_instrument[event.instrument_id];
                 if (ledger_store != nullptr) {
                     std::string append_error;
                     if (ledger_store->AppendTradeEvent(record.event, &append_error)) {

@@ -13,6 +13,7 @@ EXPORT_ROOT="${SIMNOW_EXPORT_ROOT:-${QUANT_ROOT}/runtime/trading/exports/simnow}
 RECONCILE_ROOT="${SIMNOW_RECONCILE_ROOT:-${QUANT_ROOT}/runtime/trading/reconcile/simnow}"
 REPORT_ROOT="${SIMNOW_REPORT_ROOT:-${QUANT_ROOT}/runtime/trading/reports/simnow}"
 MARKET_DATA_DIR="${SIMNOW_MARKET_DATA_DIR:-${QUANT_ROOT}/runtime/market_data/simnow}"
+FEE_CONFIG="${SIMNOW_FEE_CONFIG:-${QUANT_ROOT}/configs/strategies/instrument_info.json}"
 TRADING_DAY="${TRADING_DAY:-}"
 PROJECT_DB="${SIMNOW_EOD_PROJECT_DB:-0}"
 QUERY_DB="${SIMNOW_EOD_QUERY_DB:-${PROJECT_DB}}"
@@ -30,6 +31,7 @@ Options:
   --export-root <path>           CSV/JSONL export root (default: ${EXPORT_ROOT})
   --reconcile-root <path>        Reconcile report root (default: ${RECONCILE_ROOT})
   --report-root <path>           EOD report root (default: ${REPORT_ROOT})
+  --fee-config <path>            Product fee config for commission stats (default: ${FEE_CONFIG})
   --project-db                   Replay WAL into trading DB using configured storage
   --query-db                     Query trading DB counts for reconcile
   --strict-reconcile             Fail on DB projection/reconcile mismatch
@@ -65,6 +67,7 @@ while [[ $# -gt 0 ]]; do
     --export-root) require_value "$1" "${2:-}"; EXPORT_ROOT="$2"; shift 2 ;;
     --reconcile-root) require_value "$1" "${2:-}"; RECONCILE_ROOT="$2"; shift 2 ;;
     --report-root) require_value "$1" "${2:-}"; REPORT_ROOT="$2"; shift 2 ;;
+    --fee-config) require_value "$1" "${2:-}"; FEE_CONFIG="$2"; shift 2 ;;
     --project-db) PROJECT_DB=1; QUERY_DB=1; shift ;;
     --query-db) QUERY_DB=1; shift ;;
     --strict-reconcile) STRICT_RECONCILE=1; shift ;;
@@ -98,6 +101,7 @@ wal_cmd=(
   --summary-md "${EXPORT_DIR}/summary.md"
   --reconcile-json "${RECONCILE_DIR}/reconcile.json"
   --reconcile-md "${RECONCILE_DIR}/reconcile.md"
+  --fee-config "${FEE_CONFIG}"
   --project-db "${PROJECT_DB}"
   --query-db "${QUERY_DB}"
   --strict-reconcile "${STRICT_RECONCILE}"

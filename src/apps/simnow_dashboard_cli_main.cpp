@@ -1031,7 +1031,8 @@ std::string ClassifyCtpIssue(const std::string& line) {
         HasAnyNeedle(lower, {"fail", "failed", "level=error", "reject"})) {
         return "auth_failed";
     }
-    if (lower.find("disconnect") != std::string::npos) {
+    if (lower.find("front_disconnected") != std::string::npos ||
+        lower.find("onfrontdisconnected") != std::string::npos) {
         return "front_disconnected";
     }
     if (lower.find("reject") != std::string::npos || lower.find("rejected") != std::string::npos) {
@@ -1497,10 +1498,10 @@ SignalMonitorStatus CollectSignalMonitorStatus(const DashboardOptions& options) 
 
     if (!status.pid.empty() && ProcessIsAlive(status.pid)) {
         status.status = "alive";
-    } else if (!status.pid.empty()) {
-        status.status = "dead";
     } else if (status.event_log_exists) {
         status.status = "history_only";
+    } else if (!status.pid.empty()) {
+        status.status = "dead";
     } else {
         status.status = "missing";
     }
@@ -1565,7 +1566,9 @@ SignalMonitorStatus CollectSignalMonitorStatus(const DashboardOptions& options) 
         }
     }
 
-    status.healthy = status.status == "alive" && status.incidents == 0;
+    status.healthy = (status.status == "alive" || status.status == "history_only" ||
+                      status.status == "missing") &&
+                     status.incidents == 0;
     return status;
 }
 
@@ -1693,6 +1696,23 @@ bool LineLooksFailed(const std::string& lower) {
            HasAnyNeedle(lower, {"level=error", " failed", " fail", "reject", "timeout"});
 }
 
+bool LineHasHealthyStatus(const std::string& lower) {
+    return lower.find("state=\"healthy\"") != std::string::npos ||
+           lower.find("state=healthy") != std::string::npos ||
+           lower.find("status=\"healthy\"") != std::string::npos ||
+           lower.find("status=healthy") != std::string::npos;
+}
+
+bool LineLooksCtpRecovered(const std::string& lower) {
+    if (LineLooksFailed(lower)) {
+        return false;
+    }
+    return HasAnyNeedle(lower, {"front_candidate_connect_success", "connect_success",
+                                "ctp_trader_reconnect_ready", "session_snapshot",
+                                "ctp_settlement_confirmed", "settlement_confirmed"}) ||
+           (lower.find("health_status") != std::string::npos && LineHasHealthyStatus(lower));
+}
+
 void UpdateCtpConnectionFromLine(const std::string& line, const std::string& source,
                                  CtpConnectionStatus* status) {
     if (status == nullptr || line.empty()) {
@@ -1700,10 +1720,10 @@ void UpdateCtpConnectionFromLine(const std::string& line, const std::string& sou
     }
     const std::string lower = ToLower(line);
     const std::string issue = ClassifyCtpIssue(line);
-    const bool connection_related =
-        HasAnyNeedle(lower, {"onfront", "rspuserlogin", "authenticate", "settlement_confirm",
-                             "reqsettlement", "reconnect", "front_connected", "front_disconnected",
-                             "probe_completed", "session_snapshot", "health_status"});
+    const bool connection_related = HasAnyNeedle(
+        lower, {"onfront", "rspuserlogin", "authenticate", "settlement_confirm", "reqsettlement",
+                "reconnect", "front_connected", "front_disconnected", "connect_success",
+                "probe_completed", "session_snapshot", "health_status"});
     if (!connection_related) {
         return;
     }
@@ -1715,12 +1735,19 @@ void UpdateCtpConnectionFromLine(const std::string& line, const std::string& sou
         ++status->ctp_errors;
         status->last_error = issue;
     }
+    if (lower.find("front_candidate_connect_success") != std::string::npos ||
+        lower.find("ctp_front_candidate_connect_success") != std::string::npos) {
+        status->td_front = "connected";
+        status->md_front = "connected";
+    }
     if (lower.find("ctp_td_front_connected") != std::string::npos ||
         lower.find("td_front_connected") != std::string::npos ||
         lower.find("trader_front_connected") != std::string::npos) {
         status->td_front = "connected";
     }
-    if (lower.find("ctp_td_front_disconnected") != std::string::npos ||
+    if ((lower.find("ctp_front_disconnected") != std::string::npos &&
+         lower.find("channel=\"td\"") != std::string::npos) ||
+        lower.find("ctp_td_front_disconnected") != std::string::npos ||
         lower.find("td_front_disconnected") != std::string::npos ||
         lower.find("trader_front_disconnected") != std::string::npos) {
         status->td_front = "disconnected";
@@ -1729,7 +1756,9 @@ void UpdateCtpConnectionFromLine(const std::string& line, const std::string& sou
         lower.find("md_front_connected") != std::string::npos) {
         status->md_front = "connected";
     }
-    if (lower.find("ctp_md_front_disconnected") != std::string::npos ||
+    if ((lower.find("ctp_front_disconnected") != std::string::npos &&
+         lower.find("channel=\"md\"") != std::string::npos) ||
+        lower.find("ctp_md_front_disconnected") != std::string::npos ||
         lower.find("md_front_disconnected") != std::string::npos) {
         status->md_front = "disconnected";
     }
@@ -1751,9 +1780,12 @@ void UpdateCtpConnectionFromLine(const std::string& line, const std::string& sou
     if (lower.find("probe_completed") != std::string::npos) {
         status->probe_status = LineLooksFailed(lower) ? "failed" : "completed";
     }
-    if (lower.find("health_status") != std::string::npos &&
-        lower.find("healthy") != std::string::npos) {
+    if (lower.find("health_status") != std::string::npos && LineHasHealthyStatus(lower)) {
         status->probe_status = "healthy";
+    }
+    if (LineLooksCtpRecovered(lower)) {
+        status->ctp_errors = 0;
+        status->last_error.clear();
     }
 }
 
@@ -1957,8 +1989,8 @@ std::string BuildTradeFillDedupKey(const TradeFillDetail& fill) {
     // Exclude trade_day_bucket: replayed fills from previous sessions receive a new
     // ts_ns (recv time) that falls in a different calendar bucket, causing cross-session
     // duplicates to bypass deduplication. trade_id is globally unique per exchange trade.
-    return fill.exchange_id + "|" + fill.instrument_id + "|" + fill.side + "|" +
-           fill.offset + "|" + fill.trade_id;
+    return fill.exchange_id + "|" + fill.instrument_id + "|" + fill.side + "|" + fill.offset + "|" +
+           fill.trade_id;
 }
 
 void PushLimitedTradeFill(std::vector<TradeFillDetail>* items, TradeFillDetail value,
@@ -3117,8 +3149,7 @@ DashboardState CollectState(const DashboardOptions& options) {
                                      [](const auto& item) { return item.healthy; });
     }
     state.live_healthy = state.process.healthy && (waiting_for_window || market_healthy) &&
-                         state.signal_monitor.status != "dead" &&
-                         state.signal_monitor.incidents == 0 && state.ctp_connection.healthy &&
+                         state.signal_monitor.healthy && state.ctp_connection.healthy &&
                          state.ctp_order_flow.monitor_incidents == 0 &&
                          state.ctp_order_flow.ctp_submit_rejected == 0;
     state.overall_healthy = state.live_healthy;

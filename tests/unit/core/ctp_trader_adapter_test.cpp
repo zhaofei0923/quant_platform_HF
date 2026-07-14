@@ -292,6 +292,26 @@ TEST(CTPTraderAdapterTest, DisconnectTriggersReconnectScheduling) {
     EXPECT_TRUE(WaitUntil([&]() { return fake_gateway->request_user_login_calls() >= 1; }, 2500));
 }
 
+TEST(CTPTraderAdapterTest, ReadinessSnapshotReflectsDisconnectedRecoveryState) {
+    auto fake_gateway = std::make_shared<FakeGateway>();
+    CTPTraderAdapter adapter(fake_gateway, 1);
+    ASSERT_TRUE(adapter.Connect(BuildSimConfig()));
+    ASSERT_TRUE(adapter.ConfirmSettlement());
+    ASSERT_TRUE(adapter.IsReady());
+
+    fake_gateway->EmitConnectionState(false);
+
+    const auto snapshot = adapter.GetReadinessSnapshot();
+    EXPECT_FALSE(snapshot.ready);
+    EXPECT_EQ(snapshot.state, TraderSessionState::kDisconnected);
+    EXPECT_FALSE(snapshot.gateway_healthy);
+    EXPECT_FALSE(snapshot.settlement_confirmed);
+    EXPECT_TRUE(snapshot.need_reconnect);
+    EXPECT_GE(snapshot.reconnect_attempts, 1);
+    EXPECT_FALSE(snapshot.last_reconnect_stage.empty());
+    EXPECT_EQ(TraderSessionStateToString(snapshot.state), "disconnected");
+}
+
 TEST(CTPTraderAdapterTest, ReconnectPerformsLoginAndConfirmSettlement) {
     auto fake_gateway = std::make_shared<FakeGateway>();
     CTPTraderAdapter adapter(fake_gateway, 1);
@@ -307,6 +327,62 @@ TEST(CTPTraderAdapterTest, ReconnectPerformsLoginAndConfirmSettlement) {
     EXPECT_GE(fake_gateway->request_settlement_confirm_calls(), 1);
     EXPECT_GE(fake_gateway->enqueue_order_query_calls(), 1);
     EXPECT_GE(fake_gateway->enqueue_trade_query_calls(), 1);
+}
+
+TEST(CTPTraderAdapterTest, ReconnectAttemptLimitUsesConnectConfig) {
+    auto fake_gateway = std::make_shared<FakeGateway>();
+    CTPTraderAdapter adapter(fake_gateway, 1);
+    auto cfg = BuildSimConfig();
+    cfg.reconnect_max_attempts = 2;
+    cfg.reconnect_initial_backoff_ms = 1;
+    cfg.reconnect_max_backoff_ms = 1;
+    ASSERT_TRUE(adapter.Connect(cfg));
+    ASSERT_TRUE(adapter.ConfirmSettlement());
+    ASSERT_TRUE(adapter.IsReady());
+
+    fake_gateway->EmitConnectionState(false);
+
+    EXPECT_TRUE(WaitUntil(
+        [&]() {
+            const auto snapshot = adapter.GetReadinessSnapshot();
+            return !snapshot.need_reconnect && snapshot.last_reconnect_stage == "exhausted";
+        },
+        1000));
+    const auto snapshot = adapter.GetReadinessSnapshot();
+    EXPECT_EQ(snapshot.reconnect_attempts, 2);
+    EXPECT_EQ(fake_gateway->request_user_login_calls(), 0);
+}
+
+TEST(CTPTraderAdapterTest, GatewayHealthyAfterExhaustionRestoresReadyState) {
+    auto fake_gateway = std::make_shared<FakeGateway>();
+    CTPTraderAdapter adapter(fake_gateway, 1);
+    auto cfg = BuildSimConfig();
+    cfg.reconnect_max_attempts = 1;
+    cfg.reconnect_initial_backoff_ms = 1;
+    cfg.reconnect_max_backoff_ms = 1;
+    ASSERT_TRUE(adapter.Connect(cfg));
+    ASSERT_TRUE(adapter.ConfirmSettlement());
+    ASSERT_TRUE(adapter.IsReady());
+
+    fake_gateway->EmitConnectionState(false);
+    EXPECT_TRUE(WaitUntil(
+        [&]() {
+            const auto snapshot = adapter.GetReadinessSnapshot();
+            return !snapshot.need_reconnect && snapshot.last_reconnect_stage == "exhausted";
+        },
+        1000));
+    EXPECT_FALSE(adapter.IsReady());
+
+    fake_gateway->EmitConnectionState(true);
+
+    EXPECT_TRUE(WaitUntil([&]() { return adapter.IsReady(); }, 1500));
+    EXPECT_GE(fake_gateway->request_user_login_calls(), 1);
+    EXPECT_GE(fake_gateway->request_settlement_confirm_calls(), 1);
+    EXPECT_GE(fake_gateway->enqueue_order_query_calls(), 1);
+    EXPECT_GE(fake_gateway->enqueue_trade_query_calls(), 1);
+    const auto snapshot = adapter.GetReadinessSnapshot();
+    EXPECT_TRUE(snapshot.ready);
+    EXPECT_EQ(snapshot.last_reconnect_stage, "ready");
 }
 
 TEST(CTPTraderAdapterTest, DisconnectCancelsPendingReconnectTimer) {

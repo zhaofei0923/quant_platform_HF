@@ -32,6 +32,19 @@ enum class TraderSessionState {
     kReady = 5,
 };
 
+std::string TraderSessionStateToString(TraderSessionState state);
+
+struct CtpTraderReadinessSnapshot {
+    bool ready{false};
+    TraderSessionState state{TraderSessionState::kDisconnected};
+    bool gateway_healthy{false};
+    bool settlement_confirmed{false};
+    bool need_reconnect{false};
+    int reconnect_attempts{0};
+    std::string last_reconnect_stage;
+    std::string last_connect_diagnostic;
+};
+
 class CTPTraderAdapter {
    public:
     using OrderEventCallback = IOrderGateway::OrderEventCallback;
@@ -64,6 +77,7 @@ class CTPTraderAdapter {
     void Disconnect();
     bool IsReady() const;
     TraderSessionState SessionState() const;
+    CtpTraderReadinessSnapshot GetReadinessSnapshot() const;
     bool ConfirmSettlement();
     bool PlaceOrder(const OrderIntent& intent);
     std::string PlaceOrderWithRef(const OrderIntent& intent);
@@ -119,9 +133,6 @@ class CTPTraderAdapter {
     std::string BuildOrderRef(const std::string& strategy_id) const;
 
    private:
-    static constexpr int kMaxReconnectAttempts = 10;
-    static constexpr int kBaseReconnectDelayMs = 1000;
-
     int AllocateRequestId();
     void StorePromise(int request_id, const std::shared_ptr<std::promise<void>>& promise);
     void ResolvePromise(int request_id);
@@ -138,6 +149,8 @@ class CTPTraderAdapter {
     void JoinLoginTimeoutThreads();
     bool IsGenerationCurrent(std::uint64_t generation) const;
     void UnregisterGatewayCallbacks();
+    void SetReconnectStageLocked(const std::string& stage);
+    void SetReconnectStage(const std::string& stage);
 
     mutable std::mutex mutex_;
     std::shared_ptr<CtpGatewayAdapter> gateway_;
@@ -157,6 +170,7 @@ class CTPTraderAdapter {
     TraderSessionState state_{TraderSessionState::kDisconnected};
     bool settlement_confirm_required_{true};
     bool settlement_confirmed_{false};
+    std::string last_reconnect_stage_{"disconnected"};
     std::atomic<bool> need_reconnect_{false};
     std::atomic<int> reconnect_attempts_{0};
     std::chrono::steady_clock::time_point last_reconnect_time_{};

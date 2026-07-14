@@ -1398,19 +1398,33 @@ void EmitOrderRejectedEventLog(const quant_hft::CtpRuntimeConfig& config,
 }
 
 void EmitSignalPlanRejectedLog(const quant_hft::CtpRuntimeConfig& config,
-                               const quant_hft::SignalIntent& signal, const std::string& reason) {
-    quant_hft::EmitStructuredLog(&config, "core_engine", "error", "signal_plan_rejected",
-                                 {{"strategy_id", signal.strategy_id},
-                                  {"event_type", "signal_plan_rejected"},
-                                  {"event_ts_ns", std::to_string(signal.ts_ns)},
-                                  {"reason", reason},
-                                  {"instrument_id", signal.instrument_id},
-                                  {"signal_type", SignalTypeToString(signal.signal_type)},
-                                  {"side", SideToString(signal.side)},
-                                  {"offset", OffsetToString(signal.offset)},
-                                  {"volume", std::to_string(signal.volume)},
-                                  {"price", FormatDouble(signal.limit_price)},
-                                  {"trace_id", signal.trace_id}});
+                               const quant_hft::SignalIntent& signal, const std::string& reason,
+                               const quant_hft::CtpTraderReadinessSnapshot* readiness = nullptr) {
+    quant_hft::LogFields fields{{"strategy_id", signal.strategy_id},
+                                {"event_type", "signal_plan_rejected"},
+                                {"event_ts_ns", std::to_string(signal.ts_ns)},
+                                {"reason", reason},
+                                {"instrument_id", signal.instrument_id},
+                                {"signal_type", SignalTypeToString(signal.signal_type)},
+                                {"side", SideToString(signal.side)},
+                                {"offset", OffsetToString(signal.offset)},
+                                {"volume", std::to_string(signal.volume)},
+                                {"price", FormatDouble(signal.limit_price)},
+                                {"trace_id", signal.trace_id}};
+    if (readiness != nullptr) {
+        fields.emplace_back("ctp_trader_ready", readiness->ready ? "true" : "false");
+        fields.emplace_back("ctp_trader_state",
+                            quant_hft::TraderSessionStateToString(readiness->state));
+        fields.emplace_back("ctp_gateway_healthy", readiness->gateway_healthy ? "true" : "false");
+        fields.emplace_back("ctp_settlement_confirmed",
+                            readiness->settlement_confirmed ? "true" : "false");
+        fields.emplace_back("ctp_need_reconnect", readiness->need_reconnect ? "true" : "false");
+        fields.emplace_back("ctp_reconnect_attempts",
+                            std::to_string(readiness->reconnect_attempts));
+        fields.emplace_back("ctp_last_reconnect_stage", readiness->last_reconnect_stage);
+        fields.emplace_back("ctp_last_connect_diagnostic", readiness->last_connect_diagnostic);
+    }
+    quant_hft::EmitStructuredLog(&config, "core_engine", "error", "signal_plan_rejected", fields);
 }
 
 quant_hft::PositionDirection ResolveLedgerDirection(const quant_hft::OrderIntent& intent) {
@@ -2370,7 +2384,8 @@ int main(int argc, char** argv) {
         }
         if (config.enable_real_api && !ctp_trader->IsReady()) {
             if (!start_signal_submit_cooldown(signal, "ctp_trader_not_ready")) {
-                EmitSignalPlanRejectedLog(config, signal, "ctp_trader_not_ready");
+                const auto readiness = ctp_trader->GetReadinessSnapshot();
+                EmitSignalPlanRejectedLog(config, signal, "ctp_trader_not_ready", &readiness);
             }
             return;
         }
@@ -2709,8 +2724,7 @@ int main(int argc, char** argv) {
                 for (const auto& instrument_id : flushed_instruments) {
                     const auto inst_emissions =
                         timeframe_state_fanout.FlushInstrument(instrument_id);
-                    emissions.insert(emissions.end(), inst_emissions.begin(),
-                                     inst_emissions.end());
+                    emissions.insert(emissions.end(), inst_emissions.begin(), inst_emissions.end());
                 }
                 std::string state_error;
                 if (timeframe_state_fanout.SaveState(&fanout_state, &state_error)) {
@@ -3591,8 +3605,8 @@ int main(int argc, char** argv) {
                             next_query_request_id(), instrument_id);
                     }
                     if (need_order_comm) {
-                        (void)ctp_trader->EnqueueInstrumentOrderCommRateQuery(next_query_request_id(),
-                                                                             instrument_id);
+                        (void)ctp_trader->EnqueueInstrumentOrderCommRateQuery(
+                            next_query_request_id(), instrument_id);
                     }
                 }
                 next_instrument_query = now + std::chrono::milliseconds(std::max(

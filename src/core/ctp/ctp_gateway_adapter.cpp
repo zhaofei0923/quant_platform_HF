@@ -538,7 +538,7 @@ class CtpMdSpi final : public CThostFtdcMdSpi {
         }
     }
 
-    void OnFrontDisconnected(int) override {
+    void OnFrontDisconnected(int reason) override {
         CtpCallbackScope scope(state_);
         if (!scope.active()) {
             return;
@@ -549,6 +549,16 @@ class CtpMdSpi final : public CThostFtdcMdSpi {
             state_->md_logged_in = false;
         }
         state_->event_cv.notify_all();
+        CtpRuntimeConfig runtime;
+        {
+            std::lock_guard<std::mutex> lock(owner_->mutex_);
+            runtime = owner_->runtime_config_;
+        }
+        EmitStructuredLog(&runtime, "ctp_gateway_adapter", "warn", "ctp_front_disconnected",
+                          {{"channel", "md"},
+                           {"reason", std::to_string(reason)},
+                           {"md_front", runtime.md_front},
+                           {"td_front", runtime.td_front}});
         owner_->HandleConnectionLoss();
     }
 
@@ -693,7 +703,7 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
         SendUserLogin();
     }
 
-    void OnFrontDisconnected(int) override {
+    void OnFrontDisconnected(int reason) override {
         CtpCallbackScope scope(state_);
         if (!scope.active()) {
             return;
@@ -704,6 +714,16 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
             state_->td_logged_in = false;
         }
         state_->event_cv.notify_all();
+        CtpRuntimeConfig runtime;
+        {
+            std::lock_guard<std::mutex> lock(owner_->mutex_);
+            runtime = owner_->runtime_config_;
+        }
+        EmitStructuredLog(&runtime, "ctp_gateway_adapter", "warn", "ctp_front_disconnected",
+                          {{"channel", "td"},
+                           {"reason", std::to_string(reason)},
+                           {"md_front", runtime.md_front},
+                           {"td_front", runtime.td_front}});
         owner_->HandleConnectionLoss();
     }
 
@@ -1781,16 +1801,28 @@ bool CtpGatewayAdapter::ConnectRealApi() {
     std::vector<std::string> failures;
     for (const auto& candidate : BuildCtpFrontCandidates(runtime.md_front, runtime.td_front)) {
         std::string failure_detail;
+        EmitStructuredLog(&runtime, "ctp_gateway_adapter", "info",
+                          "ctp_front_candidate_connect_attempt",
+                          {{"md_front", candidate.md_front}, {"td_front", candidate.td_front}});
         if (ConnectRealApiWithFrontPair(runtime, was_connected, candidate, &failure_detail)) {
             std::lock_guard<std::mutex> lock(mutex_);
             runtime_config_.md_front = candidate.md_front;
             runtime_config_.td_front = candidate.td_front;
             last_connect_diagnostic_.clear();
+            EmitStructuredLog(&runtime, "ctp_gateway_adapter", "info",
+                              "ctp_front_candidate_connect_success",
+                              {{"md_front", candidate.md_front}, {"td_front", candidate.td_front}});
             return true;
         }
+        EmitStructuredLog(&runtime, "ctp_gateway_adapter", "warn",
+                          "ctp_front_candidate_connect_failed",
+                          {{"md_front", candidate.md_front},
+                           {"td_front", candidate.td_front},
+                           {"detail", failure_detail}});
         failures.push_back("md=" + candidate.md_front + " td=" + candidate.td_front + " => " +
                            failure_detail);
     }
+    std::string diagnostic;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         last_connect_diagnostic_ = "all candidate fronts failed: ";
@@ -1800,7 +1832,10 @@ bool CtpGatewayAdapter::ConnectRealApi() {
             }
             last_connect_diagnostic_ += failures[i];
         }
+        diagnostic = last_connect_diagnostic_;
     }
+    EmitStructuredLog(&runtime, "ctp_gateway_adapter", "error", "ctp_front_candidates_exhausted",
+                      {{"diagnostic", diagnostic}});
     return false;
 #endif
 }
@@ -2009,10 +2044,23 @@ void CtpGatewayAdapter::ReconnectWorkerLoop() {
 
             ++attempt;
             CtpReconnectCounter()->Increment();
+            EmitStructuredLog(&runtime, "ctp_gateway_adapter", "info",
+                              "ctp_gateway_reconnect_attempt",
+                              {{"attempt", std::to_string(attempt)},
+                               {"max_attempts", std::to_string(max_attempts)},
+                               {"md_front", runtime.md_front},
+                               {"td_front", runtime.td_front}});
             if (ConnectRealApi()) {
+                EmitStructuredLog(&runtime, "ctp_gateway_adapter", "info",
+                                  "ctp_gateway_reconnect_ready",
+                                  {{"attempt", std::to_string(attempt)}});
                 recovered = true;
                 break;
             }
+            const auto diagnostic = GetLastConnectDiagnostic();
+            EmitStructuredLog(&runtime, "ctp_gateway_adapter", "warn",
+                              "ctp_gateway_reconnect_failed",
+                              {{"attempt", std::to_string(attempt)}, {"diagnostic", diagnostic}});
 
             {
                 std::lock_guard<std::mutex> lock(mutex_);
@@ -2028,6 +2076,12 @@ void CtpGatewayAdapter::ReconnectWorkerLoop() {
             if (!recovered) {
                 connected_ = false;
             }
+        }
+        if (!recovered) {
+            EmitStructuredLog(&runtime, "ctp_gateway_adapter", "error",
+                              "ctp_gateway_reconnect_exhausted",
+                              {{"max_attempts", std::to_string(max_attempts)},
+                               {"diagnostic", GetLastConnectDiagnostic()}});
         }
     }
 #endif

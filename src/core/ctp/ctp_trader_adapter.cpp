@@ -12,18 +12,6 @@
 
 namespace quant_hft {
 
-namespace {
-
-constexpr std::int64_t kNanosPerMilli = 1'000'000;
-constexpr int kInitialAdapterRequestId = 1000;
-constexpr auto kSettlementConfirmTimeout = std::chrono::seconds(30);
-constexpr auto kSettlementTimeoutAccountProbe = std::chrono::seconds(12);
-
-std::string BuildOrderRefString(const std::string& strategy_id, std::uint64_t seq) {
-    const auto unix_ms = NowEpochNanos() / kNanosPerMilli;
-    return strategy_id + "_" + std::to_string(unix_ms) + "_" + std::to_string(seq);
-}
-
 std::string TraderSessionStateToString(TraderSessionState state) {
     switch (state) {
         case TraderSessionState::kDisconnected:
@@ -42,6 +30,26 @@ std::string TraderSessionStateToString(TraderSessionState state) {
     return "unknown";
 }
 
+namespace {
+
+constexpr std::int64_t kNanosPerMilli = 1'000'000;
+constexpr int kInitialAdapterRequestId = 1000;
+constexpr auto kSettlementConfirmTimeout = std::chrono::seconds(30);
+constexpr auto kSettlementTimeoutAccountProbe = std::chrono::seconds(12);
+
+std::string BuildOrderRefString(const std::string& strategy_id, std::uint64_t seq) {
+    const auto unix_ms = NowEpochNanos() / kNanosPerMilli;
+    return strategy_id + "_" + std::to_string(unix_ms) + "_" + std::to_string(seq);
+}
+
+std::string BoolString(bool value) { return value ? "true" : "false"; }
+
+bool IsReconnectRecoveryStage(const std::string& stage) {
+    return stage == "connection_lost" || stage == "gateway_healthy" || stage == "scheduled" ||
+           stage == "gateway_not_healthy" || stage == "exhausted" || stage == "login_timeout" ||
+           stage == "login_failed" || stage == "settlement_failed" || stage == "recover_failed";
+}
+
 void EmitOrderSubmitRejectedDiagnostic(const OrderIntent& intent, const std::string& reason,
                                        TraderSessionState state, bool settlement_confirmed) {
     EmitStructuredLog(nullptr, "ctp_trader_adapter", "warn", "ctp_order_submit_rejected",
@@ -54,7 +62,7 @@ void EmitOrderSubmitRejectedDiagnostic(const OrderIntent& intent, const std::str
                        {"trace_id", intent.trace_id},
                        {"reason", reason},
                        {"session_state", TraderSessionStateToString(state)},
-                       {"settlement_confirmed", settlement_confirmed ? "true" : "false"}});
+                       {"settlement_confirmed", BoolString(settlement_confirmed)}});
 }
 
 std::shared_ptr<MonitoringGauge> CtpConnectedGauge() {
@@ -296,14 +304,20 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
         CtpConnectedGauge()->Set(healthy ? 1.0 : 0.0);
         if (!healthy) {
             bool should_reconnect = false;
+            TraderSessionState previous_state = TraderSessionState::kDisconnected;
             {
                 std::lock_guard<std::mutex> lock(mutex_);
+                previous_state = state_;
                 if (state_ != TraderSessionState::kDisconnected && has_connect_config_) {
                     should_reconnect = true;
                 }
                 state_ = TraderSessionState::kDisconnected;
                 settlement_confirmed_ = false;
+                SetReconnectStageLocked("connection_lost");
             }
+            EmitStructuredLog(nullptr, "ctp_trader_adapter", "warn", "ctp_trader_connection_lost",
+                              {{"previous_state", TraderSessionStateToString(previous_state)},
+                               {"will_reconnect", BoolString(should_reconnect)}});
             if (!should_reconnect) {
                 return;
             }
@@ -312,7 +326,26 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
             ScheduleReconnect();
             return;
         }
-        if (need_reconnect_.load(std::memory_order_relaxed)) {
+        bool should_restore = false;
+        TraderSessionState previous_state = TraderSessionState::kDisconnected;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            previous_state = state_;
+            should_restore = has_connect_config_ && state_ != TraderSessionState::kReady &&
+                             IsReconnectRecoveryStage(last_reconnect_stage_);
+            if (should_restore) {
+                SetReconnectStageLocked("gateway_healthy");
+            }
+        }
+        if (should_restore) {
+            const bool was_reconnecting = need_reconnect_.exchange(true, std::memory_order_relaxed);
+            if (!was_reconnecting) {
+                reconnect_attempts_.store(0, std::memory_order_relaxed);
+            }
+            EmitStructuredLog(nullptr, "ctp_trader_adapter", "info",
+                              "ctp_trader_gateway_healthy_restore_scheduled",
+                              {{"previous_state", TraderSessionStateToString(previous_state)},
+                               {"was_reconnecting", BoolString(was_reconnecting)}});
             ScheduleReconnect();
         }
     });
@@ -325,6 +358,9 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
                 if (!settlement_confirm_required_) {
                     settlement_confirmed_ = true;
                     state_ = TraderSessionState::kReady;
+                    SetReconnectStageLocked("ready");
+                } else {
+                    SetReconnectStageLocked("logged_in");
                 }
             }
             ResolveLoginPromise(request_id, error_code, error_msg);
@@ -345,9 +381,11 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
                 std::lock_guard<std::mutex> lock(mutex_);
                 settlement_confirmed_ = true;
                 state_ = TraderSessionState::kSettlementConfirmed;
+                SetReconnectStageLocked("settlement_confirmed");
             } else {
                 std::lock_guard<std::mutex> lock(mutex_);
                 settlement_confirmed_ = false;
+                SetReconnectStageLocked("settlement_failed");
             }
             if (error_code == 0) {
                 ResolveSettlementPromise(request_id);
@@ -375,6 +413,7 @@ bool CTPTraderAdapter::Connect(const MarketDataConnectConfig& config) {
         state_ = TraderSessionState::kDisconnected;
         last_connect_config_ = config;
         has_connect_config_ = true;
+        SetReconnectStageLocked("connecting");
     }
     next_request_id_.store(kInitialAdapterRequestId, std::memory_order_relaxed);
     need_reconnect_.store(false, std::memory_order_relaxed);
@@ -399,6 +438,9 @@ bool CTPTraderAdapter::Connect(const MarketDataConnectConfig& config) {
         if (!settlement_confirm_required_) {
             settlement_confirmed_ = true;
             state_ = TraderSessionState::kReady;
+            SetReconnectStageLocked("ready");
+        } else {
+            SetReconnectStageLocked("logged_in");
         }
     }
     CtpConnectedGauge()->Set(1.0);
@@ -414,6 +456,7 @@ void CTPTraderAdapter::Disconnect() {
         has_connect_config_ = false;
         settlement_confirmed_ = false;
         state_ = TraderSessionState::kDisconnected;
+        SetReconnectStageLocked("disconnected");
     }
     gateway_->Disconnect();
     CtpConnectedGauge()->Set(0.0);
@@ -429,6 +472,23 @@ bool CTPTraderAdapter::IsReady() const {
 TraderSessionState CTPTraderAdapter::SessionState() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return state_;
+}
+
+CtpTraderReadinessSnapshot CTPTraderAdapter::GetReadinessSnapshot() const {
+    CtpTraderReadinessSnapshot snapshot;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        snapshot.state = state_;
+        snapshot.ready = state_ == TraderSessionState::kReady;
+        snapshot.settlement_confirmed = settlement_confirmed_;
+        snapshot.last_reconnect_stage = last_reconnect_stage_;
+    }
+    snapshot.gateway_healthy = gateway_ != nullptr && gateway_->IsHealthy();
+    snapshot.need_reconnect = need_reconnect_.load(std::memory_order_relaxed);
+    snapshot.reconnect_attempts = reconnect_attempts_.load(std::memory_order_relaxed);
+    snapshot.last_connect_diagnostic =
+        gateway_ == nullptr ? "" : gateway_->GetLastConnectDiagnostic();
+    return snapshot;
 }
 
 bool CTPTraderAdapter::ConfirmSettlement() {
@@ -474,6 +534,7 @@ bool CTPTraderAdapter::ConfirmSettlement() {
                     std::lock_guard<std::mutex> lock(mutex_);
                     settlement_confirmed_ = true;
                     state_ = TraderSessionState::kReady;
+                    SetReconnectStageLocked("ready");
                     EmitStructuredLog(nullptr, "ctp_trader_adapter", "warn",
                                       "settlement_confirm_timeout_account_probe_ready");
                     return true;
@@ -498,6 +559,7 @@ bool CTPTraderAdapter::ConfirmSettlement() {
 
     std::lock_guard<std::mutex> lock(mutex_);
     state_ = TraderSessionState::kReady;
+    SetReconnectStageLocked("ready");
     return settlement_confirmed_;
 }
 
@@ -1001,29 +1063,69 @@ void CTPTraderAdapter::ScheduleReconnect() {
     if (!need_reconnect_.load(std::memory_order_relaxed)) {
         return;
     }
-    const int attempt = reconnect_attempts_.fetch_add(1, std::memory_order_relaxed);
-    if (attempt >= kMaxReconnectAttempts) {
+
+    bool has_config = false;
+    int max_attempts = 1;
+    int base_delay_ms = 1;
+    int max_delay_ms = 1;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        has_config = has_connect_config_;
+        if (has_config) {
+            max_attempts = std::max(1, last_connect_config_.reconnect_max_attempts);
+            base_delay_ms = std::max(1, last_connect_config_.reconnect_initial_backoff_ms);
+            max_delay_ms = std::max(base_delay_ms, last_connect_config_.reconnect_max_backoff_ms);
+        } else {
+            SetReconnectStageLocked("no_connect_config");
+        }
+    }
+    if (!has_config) {
         need_reconnect_.store(false, std::memory_order_relaxed);
+        EmitStructuredLog(nullptr, "ctp_trader_adapter", "warn", "ctp_trader_reconnect_cancelled",
+                          {{"stage", "no_connect_config"}});
         return;
     }
-    const int shift = std::min(attempt, 10);
-    const int delay_ms = std::min(30000, kBaseReconnectDelayMs * (1 << shift));
+
+    int attempt_number = 0;
+    int delay_ms = 0;
+    std::uint64_t generation = 0;
     {
         std::lock_guard<std::mutex> lock(reconnect_mutex_);
         if (reconnect_stop_) {
             return;
         }
-        if (!reconnect_thread_.joinable()) {
-            reconnect_thread_ = std::thread(&CTPTraderAdapter::ReconnectWorkerLoop, this);
-        }
         if (reconnect_scheduled_) {
             return;
         }
+        const int observed_attempts = reconnect_attempts_.load(std::memory_order_relaxed);
+        if (observed_attempts >= max_attempts) {
+            need_reconnect_.store(false, std::memory_order_relaxed);
+            SetReconnectStage("exhausted");
+            EmitStructuredLog(nullptr, "ctp_trader_adapter", "error",
+                              "ctp_trader_reconnect_exhausted",
+                              {{"attempts", std::to_string(observed_attempts)},
+                               {"max_attempts", std::to_string(max_attempts)}});
+            return;
+        }
+        attempt_number = observed_attempts + 1;
+        reconnect_attempts_.store(attempt_number, std::memory_order_relaxed);
+        const int shift = std::min(attempt_number - 1, 10);
+        delay_ms = std::min(max_delay_ms, base_delay_ms * (1 << shift));
+        if (!reconnect_thread_.joinable()) {
+            reconnect_thread_ = std::thread(&CTPTraderAdapter::ReconnectWorkerLoop, this);
+        }
         reconnect_generation_ = lifecycle_generation_.load(std::memory_order_acquire);
+        generation = reconnect_generation_;
         reconnect_deadline_ =
             std::chrono::steady_clock::now() + std::chrono::milliseconds(delay_ms);
         reconnect_scheduled_ = true;
     }
+    SetReconnectStage("scheduled");
+    EmitStructuredLog(nullptr, "ctp_trader_adapter", "info", "ctp_trader_reconnect_scheduled",
+                      {{"attempt", std::to_string(attempt_number)},
+                       {"max_attempts", std::to_string(max_attempts)},
+                       {"delay_ms", std::to_string(delay_ms)},
+                       {"generation", std::to_string(generation)}});
     reconnect_cv_.notify_one();
 }
 
@@ -1032,7 +1134,12 @@ void CTPTraderAdapter::OnReconnectTimer(std::uint64_t generation) {
         return;
     }
     last_reconnect_time_ = std::chrono::steady_clock::now();
+    const int attempt_number = reconnect_attempts_.load(std::memory_order_relaxed);
     if (!gateway_->IsHealthy()) {
+        SetReconnectStage("gateway_not_healthy");
+        EmitStructuredLog(nullptr, "ctp_trader_adapter", "warn",
+                          "ctp_trader_reconnect_gateway_not_healthy",
+                          {{"attempt", std::to_string(attempt_number)}});
         ScheduleReconnect();
         return;
     }
@@ -1042,34 +1149,63 @@ void CTPTraderAdapter::OnReconnectTimer(std::uint64_t generation) {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!has_connect_config_) {
             need_reconnect_.store(false, std::memory_order_relaxed);
+            SetReconnectStageLocked("no_connect_config");
+            EmitStructuredLog(nullptr, "ctp_trader_adapter", "warn",
+                              "ctp_trader_reconnect_cancelled", {{"stage", "no_connect_config"}});
             return;
         }
         cfg = last_connect_config_;
     }
 
+    SetReconnectStage("login_started");
+    EmitStructuredLog(nullptr, "ctp_trader_adapter", "info", "ctp_trader_reconnect_login_started",
+                      {{"attempt", std::to_string(attempt_number)}});
     auto login_future = LoginAsync(cfg.broker_id, cfg.user_id, cfg.password, 5000);
     if (login_future.wait_for(std::chrono::seconds(6)) != std::future_status::ready) {
+        SetReconnectStage("login_timeout");
+        EmitStructuredLog(nullptr, "ctp_trader_adapter", "warn",
+                          "ctp_trader_reconnect_login_timeout",
+                          {{"attempt", std::to_string(attempt_number)}});
         ScheduleReconnect();
         return;
     }
     const auto login_result = login_future.get();
     if (!IsGenerationCurrent(generation) || login_result.first != 0) {
+        SetReconnectStage("login_failed");
+        EmitStructuredLog(nullptr, "ctp_trader_adapter", "warn",
+                          "ctp_trader_reconnect_login_failed",
+                          {{"attempt", std::to_string(attempt_number)},
+                           {"error_code", std::to_string(login_result.first)},
+                           {"error", login_result.second}});
         ScheduleReconnect();
         return;
     }
 
+    SetReconnectStage("settlement_started");
     if (!IsGenerationCurrent(generation) || !ConfirmSettlement()) {
+        SetReconnectStage("settlement_failed");
+        EmitStructuredLog(nullptr, "ctp_trader_adapter", "warn",
+                          "ctp_trader_reconnect_settlement_failed",
+                          {{"attempt", std::to_string(attempt_number)}});
         ScheduleReconnect();
         return;
     }
+    SetReconnectStage("recover_started");
     if (!IsGenerationCurrent(generation) || !RecoverOrdersAndTrades()) {
+        SetReconnectStage("recover_failed");
+        EmitStructuredLog(nullptr, "ctp_trader_adapter", "warn",
+                          "ctp_trader_reconnect_recover_failed",
+                          {{"attempt", std::to_string(attempt_number)}});
         ScheduleReconnect();
         return;
     }
     {
         std::lock_guard<std::mutex> lock(mutex_);
         state_ = TraderSessionState::kReady;
+        SetReconnectStageLocked("ready");
     }
+    EmitStructuredLog(nullptr, "ctp_trader_adapter", "info", "ctp_trader_reconnect_ready",
+                      {{"attempt", std::to_string(attempt_number)}});
     ResetReconnectState();
 }
 
@@ -1077,6 +1213,15 @@ void CTPTraderAdapter::ResetReconnectState() {
     need_reconnect_.store(false, std::memory_order_relaxed);
     reconnect_attempts_.store(0, std::memory_order_relaxed);
     last_reconnect_time_ = std::chrono::steady_clock::now();
+}
+
+void CTPTraderAdapter::SetReconnectStageLocked(const std::string& stage) {
+    last_reconnect_stage_ = stage;
+}
+
+void CTPTraderAdapter::SetReconnectStage(const std::string& stage) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    SetReconnectStageLocked(stage);
 }
 
 void CTPTraderAdapter::StopReconnectWorker() {

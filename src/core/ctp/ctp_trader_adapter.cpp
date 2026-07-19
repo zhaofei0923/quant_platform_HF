@@ -47,7 +47,8 @@ std::string BoolString(bool value) { return value ? "true" : "false"; }
 bool IsReconnectRecoveryStage(const std::string& stage) {
     return stage == "connection_lost" || stage == "gateway_healthy" || stage == "scheduled" ||
            stage == "gateway_not_healthy" || stage == "exhausted" || stage == "login_timeout" ||
-           stage == "login_failed" || stage == "settlement_failed" || stage == "recover_failed";
+           stage == "login_failed" || stage == "settlement_failed" || stage == "recover_failed" ||
+           stage == "retry_after_exhaustion";
 }
 
 void EmitOrderSubmitRejectedDiagnostic(const OrderIntent& intent, const std::string& reason,
@@ -1099,16 +1100,33 @@ void CTPTraderAdapter::ScheduleReconnect() {
         }
         const int observed_attempts = reconnect_attempts_.load(std::memory_order_relaxed);
         if (observed_attempts >= max_attempts) {
-            need_reconnect_.store(false, std::memory_order_relaxed);
             SetReconnectStage("exhausted");
             EmitStructuredLog(nullptr, "ctp_trader_adapter", "error",
                               "ctp_trader_reconnect_exhausted",
                               {{"attempts", std::to_string(observed_attempts)},
                                {"max_attempts", std::to_string(max_attempts)}});
+            if (!reconnect_thread_.joinable()) {
+                reconnect_thread_ = std::thread(&CTPTraderAdapter::ReconnectWorkerLoop, this);
+            }
+            reconnect_generation_ = lifecycle_generation_.load(std::memory_order_acquire);
+            generation = reconnect_generation_;
+            delay_ms = max_delay_ms;
+            reconnect_deadline_ =
+                std::chrono::steady_clock::now() + std::chrono::milliseconds(delay_ms);
+            reconnect_scheduled_ = true;
+            reconnect_exhaustion_cooldown_ = true;
+            EmitStructuredLog(nullptr, "ctp_trader_adapter", "info",
+                              "ctp_trader_reconnect_retry_after_exhaustion_scheduled",
+                              {{"attempts", std::to_string(observed_attempts)},
+                               {"max_attempts", std::to_string(max_attempts)},
+                               {"delay_ms", std::to_string(delay_ms)},
+                               {"generation", std::to_string(generation)}});
+            reconnect_cv_.notify_one();
             return;
         }
         attempt_number = observed_attempts + 1;
         reconnect_attempts_.store(attempt_number, std::memory_order_relaxed);
+        reconnect_exhaustion_cooldown_ = false;
         const int shift = std::min(attempt_number - 1, 10);
         delay_ms = std::min(max_delay_ms, base_delay_ms * (1 << shift));
         if (!reconnect_thread_.joinable()) {
@@ -1209,10 +1227,24 @@ void CTPTraderAdapter::OnReconnectTimer(std::uint64_t generation) {
     ResetReconnectState();
 }
 
+void CTPTraderAdapter::OnReconnectExhaustionCooldown(std::uint64_t generation) {
+    if (!IsGenerationCurrent(generation) || !need_reconnect_.load(std::memory_order_relaxed)) {
+        return;
+    }
+    reconnect_attempts_.store(0, std::memory_order_relaxed);
+    SetReconnectStage("retry_after_exhaustion");
+    EmitStructuredLog(nullptr, "ctp_trader_adapter", "info",
+                      "ctp_trader_reconnect_retry_after_exhaustion",
+                      {{"generation", std::to_string(generation)}});
+    ScheduleReconnect();
+}
+
 void CTPTraderAdapter::ResetReconnectState() {
     need_reconnect_.store(false, std::memory_order_relaxed);
     reconnect_attempts_.store(0, std::memory_order_relaxed);
     last_reconnect_time_ = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> lock(reconnect_mutex_);
+    reconnect_exhaustion_cooldown_ = false;
 }
 
 void CTPTraderAdapter::SetReconnectStageLocked(const std::string& stage) {
@@ -1230,6 +1262,7 @@ void CTPTraderAdapter::StopReconnectWorker() {
         std::lock_guard<std::mutex> lock(reconnect_mutex_);
         reconnect_stop_ = true;
         reconnect_scheduled_ = false;
+        reconnect_exhaustion_cooldown_ = false;
         worker = std::move(reconnect_thread_);
     }
     reconnect_cv_.notify_all();
@@ -1239,6 +1272,7 @@ void CTPTraderAdapter::StopReconnectWorker() {
     {
         std::lock_guard<std::mutex> lock(reconnect_mutex_);
         reconnect_stop_ = false;
+        reconnect_exhaustion_cooldown_ = false;
         reconnect_generation_ = lifecycle_generation_.load(std::memory_order_acquire);
     }
 }
@@ -1252,6 +1286,7 @@ void CTPTraderAdapter::ReconnectWorkerLoop() {
         }
         const auto deadline = reconnect_deadline_;
         const auto generation = reconnect_generation_;
+        const bool exhaustion_cooldown = reconnect_exhaustion_cooldown_;
         const bool interrupted = reconnect_cv_.wait_until(lock, deadline, [this, generation]() {
             return reconnect_stop_ || !reconnect_scheduled_ || reconnect_generation_ != generation;
         });
@@ -1262,8 +1297,15 @@ void CTPTraderAdapter::ReconnectWorkerLoop() {
             continue;
         }
         reconnect_scheduled_ = false;
+        if (exhaustion_cooldown) {
+            reconnect_exhaustion_cooldown_ = false;
+        }
         lock.unlock();
-        OnReconnectTimer(generation);
+        if (exhaustion_cooldown) {
+            OnReconnectExhaustionCooldown(generation);
+        } else {
+            OnReconnectTimer(generation);
+        }
         lock.lock();
     }
 }

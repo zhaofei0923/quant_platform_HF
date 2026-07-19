@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <functional>
@@ -99,8 +100,14 @@ class FakeGateway final : public CtpGatewayAdapter {
             last_login_request_id_ = request_id;
             cb = login_response_callback_;
             do_callback = auto_login_response_;
-            error_code = login_error_code_;
-            error_msg = login_error_msg_;
+            if (login_failures_before_success_ > 0) {
+                --login_failures_before_success_;
+                error_code = forced_login_error_code_;
+                error_msg = forced_login_error_msg_;
+            } else {
+                error_code = login_error_code_;
+                error_msg = login_error_msg_;
+            }
         }
         if (do_callback && cb) {
             cb(request_id, error_code, error_msg);
@@ -234,6 +241,14 @@ class FakeGateway final : public CtpGatewayAdapter {
         auto_login_response_ = value;
     }
 
+    void set_login_failures_before_success(int count, int error_code,
+                                           const std::string& error_msg) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        login_failures_before_success_ = std::max(0, count);
+        forced_login_error_code_ = error_code;
+        forced_login_error_msg_ = error_msg;
+    }
+
     void EmitOrderEvent(const OrderEvent& event) {
         OrderEventCallback cb;
         {
@@ -260,7 +275,10 @@ class FakeGateway final : public CtpGatewayAdapter {
     bool query_success_{true};
     int login_error_code_{0};
     int settlement_error_code_{0};
+    int login_failures_before_success_{0};
+    int forced_login_error_code_{-1};
     std::string login_error_msg_;
+    std::string forced_login_error_msg_{"simulated login failure"};
     std::string settlement_error_msg_;
     int last_login_request_id_{0};
     int last_settlement_request_id_{0};
@@ -335,7 +353,7 @@ TEST(CTPTraderAdapterTest, ReconnectAttemptLimitUsesConnectConfig) {
     auto cfg = BuildSimConfig();
     cfg.reconnect_max_attempts = 2;
     cfg.reconnect_initial_backoff_ms = 1;
-    cfg.reconnect_max_backoff_ms = 1;
+    cfg.reconnect_max_backoff_ms = 100;
     ASSERT_TRUE(adapter.Connect(cfg));
     ASSERT_TRUE(adapter.ConfirmSettlement());
     ASSERT_TRUE(adapter.IsReady());
@@ -345,7 +363,8 @@ TEST(CTPTraderAdapterTest, ReconnectAttemptLimitUsesConnectConfig) {
     EXPECT_TRUE(WaitUntil(
         [&]() {
             const auto snapshot = adapter.GetReadinessSnapshot();
-            return !snapshot.need_reconnect && snapshot.last_reconnect_stage == "exhausted";
+            return snapshot.need_reconnect && snapshot.last_reconnect_stage == "exhausted" &&
+                   snapshot.reconnect_attempts == 2;
         },
         1000));
     const auto snapshot = adapter.GetReadinessSnapshot();
@@ -359,7 +378,7 @@ TEST(CTPTraderAdapterTest, GatewayHealthyAfterExhaustionRestoresReadyState) {
     auto cfg = BuildSimConfig();
     cfg.reconnect_max_attempts = 1;
     cfg.reconnect_initial_backoff_ms = 1;
-    cfg.reconnect_max_backoff_ms = 1;
+    cfg.reconnect_max_backoff_ms = 10;
     ASSERT_TRUE(adapter.Connect(cfg));
     ASSERT_TRUE(adapter.ConfirmSettlement());
     ASSERT_TRUE(adapter.IsReady());
@@ -368,7 +387,7 @@ TEST(CTPTraderAdapterTest, GatewayHealthyAfterExhaustionRestoresReadyState) {
     EXPECT_TRUE(WaitUntil(
         [&]() {
             const auto snapshot = adapter.GetReadinessSnapshot();
-            return !snapshot.need_reconnect && snapshot.last_reconnect_stage == "exhausted";
+            return snapshot.need_reconnect && snapshot.last_reconnect_stage == "exhausted";
         },
         1000));
     EXPECT_FALSE(adapter.IsReady());
@@ -382,6 +401,32 @@ TEST(CTPTraderAdapterTest, GatewayHealthyAfterExhaustionRestoresReadyState) {
     EXPECT_GE(fake_gateway->enqueue_trade_query_calls(), 1);
     const auto snapshot = adapter.GetReadinessSnapshot();
     EXPECT_TRUE(snapshot.ready);
+    EXPECT_EQ(snapshot.last_reconnect_stage, "ready");
+}
+
+TEST(CTPTraderAdapterTest, LoginFailuresAfterExhaustionRetryWithoutGatewayCallback) {
+    auto fake_gateway = std::make_shared<FakeGateway>();
+    CTPTraderAdapter adapter(fake_gateway, 1);
+    auto cfg = BuildSimConfig();
+    cfg.reconnect_max_attempts = 1;
+    cfg.reconnect_initial_backoff_ms = 1;
+    cfg.reconnect_max_backoff_ms = 10;
+    ASSERT_TRUE(adapter.Connect(cfg));
+    ASSERT_TRUE(adapter.ConfirmSettlement());
+    ASSERT_TRUE(adapter.IsReady());
+
+    fake_gateway->set_login_failures_before_success(2, -1, "simulated login timeout");
+    fake_gateway->EmitConnectionState(false);
+    fake_gateway->SetHealthy(true);
+
+    EXPECT_TRUE(WaitUntil([&]() { return adapter.IsReady(); }, 2000));
+    EXPECT_GE(fake_gateway->request_user_login_calls(), 3);
+    EXPECT_GE(fake_gateway->request_settlement_confirm_calls(), 2);
+    EXPECT_GE(fake_gateway->enqueue_order_query_calls(), 1);
+    EXPECT_GE(fake_gateway->enqueue_trade_query_calls(), 1);
+    const auto snapshot = adapter.GetReadinessSnapshot();
+    EXPECT_TRUE(snapshot.ready);
+    EXPECT_FALSE(snapshot.need_reconnect);
     EXPECT_EQ(snapshot.last_reconnect_stage, "ready");
 }
 

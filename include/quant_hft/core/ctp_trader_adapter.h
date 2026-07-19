@@ -143,6 +143,7 @@ class CTPTraderAdapter {
     void RejectAllPromises(const std::string& error_msg);
     void ScheduleReconnect();
     void OnReconnectTimer(std::uint64_t generation);
+    void OnReconnectExhaustionCooldown(std::uint64_t generation);
     void ResetReconnectState();
     void StopReconnectWorker();
     void ReconnectWorkerLoop();
@@ -180,6 +181,7 @@ class CTPTraderAdapter {
     std::thread reconnect_thread_;
     bool reconnect_stop_{false};
     bool reconnect_scheduled_{false};
+    bool reconnect_exhaustion_cooldown_{false};
     std::chrono::steady_clock::time_point reconnect_deadline_{};
     std::uint64_t reconnect_generation_{0};
     std::atomic<int> next_request_id_{1};

@@ -1463,31 +1463,37 @@ void EmitOrderSubmittedLog(const quant_hft::CtpRuntimeConfig& config,
                            const ExecutionMetadata& metadata) {
     const std::string client_order_id =
         result.client_order_id.empty() ? intent.client_order_id : result.client_order_id;
-    quant_hft::EmitStructuredLog(&config, "core_engine", "info", "order_submitted",
-                                 {{"strategy_id", intent.strategy_id},
-                                  {"event_type", "order_submitted"},
-                                  {"event_ts_ns", std::to_string(intent.ts_ns)},
-                                  {"instrument_id", intent.instrument_id},
-                                  {"side", SideToString(intent.side)},
-                                  {"offset", OffsetToString(intent.offset)},
-                                  {"volume", std::to_string(intent.volume)},
-                                  {"price", FormatDouble(intent.price)},
-                                  {"client_order_id", client_order_id},
-                                  {"trace_id", intent.trace_id},
-                                  {"execution_algo_id", metadata.execution_algo_id},
-                                  {"venue", metadata.venue},
-                                  {"route_id", metadata.route_id},
-                                  {"message", result.message}});
-    quant_hft::EmitStructuredLog(&config, "core_engine", "info", "execution_disposition",
-                                 {{"strategy_id", intent.strategy_id},
-                                  {"event_type", "execution_disposition"},
-                                  {"disposition", "ctp_submitted"},
-                                  {"instrument_id", intent.instrument_id},
-                                  {"client_order_id", client_order_id},
-                                  {"trace_id", intent.trace_id},
-                                  {"offset", OffsetToString(intent.offset)},
-                                  {"signal_ts_ns", std::to_string(intent.signal_ts_ns)},
-                                  {"market_recv_ts_ns", std::to_string(intent.market_recv_ts_ns)}});
+    quant_hft::EmitStructuredLog(
+        &config, "core_engine", "info", "order_submitted",
+        {{"strategy_id", intent.strategy_id},
+         {"event_type", "order_submitted"},
+         {"event_ts_ns", std::to_string(intent.ts_ns)},
+         {"instrument_id", intent.instrument_id},
+         {"product_id", intent.product_id},
+         {"contract_generation", std::to_string(intent.contract_generation)},
+         {"side", SideToString(intent.side)},
+         {"offset", OffsetToString(intent.offset)},
+         {"volume", std::to_string(intent.volume)},
+         {"price", FormatDouble(intent.price)},
+         {"client_order_id", client_order_id},
+         {"trace_id", intent.trace_id},
+         {"execution_algo_id", metadata.execution_algo_id},
+         {"venue", metadata.venue},
+         {"route_id", metadata.route_id},
+         {"message", result.message}});
+    quant_hft::EmitStructuredLog(
+        &config, "core_engine", "info", "execution_disposition",
+        {{"strategy_id", intent.strategy_id},
+         {"event_type", "execution_disposition"},
+         {"disposition", "ctp_submitted"},
+         {"instrument_id", intent.instrument_id},
+         {"product_id", intent.product_id},
+         {"contract_generation", std::to_string(intent.contract_generation)},
+         {"client_order_id", client_order_id},
+         {"trace_id", intent.trace_id},
+         {"offset", OffsetToString(intent.offset)},
+         {"signal_ts_ns", std::to_string(intent.signal_ts_ns)},
+         {"market_recv_ts_ns", std::to_string(intent.market_recv_ts_ns)}});
 }
 
 void EmitOrderRejectedEventLog(const quant_hft::CtpRuntimeConfig& config,
@@ -1514,6 +1520,8 @@ void EmitSignalPlanRejectedLog(const quant_hft::CtpRuntimeConfig& config,
                                 {"event_ts_ns", std::to_string(signal.ts_ns)},
                                 {"reason", reason},
                                 {"instrument_id", signal.instrument_id},
+                                {"product_id", signal.product_id},
+                                {"contract_generation", std::to_string(signal.contract_generation)},
                                 {"signal_type", SignalTypeToString(signal.signal_type)},
                                 {"side", SideToString(signal.side)},
                                 {"offset", OffsetToString(signal.offset)},
@@ -3189,7 +3197,8 @@ int main(int argc, char** argv) {
         persist_timeframe_fanout_state(fanout_state, checkpoint_sequence);
     };
 
-    auto handle_market_bar_pipeline_result = [&](const MarketBarPipelineResult& result) {
+    auto handle_market_bar_pipeline_result = [&](const MarketBarPipelineResult& result,
+                                                 const std::string& instrument_id = "") {
         for (const auto& bar : result.one_minute_bars) {
             record_market_bar(bar);
         }
@@ -3200,7 +3209,12 @@ int main(int argc, char** argv) {
                               {{"bar_key", conflict_key}});
         }
         if (result.late_tick) {
-            EmitStructuredLog(&config, "core_engine", "warn", "market_late_tick_after_watermark");
+            EmitStructuredLog(&config, "core_engine", "warn", "market_late_tick_after_watermark",
+                              {{"instrument_id", instrument_id}});
+        }
+        if (result.duplicate_tick) {
+            EmitStructuredLog(&config, "core_engine", "warn", "market_duplicate_tick_suppressed",
+                              {{"instrument_id", instrument_id}});
         }
     };
 
@@ -3210,7 +3224,8 @@ int main(int argc, char** argv) {
 
     auto process_market_snapshot = [&](const MarketSnapshot& raw_snapshot) {
         MarketSnapshot snapshot = raw_snapshot;
-        handle_market_bar_pipeline_result(market_bar_pipeline.OnTick(snapshot));
+        handle_market_bar_pipeline_result(market_bar_pipeline.OnTick(snapshot),
+                                          snapshot.instrument_id);
         {
             std::lock_guard<std::mutex> lock(market_history_mutex);
             auto& history = recent_market_history[snapshot.instrument_id];

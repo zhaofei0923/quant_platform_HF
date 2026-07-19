@@ -245,11 +245,12 @@ infra/systemd/quant-hft-simnow-trading.service
 
 ## 监控总览
 
-自动执行时有三层监控：
+自动执行时有四层监控：
 
 1. systemd 监控 supervisor 是否存活。
 2. supervisor 监控 `core_engine` 是否存活并负责崩溃重启。
-3. supervisor 检查 tick、bar、成交回报、磁盘、日志、日终流程状态。
+3. 独立 pipeline monitor 只读关联 `core_engine → Tick → 1m/5m Bar → 策略 → 执行 → CTP 回报/成交`。
+4. supervisor 保留磁盘、日志、进程重启和日终流程等粗粒度安全检查。
 
 常用监控命令：
 
@@ -258,9 +259,50 @@ scripts/ops/monitor_simnow_trading.sh --config configs/sim/ctp_sim_trade_candida
 scripts/ops/monitor_simnow_trading.sh --config configs/sim/ctp_sim_trade_candidates.yaml --watch-seconds 30
 systemctl --user status quant-hft-simnow-trading.service
 journalctl --user -u quant-hft-simnow-trading.service -f
+journalctl --user -u quant-hft-simnow-signal-monitor.service -f
 tail -f runtime/simnow_trading/supervisor.log
 tail -f "$(cat runtime/simnow_trading/current_core_engine_log)"
 ```
+
+安装并启动独立监控服务：
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp infra/systemd/quant-hft-simnow-signal-monitor.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now quant-hft-simnow-signal-monitor.service
+```
+
+监控每 5 秒原子更新以下 v3 证据，重启时通过 versioned checkpoint 恢复游标和未完成 trace：
+
+```text
+runtime/trading/monitor/simnow/pipeline_health.json
+runtime/trading/monitor/simnow/heartbeat.json
+runtime/trading/monitor/simnow/pipeline_checkpoint_v3.tsv
+```
+
+`pipeline_health.json` 的统一状态为 `healthy`、`degraded`、`unhealthy`、`inactive` 和
+`unknown`。休市时 `inactive` 是正常状态；交易时段内 Tick 超过 6 秒、Bar 冲突或不完整、
+策略漏评、allowed trace 漏执行处置、CTP 提交后 120 秒无回报等会按严重度升级。无候选信号
+本身不告警。脚本只读交易状态，不会提交或撤销订单。
+
+单次检查和严格退出码可用于演练或外部探针：
+
+```bash
+scripts/ops/monitor_simnow_signal_execution.sh --once --strict-exit
+# 0=healthy/inactive, 1=degraded, 2=unhealthy, 3=监控自身错误
+```
+
+Dashboard 以新鲜（不超过 10 秒）的 v3 pipeline health 作为实时链路权威来源；一旦发现 v3
+心跳，快照缺失或陈旧会直接显示 unhealthy，不再静默回退旧的 mtime/日志关键字推断。推荐：
+
+```bash
+build-gcc/simnow_dashboard_cli --watch-seconds 5 \
+  --pipeline-health-file runtime/trading/monitor/simnow/pipeline_health.json
+```
+
+生成的 HTML 每 10 秒自动刷新；旧版监控尚未升级时仍可兼容读取，但页面会显示
+`legacy_monitoring`。
 
 确认 `core_engine` 是否存活：
 

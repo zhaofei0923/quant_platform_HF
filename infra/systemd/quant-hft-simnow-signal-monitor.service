@@ -1,5 +1,5 @@
 [Unit]
-Description=Quant HFT SimNow Signal Execution Monitor (user unit)
+Description=Quant HFT SimNow Full Pipeline Health Monitor (user unit)
 After=network-online.target quant-hft-simnow-trading.service
 Wants=network-online.target
 StartLimitIntervalSec=60
@@ -11,7 +11,7 @@ WorkingDirectory=%h/workspace/quant_platform_HF
 Environment=QUANT_HFT_ENV=simnow
 Environment=QUANT_ROOT=%h/workspace/quant_platform_HF
 EnvironmentFile=-/etc/quant/platform.conf
-ExecStart=/bin/bash -lc ': "${QUANT_ROOT:?QUANT_ROOT is required}"; exec "${QUANT_ROOT}/scripts/ops/monitor_simnow_signal_execution.sh" --heartbeat-file "${QUANT_ROOT}/runtime/trading/monitor/simnow/heartbeat.json" --core-readiness-file "${QUANT_ROOT}/runtime/trading/monitor/simnow/readiness.json"'
+ExecStart=/bin/bash -lc ': "${QUANT_ROOT:?QUANT_ROOT is required}"; exec "${QUANT_ROOT}/scripts/ops/monitor_simnow_signal_execution.sh" --heartbeat-file "${QUANT_ROOT}/runtime/trading/monitor/simnow/heartbeat.json" --core-readiness-file "${QUANT_ROOT}/runtime/trading/monitor/simnow/readiness.json" --health-snapshot-file "${QUANT_ROOT}/runtime/trading/monitor/simnow/pipeline_health.json" --checkpoint-file "${QUANT_ROOT}/runtime/trading/monitor/simnow/pipeline_checkpoint_v3.tsv" --trading-sessions-config "${QUANT_ROOT}/configs/trading_sessions.yaml"'
 Restart=always
 RestartSec=5
 KillSignal=SIGTERM

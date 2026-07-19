@@ -105,9 +105,10 @@ Window spec examples:
 Alert hooks are inherited from start_simnow_trading.sh:
   SIMNOW_ALERT_WEBHOOK_URL, SIMNOW_ALERT_EMAIL_TO, SIMNOW_ALERT_COMMAND
 
-Optional signal execution watcher:
+Optional full-pipeline health monitor (legacy environment names remain compatible):
   SIMNOW_SIGNAL_EXECUTION_MONITOR=1 starts monitor_simnow_signal_execution.sh
-  alongside the supervisor and records incidents under runtime/trading/monitor/simnow.
+  alongside the supervisor and atomically publishes pipeline_health.json plus incidents
+  under runtime/trading/monitor/simnow.
   SIMNOW_SIGNAL_MONITOR_EXTERNAL=1 expects the independent systemd monitor unit
   and makes the supervisor verify its heartbeat instead of spawning a child.
 USAGE

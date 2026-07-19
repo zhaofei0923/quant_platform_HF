@@ -29,6 +29,8 @@ namespace fs = std::filesystem;
 
 constexpr std::int64_t kTickStaleSeconds = 180;
 constexpr std::int64_t kBarStaleSeconds = 240;
+constexpr std::int64_t kPipelineHealthStaleSeconds = 10;
+constexpr std::int64_t kNanosPerSecond = 1'000'000'000LL;
 constexpr int kCommodityMorningBreakMinute = 10 * 60 + 15;
 constexpr int kCommodityLunchBreakMinute = 11 * 60 + 30;
 constexpr int kCommodityDayCloseMinute = 15 * 60;
@@ -49,6 +51,7 @@ struct DashboardOptions {
     std::string export_root;
     std::string monitor_root;
     std::string readiness_file;
+    std::string pipeline_health_file;
     std::string ctp_instrument_dir;
     std::string probe_log_dir;
     std::string state_dir;
@@ -205,6 +208,91 @@ struct SignalMonitorEpochStats {
     std::vector<std::string> incident_trace_ids;
 };
 
+struct PipelineStageStatus {
+    std::string name;
+    std::string status{"unknown"};
+    std::string reason;
+};
+
+struct PipelineProductStatus {
+    std::string product_id;
+    std::string instrument_id;
+    std::string exchange_id;
+    std::string status{"unknown"};
+    std::string reason;
+    std::string schema;
+    std::int64_t tick_age_seconds{-1};
+    std::int64_t tick_delay_ms{-1};
+    std::int64_t tick_time_reversals{0};
+    std::int64_t duplicate_ticks{0};
+    std::int64_t volume_regressions{0};
+    std::string last_1m;
+    std::string last_5m;
+    bool bar_5m_complete{false};
+    std::string strategy_minute;
+    std::int64_t strategy_evaluations{0};
+    std::int64_t candidates{0};
+    std::int64_t allowed{0};
+    std::int64_t pending_traces{0};
+};
+
+struct PipelineTraceStatus {
+    std::string trace_id;
+    std::string instrument_id;
+    std::string strategy_id;
+    std::string status;
+    std::string last_event;
+    std::string client_order_id;
+};
+
+struct PipelineInputCursor {
+    std::string path;
+    std::string inode;
+    std::int64_t byte_offset{0};
+    std::int64_t size_bytes{0};
+    std::int64_t lines{0};
+};
+
+struct PipelineHealthStatus {
+    std::string path;
+    bool found{false};
+    bool fresh{false};
+    bool authoritative{false};
+    bool v3_heartbeat_seen{false};
+    bool healthy{false};
+    std::int64_t schema_version{0};
+    std::optional<std::int64_t> age_seconds;
+    std::string status{"legacy_monitoring"};
+    std::string session{"unknown"};
+    std::string trading_day;
+    std::string readiness_mode{"unknown"};
+    std::int64_t generation{0};
+    std::int64_t warning_count{0};
+    std::int64_t critical_count{0};
+    std::int64_t last_change_epoch{0};
+    std::int64_t pending_exit_count{0};
+    std::int64_t unresolved_mapping_count{0};
+    std::int64_t late_tick_count{0};
+    std::int64_t duplicate_tick_count{0};
+    std::int64_t tick_time_reversal_count{0};
+    std::int64_t volume_regression_count{0};
+    std::int64_t duplicate_bar_count{0};
+    std::int64_t conflict_bar_count{0};
+    std::int64_t incomplete_bar_count{0};
+    std::int64_t missing_strategy_evaluation_count{0};
+    std::int64_t duplicate_disposition_count{0};
+    std::int64_t unresolved_trace_count{0};
+    std::int64_t strategy_trace_integrity_failure_count{0};
+    std::int64_t generation_mismatch_submission_count{0};
+    std::map<std::string, std::int64_t> latencies_ms;
+    std::vector<PipelineStageStatus> stages;
+    std::vector<PipelineProductStatus> products;
+    std::vector<PipelineTraceStatus> recent_traces;
+    std::vector<PipelineInputCursor> input_cursors;
+    std::vector<std::string> issues;
+    std::vector<std::string> recent_recoveries;
+};
+
 struct CtpConnectionStatus {
     std::string status{"unknown"};
     bool healthy{false};
@@ -304,6 +392,7 @@ struct DashboardState {
     std::string generated_at_local;
     bool overall_healthy{false};
     bool live_healthy{false};
+    std::string live_status{"unknown"};
     std::int64_t warning_count{0};
     std::int64_t live_warning_count{0};
     std::int64_t historical_risk_count{0};
@@ -313,6 +402,7 @@ struct DashboardState {
     WalStatus wal;
     DailyStatus daily;
     SignalMonitorStatus signal_monitor;
+    PipelineHealthStatus pipeline_health;
     ReadinessStatus readiness;
     CtpConnectionStatus ctp_connection;
     CtpOrderFlowStatus ctp_order_flow;
@@ -882,6 +972,118 @@ std::optional<double> ExtractJsonDouble(const std::string& text, const std::stri
     } catch (...) {
         return std::nullopt;
     }
+}
+
+std::optional<std::string> ExtractJsonArrayPayload(const std::string& text,
+                                                   const std::string& key) {
+    const std::string marker = "\"" + key + "\"";
+    const auto key_pos = text.find(marker);
+    if (key_pos == std::string::npos) {
+        return std::nullopt;
+    }
+    const auto start = text.find('[', key_pos + marker.size());
+    if (start == std::string::npos) {
+        return std::nullopt;
+    }
+    bool in_string = false;
+    bool escaped = false;
+    int depth = 0;
+    for (std::size_t i = start; i < text.size(); ++i) {
+        const char ch = text[i];
+        if (in_string) {
+            if (escaped) {
+                escaped = false;
+            } else if (ch == '\\') {
+                escaped = true;
+            } else if (ch == '"') {
+                in_string = false;
+            }
+            continue;
+        }
+        if (ch == '"') {
+            in_string = true;
+        } else if (ch == '[') {
+            ++depth;
+        } else if (ch == ']') {
+            --depth;
+            if (depth == 0) {
+                return text.substr(start + 1, i - start - 1);
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+std::vector<std::string> ExtractJsonObjectArray(const std::string& text, const std::string& key) {
+    std::vector<std::string> objects;
+    const auto payload = ExtractJsonArrayPayload(text, key);
+    if (!payload.has_value()) {
+        return objects;
+    }
+    bool in_string = false;
+    bool escaped = false;
+    int depth = 0;
+    std::size_t object_start = std::string::npos;
+    for (std::size_t i = 0; i < payload->size(); ++i) {
+        const char ch = (*payload)[i];
+        if (in_string) {
+            if (escaped) {
+                escaped = false;
+            } else if (ch == '\\') {
+                escaped = true;
+            } else if (ch == '"') {
+                in_string = false;
+            }
+            continue;
+        }
+        if (ch == '"') {
+            in_string = true;
+        } else if (ch == '{') {
+            if (depth == 0) {
+                object_start = i;
+            }
+            ++depth;
+        } else if (ch == '}') {
+            --depth;
+            if (depth == 0 && object_start != std::string::npos) {
+                objects.push_back(payload->substr(object_start, i - object_start + 1));
+                object_start = std::string::npos;
+            }
+        }
+    }
+    return objects;
+}
+
+std::vector<std::string> ExtractJsonStringArray(const std::string& text, const std::string& key) {
+    std::vector<std::string> values;
+    const auto payload = ExtractJsonArrayPayload(text, key);
+    if (!payload.has_value()) {
+        return values;
+    }
+    bool in_string = false;
+    bool escaped = false;
+    std::string value;
+    for (const char ch : *payload) {
+        if (!in_string) {
+            if (ch == '"') {
+                in_string = true;
+                value.clear();
+            }
+            continue;
+        }
+        if (escaped) {
+            value.push_back(ch);
+            escaped = false;
+        } else if (ch == '\\') {
+            escaped = true;
+        } else if (ch == '"') {
+            values.push_back(value);
+            in_string = false;
+        } else {
+            value.push_back(ch);
+        }
+    }
+    return values;
 }
 
 std::int64_t CountOccurrences(const std::string& text, const std::string& needle) {
@@ -1990,6 +2192,149 @@ ReadinessStatus CollectReadinessStatus(const DashboardOptions& options) {
     return status;
 }
 
+PipelineHealthStatus CollectPipelineHealthStatus(const DashboardOptions& options) {
+    PipelineHealthStatus status;
+    status.path = options.pipeline_health_file;
+    const fs::path heartbeat_path = fs::path(options.monitor_root) / "heartbeat.json";
+    if (const auto heartbeat = ReadTextFile(heartbeat_path.string()); heartbeat.has_value()) {
+        status.v3_heartbeat_seen = ExtractJsonInt(*heartbeat, "schema_version").value_or(0) >= 3;
+    }
+
+    const auto payload = ReadTextFile(options.pipeline_health_file);
+    if (!payload.has_value()) {
+        if (status.v3_heartbeat_seen) {
+            status.authoritative = true;
+            status.status = "missing";
+        }
+        return status;
+    }
+
+    status.found = true;
+    status.age_seconds = FileAgeSeconds(options.pipeline_health_file);
+    status.fresh =
+        status.age_seconds.has_value() && *status.age_seconds <= kPipelineHealthStaleSeconds;
+    status.schema_version = ExtractJsonInt(*payload, "schema_version").value_or(0);
+    const bool snapshot_v3 = status.schema_version >= 3;
+    status.authoritative = snapshot_v3 || status.v3_heartbeat_seen;
+    const std::string reported_status = ExtractJsonString(*payload, "overall_status");
+    if (!snapshot_v3 && !status.v3_heartbeat_seen) {
+        status.status = "legacy_monitoring";
+        return status;
+    }
+    if (!snapshot_v3 || reported_status.empty()) {
+        status.status = "invalid";
+    } else if (!status.fresh) {
+        status.status = "stale";
+    } else {
+        status.status = reported_status;
+    }
+    status.healthy = snapshot_v3 && status.fresh &&
+                     (reported_status == "healthy" || reported_status == "inactive");
+    status.session = ExtractJsonString(*payload, "session");
+    status.trading_day = ExtractJsonString(*payload, "trading_day");
+    status.readiness_mode = ExtractJsonString(*payload, "readiness_mode");
+    status.generation = ExtractJsonInt(*payload, "generation").value_or(0);
+    status.warning_count = ExtractJsonInt(*payload, "warning_count").value_or(0);
+    status.critical_count = ExtractJsonInt(*payload, "critical_count").value_or(0);
+    status.last_change_epoch = ExtractJsonInt(*payload, "last_change_epoch").value_or(0);
+    status.pending_exit_count = ExtractJsonInt(*payload, "pending_exit_count").value_or(0);
+    status.unresolved_mapping_count =
+        ExtractJsonInt(*payload, "unresolved_mapping_count").value_or(0);
+    status.late_tick_count = ExtractJsonInt(*payload, "late_tick_count").value_or(0);
+    status.duplicate_tick_count = ExtractJsonInt(*payload, "duplicate_tick_count").value_or(0);
+    status.tick_time_reversal_count =
+        ExtractJsonInt(*payload, "tick_time_reversal_count").value_or(0);
+    status.volume_regression_count =
+        ExtractJsonInt(*payload, "volume_regression_count").value_or(0);
+    status.duplicate_bar_count = ExtractJsonInt(*payload, "duplicate_bar_count").value_or(0);
+    status.conflict_bar_count = ExtractJsonInt(*payload, "conflict_bar_count").value_or(0);
+    status.incomplete_bar_count = ExtractJsonInt(*payload, "incomplete_bar_count").value_or(0);
+    status.missing_strategy_evaluation_count =
+        ExtractJsonInt(*payload, "missing_strategy_evaluation_count").value_or(0);
+    status.duplicate_disposition_count =
+        ExtractJsonInt(*payload, "duplicate_disposition_count").value_or(0);
+    status.unresolved_trace_count = ExtractJsonInt(*payload, "unresolved_trace_count").value_or(0);
+    status.strategy_trace_integrity_failure_count =
+        ExtractJsonInt(*payload, "strategy_trace_integrity_failure_count").value_or(0);
+    status.generation_mismatch_submission_count =
+        ExtractJsonInt(*payload, "generation_mismatch_submission_count").value_or(0);
+
+    const std::vector<std::string> stage_names = {"runtime", "market_data", "bar_1m",
+                                                  "bar_5m",  "strategy",    "execution"};
+    for (const auto& name : stage_names) {
+        PipelineStageStatus stage;
+        stage.name = name;
+        stage.status = ExtractJsonString(*payload, name + "_status");
+        stage.reason = ExtractJsonString(*payload, name + "_reason");
+        if (stage.status.empty()) {
+            stage.status = "unknown";
+        }
+        status.stages.push_back(std::move(stage));
+    }
+
+    const std::vector<std::string> latency_names = {"bar_finalize_p50",
+                                                    "bar_finalize_p95",
+                                                    "bar_finalize_p99",
+                                                    "bar_to_decision_p50",
+                                                    "bar_to_decision_p95",
+                                                    "bar_to_decision_p99",
+                                                    "candidate_to_disposition_p50",
+                                                    "candidate_to_disposition_p95",
+                                                    "candidate_to_disposition_p99",
+                                                    "ctp_to_callback_p50",
+                                                    "ctp_to_callback_p95",
+                                                    "ctp_to_callback_p99"};
+    for (const auto& name : latency_names) {
+        status.latencies_ms[name] = ExtractJsonInt(*payload, name).value_or(-1);
+    }
+
+    for (const auto& object : ExtractJsonObjectArray(*payload, "products")) {
+        PipelineProductStatus product;
+        product.product_id = ExtractJsonString(object, "product_id");
+        product.instrument_id = ExtractJsonString(object, "instrument_id");
+        product.exchange_id = ExtractJsonString(object, "exchange_id");
+        product.status = ExtractJsonString(object, "status");
+        product.reason = ExtractJsonString(object, "reason");
+        product.schema = ExtractJsonString(object, "schema");
+        product.tick_age_seconds = ExtractJsonInt(object, "tick_age_seconds").value_or(-1);
+        product.tick_delay_ms = ExtractJsonInt(object, "tick_delay_ms").value_or(-1);
+        product.tick_time_reversals = ExtractJsonInt(object, "tick_time_reversals").value_or(0);
+        product.duplicate_ticks = ExtractJsonInt(object, "duplicate_ticks").value_or(0);
+        product.volume_regressions = ExtractJsonInt(object, "volume_regressions").value_or(0);
+        product.last_1m = ExtractJsonString(object, "last_1m");
+        product.last_5m = ExtractJsonString(object, "last_5m");
+        product.bar_5m_complete = ExtractJsonInt(object, "bar_5m_complete").value_or(0) != 0;
+        product.strategy_minute = ExtractJsonString(object, "strategy_minute");
+        product.strategy_evaluations = ExtractJsonInt(object, "strategy_evaluations").value_or(0);
+        product.candidates = ExtractJsonInt(object, "candidates").value_or(0);
+        product.allowed = ExtractJsonInt(object, "allowed").value_or(0);
+        product.pending_traces = ExtractJsonInt(object, "pending_traces").value_or(0);
+        status.products.push_back(std::move(product));
+    }
+    for (const auto& object : ExtractJsonObjectArray(*payload, "recent_traces")) {
+        PipelineTraceStatus trace;
+        trace.trace_id = ExtractJsonString(object, "trace_id");
+        trace.instrument_id = ExtractJsonString(object, "instrument_id");
+        trace.strategy_id = ExtractJsonString(object, "strategy_id");
+        trace.status = ExtractJsonString(object, "status");
+        trace.last_event = ExtractJsonString(object, "last_event");
+        trace.client_order_id = ExtractJsonString(object, "client_order_id");
+        status.recent_traces.push_back(std::move(trace));
+    }
+    for (const auto& object : ExtractJsonObjectArray(*payload, "input_cursors")) {
+        PipelineInputCursor cursor;
+        cursor.path = ExtractJsonString(object, "path");
+        cursor.inode = ExtractJsonString(object, "inode");
+        cursor.byte_offset = ExtractJsonInt(object, "byte_offset").value_or(0);
+        cursor.size_bytes = ExtractJsonInt(object, "size_bytes").value_or(0);
+        cursor.lines = ExtractJsonInt(object, "lines").value_or(0);
+        status.input_cursors.push_back(std::move(cursor));
+    }
+    status.issues = ExtractJsonStringArray(*payload, "issues");
+    status.recent_recoveries = ExtractJsonStringArray(*payload, "recent_recoveries");
+    return status;
+}
+
 void ApplyStructuredReadiness(const ReadinessStatus& readiness, CtpConnectionStatus* connection) {
     if (connection == nullptr || !readiness.found) {
         return;
@@ -2381,6 +2726,7 @@ std::string RenderStateJson(const DashboardState& state) {
     out << "  \"generated_at_local\": " << JsonString(state.generated_at_local) << ",\n";
     out << "  \"overall_healthy\": " << (state.overall_healthy ? "true" : "false") << ",\n";
     out << "  \"live_healthy\": " << (state.live_healthy ? "true" : "false") << ",\n";
+    out << "  \"live_status\": " << JsonString(state.live_status) << ",\n";
     out << "  \"warning_count\": " << state.warning_count << ",\n";
     out << "  \"live_warning_count\": " << state.live_warning_count << ",\n";
     out << "  \"historical_risk_count\": " << state.historical_risk_count << ",\n";
@@ -2525,6 +2871,144 @@ std::string RenderStateJson(const DashboardState& state) {
     out << "    \"export_summary_path\": " << JsonString(state.daily.export_summary_path) << ",\n";
     out << "    \"health_report_path\": " << JsonString(state.daily.health_report_path) << ",\n";
     out << "    \"alert_report_path\": " << JsonString(state.daily.alert_report_path) << "\n";
+    out << "  },\n";
+
+    out << "  \"pipeline_health\": {\n";
+    out << "    \"path\": " << JsonString(state.pipeline_health.path) << ",\n";
+    out << "    \"found\": " << (state.pipeline_health.found ? "true" : "false") << ",\n";
+    out << "    \"fresh\": " << (state.pipeline_health.fresh ? "true" : "false") << ",\n";
+    out << "    \"authoritative\": " << (state.pipeline_health.authoritative ? "true" : "false")
+        << ",\n";
+    out << "    \"v3_heartbeat_seen\": "
+        << (state.pipeline_health.v3_heartbeat_seen ? "true" : "false") << ",\n";
+    out << "    \"healthy\": " << (state.pipeline_health.healthy ? "true" : "false") << ",\n";
+    out << "    \"schema_version\": " << state.pipeline_health.schema_version << ",\n";
+    out << "    \"age_seconds\": " << JsonOptionalInt(state.pipeline_health.age_seconds) << ",\n";
+    out << "    \"status\": " << JsonString(state.pipeline_health.status) << ",\n";
+    out << "    \"session\": " << JsonString(state.pipeline_health.session) << ",\n";
+    out << "    \"trading_day\": " << JsonString(state.pipeline_health.trading_day) << ",\n";
+    out << "    \"readiness_mode\": " << JsonString(state.pipeline_health.readiness_mode) << ",\n";
+    out << "    \"generation\": " << state.pipeline_health.generation << ",\n";
+    out << "    \"warning_count\": " << state.pipeline_health.warning_count << ",\n";
+    out << "    \"critical_count\": " << state.pipeline_health.critical_count << ",\n";
+    out << "    \"last_change_epoch\": " << state.pipeline_health.last_change_epoch << ",\n";
+    out << "    \"pending_exit_count\": " << state.pipeline_health.pending_exit_count << ",\n";
+    out << "    \"unresolved_mapping_count\": " << state.pipeline_health.unresolved_mapping_count
+        << ",\n";
+    out << "    \"late_tick_count\": " << state.pipeline_health.late_tick_count << ",\n";
+    out << "    \"duplicate_tick_count\": " << state.pipeline_health.duplicate_tick_count << ",\n";
+    out << "    \"tick_time_reversal_count\": " << state.pipeline_health.tick_time_reversal_count
+        << ",\n";
+    out << "    \"volume_regression_count\": " << state.pipeline_health.volume_regression_count
+        << ",\n";
+    out << "    \"duplicate_bar_count\": " << state.pipeline_health.duplicate_bar_count << ",\n";
+    out << "    \"conflict_bar_count\": " << state.pipeline_health.conflict_bar_count << ",\n";
+    out << "    \"incomplete_bar_count\": " << state.pipeline_health.incomplete_bar_count << ",\n";
+    out << "    \"missing_strategy_evaluation_count\": "
+        << state.pipeline_health.missing_strategy_evaluation_count << ",\n";
+    out << "    \"duplicate_disposition_count\": "
+        << state.pipeline_health.duplicate_disposition_count << ",\n";
+    out << "    \"unresolved_trace_count\": " << state.pipeline_health.unresolved_trace_count
+        << ",\n";
+    out << "    \"strategy_trace_integrity_failure_count\": "
+        << state.pipeline_health.strategy_trace_integrity_failure_count << ",\n";
+    out << "    \"generation_mismatch_submission_count\": "
+        << state.pipeline_health.generation_mismatch_submission_count << ",\n";
+    out << "    \"stages\": [\n";
+    for (std::size_t i = 0; i < state.pipeline_health.stages.size(); ++i) {
+        const auto& stage = state.pipeline_health.stages[i];
+        out << "      {\"name\": " << JsonString(stage.name)
+            << ", \"status\": " << JsonString(stage.status)
+            << ", \"reason\": " << JsonString(stage.reason) << "}";
+        if (i + 1 < state.pipeline_health.stages.size()) {
+            out << ',';
+        }
+        out << "\n";
+    }
+    out << "    ],\n";
+    out << "    \"latencies_ms\": {";
+    std::size_t latency_index = 0;
+    for (const auto& [name, value] : state.pipeline_health.latencies_ms) {
+        if (latency_index++ > 0) {
+            out << ',';
+        }
+        out << "\n      " << JsonString(name) << ": " << value;
+    }
+    if (!state.pipeline_health.latencies_ms.empty()) {
+        out << '\n';
+    }
+    out << "    },\n";
+    out << "    \"products\": [\n";
+    for (std::size_t i = 0; i < state.pipeline_health.products.size(); ++i) {
+        const auto& product = state.pipeline_health.products[i];
+        out << "      {\"product_id\": " << JsonString(product.product_id)
+            << ", \"instrument_id\": " << JsonString(product.instrument_id)
+            << ", \"exchange_id\": " << JsonString(product.exchange_id)
+            << ", \"status\": " << JsonString(product.status)
+            << ", \"reason\": " << JsonString(product.reason)
+            << ", \"schema\": " << JsonString(product.schema)
+            << ", \"tick_age_seconds\": " << product.tick_age_seconds
+            << ", \"tick_delay_ms\": " << product.tick_delay_ms
+            << ", \"tick_time_reversals\": " << product.tick_time_reversals
+            << ", \"duplicate_ticks\": " << product.duplicate_ticks
+            << ", \"volume_regressions\": " << product.volume_regressions
+            << ", \"last_1m\": " << JsonString(product.last_1m)
+            << ", \"last_5m\": " << JsonString(product.last_5m)
+            << ", \"bar_5m_complete\": " << (product.bar_5m_complete ? "true" : "false")
+            << ", \"strategy_minute\": " << JsonString(product.strategy_minute)
+            << ", \"strategy_evaluations\": " << product.strategy_evaluations
+            << ", \"candidates\": " << product.candidates << ", \"allowed\": " << product.allowed
+            << ", \"pending_traces\": " << product.pending_traces << "}";
+        if (i + 1 < state.pipeline_health.products.size()) {
+            out << ',';
+        }
+        out << "\n";
+    }
+    out << "    ],\n";
+    out << "    \"recent_traces\": [\n";
+    for (std::size_t i = 0; i < state.pipeline_health.recent_traces.size(); ++i) {
+        const auto& trace = state.pipeline_health.recent_traces[i];
+        out << "      {\"trace_id\": " << JsonString(trace.trace_id)
+            << ", \"instrument_id\": " << JsonString(trace.instrument_id)
+            << ", \"strategy_id\": " << JsonString(trace.strategy_id)
+            << ", \"status\": " << JsonString(trace.status)
+            << ", \"last_event\": " << JsonString(trace.last_event)
+            << ", \"client_order_id\": " << JsonString(trace.client_order_id) << "}";
+        if (i + 1 < state.pipeline_health.recent_traces.size()) {
+            out << ',';
+        }
+        out << "\n";
+    }
+    out << "    ],\n";
+    out << "    \"input_cursors\": [\n";
+    for (std::size_t i = 0; i < state.pipeline_health.input_cursors.size(); ++i) {
+        const auto& cursor = state.pipeline_health.input_cursors[i];
+        out << "      {\"path\": " << JsonString(cursor.path)
+            << ", \"inode\": " << JsonString(cursor.inode)
+            << ", \"byte_offset\": " << cursor.byte_offset
+            << ", \"size_bytes\": " << cursor.size_bytes << ", \"lines\": " << cursor.lines << "}";
+        if (i + 1 < state.pipeline_health.input_cursors.size()) {
+            out << ',';
+        }
+        out << "\n";
+    }
+    out << "    ],\n";
+    out << "    \"issues\": [";
+    for (std::size_t i = 0; i < state.pipeline_health.issues.size(); ++i) {
+        if (i > 0) {
+            out << ',';
+        }
+        out << JsonString(state.pipeline_health.issues[i]);
+    }
+    out << "],\n";
+    out << "    \"recent_recoveries\": [";
+    for (std::size_t i = 0; i < state.pipeline_health.recent_recoveries.size(); ++i) {
+        if (i > 0) {
+            out << ',';
+        }
+        out << JsonString(state.pipeline_health.recent_recoveries[i]);
+    }
+    out << "]\n";
     out << "  },\n";
 
     out << "  \"signal_monitor\": {\n";
@@ -2764,10 +3248,12 @@ std::string HtmlEscape(const std::string& text) {
 std::string EmptyAsDash(const std::string& value) { return value.empty() ? "-" : value; }
 
 std::string BadgeClass(const std::string& status, bool healthy) {
-    if (healthy || status == "fresh" || status == "alive") {
+    if (healthy || status == "fresh" || status == "alive" || status == "healthy" ||
+        status == "inactive") {
         return "ok";
     }
-    if (status == "missing" || status == "missing_pid" || status == "dead" || status == "stale") {
+    if (status == "missing" || status == "missing_pid" || status == "dead" || status == "stale" ||
+        status == "invalid" || status == "unhealthy") {
         return "bad";
     }
     return "warn";
@@ -2839,12 +3325,24 @@ std::string RenderHtml(const DashboardState& state) {
     const std::int64_t reject_count =
         state.ctp_order_flow.wal_rejected + state.ctp_order_flow.ctp_submit_rejected;
     const std::string active_instruments = JoinOrDash(state.ctp_connection.active_instruments);
+    const auto latency_text = [&](const std::string& name) {
+        const auto it = state.pipeline_health.latencies_ms.find(name);
+        return it == state.pipeline_health.latencies_ms.end() || it->second < 0
+                   ? std::string("n/a")
+                   : std::to_string(it->second) + "ms";
+    };
+    const auto contract_phase = [&](const std::string& product) {
+        const auto it = std::find_if(
+            state.contracts.begin(), state.contracts.end(),
+            [&](const ContractStatus& contract) { return contract.product == product; });
+        return it == state.contracts.end() ? std::string("unknown") : it->phase;
+    };
 
     std::ostringstream html;
     html << "<!doctype html>\n<html lang=\"en\">\n<head>\n";
     html << "<meta charset=\"utf-8\">\n";
     html << "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n";
-    html << "<meta http-equiv=\"refresh\" content=\"30\">\n";
+    html << "<meta http-equiv=\"refresh\" content=\"10\">\n";
     html << "<title>SimNow Dashboard</title>\n";
     html << "<style>\n";
     html << ":root{color-scheme:dark;--bg:#070807;--surface:#101312;--surface-2:#151a18;"
@@ -2947,14 +3445,148 @@ std::string RenderHtml(const DashboardState& state) {
     html << "<header class=\"topbar\"><div class=\"brand\"><span class=\"brand-mark\"></span>"
             "<span>quant_hft / SimNow</span></div><nav class=\"nav\"><span>Status</span>"
             "<span>Positions</span><span>Prices</span><span>Fills</span>"
-            "<span>30s refresh</span></nav></header>\n";
+            "<span>10s refresh</span></nav></header>\n";
     html << "<main><section class=\"hero\"><div><div class=\"eyebrow\">SimNow live trading</div>"
             "<h1>SimNow Trading Cockpit</h1><p class=\"intro\">Key live state: system health, "
             "positions, prices, order flow, and fills.</p></div><div "
             "class=\"hero-meta\">"
-         << RenderBadge(state.live_healthy ? "live healthy" : "live unhealthy", state.live_healthy)
+         << RenderBadge(state.pipeline_health.authoritative ? state.live_status
+                                                            : "live " + state.live_status,
+                        state.live_status == "healthy" || state.live_status == "inactive")
          << "<div class=\"subtle\">Generated " << HtmlEscape(state.generated_at_local)
          << "</div></div></section><div class=\"grid\">\n";
+
+    if (!state.pipeline_health.authoritative) {
+        html << "<section class=\"panel span-12\"><h2>Legacy Monitoring</h2>"
+                "<div class=\"section-note\">pipeline_health schema v3 is not available; "
+                "live health is using the compatibility collectors.</div></section>\n";
+    }
+
+    html << "<section class=\"panel span-12\"><h2>Pipeline Overview</h2><div class=\"metrics\">";
+    html << RenderMetric("overall", state.live_status);
+    html << RenderMetric("pipeline", state.pipeline_health.status);
+    html << RenderMetric("session", state.pipeline_health.session);
+    html << RenderMetric("trading day", state.pipeline_health.trading_day);
+    html << RenderMetric("permission", state.readiness.found
+                                           ? state.readiness.mode
+                                           : state.pipeline_health.readiness_mode);
+    html << RenderMetric("generation", state.pipeline_health.authoritative
+                                           ? state.pipeline_health.generation
+                                           : state.readiness.generation);
+    html << RenderMetric("monitor heartbeat", AgeText(state.pipeline_health.age_seconds));
+    html << RenderMetric(
+        "last status change",
+        state.pipeline_health.last_change_epoch > 0
+            ? FormatLocalTime(state.pipeline_health.last_change_epoch * kNanosPerSecond)
+            : "-");
+    html << RenderMetric("critical", state.pipeline_health.critical_count);
+    html << RenderMetric("warning", state.pipeline_health.warning_count);
+    html << RenderMetric("pending exits", state.pipeline_health.pending_exit_count);
+    html << RenderMetric("unmapped", state.pipeline_health.unresolved_mapping_count);
+    html << "</div></section>\n";
+
+    html << "<section class=\"panel span-12\"><h2>Pipeline Stages</h2><div class=\"metrics\">";
+    if (state.pipeline_health.stages.empty()) {
+        html << RenderMetric("status", "legacy_monitoring");
+    } else {
+        for (const auto& stage : state.pipeline_health.stages) {
+            html << "<div class=\"metric\"><div class=\"metric-label\">" << HtmlEscape(stage.name)
+                 << "</div><div class=\"metric-value\">"
+                 << RenderBadge(stage.status,
+                                stage.status == "healthy" || stage.status == "inactive")
+                 << "</div><div class=\"caption\">" << HtmlEscape(EmptyAsDash(stage.reason))
+                 << "</div></div>";
+        }
+    }
+    html << "</div></section>\n";
+
+    html << "<section class=\"panel span-12\"><h2>Product Pipeline Health</h2>"
+            "<div class=\"scroll\"><table><thead><tr><th>Product</th><th>Instrument</th>"
+            "<th>Phase</th><th>Status</th><th>Tick Age</th><th>Tick Delay</th>"
+            "<th>Tick Integrity</th><th>Last 1m</th><th>Last 5m</th><th>5m "
+            "Complete</th><th>Strategy Eval</th>"
+            "<th>Candidate/Allowed</th><th>Pending Trace</th><th>Schema</th></tr></thead><tbody>";
+    if (state.pipeline_health.products.empty()) {
+        html << "<tr><td colspan=\"14\">No pipeline product snapshot available</td></tr>";
+    } else {
+        for (const auto& product : state.pipeline_health.products) {
+            html << "<tr><td>" << HtmlEscape(product.product_id) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(product.instrument_id)) << "</td><td>"
+                 << HtmlEscape(contract_phase(product.product_id)) << "</td><td>"
+                 << RenderBadge(product.status,
+                                product.status == "healthy" || product.status == "inactive")
+                 << "</td><td>" << product.tick_age_seconds << "s</td><td>"
+                 << (product.tick_delay_ms < 0 ? std::string("n/a")
+                                               : std::to_string(product.tick_delay_ms) + "ms")
+                 << "</td><td>rev/dup/vol " << product.tick_time_reversals << "/"
+                 << product.duplicate_ticks << "/" << product.volume_regressions << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(product.last_1m)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(product.last_5m)) << "</td><td>"
+                 << (product.bar_5m_complete ? "yes" : "no") << "</td><td>"
+                 << product.strategy_evaluations << " @ "
+                 << HtmlEscape(EmptyAsDash(product.strategy_minute)) << "</td><td>"
+                 << product.candidates << "/" << product.allowed << "</td><td>"
+                 << product.pending_traces << "</td><td>" << HtmlEscape(product.schema)
+                 << "</td></tr>";
+        }
+    }
+    html << "</tbody></table></div></section>\n";
+
+    html << "<section class=\"panel span-6\"><h2>Latency (15m)</h2><div class=\"scroll\">"
+            "<table><thead><tr><th>Chain</th><th>Threshold</th><th>p50</th><th>p95</th><th>p99</th>"
+            "</tr></thead><tbody>";
+    for (const auto& prefix :
+         {std::string("bar_finalize"), std::string("bar_to_decision"),
+          std::string("candidate_to_disposition"), std::string("ctp_to_callback")}) {
+        const std::string threshold = prefix == "bar_finalize"      ? "5s warn / 10s critical"
+                                      : prefix == "bar_to_decision" ? "10s"
+                                      : prefix == "ctp_to_callback" ? "120s"
+                                                                    : "2s";
+        html << "<tr><td>" << HtmlEscape(prefix) << "</td><td>" << threshold << "</td><td>"
+             << HtmlEscape(latency_text(prefix + "_p50")) << "</td><td>"
+             << HtmlEscape(latency_text(prefix + "_p95")) << "</td><td>"
+             << HtmlEscape(latency_text(prefix + "_p99")) << "</td></tr>";
+    }
+    html << "</tbody></table></div></section>\n";
+
+    html << "<section class=\"panel span-6\"><h2>Integrity Counters</h2><div class=\"metrics\">";
+    html << RenderMetric("late ticks", state.pipeline_health.late_tick_count);
+    html << RenderMetric("duplicate ticks", state.pipeline_health.duplicate_tick_count);
+    html << RenderMetric("tick reversals", state.pipeline_health.tick_time_reversal_count);
+    html << RenderMetric("volume regressions", state.pipeline_health.volume_regression_count);
+    html << RenderMetric("duplicate bars", state.pipeline_health.duplicate_bar_count);
+    html << RenderMetric("bar conflicts", state.pipeline_health.conflict_bar_count);
+    html << RenderMetric("incomplete bars", state.pipeline_health.incomplete_bar_count);
+    html << RenderMetric("strategy misses",
+                         state.pipeline_health.missing_strategy_evaluation_count);
+    html << RenderMetric("duplicate disposition",
+                         state.pipeline_health.duplicate_disposition_count);
+    html << RenderMetric("unresolved traces", state.pipeline_health.unresolved_trace_count);
+    html << RenderMetric("trace integrity",
+                         state.pipeline_health.strategy_trace_integrity_failure_count);
+    html << RenderMetric("generation breaches",
+                         state.pipeline_health.generation_mismatch_submission_count);
+    html << RenderMetric("unmapped", state.pipeline_health.unresolved_mapping_count);
+    html << "</div></section>\n";
+
+    html << "<section class=\"panel span-12\"><h2>Recent Execution Traces</h2>"
+            "<div class=\"scroll\"><table><thead><tr><th>Trace</th><th>Instrument</th>"
+            "<th>Strategy</th><th>Status</th><th>Last Event</th><th>Client Order</th>"
+            "</tr></thead><tbody>";
+    if (state.pipeline_health.recent_traces.empty()) {
+        html << "<tr><td colspan=\"6\">No allowed traces in the current monitor epoch</td></tr>";
+    } else {
+        for (const auto& trace : state.pipeline_health.recent_traces) {
+            html << "<tr><td><code>" << HtmlEscape(trace.trace_id) << "</code></td><td>"
+                 << HtmlEscape(EmptyAsDash(trace.instrument_id)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(trace.strategy_id)) << "</td><td>"
+                 << RenderBadge(trace.status,
+                                trace.status == "filled" || trace.status == "canceled")
+                 << "</td><td>" << HtmlEscape(EmptyAsDash(trace.last_event)) << "</td><td><code>"
+                 << HtmlEscape(EmptyAsDash(trace.client_order_id)) << "</code></td></tr>";
+        }
+    }
+    html << "</tbody></table></div></section>\n";
 
     // Panel 0: Recent fills (newest first) — surfaced at the top for quick review.
     html << "<section class=\"panel span-12\"><h2>Recent Fills</h2>";
@@ -2988,6 +3620,7 @@ std::string RenderHtml(const DashboardState& state) {
     html << RenderMetric("recovery gen", state.readiness.generation);
     html << RenderMetric("CTP", state.ctp_connection.status);
     html << RenderMetric("settlement", state.ctp_connection.settlement_status);
+    html << RenderMetric("pipeline", state.pipeline_health.status);
     html << RenderMetric("signal monitor", state.signal_monitor.status);
     html << RenderMetric("trading day", state.daily.trading_day);
     html << RenderMetric("warnings", state.live_warning_count);
@@ -3104,6 +3737,12 @@ std::string RenderHtml(const DashboardState& state) {
 
     // Panel 6: Issues — alerts + signal incidents + CTP rejections combined.
     std::vector<std::string> issues;
+    for (const auto& line : state.pipeline_health.issues) {
+        issues.push_back("pipeline: " + line);
+    }
+    for (const auto& line : state.pipeline_health.recent_recoveries) {
+        issues.push_back("recovered: " + line);
+    }
     for (const auto& line : state.ctp_order_flow.recent_rejections) {
         issues.push_back("reject: " + line);
     }
@@ -3144,6 +3783,10 @@ DashboardOptions ParseOptions(int argc, char** argv, std::string* error) {
         args, "readiness-file",
         GetEnvOrDefault("QUANT_HFT_READINESS_FILE",
                         (fs::path(options.monitor_root) / "readiness.json").string()));
+    options.pipeline_health_file = quant_hft::apps::GetArg(
+        args, "pipeline-health-file",
+        GetEnvOrDefault("SIMNOW_PIPELINE_HEALTH_FILE",
+                        (fs::path(options.monitor_root) / "pipeline_health.json").string()));
     options.ctp_instrument_dir = quant_hft::apps::GetArg(
         args, "ctp-instrument-dir", DefaultPathFromRoot("runtime/ctp_instruments"));
     options.probe_log_dir = quant_hft::apps::GetArg(
@@ -3360,6 +4003,7 @@ DashboardState CollectState(const DashboardOptions& options) {
         {"output_dir", options.output_dir},
         {"monitor_root", options.monitor_root},
         {"readiness_file", options.readiness_file},
+        {"pipeline_health_file", options.pipeline_health_file},
         {"ctp_instrument_dir", options.ctp_instrument_dir},
         {"probe_log_dir", options.probe_log_dir},
         {"state_dir", options.state_dir},
@@ -3371,6 +4015,7 @@ DashboardState CollectState(const DashboardOptions& options) {
     state.wal = CollectWalStatus(options);
     state.daily = CollectDailyStatus(options);
     state.signal_monitor = CollectSignalMonitorStatus(options);
+    state.pipeline_health = CollectPipelineHealthStatus(options);
     state.readiness = CollectReadinessStatus(options);
     state.ctp_connection = CollectCtpConnectionStatus(options, state.process, state.contracts);
     ApplyStructuredReadiness(state.readiness, &state.ctp_connection);
@@ -3391,13 +4036,38 @@ DashboardState CollectState(const DashboardOptions& options) {
         state.contracts.empty() ||
         std::all_of(state.contracts.begin(), state.contracts.end(),
                     [](const auto& contract) { return contract.healthy; });
-    state.live_healthy = state.process.healthy && structured_readiness_healthy &&
-                         (waiting_for_window || market_healthy) && state.signal_monitor.healthy &&
-                         state.ctp_connection.healthy && dominant_contracts_healthy &&
-                         state.ctp_order_flow.monitor_incidents == 0 &&
-                         state.ctp_order_flow.ctp_submit_rejected == 0;
+    if (state.pipeline_health.authoritative) {
+        const bool pipeline_inactive = state.pipeline_health.status == "inactive";
+        const bool independent_unhealthy =
+            !dominant_contracts_healthy || (!pipeline_inactive && (!structured_readiness_healthy ||
+                                                                   !state.ctp_connection.healthy));
+        if (independent_unhealthy || state.pipeline_health.status == "unhealthy" ||
+            state.pipeline_health.status == "missing" ||
+            state.pipeline_health.status == "invalid" || state.pipeline_health.status == "stale") {
+            state.live_status = "unhealthy";
+        } else {
+            state.live_status = state.pipeline_health.status;
+        }
+        state.live_healthy = state.live_status == "healthy" || state.live_status == "inactive";
+    } else {
+        state.live_healthy = state.process.healthy && structured_readiness_healthy &&
+                             (waiting_for_window || market_healthy) &&
+                             state.signal_monitor.healthy && state.ctp_connection.healthy &&
+                             dominant_contracts_healthy &&
+                             state.ctp_order_flow.monitor_incidents == 0 &&
+                             state.ctp_order_flow.ctp_submit_rejected == 0;
+        state.live_status = state.live_healthy ? "healthy" : "unhealthy";
+    }
     state.overall_healthy = state.live_healthy;
 
+    if (state.pipeline_health.authoritative) {
+        state.live_warning_count +=
+            state.pipeline_health.warning_count + state.pipeline_health.critical_count;
+        if (!state.pipeline_health.fresh || state.pipeline_health.status == "missing" ||
+            state.pipeline_health.status == "invalid" || state.pipeline_health.status == "stale") {
+            ++state.live_warning_count;
+        }
+    }
     if (!state.process.supervisor_pids.empty() && state.process.status != "alive") {
         if (!waiting_for_window) {
             ++state.live_warning_count;
@@ -3412,19 +4082,20 @@ DashboardState CollectState(const DashboardOptions& options) {
     if (state.daily.parse_errors > 0) {
         ++state.historical_risk_count;
     }
-    if (state.signal_monitor.status == "dead") {
+    if (!state.pipeline_health.authoritative && state.signal_monitor.status == "dead") {
         ++state.live_warning_count;
     }
-    if (state.signal_monitor.incidents > 0) {
+    if (!state.pipeline_health.authoritative && state.signal_monitor.incidents > 0) {
         ++state.live_warning_count;
     }
-    if (state.ctp_connection.status == "degraded") {
+    if (!state.pipeline_health.authoritative && state.ctp_connection.status == "degraded") {
         ++state.live_warning_count;
     }
-    if (state.readiness.found && !state.readiness.healthy && !waiting_for_window) {
+    if (!state.pipeline_health.authoritative && state.readiness.found && !state.readiness.healthy &&
+        !waiting_for_window) {
         ++state.live_warning_count;
     }
-    if (state.ctp_order_flow.status == "attention") {
+    if (!state.pipeline_health.authoritative && state.ctp_order_flow.status == "attention") {
         if (state.ctp_order_flow.monitor_incidents > 0 ||
             state.ctp_order_flow.ctp_submit_rejected > 0) {
             ++state.live_warning_count;
@@ -3432,9 +4103,11 @@ DashboardState CollectState(const DashboardOptions& options) {
             ++state.historical_risk_count;
         }
     }
-    for (const auto& item : state.markets) {
-        if (!item.healthy && !waiting_for_window) {
-            ++state.live_warning_count;
+    if (!state.pipeline_health.authoritative) {
+        for (const auto& item : state.markets) {
+            if (!item.healthy && !waiting_for_window) {
+                ++state.live_warning_count;
+            }
         }
     }
     for (const auto& contract : state.contracts) {
@@ -3500,7 +4173,7 @@ int main(int argc, char** argv) {
                   << " overall_healthy=" << (state.overall_healthy ? "true" : "false") << '\n';
 
         if (options.watch_seconds == 0) {
-            return options.strict_exit && !state.overall_healthy ? 2 : 0;
+            return options.strict_exit && state.live_status == "unhealthy" ? 2 : 0;
         }
         std::this_thread::sleep_for(std::chrono::seconds(options.watch_seconds));
     }

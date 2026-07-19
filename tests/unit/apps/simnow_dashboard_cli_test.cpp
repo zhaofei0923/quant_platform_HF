@@ -86,6 +86,58 @@ std::string DashboardCommand(const std::filesystem::path& root,
            output_dir.string() + "\"";
 }
 
+void WritePipelineHealth(const std::filesystem::path& root, const std::string& status,
+                         const std::string& product_status = "healthy",
+                         const std::string& reason = "all_checks_passed") {
+    const bool inactive = status == "inactive";
+    const std::string stage_status = inactive ? "inactive" : status;
+    WriteFile(root / "monitor" / "pipeline_health.json",
+              "{\"schema_version\":3,\"overall_status\":\"" + status + "\",\"session\":\"" +
+                  (inactive ? "closed" : "day") +
+                  "\",\"trading_day\":\"20260720\",\"readiness_mode\":\"Ready\"," +
+                  "\"generation\":7,\"warning_count\":0,\"critical_count\":0," +
+                  "\"last_change_epoch\":1784511065,\"pending_exit_count\":0," +
+                  "\"unresolved_mapping_count\":0,\"late_tick_count\":0," +
+                  "\"duplicate_bar_count\":0,\"conflict_bar_count\":0," +
+                  "\"incomplete_bar_count\":0,\"missing_strategy_evaluation_count\":0," +
+                  "\"duplicate_disposition_count\":0,\"unresolved_trace_count\":0," +
+                  "\"runtime_status\":\"" + stage_status + "\",\"runtime_reason\":\"" + reason +
+                  "\",\"market_data_status\":\"" + stage_status + "\",\"market_data_reason\":\"" +
+                  reason + "\",\"bar_1m_status\":\"" + stage_status + "\",\"bar_1m_reason\":\"" +
+                  reason + "\",\"bar_5m_status\":\"" + stage_status + "\",\"bar_5m_reason\":\"" +
+                  reason + "\",\"strategy_status\":\"" + stage_status +
+                  "\",\"strategy_reason\":\"" + reason + "\",\"execution_status\":\"" +
+                  stage_status + "\",\"execution_reason\":\"" + reason +
+                  "\",\"latencies_ms\":{\"bar_finalize_p50\":4," +
+                  "\"bar_finalize_p95\":5,\"bar_finalize_p99\":6," +
+                  "\"bar_to_decision_p50\":1,\"bar_to_decision_p95\":2," +
+                  "\"bar_to_decision_p99\":3,\"candidate_to_disposition_p50\":1," +
+                  "\"candidate_to_disposition_p95\":2," +
+                  "\"candidate_to_disposition_p99\":3,\"ctp_to_callback_p50\":10," +
+                  "\"ctp_to_callback_p95\":20,\"ctp_to_callback_p99\":30}," +
+                  "\"products\":[{\"product_id\":\"c\",\"instrument_id\":\"c2609\"," +
+                  "\"exchange_id\":\"DCE\",\"status\":\"" + product_status + "\",\"reason\":\"" +
+                  reason + "\",\"schema\":\"1m:v2,5m:v2\",\"tick_age_seconds\":1," +
+                  "\"tick_delay_ms\":2,\"last_1m\":\"20260720 09:30\"," +
+                  "\"last_5m\":\"20260720 09:25\",\"bar_5m_complete\":1," +
+                  "\"strategy_minute\":\"20260720 09:25\",\"strategy_evaluations\":8," +
+                  "\"candidates\":1,\"allowed\":1,\"pending_traces\":0}]," +
+                  "\"recent_traces\":[{\"trace_id\":\"trace-1\",\"instrument_id\":\"c2609\"," +
+                  "\"strategy_id\":\"kama_c\",\"status\":\"filled\"," +
+                  "\"last_event\":\"trade_fill\",\"client_order_id\":\"order-1\"}]," +
+                  "\"issues\":[],\"recent_recoveries\":[]}\n");
+    WriteFile(root / "monitor" / "heartbeat.json",
+              "{\"schema_version\":3,\"pipeline_status\":\"" + status + "\"}\n");
+}
+
+void WriteHealthyReadiness(const std::filesystem::path& root) {
+    WriteFile(root / "monitor" / "readiness.json",
+              "{\"mode\":\"Ready\",\"generation\":7,\"recovery_complete\":true," +
+                  std::string("\"trader_ready\":true,\"gateway_healthy\":true,") +
+                  "\"settlement_confirmed\":true,\"pending_exit_count\":0," +
+                  "\"unresolved_mapping_count\":0}\n");
+}
+
 void WriteSampleMarketData(const std::filesystem::path& root) {
     WriteFile(root / "market" / "trading_day=20260515" / "varieties" / "c" / "market" / "ticks.csv",
               "instrument_id,exchange_id,trading_day,action_day,update_time,update_millisec,"
@@ -945,6 +997,120 @@ TEST(SimnowDashboardCli, StructuredReadinessOverridesLogInference) {
     EXPECT_NE(json.find("\"pending_exit_count\": 1"), std::string::npos) << json;
     EXPECT_NE(json.find("\"status\": \"connected\""), std::string::npos) << json;
     EXPECT_NE(json.find("\"settlement_status\": \"confirmed\""), std::string::npos) << json;
+}
+
+TEST(SimnowDashboardCli, PipelineV3IsAuthoritativeAndRendersFullChain) {
+    const auto root = MakeTempDir("pipeline_v3");
+    const auto output_dir = root / "dashboard";
+    const auto stdout_log = root / "stdout.log";
+    WriteFile(root / "runs" / "current_core_engine.pid", std::to_string(getpid()) + "\n");
+    WriteFile(root / "wal" / "events.wal", "");
+    WriteHealthyReadiness(root);
+    WritePipelineHealth(root, "healthy");
+
+    const int rc = RunCommandCapture(DashboardCommand(root, output_dir), stdout_log);
+
+    ASSERT_EQ(rc, 0) << ReadFile(stdout_log);
+    const std::string json = ReadFile(output_dir / "dashboard_state.json");
+    const std::string html = ReadFile(output_dir / "index.html");
+    EXPECT_NE(json.find("\"pipeline_health\""), std::string::npos) << json;
+    EXPECT_NE(json.find("\"authoritative\": true"), std::string::npos) << json;
+    EXPECT_NE(json.find("\"status\": \"healthy\""), std::string::npos) << json;
+    EXPECT_NE(json.find("\"product_id\": \"c\""), std::string::npos) << json;
+    EXPECT_NE(json.find("\"trace_id\": \"trace-1\""), std::string::npos) << json;
+    EXPECT_NE(json.find("\"overall_healthy\": true"), std::string::npos) << json;
+    EXPECT_NE(html.find("Pipeline Stages"), std::string::npos) << html;
+    EXPECT_NE(html.find("Product Pipeline Health"), std::string::npos) << html;
+    EXPECT_NE(html.find("Recent Execution Traces"), std::string::npos) << html;
+    EXPECT_NE(html.find("candidate_to_disposition"), std::string::npos) << html;
+    EXPECT_EQ(html.find("Legacy Monitoring"), std::string::npos) << html;
+}
+
+TEST(SimnowDashboardCli, PipelineInactiveIsHealthyWithoutLiveCore) {
+    const auto root = MakeTempDir("pipeline_inactive");
+    const auto output_dir = root / "dashboard";
+    const auto stdout_log = root / "stdout.log";
+    WriteFile(root / "wal" / "events.wal", "");
+    WritePipelineHealth(root, "inactive", "inactive", "outside_trading_session");
+
+    const int rc = RunCommandCapture(DashboardCommand(root, output_dir), stdout_log);
+
+    ASSERT_EQ(rc, 0) << ReadFile(stdout_log);
+    const std::string json = ReadFile(output_dir / "dashboard_state.json");
+    const std::string html = ReadFile(output_dir / "index.html");
+    EXPECT_NE(json.find("\"status\": \"inactive\""), std::string::npos) << json;
+    EXPECT_NE(json.find("\"overall_healthy\": true"), std::string::npos) << json;
+    EXPECT_NE(html.find("inactive"), std::string::npos) << html;
+}
+
+TEST(SimnowDashboardCli, StrictExitAllowsDegradedPipeline) {
+    const auto root = MakeTempDir("pipeline_degraded_strict");
+    const auto output_dir = root / "dashboard";
+    const auto stdout_log = root / "stdout.log";
+    WriteFile(root / "runs" / "current_core_engine.pid", std::to_string(getpid()) + "\n");
+    WriteFile(root / "wal" / "events.wal", "");
+    WriteHealthyReadiness(root);
+    WritePipelineHealth(root, "degraded", "degraded", "candidate_tick_baseline_incomplete");
+
+    const int rc =
+        RunCommandCapture(DashboardCommand(root, output_dir) + " --strict-exit", stdout_log);
+
+    ASSERT_EQ(rc, 0) << ReadFile(stdout_log);
+    const std::string json = ReadFile(output_dir / "dashboard_state.json");
+    EXPECT_NE(json.find("\"live_status\": \"degraded\""), std::string::npos) << json;
+    EXPECT_NE(json.find("\"overall_healthy\": false"), std::string::npos) << json;
+}
+
+TEST(SimnowDashboardCli, V3HeartbeatWithoutSnapshotCannotFallBackToLegacy) {
+    const auto root = MakeTempDir("pipeline_missing");
+    const auto output_dir = root / "dashboard";
+    const auto stdout_log = root / "stdout.log";
+    WriteFile(root / "monitor" / "heartbeat.json",
+              "{\"schema_version\":3,\"pipeline_status\":\"healthy\"}\n");
+    WriteFile(root / "wal" / "events.wal", "");
+
+    const int rc =
+        RunCommandCapture(DashboardCommand(root, output_dir) + " --strict-exit", stdout_log);
+
+    EXPECT_NE(rc, 0) << ReadFile(stdout_log);
+    const std::string json = ReadFile(output_dir / "dashboard_state.json");
+    EXPECT_NE(json.find("\"authoritative\": true"), std::string::npos) << json;
+    EXPECT_NE(json.find("\"status\": \"missing\""), std::string::npos) << json;
+    EXPECT_NE(json.find("\"overall_healthy\": false"), std::string::npos) << json;
+}
+
+TEST(SimnowDashboardCli, V3HeartbeatWithLegacySnapshotCannotFallBackToLegacy) {
+    const auto root = MakeTempDir("pipeline_legacy_with_v3_heartbeat");
+    const auto output_dir = root / "dashboard";
+    const auto stdout_log = root / "stdout.log";
+    WriteFile(root / "monitor" / "heartbeat.json",
+              "{\"schema_version\":3,\"pipeline_status\":\"healthy\"}\n");
+    WriteFile(root / "monitor" / "pipeline_health.json",
+              "{\"schema_version\":2,\"overall_status\":\"healthy\"}\n");
+    WriteFile(root / "wal" / "events.wal", "");
+
+    const int rc =
+        RunCommandCapture(DashboardCommand(root, output_dir) + " --strict-exit", stdout_log);
+
+    EXPECT_NE(rc, 0) << ReadFile(stdout_log);
+    const std::string json = ReadFile(output_dir / "dashboard_state.json");
+    EXPECT_NE(json.find("\"authoritative\": true"), std::string::npos) << json;
+    EXPECT_NE(json.find("\"status\": \"invalid\""), std::string::npos) << json;
+    EXPECT_NE(json.find("\"live_status\": \"unhealthy\""), std::string::npos) << json;
+}
+
+TEST(SimnowDashboardCli, PipelineContentIsHtmlEscaped) {
+    const auto root = MakeTempDir("pipeline_escape");
+    const auto output_dir = root / "dashboard";
+    const auto stdout_log = root / "stdout.log";
+    WriteFile(root / "wal" / "events.wal", "");
+    WritePipelineHealth(root, "degraded", "degraded", "<script>alert(1)</script>");
+
+    ASSERT_EQ(RunCommandCapture(DashboardCommand(root, output_dir), stdout_log), 0)
+        << ReadFile(stdout_log);
+    const std::string html = ReadFile(output_dir / "index.html");
+    EXPECT_EQ(html.find("<script>alert(1)</script>"), std::string::npos) << html;
+    EXPECT_NE(html.find("&lt;script&gt;alert(1)&lt;/script&gt;"), std::string::npos) << html;
 }
 
 }  // namespace

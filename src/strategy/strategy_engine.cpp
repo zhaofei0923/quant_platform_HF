@@ -158,6 +158,7 @@ bool StrategyEngine::Start(const std::vector<StrategyLaunchSpec>& launch_specs,
         last_metrics_collect_ns_ = 0;
         running_ = true;
         stop_requested_ = false;
+        dispatching_ = false;
     }
 
     worker_thread_ = std::thread(&StrategyEngine::WorkerLoop, this);
@@ -188,6 +189,7 @@ void StrategyEngine::Stop() {
         cached_metrics_.clear();
         running_ = false;
         stop_requested_ = false;
+        dispatching_ = false;
         last_state_snapshot_ns_ = 0;
         last_metrics_collect_ns_ = 0;
     }
@@ -245,6 +247,12 @@ std::vector<StrategyMetric> StrategyEngine::CollectAllMetrics() const {
     return cached_metrics_;
 }
 
+bool StrategyEngine::WaitUntilDrained(std::int64_t timeout_ms) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    return cv_.wait_for(lock, std::chrono::milliseconds(std::max<std::int64_t>(0, timeout_ms)),
+                        [&]() { return queue_.empty() && !dispatching_; });
+}
+
 StrategyEngine::Stats StrategyEngine::GetStats() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return stats_;
@@ -285,6 +293,7 @@ void StrategyEngine::WorkerLoop() {
                 event = std::move(queue_.front());
                 queue_.pop_front();
                 ++stats_.processed_events;
+                dispatching_ = true;
                 has_event = true;
             }
         }
@@ -302,10 +311,24 @@ void StrategyEngine::WorkerLoop() {
             } else {
                 DispatchAccountSnapshot(event.account_snapshot);
             }
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                dispatching_ = false;
+            }
+            cv_.notify_all();
             continue;
         }
 
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            dispatching_ = true;
+        }
         DispatchTimer(NowEpochNanos());
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            dispatching_ = false;
+        }
+        cv_.notify_all();
     }
 }
 
@@ -610,6 +633,9 @@ void StrategyEngine::EmitIntents(const std::string& strategy_id,
     for (auto& intent : intents) {
         if (intent.strategy_id.empty()) {
             intent.strategy_id = strategy_id;
+        }
+        if (intent.generated_ts_ns <= 0) {
+            intent.generated_ts_ns = NowEpochNanos();
         }
         try {
             intent_sink_(intent);

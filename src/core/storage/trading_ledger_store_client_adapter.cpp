@@ -1,8 +1,8 @@
 #include "quant_hft/core/trading_ledger_store_client_adapter.h"
 
 #include <algorithm>
-#include <chrono>
 #include <cctype>
+#include <chrono>
 #include <ctime>
 #include <sstream>
 #include <thread>
@@ -10,8 +10,7 @@
 namespace quant_hft {
 
 TradingLedgerStoreClientAdapter::TradingLedgerStoreClientAdapter(
-    std::shared_ptr<ITimescaleSqlClient> client,
-    StorageRetryPolicy retry_policy,
+    std::shared_ptr<ITimescaleSqlClient> client, StorageRetryPolicy retry_policy,
     std::string schema)
     : client_(std::move(client)),
       retry_policy_(retry_policy),
@@ -27,8 +26,13 @@ bool TradingLedgerStoreClientAdapter::AppendOrderEvent(const OrderEvent& event,
     }
     const std::int64_t effective_ts =
         event.recv_ts_ns > 0 ? event.recv_ts_ns : (event.ts_ns > 0 ? event.ts_ns : NowEpochNanos());
+    std::string trade_date = BuildTradeDate(effective_ts);
+    if (event.trading_day.size() == 8) {
+        trade_date = event.trading_day.substr(0, 4) + "-" + event.trading_day.substr(4, 2) + "-" +
+                     event.trading_day.substr(6, 2);
+    }
     std::unordered_map<std::string, std::string> row{
-        {"trade_date", BuildTradeDate(effective_ts)},
+        {"trade_date", trade_date},
         {"idempotency_key", BuildIdempotencyKey(event)},
         {"account_id", event.account_id},
         {"strategy_id", event.strategy_id},
@@ -38,8 +42,8 @@ bool TradingLedgerStoreClientAdapter::AppendOrderEvent(const OrderEvent& event,
         {"exchange_id", event.exchange_id},
         {"status", std::to_string(static_cast<int>(event.status))},
         {"total_volume", ToString(event.total_volume)},
-        {"filled_volume", ToString(event.last_trade_volume > 0 ? event.last_trade_volume
-                                    : event.filled_volume)},
+        {"filled_volume",
+         ToString(event.last_trade_volume > 0 ? event.last_trade_volume : event.filled_volume)},
         {"avg_fill_price", ToString(event.avg_fill_price)},
         {"reason", event.reason},
         {"status_msg", event.status_msg},
@@ -73,11 +77,23 @@ bool TradingLedgerStoreClientAdapter::AppendTradeEvent(const OrderEvent& event,
         }
         return false;
     }
+    const std::string canonical_key = BuildCanonicalTradeKey(event);
+    if (canonical_key.empty()) {
+        if (error != nullptr) {
+            *error = "trade event missing canonical identity";
+        }
+        return false;
+    }
     const std::int64_t effective_ts =
         event.recv_ts_ns > 0 ? event.recv_ts_ns : (event.ts_ns > 0 ? event.ts_ns : NowEpochNanos());
+    std::string trade_date = BuildTradeDate(effective_ts);
+    if (event.trading_day.size() == 8) {
+        trade_date = event.trading_day.substr(0, 4) + "-" + event.trading_day.substr(4, 2) + "-" +
+                     event.trading_day.substr(6, 2);
+    }
     std::unordered_map<std::string, std::string> row{
-        {"trade_date", BuildTradeDate(effective_ts)},
-        {"idempotency_key", BuildIdempotencyKey(event)},
+        {"trade_date", trade_date},
+        {"idempotency_key", canonical_key},
         {"account_id", event.account_id},
         {"client_order_id", event.client_order_id},
         {"exchange_order_id", event.exchange_order_id},
@@ -95,9 +111,8 @@ bool TradingLedgerStoreClientAdapter::AppendTradeEvent(const OrderEvent& event,
     return InsertWithRetry("trade_events", row, error);
 }
 
-bool TradingLedgerStoreClientAdapter::AppendAccountSnapshot(
-    const TradingAccountSnapshot& snapshot,
-    std::string* error) {
+bool TradingLedgerStoreClientAdapter::AppendAccountSnapshot(const TradingAccountSnapshot& snapshot,
+                                                            std::string* error) {
     if (snapshot.account_id.empty()) {
         if (error != nullptr) {
             *error = "empty account_id";
@@ -125,8 +140,7 @@ bool TradingLedgerStoreClientAdapter::AppendAccountSnapshot(
 }
 
 bool TradingLedgerStoreClientAdapter::AppendPositionSnapshot(
-    const InvestorPositionSnapshot& snapshot,
-    std::string* error) {
+    const InvestorPositionSnapshot& snapshot, std::string* error) {
     if (snapshot.account_id.empty() || snapshot.instrument_id.empty()) {
         if (error != nullptr) {
             *error = "empty account_id or instrument_id";
@@ -237,8 +251,7 @@ bool TradingLedgerStoreClientAdapter::UpsertReplayOffset(const std::string& stre
 }
 
 bool TradingLedgerStoreClientAdapter::InsertWithRetry(
-    const std::string& table,
-    const std::unordered_map<std::string, std::string>& row,
+    const std::string& table, const std::unordered_map<std::string, std::string>& row,
     std::string* error) const {
     if (client_ == nullptr) {
         if (error != nullptr) {
@@ -275,9 +288,8 @@ bool TradingLedgerStoreClientAdapter::InsertWithRetry(
 
 bool TradingLedgerStoreClientAdapter::IsDuplicateKeyError(const std::string& error) const {
     std::string lowered = error;
-    std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     return lowered.find("duplicate key") != std::string::npos ||
            lowered.find("already exists") != std::string::npos;
 }
@@ -317,6 +329,9 @@ std::string TradingLedgerStoreClientAdapter::BuildTradeDate(std::int64_t ts_ns) 
 }
 
 std::string TradingLedgerStoreClientAdapter::BuildIdempotencyKey(const OrderEvent& event) {
+    if (const std::string canonical = BuildCanonicalTradeKey(event); !canonical.empty()) {
+        return canonical;
+    }
     std::ostringstream key;
     key << event.client_order_id << "|" << event.event_source << "|" << event.ts_ns << "|"
         << event.filled_volume << "|" << event.last_trade_volume << "|" << event.trade_id;

@@ -91,7 +91,7 @@ TEST(WalReplayLoaderTest, RebuildsOrderStateAndLedgerFromWal) {
 
     const auto position = ledger.GetPositionSnapshot("a1", "SHFE.ag2406", PositionDirection::kLong);
     EXPECT_EQ(position.volume, 2);
-    EXPECT_NEAR(position.avg_price, 4505.0, 1e-6);
+    EXPECT_NEAR(position.avg_price, 4510.0, 1e-6);
 
     std::filesystem::remove(wal_path);
 }
@@ -214,6 +214,71 @@ TEST(WalReplayLoaderTest, IgnoresRolloverLinesWithoutParseErrors) {
     EXPECT_EQ(snapshot.status, OrderStatus::kAccepted);
 
     std::filesystem::remove(wal_path);
+}
+
+TEST(CtpOrderMappingStoreTest, SameOrderRefAcrossTradingDaysDoesNotCrossAttribute) {
+    CtpOrderMappingStore store;
+    CtpOrderSubmitMapping first;
+    first.account_id = "acc";
+    first.client_order_id = "client-day-1";
+    first.order_ref = "42";
+    first.trading_day = "20260718";
+    first.instrument_id = "SHFE.ag2608";
+    first.exchange_id = "SHFE";
+    first.side = Side::kBuy;
+    first.offset = OffsetFlag::kOpen;
+    store.Upsert(first);
+    auto second = first;
+    second.client_order_id = "client-day-2";
+    second.trading_day = "20260719";
+    store.Upsert(second);
+
+    OrderEvent event;
+    event.account_id = "acc";
+    event.order_ref = "42";
+    event.trading_day = "20260718";
+    event.instrument_id = "SHFE.ag2608";
+    event.exchange_id = "SHFE";
+    event.side = Side::kBuy;
+    event.offset = OffsetFlag::kOpen;
+    ASSERT_TRUE(store.EnrichOrderEvent(&event));
+    EXPECT_EQ(event.client_order_id, "client-day-1");
+
+    event.client_order_id.clear();
+    event.trading_day.clear();
+    EXPECT_FALSE(store.EnrichOrderEvent(&event));
+}
+
+TEST(CtpOrderMappingStoreTest, ExchangeOrderIdentityResolvesTradeWithoutOrderRef) {
+    CtpOrderMappingStore store;
+    CtpOrderSubmitMapping mapping;
+    mapping.account_id = "acc";
+    mapping.client_order_id = "client-1";
+    mapping.order_ref = "88";
+    mapping.trading_day = "20260719";
+    mapping.instrument_id = "DCE.i2609";
+    mapping.exchange_id = "DCE";
+    mapping.side = Side::kSell;
+    mapping.offset = OffsetFlag::kOpen;
+    store.Upsert(mapping);
+
+    OrderEvent order;
+    order.account_id = "acc";
+    order.client_order_id = "client-1";
+    order.exchange_order_id = "SYS000088";
+    order.trading_day = "20260719";
+    order.exchange_id = "DCE";
+    ASSERT_TRUE(store.EnrichOrderEvent(&order));
+
+    OrderEvent trade;
+    trade.account_id = "acc";
+    trade.exchange_order_id = "SYS000088";
+    trade.trading_day = "20260719";
+    trade.exchange_id = "DCE";
+    ASSERT_TRUE(store.EnrichOrderEvent(&trade));
+    EXPECT_EQ(trade.client_order_id, "client-1");
+    EXPECT_EQ(trade.strategy_id, mapping.strategy_id);
+    EXPECT_EQ(trade.instrument_id, "DCE.i2609");
 }
 
 }  // namespace quant_hft

@@ -94,10 +94,11 @@ std::string KafkaMarketBusProducer::SerializeMarketSnapshotJson(const MarketSnap
         << "\"settlement_price\":" << snapshot.settlement_price << ","
         << "\"average_price_raw\":" << snapshot.average_price_raw << ","
         << "\"average_price_norm\":" << snapshot.average_price_norm << ","
+        << "\"average_price_norm_valid\":" << (snapshot.average_price_norm_valid ? "true" : "false")
+        << ","
         << "\"is_valid_settlement\":" << (snapshot.is_valid_settlement ? "true" : "false") << ","
         << "\"exchange_ts_ns\":" << snapshot.exchange_ts_ns << ","
-        << "\"recv_ts_ns\":" << snapshot.recv_ts_ns
-        << "}";
+        << "\"recv_ts_ns\":" << snapshot.recv_ts_ns << "}";
     return oss.str();
 }
 
@@ -106,14 +107,12 @@ bool KafkaMarketBusProducer::IsSafeKafkaName(const std::string& text) {
         return false;
     }
     return std::all_of(text.begin(), text.end(), [](unsigned char ch) {
-        return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
-               (ch >= '0' && ch <= '9') || ch == '.' || ch == '_' || ch == '-' || ch == ':' ||
-               ch == ',';
+        return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
+               ch == '.' || ch == '_' || ch == '-' || ch == ':' || ch == ',';
     });
 }
 
-std::string KafkaMarketBusProducer::ReplaceAll(std::string text,
-                                               const std::string& pattern,
+std::string KafkaMarketBusProducer::ReplaceAll(std::string text, const std::string& pattern,
                                                const std::string& replacement) {
     if (pattern.empty()) {
         return text;

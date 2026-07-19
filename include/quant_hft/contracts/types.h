@@ -73,6 +73,21 @@ enum class RiskAction {
     kReview,
 };
 
+// Order admission is deliberately separate from transport readiness.  A disconnected
+// transport is kBlocked, while a recovered transport with unresolved reconciliation is
+// kCloseOnly.  Only kReady permits new risk.
+enum class TradingPermissionMode : std::uint8_t {
+    kBlocked = 0,
+    kCloseOnly = 1,
+    kReady = 2,
+};
+
+enum class OrderSubmitMappingPhase : std::uint8_t {
+    kPrepared = 0,
+    kSubmitted = 1,
+    kSubmitFailed = 2,
+};
+
 struct StateDimension {
     double score{0.0};
     double confidence{0.0};
@@ -219,6 +234,9 @@ struct MarketSnapshot {
     bool is_valid_settlement{false};
     EpochNanos exchange_ts_ns{0};
     EpochNanos recv_ts_ns{0};
+    // False means the contract multiplier was unavailable and average_price_norm must not be
+    // consumed.  Kept at the end for append-only CSV/schema compatibility.
+    bool average_price_norm_valid{false};
 };
 
 struct StateSnapshot7D {
@@ -277,6 +295,9 @@ struct SignalIntent {
     double limit_price{0.0};
     EpochNanos ts_ns{0};
     std::string trace_id;
+    // Wall-clock generation time assigned by StrategyEngine. ts_ns remains the source market
+    // event time so candidate audit and execution-age semantics are not conflated.
+    EpochNanos generated_ts_ns{0};
 };
 
 struct OrderIntent {
@@ -294,6 +315,10 @@ struct OrderIntent {
     double price{0.0};
     EpochNanos ts_ns{0};
     std::string trace_id;
+    std::string exchange_id;
+    std::string trading_day;
+    EpochNanos signal_ts_ns{0};
+    EpochNanos market_recv_ts_ns{0};
 };
 
 struct CtpOrderSubmitMapping {
@@ -313,6 +338,8 @@ struct CtpOrderSubmitMapping {
     std::int32_t session_id{0};
     std::int32_t request_id{0};
     EpochNanos submit_ts_ns{0};
+    std::string trading_day;
+    OrderSubmitMappingPhase phase{OrderSubmitMappingPhase::kPrepared};
 };
 
 struct RiskDecision {
@@ -363,6 +390,31 @@ struct OrderEvent {
     std::string route_id;
     double slippage_bps{0.0};
     double impact_cost{0.0};
+    std::string trading_day;
+    std::string raw_trade_id;
+    std::int32_t query_request_id{0};
+    std::uint64_t recovery_generation{0};
+};
+
+inline std::string BuildCanonicalTradeKey(const OrderEvent& event) {
+    const std::string& raw_trade_id =
+        event.raw_trade_id.empty() ? event.trade_id : event.raw_trade_id;
+    if (event.account_id.empty() || event.trading_day.empty() || event.exchange_id.empty() ||
+        raw_trade_id.empty()) {
+        return {};
+    }
+    return event.account_id + "|" + event.trading_day + "|" + event.exchange_id + "|" +
+           raw_trade_id;
+}
+
+struct PendingExit {
+    std::string account_id;
+    std::string strategy_id;
+    std::string instrument_id;
+    PositionDirection position_side{PositionDirection::kLong};
+    SignalType signal_type{SignalType::kClose};
+    std::string trace_id;
+    EpochNanos trigger_ts_ns{0};
 };
 
 struct PositionSnapshot {

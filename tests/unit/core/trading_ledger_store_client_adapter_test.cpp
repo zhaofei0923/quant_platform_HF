@@ -1,13 +1,14 @@
+#include "quant_hft/core/trading_ledger_store_client_adapter.h"
+
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
-#include <gtest/gtest.h>
-
 #include "quant_hft/contracts/types.h"
-#include "quant_hft/core/trading_ledger_store_client_adapter.h"
 #include "quant_hft/core/timescale_sql_client.h"
 
 namespace quant_hft {
@@ -15,7 +16,7 @@ namespace quant_hft {
 namespace {
 
 class FakeTimescaleSqlClient : public ITimescaleSqlClient {
-public:
+   public:
     explicit FakeTimescaleSqlClient(int transient_fail_times)
         : transient_fail_times_(transient_fail_times) {}
 
@@ -58,9 +59,7 @@ public:
     }
 
     std::vector<std::unordered_map<std::string, std::string>> QueryRows(
-        const std::string& table,
-        const std::string& key,
-        const std::string& value,
+        const std::string& table, const std::string& key, const std::string& value,
         std::string* error) const override {
         (void)error;
         const auto table_it = tables_.find(table);
@@ -78,8 +77,7 @@ public:
     }
 
     std::vector<std::unordered_map<std::string, std::string>> QueryAllRows(
-        const std::string& table,
-        std::string* error) const override {
+        const std::string& table, std::string* error) const override {
         (void)error;
         const auto table_it = tables_.find(table);
         if (table_it == tables_.end()) {
@@ -103,11 +101,10 @@ public:
         return it->second.size();
     }
 
-private:
+   private:
     int transient_fail_times_{0};
     int insert_calls_{0};
-    std::unordered_map<std::string,
-                       std::vector<std::unordered_map<std::string, std::string>>>
+    std::unordered_map<std::string, std::vector<std::unordered_map<std::string, std::string>>>
         tables_;
     std::unordered_set<std::string> idempotency_keys_;
     std::unordered_set<std::string> replay_streams_;
@@ -120,6 +117,7 @@ OrderEvent BuildOrderEvent() {
     event.exchange_order_id = "ex-1";
     event.instrument_id = "SHFE.ag2406";
     event.exchange_id = "SHFE";
+    event.trading_day = "20260719";
     event.status = OrderStatus::kAccepted;
     event.total_volume = 5;
     event.filled_volume = 2;
@@ -171,6 +169,7 @@ TEST(TradingLedgerStoreClientAdapterTest, WritesTradeRowsIntoConfiguredSchema) {
     OrderEvent event = BuildOrderEvent();
     event.status = OrderStatus::kFilled;
     event.trade_id = "trade-1";
+    event.raw_trade_id = "trade-1";
     std::string error;
     EXPECT_TRUE(adapter.AppendTradeEvent(event, &error)) << error;
     EXPECT_EQ(client->table_row_count("trading_core.trade_events"), 1U);

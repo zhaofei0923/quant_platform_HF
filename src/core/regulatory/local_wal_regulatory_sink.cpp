@@ -58,7 +58,7 @@ bool LocalWalRegulatorySink::Append(const char* kind, const char* event_type,
     std::ostringstream oss;
     oss << "{"
         << "\"seq\":" << seq_++ << ","
-        << "\"schema_version\":2,"
+        << "\"schema_version\":3,"
         << "\"kind\":\"" << kind << "\","
         << "\"event_type\":\"" << event_type << "\","
         << "\"run_id\":\"" << EscapeJsonString(run_id_) << "\","
@@ -72,6 +72,8 @@ bool LocalWalRegulatorySink::Append(const char* kind, const char* event_type,
         << "\"instrument_id\":\"" << EscapeJsonString(event.instrument_id) << "\","
         << "\"exchange_id\":\"" << EscapeJsonString(event.exchange_id) << "\","
         << "\"trade_id\":\"" << EscapeJsonString(event.trade_id) << "\","
+        << "\"raw_trade_id\":\"" << EscapeJsonString(event.raw_trade_id) << "\","
+        << "\"trading_day\":\"" << EscapeJsonString(event.trading_day) << "\","
         << "\"event_source\":\"" << EscapeJsonString(event.event_source) << "\","
         << "\"side\":" << static_cast<int>(event.side) << ","
         << "\"offset\":" << static_cast<int>(event.offset) << ","
@@ -86,6 +88,8 @@ bool LocalWalRegulatorySink::Append(const char* kind, const char* event_type,
         << "\"order_ref\":\"" << EscapeJsonString(event.order_ref) << "\","
         << "\"front_id\":" << event.front_id << ","
         << "\"session_id\":" << event.session_id << ","
+        << "\"query_request_id\":" << event.query_request_id << ","
+        << "\"recovery_generation\":" << event.recovery_generation << ","
         << "\"trace_id\":\"" << EscapeJsonString(event.trace_id) << "\""
         << "}\n";
 
@@ -103,7 +107,7 @@ bool LocalWalRegulatorySink::AppendMapping(const CtpOrderSubmitMapping& mapping)
     std::ostringstream oss;
     oss << "{"
         << "\"seq\":" << seq_++ << ","
-        << "\"schema_version\":2,"
+        << "\"schema_version\":3,"
         << "\"kind\":\"ctp_order_submit_mapping\","
         << "\"event_type\":\"ctp_submit_mapping\","
         << "\"run_id\":\"" << EscapeJsonString(run_id) << "\","
@@ -121,7 +125,9 @@ bool LocalWalRegulatorySink::AppendMapping(const CtpOrderSubmitMapping& mapping)
         << "\"order_ref\":\"" << EscapeJsonString(mapping.order_ref) << "\","
         << "\"front_id\":" << mapping.front_id << ","
         << "\"session_id\":" << mapping.session_id << ","
-        << "\"request_id\":" << mapping.request_id << "}\n";
+        << "\"request_id\":" << mapping.request_id << ","
+        << "\"trading_day\":\"" << EscapeJsonString(mapping.trading_day) << "\","
+        << "\"phase\":" << static_cast<int>(mapping.phase) << "}\n";
 
     stream_ << oss.str();
     return stream_.good();

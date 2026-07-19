@@ -331,4 +331,70 @@ TEST(CtpPositionLedgerTest, ExchangeAndHedgeFlagSeparatePositionBuckets) {
     EXPECT_EQ(ledger.GetClosableVolume("acc-1", "rb2405", PositionDirection::kLong, "today"), 0);
 }
 
+TEST(CtpPositionLedgerTest, BatchReplacementRemovesPositionsMissingFromBrokerTruth) {
+    CtpPositionLedger ledger;
+    std::string error;
+    ASSERT_TRUE(ledger.ApplyInvestorPositionSnapshot(
+        MakePositionSnapshot(4, "rb2405", "SHFE", PositionDirection::kLong, "today"), &error));
+    ASSERT_TRUE(ledger.ApplyInvestorPositionSnapshot(
+        MakePositionSnapshot(7, "ag2406", "SHFE", PositionDirection::kShort, "yesterday"), &error));
+
+    const std::vector<InvestorPositionSnapshot> replacement = {
+        MakePositionSnapshot(2, "rb2405", "SHFE", PositionDirection::kLong, "today")};
+    ASSERT_TRUE(ledger.ReplaceInvestorPositionSnapshotBatch("acc-1", replacement, &error)) << error;
+
+    EXPECT_EQ(
+        ledger.GetPosition("acc-1", "rb2405", PositionDirection::kLong, "today", "SHFE").position,
+        2);
+    EXPECT_EQ(ledger.GetPosition("acc-1", "ag2406", PositionDirection::kShort, "yesterday", "SHFE")
+                  .position,
+              0);
+}
+
+TEST(CtpPositionLedgerTest, EmptyBatchAuthoritativelyClearsAccountOnly) {
+    CtpPositionLedger ledger;
+    std::string error;
+    ASSERT_TRUE(ledger.ApplyInvestorPositionSnapshot(MakeLongTodaySnapshot(5), &error));
+    auto other_account = MakePositionSnapshot(8, "rb2405");
+    other_account.account_id = "acc-2";
+    ASSERT_TRUE(ledger.ApplyInvestorPositionSnapshot(other_account, &error));
+
+    ASSERT_TRUE(ledger.ReplaceInvestorPositionSnapshotBatch("acc-1", {}, &error)) << error;
+
+    EXPECT_EQ(ledger.GetPosition("acc-1", "SHFE.ag2406", PositionDirection::kLong, "today", "SHFE")
+                  .position,
+              0);
+    EXPECT_EQ(
+        ledger.GetPosition("acc-2", "rb2405", PositionDirection::kLong, "today", "SHFE").position,
+        8);
+}
+
+TEST(CtpPositionLedgerTest, InvalidBatchDoesNotPartiallyReplaceAccount) {
+    CtpPositionLedger ledger;
+    std::string error;
+    ASSERT_TRUE(ledger.ApplyInvestorPositionSnapshot(MakeLongTodaySnapshot(5), &error));
+    auto valid = MakePositionSnapshot(9);
+    auto foreign = MakePositionSnapshot(3, "rb2405");
+    foreign.account_id = "acc-2";
+
+    EXPECT_FALSE(ledger.ReplaceInvestorPositionSnapshotBatch("acc-1", {valid, foreign}, &error));
+    EXPECT_EQ(ledger.GetPosition("acc-1", "SHFE.ag2406", PositionDirection::kLong, "today", "SHFE")
+                  .position,
+              5);
+}
+
+TEST(CtpPositionLedgerTest, DuplicateNormalizedBrokerKeyIsRejectedAtomically) {
+    CtpPositionLedger ledger;
+    std::string error;
+    ASSERT_TRUE(ledger.ApplyInvestorPositionSnapshot(MakeLongTodaySnapshot(5), &error));
+    auto first = MakePositionSnapshot(2);
+    auto duplicate = first;
+    duplicate.position = 3;
+
+    EXPECT_FALSE(ledger.ReplaceInvestorPositionSnapshotBatch("acc-1", {first, duplicate}, &error));
+    EXPECT_EQ(ledger.GetPosition("acc-1", "SHFE.ag2406", PositionDirection::kLong, "today", "SHFE")
+                  .position,
+              5);
+}
+
 }  // namespace quant_hft

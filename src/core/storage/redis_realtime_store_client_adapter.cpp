@@ -48,6 +48,8 @@ void RedisRealtimeStoreClientAdapter::UpsertMarketSnapshot(const MarketSnapshot&
         {"bid_volume_1", ToString(snapshot.bid_volume_1)},
         {"ask_volume_1", ToString(snapshot.ask_volume_1)},
         {"volume", ToString(snapshot.volume)},
+        {"average_price_norm", ToString(snapshot.average_price_norm)},
+        {"average_price_norm_valid", snapshot.average_price_norm_valid ? "1" : "0"},
         {"exchange_ts_ns", ToString(snapshot.exchange_ts_ns)},
         {"recv_ts_ns", ToString(snapshot.recv_ts_ns)},
     };
@@ -184,6 +186,11 @@ bool RedisRealtimeStoreClientAdapter::GetMarketSnapshot(const std::string& instr
     (void)ParseInt64(row, "bid_volume_1", &snapshot.bid_volume_1);
     (void)ParseInt64(row, "ask_volume_1", &snapshot.ask_volume_1);
     (void)ParseInt64(row, "volume", &snapshot.volume);
+    (void)ParseDouble(row, "average_price_norm", &snapshot.average_price_norm);
+    std::int32_t average_price_norm_valid = 0;
+    if (ParseInt32(row, "average_price_norm_valid", &average_price_norm_valid)) {
+        snapshot.average_price_norm_valid = average_price_norm_valid > 0;
+    }
     (void)ParseInt64(row, "exchange_ts_ns", &snapshot.exchange_ts_ns);
     (void)ParseInt64(row, "recv_ts_ns", &snapshot.recv_ts_ns);
     *out = snapshot;

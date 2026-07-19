@@ -25,13 +25,14 @@ struct MarketDataConnectConfig {
     int reconnect_max_attempts{8};
     int reconnect_initial_backoff_ms{500};
     int reconnect_max_backoff_ms{8'000};
+    int reconnect_cycle_cooldown_ms{8'000};
     int query_retry_backoff_ms{200};
     int recovery_quiet_period_ms{3'000};
     bool settlement_confirm_required{true};
 };
 
 class IMarketDataGateway {
-public:
+   public:
     using MarketDataCallback = std::function<void(const MarketSnapshot&)>;
 
     virtual ~IMarketDataGateway() = default;

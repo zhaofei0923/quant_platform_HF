@@ -40,6 +40,12 @@ class CtpPositionLedger {
    public:
     bool ApplyInvestorPositionSnapshot(const InvestorPositionSnapshot& snapshot,
                                        std::string* error);
+    // Atomically replaces the complete broker-authoritative position book for one
+    // account.  An empty snapshots vector is a valid authoritative zero-position
+    // response and removes every previously known bucket for the account.
+    bool ReplaceInvestorPositionSnapshotBatch(
+        const std::string& account_id, const std::vector<InvestorPositionSnapshot>& snapshots,
+        std::string* error);
     bool RegisterOrderIntent(const CtpOrderIntentForLedger& intent, std::string* error);
     bool ApplyOrderEvent(const OrderEvent& event, std::string* error);
 

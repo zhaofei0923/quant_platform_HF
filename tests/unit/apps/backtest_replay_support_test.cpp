@@ -2291,7 +2291,8 @@ TEST(BacktestReplaySupportTest, LoadCsvTicksAcceptsUtf8BomHeader) {
     std::filesystem::remove(csv_path, ec);
 }
 
-TEST(BacktestReplaySupportTest, RunBacktestSpecIgnoresBoundaryTicksWithoutReplayContextLeak) {
+TEST(BacktestReplaySupportTest,
+     RunBacktestSpecPreservesDiagnosticEndpointsWithoutReplayContextLeak) {
     const std::filesystem::path csv_path = WriteBoundaryReplayCsv("quant_hft_boundary_ticks");
 
     BacktestCliSpec spec;
@@ -2306,7 +2307,8 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecIgnoresBoundaryTicksWithoutReplay
     BacktestCliResult result;
     std::string error;
     ASSERT_TRUE(RunBacktestSpec(spec, &result, &error)) << error;
-    EXPECT_EQ(result.deterministic.instrument_bars.at("c2405"), 6);
+    // Six normal one-minute bars plus the 10:15, 11:30 and 15:00 diagnostic endpoint bars.
+    EXPECT_EQ(result.deterministic.instrument_bars.at("c2405"), 9);
 
     std::error_code ec;
     std::filesystem::remove(csv_path, ec);

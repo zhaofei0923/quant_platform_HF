@@ -1,16 +1,20 @@
+#include "quant_hft/services/daily_settlement_service.h"
+
+#include <gtest/gtest.h>
+
+#include <filesystem>
+#include <fstream>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
-
 #include "quant_hft/core/ctp_trader_adapter.h"
 #include "quant_hft/core/flow_controller.h"
 #include "quant_hft/interfaces/settlement_store.h"
 #include "quant_hft/interfaces/trading_domain_store.h"
-#include "quant_hft/services/daily_settlement_service.h"
 #include "quant_hft/services/settlement_price_provider.h"
 #include "quant_hft/services/settlement_query_client.h"
 
@@ -18,7 +22,7 @@ namespace quant_hft {
 namespace {
 
 class FakeSettlementStore : public ISettlementStore {
-public:
+   public:
     SettlementRunRecord existing_run;
     std::vector<SettlementRunRecord> upserted_runs;
     std::vector<SettlementSummaryRecord> summaries;
@@ -56,8 +60,7 @@ public:
         return true;
     }
 
-    bool GetRun(const std::string& trading_day,
-                SettlementRunRecord* out,
+    bool GetRun(const std::string& trading_day, SettlementRunRecord* out,
                 std::string* error) const override {
         (void)error;
         if (out == nullptr) {
@@ -173,10 +176,8 @@ public:
         return true;
     }
 
-    bool LoadAccountFunds(const std::string& account_id,
-                          const std::string& trading_day,
-                          SettlementAccountFundsRecord* out,
-                          std::string* error) const override {
+    bool LoadAccountFunds(const std::string& account_id, const std::string& trading_day,
+                          SettlementAccountFundsRecord* out, std::string* error) const override {
         (void)error;
         if (out == nullptr) {
             return false;
@@ -191,9 +192,7 @@ public:
         return true;
     }
 
-    bool SumDeposit(const std::string& account_id,
-                    const std::string& trading_day,
-                    double* out,
+    bool SumDeposit(const std::string& account_id, const std::string& trading_day, double* out,
                     std::string* error) const override {
         (void)account_id;
         (void)error;
@@ -207,9 +206,7 @@ public:
         return true;
     }
 
-    bool SumWithdraw(const std::string& account_id,
-                     const std::string& trading_day,
-                     double* out,
+    bool SumWithdraw(const std::string& account_id, const std::string& trading_day, double* out,
                      std::string* error) const override {
         (void)account_id;
         (void)error;
@@ -223,9 +220,7 @@ public:
         return true;
     }
 
-    bool SumCommission(const std::string& account_id,
-                       const std::string& trading_day,
-                       double* out,
+    bool SumCommission(const std::string& account_id, const std::string& trading_day, double* out,
                        std::string* error) const override {
         (void)account_id;
         (void)error;
@@ -239,9 +234,7 @@ public:
         return true;
     }
 
-    bool SumCloseProfit(const std::string& account_id,
-                        const std::string& trading_day,
-                        double* out,
+    bool SumCloseProfit(const std::string& account_id, const std::string& trading_day, double* out,
                         std::string* error) const override {
         (void)account_id;
         (void)error;
@@ -255,7 +248,8 @@ public:
         return true;
     }
 
-    bool UpsertAccountFunds(const SettlementAccountFundsRecord& funds, std::string* error) override {
+    bool UpsertAccountFunds(const SettlementAccountFundsRecord& funds,
+                            std::string* error) override {
         (void)error;
         funds_by_day[funds.trading_day] = funds;
         upserted_funds.push_back(funds);
@@ -278,8 +272,7 @@ public:
         return true;
     }
 
-    bool LoadOrderKeysByDay(const std::string& account_id,
-                            const std::string& trading_day,
+    bool LoadOrderKeysByDay(const std::string& account_id, const std::string& trading_day,
                             std::vector<SettlementOrderKey>* out,
                             std::string* error) const override {
         (void)account_id;
@@ -292,10 +285,8 @@ public:
         return true;
     }
 
-    bool LoadTradeIdsByDay(const std::string& account_id,
-                           const std::string& trading_day,
-                           std::vector<std::string>* out,
-                           std::string* error) const override {
+    bool LoadTradeIdsByDay(const std::string& account_id, const std::string& trading_day,
+                           std::vector<std::string>* out, std::string* error) const override {
         (void)account_id;
         (void)trading_day;
         (void)error;
@@ -306,8 +297,7 @@ public:
         return true;
     }
 
-    bool UpsertSystemConfig(const std::string& key,
-                            const std::string& value,
+    bool UpsertSystemConfig(const std::string& key, const std::string& value,
                             std::string* error) override {
         (void)error;
         system_config[key] = value;
@@ -318,28 +308,26 @@ public:
 };
 
 class FakePriceProvider : public SettlementPriceProvider {
-public:
+   public:
     std::optional<std::pair<double, SettlementPriceSource>> GetSettlementPrice(
-        const std::string& instrument_id,
-        const std::string& trading_day) override {
+        const std::string& instrument_id, const std::string& trading_day) override {
         const auto manual_it = manual.find(trading_day + "|" + instrument_id);
         if (manual_it != manual.end()) {
-            return std::make_pair(manual_it->second,
-                                  SettlementPriceSource{SettlementPriceSource::SourceType::kManual,
-                                                        "manual"});
+            return std::make_pair(
+                manual_it->second,
+                SettlementPriceSource{SettlementPriceSource::SourceType::kManual, "manual"});
         }
         const auto it = prices.find(trading_day + "|" + instrument_id);
         if (it == prices.end()) {
             return std::nullopt;
         }
-        return std::make_pair(it->second,
-                              SettlementPriceSource{SettlementPriceSource::SourceType::kApi,
-                                                    "api"});
+        return std::make_pair(
+            it->second, SettlementPriceSource{SettlementPriceSource::SourceType::kApi, "api"});
     }
 
-    std::unordered_map<std::string, std::pair<double, SettlementPriceSource>> BatchGetSettlementPrices(
-        const std::vector<std::string>& instrument_ids,
-        const std::string& trading_day) override {
+    std::unordered_map<std::string, std::pair<double, SettlementPriceSource>>
+    BatchGetSettlementPrices(const std::vector<std::string>& instrument_ids,
+                             const std::string& trading_day) override {
         std::unordered_map<std::string, std::pair<double, SettlementPriceSource>> result;
         for (const auto& instrument_id : instrument_ids) {
             auto price = GetSettlementPrice(instrument_id, trading_day);
@@ -350,10 +338,8 @@ public:
         return result;
     }
 
-    void SetManualOverride(const std::string& instrument_id,
-                           const std::string& trading_day,
-                           double price,
-                           const std::string& operator_id) override {
+    void SetManualOverride(const std::string& instrument_id, const std::string& trading_day,
+                           double price, const std::string& operator_id) override {
         (void)operator_id;
         manual[trading_day + "|" + instrument_id] = price;
     }
@@ -363,7 +349,7 @@ public:
 };
 
 class FakeTradingDomainStore : public ITradingDomainStore {
-public:
+   public:
     bool UpsertOrder(const Order& order, std::string* error) override {
         (void)error;
         orders.push_back(order);
@@ -401,8 +387,7 @@ public:
         return true;
     }
 
-    bool ExistsProcessedOrderEvent(const std::string& event_key,
-                                   bool* exists,
+    bool ExistsProcessedOrderEvent(const std::string& event_key, bool* exists,
                                    std::string* error) const override {
         (void)event_key;
         (void)error;
@@ -424,10 +409,8 @@ public:
         return true;
     }
 
-    bool LoadPositionSummary(const std::string& account_id,
-                             const std::string& strategy_id,
-                             std::vector<Position>* out,
-                             std::string* error) const override {
+    bool LoadPositionSummary(const std::string& account_id, const std::string& strategy_id,
+                             std::vector<Position>* out, std::string* error) const override {
         (void)account_id;
         (void)strategy_id;
         (void)error;
@@ -437,10 +420,8 @@ public:
         return true;
     }
 
-    bool UpdateOrderCancelRetry(const std::string& client_order_id,
-                                std::int32_t cancel_retry_count,
-                                EpochNanos last_cancel_ts_ns,
-                                std::string* error) override {
+    bool UpdateOrderCancelRetry(const std::string& client_order_id, std::int32_t cancel_retry_count,
+                                EpochNanos last_cancel_ts_ns, std::string* error) override {
         (void)client_order_id;
         (void)cancel_retry_count;
         (void)last_cancel_ts_ns;
@@ -782,6 +763,58 @@ TEST(DailySettlementServiceTest, CompletedRunWithoutForceNoOp) {
     EXPECT_TRUE(result.noop);
     EXPECT_EQ(result.status, "COMPLETED");
     EXPECT_TRUE(store->upserted_runs.empty());
+}
+
+TEST(DailySettlementServiceTest, PublishesValidatedEvidenceAndSuccessDiffAtomically) {
+    const auto root =
+        std::filesystem::temp_directory_path() / "quant_hft_daily_settlement_evidence_test";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+
+    auto store = std::make_shared<FakeSettlementStore>();
+    auto price = std::make_shared<FakePriceProvider>();
+    auto bundle = BuildConnectedQueryClient();
+
+    SettlementAccountFundsRecord prev;
+    prev.exists = true;
+    prev.account_id = "191202";
+    prev.trading_day = "2026-02-11";
+    prev.balance = 0.0;
+    store->funds_by_day["2026-02-11"] = prev;
+
+    DailySettlementConfig config = BaseConfig("191202");
+    config.strict_order_trade_backfill = true;
+    config.evidence_path = (root / "evidence.json").string();
+    config.diff_report_path = (root / "diff.json").string();
+
+    DailySettlementService service(price, store, bundle.query_client);
+    DailySettlementResult result;
+    std::string error;
+    const bool run_ok = service.Run(config, &result, &error);
+    ASSERT_TRUE(run_ok) << error;
+    ASSERT_TRUE(result.success) << result.message;
+    ASSERT_TRUE(service.WriteEvidenceAtomically(config, result, run_ok, error, &error)) << error;
+
+    std::ifstream evidence_in(config.evidence_path);
+    std::ostringstream evidence;
+    evidence << evidence_in.rdbuf();
+    EXPECT_NE(evidence.str().find("\"evidence_complete\": true"), std::string::npos);
+    EXPECT_NE(evidence.str().find("\"valid_success\": true"), std::string::npos);
+    EXPECT_NE(evidence.str().find("\"backfill_completed\": true"), std::string::npos);
+    EXPECT_NE(evidence.str().find("\"reconcile_passed\": true"), std::string::npos);
+
+    std::ifstream diff_in(config.diff_report_path);
+    std::ostringstream diff;
+    diff << diff_in.rdbuf();
+    EXPECT_NE(diff.str().find("\"reconcile_performed\": true"), std::string::npos);
+    EXPECT_NE(diff.str().find("\"diff_count\": 0"), std::string::npos);
+
+    for (const auto& entry : std::filesystem::directory_iterator(root)) {
+        EXPECT_EQ(entry.path().filename().string().find(".tmp."), std::string::npos);
+    }
+
+    bundle.trader->Disconnect();
+    std::filesystem::remove_all(root);
 }
 
 }  // namespace quant_hft

@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <ctime>
 #include <string>
 #include <vector>
 
@@ -62,22 +63,36 @@ MarketStateDetectorConfig MakeCanaryDetectorConfig() {
     return config;
 }
 
+EpochNanos ShanghaiEpochNs(const std::string& day, int hour, int minute, int second = 0) {
+    std::tm local_tm{};
+    local_tm.tm_year = std::stoi(day.substr(0, 4)) - 1900;
+    local_tm.tm_mon = std::stoi(day.substr(4, 2)) - 1;
+    local_tm.tm_mday = std::stoi(day.substr(6, 2));
+    local_tm.tm_hour = hour;
+    local_tm.tm_min = minute;
+    local_tm.tm_sec = second;
+    return (static_cast<EpochNanos>(timegm(&local_tm)) - 8LL * 60LL * 60LL) * 1'000'000'000LL;
+}
+
 }  // namespace
 
-TEST(TimeframeStateFanoutTest, EmitsClosedFiveMinuteBucketOnNextBucket) {
+TEST(TimeframeStateFanoutTest, EmitsClosedFiveMinuteBucketOnTerminalSlot) {
     TimeframeStateFanout fanout({5});
 
+    std::vector<TimeframeStateEmission> terminal_emissions;
     for (int i = 0; i < 5; ++i) {
         const std::string minute = "20260515 09:0" + std::to_string(i);
         const auto emissions = fanout.OnOneMinuteBar(
             MakeOneMinuteBar(minute, 100.0 + i, 101.0 + i, 99.0 + i, 100.5 + i, 10 + i, i + 1));
-        EXPECT_TRUE(emissions.empty());
+        if (i < 4) {
+            EXPECT_TRUE(emissions.empty());
+        } else {
+            terminal_emissions = emissions;
+        }
     }
 
-    const auto emissions = fanout.OnOneMinuteBar(
-        MakeOneMinuteBar("20260515 09:05", 105.0, 106.0, 104.0, 105.5, 20, 6));
-    ASSERT_EQ(emissions.size(), 1U);
-    const auto& emitted = emissions.front();
+    ASSERT_EQ(terminal_emissions.size(), 1U);
+    const auto& emitted = terminal_emissions.front();
     EXPECT_EQ(emitted.timeframe_minutes, 5);
     EXPECT_EQ(emitted.bar.minute, "20260515 09:00");
     EXPECT_DOUBLE_EQ(emitted.bar.open, 100.0);
@@ -87,6 +102,7 @@ TEST(TimeframeStateFanoutTest, EmitsClosedFiveMinuteBucketOnNextBucket) {
     EXPECT_EQ(emitted.bar.volume, 60);
     EXPECT_EQ(emitted.state.timeframe_minutes, 5);
     EXPECT_TRUE(emitted.state.has_bar);
+    EXPECT_TRUE(emitted.strategy_eligible);
     EXPECT_DOUBLE_EQ(emitted.state.effective_bar_close(), 104.5);
 }
 
@@ -235,19 +251,23 @@ TEST(TimeframeStateFanoutTest, FlushInstrumentDoesNotEmitOtherInstrumentPendingB
         EXPECT_TRUE(fanout.OnOneMinuteBar(make_night_bar("DCE.c2609", buf, 100 * m, m)).empty());
     }
 
-    // hc2610: receives all 5 bars 22:55-22:59 (bucket complete)
+    // hc2610: receives all 5 bars 22:55-22:59 and emits immediately on terminal slot.
+    std::vector<TimeframeStateEmission> hc_emissions;
     for (int m = 55; m <= 59; ++m) {
         char buf[8];
         std::snprintf(buf, sizeof(buf), "22:%02d", m);
-        EXPECT_TRUE(fanout.OnOneMinuteBar(make_night_bar("SHFE.hc2610", buf, 200 * m, m)).empty());
+        const auto batch = fanout.OnOneMinuteBar(make_night_bar("SHFE.hc2610", buf, 200 * m, m));
+        if (m < 59) {
+            EXPECT_TRUE(batch.empty());
+        } else {
+            hc_emissions = batch;
+        }
     }
 
-    // Simulate: hc2610's "22:59" becomes ready first → FlushInstrument("SHFE.hc2610")
-    const auto hc_emissions = fanout.FlushInstrument("SHFE.hc2610");
     ASSERT_EQ(hc_emissions.size(), 1U) << "hc2610 22:55 should be emitted";
     EXPECT_EQ(hc_emissions[0].bar.minute, "20260710 22:55");
     EXPECT_EQ(hc_emissions[0].bar.instrument_id, "SHFE.hc2610");
-    EXPECT_EQ(hc_emissions[0].bar.volume, 200*55 + 200*56 + 200*57 + 200*58 + 200*59);
+    EXPECT_EQ(hc_emissions[0].bar.volume, 200 * 55 + 200 * 56 + 200 * 57 + 200 * 58 + 200 * 59);
 
     // c2609's bucket must still be in the fanout (not affected by hc flush)
     const auto after_hc_flush = fanout.Flush();
@@ -256,8 +276,9 @@ TEST(TimeframeStateFanoutTest, FlushInstrumentDoesNotEmitOtherInstrumentPendingB
     EXPECT_EQ(after_hc_flush[0].bar.instrument_id, "DCE.c2609");
     EXPECT_EQ(after_hc_flush[0].bar.minute, "20260710 22:55");
     // Volume should be the SUM of 22:55-22:58 only (4 bars), not including 22:59
-    const int64_t expected_c_vol = 100*55 + 100*56 + 100*57 + 100*58;
+    const int64_t expected_c_vol = 100 * 55 + 100 * 56 + 100 * 57 + 100 * 58;
     EXPECT_EQ(after_hc_flush[0].bar.volume, expected_c_vol);
+    EXPECT_FALSE(after_hc_flush[0].strategy_eligible);
 }
 
 // Verify the complete correct flow: c2609's "22:59" arrives after hc2610's flush,
@@ -288,23 +309,148 @@ TEST(TimeframeStateFanoutTest, FlushInstrumentEmitsCompleteBarAfterLastMinuteArr
     }
 
     // hc2610 gets 22:59 first → hc flush happens
-    fanout.OnOneMinuteBar(make_bar("SHFE.hc2610", "20260710 22:59", 200, 59));
-    const auto hc_flush = fanout.FlushInstrument("SHFE.hc2610");
+    const auto hc_flush = fanout.OnOneMinuteBar(make_bar("SHFE.hc2610", "20260710 22:59", 200, 59));
     ASSERT_EQ(hc_flush.size(), 1U);
     EXPECT_EQ(hc_flush[0].bar.volume, 200 * 5);  // 22:55-22:59, 5 bars × 200
 
     // c2609 still has partial "22:55" (22:55-22:58 only)
     // Now c2609's "22:59" arrives
-    fanout.OnOneMinuteBar(make_bar("DCE.c2609", "20260710 22:59", 100, 59));
-
-    // c2609 flush → must include the 22:59 data (complete bar)
-    const auto c_flush = fanout.FlushInstrument("DCE.c2609");
+    // c2609 terminal slot emits immediately and includes 22:59.
+    const auto c_flush = fanout.OnOneMinuteBar(make_bar("DCE.c2609", "20260710 22:59", 100, 59));
     ASSERT_EQ(c_flush.size(), 1U);
     EXPECT_EQ(c_flush[0].bar.minute, "20260710 22:55");
-    EXPECT_EQ(c_flush[0].bar.volume, 100 * 5);   // 22:55-22:59, 5 bars × 100 (complete!)
-    EXPECT_EQ(c_flush[0].bar.ts_ns, 59);          // ts_ns = last bar's ts_ns
+    EXPECT_EQ(c_flush[0].bar.volume, 100 * 5);  // 22:55-22:59, 5 bars × 100 (complete!)
+    EXPECT_EQ(c_flush[0].bar.ts_ns, 59);        // ts_ns = last bar's ts_ns
 
     // Fanout now empty
+    EXPECT_TRUE(fanout.Flush().empty());
+}
+
+TEST(TimeframeStateFanoutTest, DuplicateOneMinuteBarIsIdempotent) {
+    TimeframeStateFanout fanout({5});
+    const auto first = MakeOneMinuteBar("20260515 09:00", 100.0, 101.0, 99.0, 100.5, 10, 1);
+    EXPECT_TRUE(fanout.OnOneMinuteBar(first).empty());
+    EXPECT_TRUE(fanout.OnOneMinuteBar(first).empty());
+    std::vector<TimeframeStateEmission> emissions;
+    for (int i = 1; i < 5; ++i) {
+        emissions =
+            fanout.OnOneMinuteBar(MakeOneMinuteBar("20260515 09:0" + std::to_string(i), 100.0 + i,
+                                                   101.0 + i, 99.0 + i, 100.5 + i, 10 + i, i + 1));
+    }
+    ASSERT_EQ(emissions.size(), 1U);
+    EXPECT_TRUE(emissions[0].strategy_eligible);
+    EXPECT_EQ(emissions[0].bar.observed_source_bars, 5);
+    EXPECT_EQ(emissions[0].bar.volume, 60);
+}
+
+TEST(TimeframeStateFanoutTest, ConflictingDuplicateMakesBucketNonTradable) {
+    TimeframeStateFanout fanout({5});
+    EXPECT_TRUE(
+        fanout.OnOneMinuteBar(MakeOneMinuteBar("20260515 09:00", 100.0, 101.0, 99.0, 100.5, 10, 1))
+            .empty());
+    EXPECT_TRUE(
+        fanout.OnOneMinuteBar(MakeOneMinuteBar("20260515 09:00", 100.0, 105.0, 99.0, 104.0, 10, 2))
+            .empty());
+    std::vector<TimeframeStateEmission> emissions;
+    for (int i = 1; i < 5; ++i) {
+        emissions =
+            fanout.OnOneMinuteBar(MakeOneMinuteBar("20260515 09:0" + std::to_string(i), 100.0 + i,
+                                                   101.0 + i, 99.0 + i, 100.5 + i, 10 + i, i + 2));
+    }
+    ASSERT_EQ(emissions.size(), 1U);
+    EXPECT_FALSE(emissions[0].bar.is_complete);
+    EXPECT_FALSE(emissions[0].strategy_eligible);
+    EXPECT_FALSE(emissions[0].state.has_bar);
+    EXPECT_EQ(emissions[0].state.market_state_bars_seen, 0U);
+}
+
+TEST(TimeframeStateFanoutTest, MissingMinuteProducesAuditableNonTradablePartial) {
+    TimeframeStateFanout fanout({5});
+    std::vector<TimeframeStateEmission> emissions;
+    for (int i : {0, 1, 3, 4}) {
+        emissions =
+            fanout.OnOneMinuteBar(MakeOneMinuteBar("20260515 09:0" + std::to_string(i), 100.0 + i,
+                                                   101.0 + i, 99.0 + i, 100.5 + i, 10 + i, i + 1));
+    }
+    ASSERT_EQ(emissions.size(), 1U);
+    EXPECT_EQ(emissions[0].bar.expected_source_bars, 5);
+    EXPECT_EQ(emissions[0].bar.observed_source_bars, 4);
+    EXPECT_FALSE(emissions[0].bar.is_complete);
+    EXPECT_FALSE(emissions[0].strategy_eligible);
+    EXPECT_FALSE(emissions[0].state.has_bar);
+}
+
+TEST(TimeframeStateFanoutTest, IncompleteSourceMinuteMakesFiveMinuteBarNonTradable) {
+    TimeframeStateFanout fanout({5});
+    std::vector<TimeframeStateEmission> emissions;
+    for (int i = 0; i < 5; ++i) {
+        BarSnapshot bar = MakeOneMinuteBar("20260515 09:0" + std::to_string(i), 100.0 + i,
+                                           101.0 + i, 99.0 + i, 100.5 + i, 10 + i, i + 1);
+        if (i == 2) {
+            bar.is_complete = false;
+            bar.strategy_eligible = false;
+        }
+        emissions = fanout.OnOneMinuteBar(bar);
+    }
+    ASSERT_EQ(emissions.size(), 1U);
+    EXPECT_EQ(emissions[0].bar.observed_source_bars, 5);
+    EXPECT_FALSE(emissions[0].bar.is_complete);
+    EXPECT_FALSE(emissions[0].strategy_eligible);
+}
+
+TEST(TimeframeStateFanoutTest, WatermarkFinalizesBucketWhoseTerminalMinuteIsMissing) {
+    TimeframeStateFanout fanout({5});
+    for (int i = 0; i < 4; ++i) {
+        EXPECT_TRUE(fanout
+                        .OnOneMinuteBar(MakeOneMinuteBar("20260515 09:0" + std::to_string(i), 100.0,
+                                                         101.0, 99.0, 100.5, 10, i + 1))
+                        .empty());
+    }
+    const auto emissions = fanout.AdvanceWatermark(ShanghaiEpochNs("20260515", 9, 5));
+    ASSERT_EQ(emissions.size(), 1U);
+    EXPECT_EQ(emissions[0].bar.observed_source_bars, 4);
+    EXPECT_FALSE(emissions[0].strategy_eligible);
+}
+
+TEST(TimeframeStateFanoutTest, SessionEndpointIsFinalButNeverStrategyEligible) {
+    TimeframeStateFanout fanout({5});
+    BarSnapshot endpoint = MakeOneMinuteBar("20260515 15:00", 100.0, 102.0, 100.0, 102.0, 2, 10);
+    endpoint.is_session_endpoint = true;
+    endpoint.strategy_eligible = false;
+    const auto emissions = fanout.OnOneMinuteBar(endpoint);
+    ASSERT_EQ(emissions.size(), 1U);
+    EXPECT_TRUE(emissions[0].bar.is_complete);
+    EXPECT_TRUE(emissions[0].bar.is_session_endpoint);
+    EXPECT_FALSE(emissions[0].strategy_eligible);
+    EXPECT_FALSE(emissions[0].state.has_bar);
+}
+
+TEST(TimeframeStateFanoutTest, PersistedSourceMinutesSuppressReplayDuplicate) {
+    TimeframeStateFanout fanout({5});
+    const auto first = MakeOneMinuteBar("20260515 09:00", 100.0, 101.0, 99.0, 100.5, 10, 1);
+    fanout.OnOneMinuteBar(first);
+    TimeframeStateFanout::PersistenceState state;
+    std::string error;
+    ASSERT_TRUE(fanout.SaveState(&state, &error)) << error;
+
+    TimeframeStateFanout restored({5});
+    ASSERT_TRUE(restored.LoadState(state, &error)) << error;
+    EXPECT_TRUE(restored.OnOneMinuteBar(first).empty());
+    std::vector<TimeframeStateEmission> emissions;
+    for (int i = 1; i < 5; ++i) {
+        emissions = restored.OnOneMinuteBar(MakeOneMinuteBar("20260515 09:0" + std::to_string(i),
+                                                             100.0 + i, 101.0 + i, 99.0 + i,
+                                                             100.5 + i, 10 + i, i + 1));
+    }
+    ASSERT_EQ(emissions.size(), 1U);
+    EXPECT_TRUE(emissions[0].strategy_eligible);
+    EXPECT_EQ(emissions[0].bar.volume, 60);
+}
+
+TEST(TimeframeStateFanoutTest, DiscardPendingDoesNotAdvanceDetector) {
+    TimeframeStateFanout fanout({5});
+    fanout.OnOneMinuteBar(MakeOneMinuteBar("20260515 09:00", 100.0, 101.0, 99.0, 100.5, 10, 1));
+    fanout.DiscardPending();
     EXPECT_TRUE(fanout.Flush().empty());
 }
 

@@ -48,6 +48,7 @@ struct DashboardOptions {
     std::string report_root;
     std::string export_root;
     std::string monitor_root;
+    std::string readiness_file;
     std::string ctp_instrument_dir;
     std::string probe_log_dir;
     std::string state_dir;
@@ -203,6 +204,23 @@ struct CtpConnectionStatus {
     std::vector<std::string> recent_events;
 };
 
+struct ReadinessStatus {
+    std::string path;
+    std::string status{"missing"};
+    bool found{false};
+    bool fresh{false};
+    bool healthy{false};
+    std::optional<std::int64_t> age_seconds;
+    std::string mode{"unknown"};
+    std::int64_t generation{0};
+    bool recovery_complete{false};
+    bool trader_ready{false};
+    bool gateway_healthy{false};
+    bool settlement_confirmed{false};
+    std::int64_t pending_exit_count{0};
+    std::int64_t unresolved_mapping_count{0};
+};
+
 struct TradeFillDetail {
     std::string seq;
     std::string time;
@@ -276,6 +294,7 @@ struct DashboardState {
     WalStatus wal;
     DailyStatus daily;
     SignalMonitorStatus signal_monitor;
+    ReadinessStatus readiness;
     CtpConnectionStatus ctp_connection;
     CtpOrderFlowStatus ctp_order_flow;
     std::vector<PositionRow> positions;
@@ -1856,6 +1875,56 @@ CtpConnectionStatus CollectCtpConnectionStatus(const DashboardOptions& options,
     return status;
 }
 
+ReadinessStatus CollectReadinessStatus(const DashboardOptions& options) {
+    ReadinessStatus status;
+    status.path = options.readiness_file;
+    const auto payload = ReadTextFile(options.readiness_file);
+    if (!payload.has_value()) {
+        return status;
+    }
+
+    status.found = true;
+    status.age_seconds = FileAgeSeconds(options.readiness_file);
+    status.fresh = status.age_seconds.has_value() && *status.age_seconds <= 10;
+    status.mode = ExtractJsonString(*payload, "mode");
+    if (status.mode.empty()) {
+        status.mode = "unknown";
+    }
+    status.generation = ExtractJsonInt(*payload, "generation").value_or(0);
+    status.recovery_complete = ExtractJsonBool(*payload, "recovery_complete").value_or(false);
+    status.trader_ready = ExtractJsonBool(*payload, "trader_ready").value_or(false);
+    status.gateway_healthy = ExtractJsonBool(*payload, "gateway_healthy").value_or(false);
+    status.settlement_confirmed = ExtractJsonBool(*payload, "settlement_confirmed").value_or(false);
+    status.pending_exit_count = ExtractJsonInt(*payload, "pending_exit_count").value_or(0);
+    status.unresolved_mapping_count =
+        ExtractJsonInt(*payload, "unresolved_mapping_count").value_or(0);
+    status.healthy = status.fresh && status.mode == "Ready" && status.recovery_complete &&
+                     status.trader_ready && status.gateway_healthy && status.settlement_confirmed &&
+                     status.unresolved_mapping_count == 0;
+    status.status = status.fresh ? status.mode : "stale";
+    return status;
+}
+
+void ApplyStructuredReadiness(const ReadinessStatus& readiness, CtpConnectionStatus* connection) {
+    if (connection == nullptr || !readiness.found) {
+        return;
+    }
+    connection->td_front = readiness.gateway_healthy ? "connected" : "disconnected";
+    connection->md_front = readiness.gateway_healthy ? "connected" : "disconnected";
+    connection->login_status = readiness.trader_ready ? "logged_in" : "not_ready";
+    connection->settlement_status = readiness.settlement_confirmed ? "confirmed" : "unconfirmed";
+    connection->status = readiness.healthy ? "connected" : "degraded";
+    connection->healthy = readiness.healthy;
+    if (!readiness.fresh) {
+        connection->last_error = "structured readiness heartbeat is stale";
+    } else if (readiness.unresolved_mapping_count > 0) {
+        connection->last_error =
+            "unresolved order/trade mappings=" + std::to_string(readiness.unresolved_mapping_count);
+    } else if (readiness.mode != "Ready") {
+        connection->last_error = "trading permission mode=" + readiness.mode;
+    }
+}
+
 void UpdateCtpOrderFlowFromLine(const std::string& line, const std::string& source,
                                 CtpOrderFlowStatus* flow) {
     if (flow == nullptr || line.empty()) {
@@ -2389,6 +2458,26 @@ std::string RenderStateJson(const DashboardState& state) {
     out << "    ]\n";
     out << "  },\n";
 
+    out << "  \"readiness\": {\n";
+    out << "    \"path\": " << JsonString(state.readiness.path) << ",\n";
+    out << "    \"status\": " << JsonString(state.readiness.status) << ",\n";
+    out << "    \"found\": " << (state.readiness.found ? "true" : "false") << ",\n";
+    out << "    \"fresh\": " << (state.readiness.fresh ? "true" : "false") << ",\n";
+    out << "    \"healthy\": " << (state.readiness.healthy ? "true" : "false") << ",\n";
+    out << "    \"age_seconds\": " << JsonOptionalInt(state.readiness.age_seconds) << ",\n";
+    out << "    \"mode\": " << JsonString(state.readiness.mode) << ",\n";
+    out << "    \"generation\": " << state.readiness.generation << ",\n";
+    out << "    \"recovery_complete\": " << (state.readiness.recovery_complete ? "true" : "false")
+        << ",\n";
+    out << "    \"trader_ready\": " << (state.readiness.trader_ready ? "true" : "false") << ",\n";
+    out << "    \"gateway_healthy\": " << (state.readiness.gateway_healthy ? "true" : "false")
+        << ",\n";
+    out << "    \"settlement_confirmed\": "
+        << (state.readiness.settlement_confirmed ? "true" : "false") << ",\n";
+    out << "    \"pending_exit_count\": " << state.readiness.pending_exit_count << ",\n";
+    out << "    \"unresolved_mapping_count\": " << state.readiness.unresolved_mapping_count << "\n";
+    out << "  },\n";
+
     out << "  \"ctp_connection\": {\n";
     out << "    \"status\": " << JsonString(state.ctp_connection.status) << ",\n";
     out << "    \"healthy\": " << (state.ctp_connection.healthy ? "true" : "false") << ",\n";
@@ -2788,6 +2877,8 @@ std::string RenderHtml(const DashboardState& state) {
     // Panel 1: Status bar — consolidated system health.
     html << "<section class=\"panel span-12\"><h2>System Status</h2><div class=\"metrics\">";
     html << RenderMetric("core_engine", state.process.status);
+    html << RenderMetric("permission", state.readiness.found ? state.readiness.mode : "legacy");
+    html << RenderMetric("recovery gen", state.readiness.generation);
     html << RenderMetric("CTP", state.ctp_connection.status);
     html << RenderMetric("settlement", state.ctp_connection.settlement_status);
     html << RenderMetric("signal monitor", state.signal_monitor.status);
@@ -2910,6 +3001,10 @@ DashboardOptions ParseOptions(int argc, char** argv, std::string* error) {
         args, "export-root", DefaultPathFromRoot("runtime/trading/exports/simnow"));
     options.monitor_root = quant_hft::apps::GetArg(
         args, "monitor-root", DefaultPathFromRoot("runtime/trading/monitor/simnow"));
+    options.readiness_file = quant_hft::apps::GetArg(
+        args, "readiness-file",
+        GetEnvOrDefault("QUANT_HFT_READINESS_FILE",
+                        (fs::path(options.monitor_root) / "readiness.json").string()));
     options.ctp_instrument_dir = quant_hft::apps::GetArg(
         args, "ctp-instrument-dir", DefaultPathFromRoot("runtime/ctp_instruments"));
     options.probe_log_dir = quant_hft::apps::GetArg(
@@ -3125,6 +3220,7 @@ DashboardState CollectState(const DashboardOptions& options) {
         {"export_root", options.export_root},
         {"output_dir", options.output_dir},
         {"monitor_root", options.monitor_root},
+        {"readiness_file", options.readiness_file},
         {"ctp_instrument_dir", options.ctp_instrument_dir},
         {"probe_log_dir", options.probe_log_dir},
         {"state_dir", options.state_dir},
@@ -3136,7 +3232,9 @@ DashboardState CollectState(const DashboardOptions& options) {
     state.wal = CollectWalStatus(options);
     state.daily = CollectDailyStatus(options);
     state.signal_monitor = CollectSignalMonitorStatus(options);
+    state.readiness = CollectReadinessStatus(options);
     state.ctp_connection = CollectCtpConnectionStatus(options, state.process, state.contracts);
+    ApplyStructuredReadiness(state.readiness, &state.ctp_connection);
     state.ctp_order_flow =
         CollectCtpOrderFlowStatus(options, state.signal_monitor, state.wal, state.process);
     state.positions = CollectPositions(options, &state.positions_source);
@@ -3148,8 +3246,11 @@ DashboardState CollectState(const DashboardOptions& options) {
         market_healthy = std::all_of(state.markets.begin(), state.markets.end(),
                                      [](const auto& item) { return item.healthy; });
     }
-    state.live_healthy = state.process.healthy && (waiting_for_window || market_healthy) &&
-                         state.signal_monitor.healthy && state.ctp_connection.healthy &&
+    const bool structured_readiness_healthy =
+        !state.readiness.found || state.readiness.healthy || waiting_for_window;
+    state.live_healthy = state.process.healthy && structured_readiness_healthy &&
+                         (waiting_for_window || market_healthy) && state.signal_monitor.healthy &&
+                         state.ctp_connection.healthy &&
                          state.ctp_order_flow.monitor_incidents == 0 &&
                          state.ctp_order_flow.ctp_submit_rejected == 0;
     state.overall_healthy = state.live_healthy;
@@ -3175,6 +3276,9 @@ DashboardState CollectState(const DashboardOptions& options) {
         ++state.live_warning_count;
     }
     if (state.ctp_connection.status == "degraded") {
+        ++state.live_warning_count;
+    }
+    if (state.readiness.found && !state.readiness.healthy && !waiting_for_window) {
         ++state.live_warning_count;
     }
     if (state.ctp_order_flow.status == "attention") {

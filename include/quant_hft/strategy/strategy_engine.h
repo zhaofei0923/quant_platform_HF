@@ -77,6 +77,9 @@ class StrategyEngine {
         const std::unordered_map<std::string, std::int32_t>& authoritative_net,
         const std::unordered_map<std::string, double>& authoritative_avg_open = {});
     std::vector<StrategyMetric> CollectAllMetrics() const;
+    // Waits until every event enqueued before the call has completed its strategy callback.
+    // Used as the recovery barrier before trading permission can leave Blocked.
+    bool WaitUntilDrained(std::int64_t timeout_ms);
 
     Stats GetStats() const;
 
@@ -133,6 +136,7 @@ class StrategyEngine {
     Stats stats_;
     bool running_{false};
     bool stop_requested_{false};
+    bool dispatching_{false};
     EpochNanos last_state_snapshot_ns_{0};
     EpochNanos last_metrics_collect_ns_{0};
 

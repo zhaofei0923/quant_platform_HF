@@ -100,7 +100,10 @@ std::vector<PlannedOrder> ExecutionPlanner::BuildPlan(
     if (!order_price.has_value()) {
         return out;
     }
-    const auto base_ts = signal.ts_ns == 0 ? NowEpochNanos() : signal.ts_ns;
+    const auto base_ts = signal.generated_ts_ns > 0
+                             ? signal.generated_ts_ns
+                             : (signal.ts_ns == 0 ? NowEpochNanos() : signal.ts_ns);
+    const MarketSnapshot* latest_market = recent_market.empty() ? nullptr : &recent_market.back();
     const auto algo_id = AlgoToId(config.algo);
     const std::int32_t total = static_cast<std::int32_t>(volume_plan.size());
     out.reserve(volume_plan.size());
@@ -115,6 +118,20 @@ std::vector<PlannedOrder> ExecutionPlanner::BuildPlan(
         planned.intent.volume = volume_plan[idx];
         planned.intent.price = *order_price;
         planned.intent.ts_ns = base_ts + static_cast<EpochNanos>(idx + 1);
+        planned.intent.signal_ts_ns = base_ts;
+        if (latest_market != nullptr) {
+            planned.intent.exchange_id = latest_market->exchange_id;
+            planned.intent.trading_day = latest_market->trading_day.empty()
+                                             ? latest_market->action_day
+                                             : latest_market->trading_day;
+            planned.intent.market_recv_ts_ns = latest_market->recv_ts_ns;
+        }
+        if (planned.intent.exchange_id.empty()) {
+            const std::size_t separator = signal.instrument_id.find('.');
+            if (separator != std::string::npos) {
+                planned.intent.exchange_id = signal.instrument_id.substr(0, separator);
+            }
+        }
         planned.slice_index = static_cast<std::int32_t>(idx + 1);
         planned.slice_total = total;
         planned.execution_algo_id = algo_id;

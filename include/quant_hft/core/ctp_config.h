@@ -43,6 +43,7 @@ struct CtpRuntimeConfig {
     int reconnect_max_attempts{8};
     int reconnect_initial_backoff_ms{500};
     int reconnect_max_backoff_ms{8'000};
+    int reconnect_cycle_cooldown_ms{8'000};
     int recovery_quiet_period_ms{3'000};
     int query_retry_backoff_ms{200};
     int order_insert_rate_per_sec{50};
@@ -132,6 +133,20 @@ struct ExecutionConfig {
     // 0 disables timeout-based cancel requests.
     int cancel_after_ms{0};
     int cancel_check_interval_ms{200};
+    bool session_gate_enabled{true};
+    int max_signal_age_ms{2'000};
+    int max_market_tick_age_ms{6'000};
+    int open_session_end_guard_ms{30'000};
+    int recovery_query_timeout_ms{30'000};
+    int open_reenable_stability_ms{30'000};
+};
+
+struct MarketBarRuntimeConfig {
+    int allowed_lateness_ms{3'500};
+    int poll_interval_ms{100};
+    int checkpoint_interval_ms{1'000};
+    int event_delay_hard_ms{5'000};
+    bool require_complete_timeframe_bar{true};
 };
 
 struct MarketDataRecordingConfig {

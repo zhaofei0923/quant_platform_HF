@@ -697,9 +697,10 @@ std::vector<SignalIntent> KamaTrendStrategy::OnState(const StateSnapshot7D& stat
                 entry_signal.trace_id = BuildSignalTraceId(id_, entry_signal.signal_type,
                                                            state.instrument_id, state.ts_ns);
                 EmitKamaStrategyLog(
-                    ctx, "info", "open_signal_emitted",
+                    ctx, "info", "signal_candidate",
                     {{"strategy_id", id_},
-                     {"event_type", "open_signal"},
+                     {"event_type", "signal_candidate"},
+                     {"candidate_type", "open"},
                      {"event_ts_ns", std::to_string(state.ts_ns)},
                      {"trace_id", entry_signal.trace_id},
                      {"instrument_id", state.instrument_id},
@@ -759,14 +760,11 @@ std::vector<SignalIntent> KamaTrendStrategy::OnState(const StateSnapshot7D& stat
             take_profit_by_instrument_.erase(state.instrument_id);
         }
 
-        if (!has_entry_signal) {
-            return {};
-        }
-        const Side position_side = position > 0 ? Side::kBuy : Side::kSell;
-        if (entry_signal.side == position_side) {
-            return {};
-        }
-        return {entry_signal};
+        // Position ownership, same-direction and reverse-open policy are composite concerns.
+        // Always surface a mathematically valid candidate so the composite trace records the
+        // actual gate reason instead of incorrectly reporting no_raw_signal.
+        return has_entry_signal ? std::vector<SignalIntent>{entry_signal}
+                                : std::vector<SignalIntent>{};
     }
 
     trailing_stop_by_instrument_.erase(state.instrument_id);
@@ -801,8 +799,7 @@ std::vector<SignalIntent> KamaTrendStrategy::OnBacktestTick(const AtomicTickSnap
     const double avg_open_price = avg_price_it->second;
     const int direction = position > 0 ? 1 : -1;
     if (stop_loss_mode_ == "trailing_atr") {
-        if (last_stop_atr_.has_value() && std::isfinite(*last_stop_atr_) &&
-            *last_stop_atr_ > 0.0) {
+        if (last_stop_atr_.has_value() && std::isfinite(*last_stop_atr_) && *last_stop_atr_ > 0.0) {
             const double stop_distance = stop_loss_atr_multiplier_ * (*last_stop_atr_);
             const double base_stop =
                 direction > 0 ? (avg_open_price - stop_distance) : (avg_open_price + stop_distance);

@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <unordered_map>
@@ -28,6 +29,19 @@ MarketSnapshot MakeSnapshot(const std::string& instrument_id, const std::string&
     return snapshot;
 }
 
+EpochNanos ShanghaiEpochNs(const std::string& day, int hour, int minute, int second = 0,
+                           int millis = 0) {
+    std::tm local_tm{};
+    local_tm.tm_year = std::stoi(day.substr(0, 4)) - 1900;
+    local_tm.tm_mon = std::stoi(day.substr(4, 2)) - 1;
+    local_tm.tm_mday = std::stoi(day.substr(6, 2));
+    local_tm.tm_hour = hour;
+    local_tm.tm_min = minute;
+    local_tm.tm_sec = second;
+    return (static_cast<EpochNanos>(timegm(&local_tm)) - 8LL * 60LL * 60LL) * 1'000'000'000LL +
+           static_cast<EpochNanos>(millis) * 1'000'000LL;
+}
+
 TEST(BarAggregatorTest, EmitsClosedMinuteBarWhenMinuteRolls) {
     BarAggregator aggregator;
 
@@ -40,8 +54,11 @@ TEST(BarAggregatorTest, EmitsClosedMinuteBarWhenMinuteRolls) {
                                                    "09:00:45", 200, 12.0, 108))
                     .empty());
 
-    const auto bars = aggregator.OnMarketSnapshot(
-        MakeSnapshot("SHFE.ag2406", "20260211", "20260211", "09:01:02", 50, 11.0, 120));
+    EXPECT_TRUE(aggregator
+                    .OnMarketSnapshot(MakeSnapshot("SHFE.ag2406", "20260211", "20260211",
+                                                   "09:01:04", 0, 11.0, 120))
+                    .empty());
+    const auto bars = aggregator.AdvanceWatermark(ShanghaiEpochNs("20260211", 9, 1, 4));
     ASSERT_EQ(bars.size(), 1U);
     EXPECT_EQ(bars[0].instrument_id, "SHFE.ag2406");
     EXPECT_EQ(bars[0].exchange_id, "SHFE");
@@ -53,13 +70,15 @@ TEST(BarAggregatorTest, EmitsClosedMinuteBarWhenMinuteRolls) {
     EXPECT_DOUBLE_EQ(bars[0].low, 10.0);
     EXPECT_DOUBLE_EQ(bars[0].close, 12.0);
     EXPECT_EQ(bars[0].volume, 8);
+    EXPECT_TRUE(bars[0].is_complete);
+    EXPECT_FALSE(bars[0].is_session_endpoint);
 
     const auto flush = aggregator.Flush();
     ASSERT_EQ(flush.size(), 1U);
     EXPECT_EQ(flush[0].minute, "20260211 09:01");
     EXPECT_DOUBLE_EQ(flush[0].open, 11.0);
     EXPECT_DOUBLE_EQ(flush[0].close, 11.0);
-    EXPECT_EQ(flush[0].volume, 0);
+    EXPECT_EQ(flush[0].volume, 12);
 }
 
 TEST(BarAggregatorTest, FiltersNonTradingSessionByDefault) {
@@ -78,8 +97,11 @@ TEST(BarAggregatorTest, NightSessionUsesTradingDayAndKeepsActionDay) {
                     .OnMarketSnapshot(MakeSnapshot("DCE.i2409", "20260212", "20260211", "21:01:01",
                                                    0, 100.0, 200))
                     .empty());
-    const auto bars = aggregator.OnMarketSnapshot(
-        MakeSnapshot("DCE.i2409", "20260212", "20260211", "21:02:01", 0, 101.0, 205));
+    EXPECT_TRUE(aggregator
+                    .OnMarketSnapshot(MakeSnapshot("DCE.i2409", "20260212", "20260211", "21:02:04",
+                                                   0, 101.0, 205))
+                    .empty());
+    const auto bars = aggregator.AdvanceWatermark(ShanghaiEpochNs("20260211", 21, 2, 4));
     ASSERT_EQ(bars.size(), 1U);
     EXPECT_EQ(bars[0].minute, "20260212 21:01");
     EXPECT_EQ(bars[0].trading_day, "20260212");
@@ -94,24 +116,24 @@ TEST(BarAggregatorTest, EmitsSessionEndMinuteBarWithoutNextTick) {
                                                    0, 2367.0, 100))
                     .empty());
 
-    // 23:00:00 closing tick: flushes the pending "22:59" bar AND creates a new "23:00" bar.
+    // The closing tick starts its own endpoint bucket; neither bucket is final
+    // until the 3.5 second event-time lateness window has elapsed.
     const auto bars = aggregator.OnMarketSnapshot(
         MakeSnapshot("DCE.c2607", "20260515", "20260514", "23:00:00", 500, 2368.0, 101));
-    ASSERT_EQ(bars.size(), 1U);
-    EXPECT_EQ(bars[0].minute, "20260515 22:59");
-    EXPECT_DOUBLE_EQ(bars[0].close, 2367.0);
+    EXPECT_TRUE(bars.empty());
 
     // Ticks after the exact end time (23:00:01) are still filtered.
     EXPECT_TRUE(aggregator
                     .OnMarketSnapshot(MakeSnapshot("DCE.c2607", "20260515", "20260514", "23:00:01",
                                                    500, 2369.0, 102))
                     .empty());
-    // The "23:00" closing-auction bar is still pending (not yet flushed).
-    const auto closing_bars = aggregator.Flush();
-    ASSERT_EQ(closing_bars.size(), 1U);
-    EXPECT_EQ(closing_bars[0].minute, "20260515 23:00");
-    EXPECT_DOUBLE_EQ(closing_bars[0].open, 2368.0);
-    EXPECT_DOUBLE_EQ(closing_bars[0].close, 2368.0);
+    const auto closing_bars = aggregator.AdvanceWatermark(ShanghaiEpochNs("20260514", 23, 0, 4));
+    ASSERT_EQ(closing_bars.size(), 2U);
+    EXPECT_EQ(closing_bars[0].minute, "20260515 22:59");
+    EXPECT_EQ(closing_bars[1].minute, "20260515 23:00");
+    EXPECT_TRUE(closing_bars[1].is_session_endpoint);
+    EXPECT_FALSE(closing_bars[1].strategy_eligible);
+    EXPECT_DOUBLE_EQ(closing_bars[1].close, 2368.0);
 }
 
 TEST(BarAggregatorTest, TradingSessionMatcherHandlesDayAndNightWindowsByExchange) {
@@ -139,12 +161,12 @@ TEST(BarAggregatorTest, ResolveTimestampUsesExchangeTimeInBacktestMode) {
 
     MarketSnapshot snapshot =
         MakeSnapshot("SHFE.ag2406", "20260211", "20260211", "09:00:01", 0, 10.0, 1, 100);
-    snapshot.exchange_ts_ns = 200;
+    snapshot.exchange_ts_ns = 1'770'768'001'000'000'200LL;
 
     EXPECT_TRUE(aggregator.OnMarketSnapshot(snapshot).empty());
     const auto bars = aggregator.Flush();
     ASSERT_EQ(bars.size(), 1U);
-    EXPECT_EQ(bars[0].ts_ns, 200);
+    EXPECT_EQ(bars[0].ts_ns, snapshot.exchange_ts_ns);
 }
 
 TEST(BarAggregatorTest, ResetInstrumentClearsActiveBucket) {
@@ -221,7 +243,7 @@ TEST(BarAggregatorTest, SessionConfigSupportsCommaSeparatedDaySegments) {
 
     EXPECT_TRUE(aggregator.ShouldProcessSnapshot(
         MakeSnapshot("DCE.c2405", "20260211", "20260211", "11:29:59", 0, 2400.0, 1)));
-    EXPECT_FALSE(aggregator.ShouldProcessSnapshot(
+    EXPECT_TRUE(aggregator.ShouldProcessSnapshot(
         MakeSnapshot("DCE.c2405", "20260211", "20260211", "11:30:00", 0, 2400.0, 1)));
     EXPECT_FALSE(aggregator.ShouldProcessSnapshot(
         MakeSnapshot("DCE.c2405", "20260211", "20260211", "11:45:00", 0, 2400.0, 1)));
@@ -255,22 +277,20 @@ TEST(BarAggregatorTest, SessionEndFlushDoesNotDuplicateAlreadyClosedSegmentMinut
                     .OnMarketSnapshot(MakeSnapshot(instrument_id, "20260211", "20260211",
                                                    "11:29:30", 0, 2400.0, 100, 1'000'000'000))
                     .empty());
+    EXPECT_TRUE(aggregator.AdvanceWatermark(ShanghaiEpochNs("20260211", 11, 30, 3, 499)).empty());
     const auto flushed_bars =
-        aggregator.FlushSessionEndBars({{instrument_id, 1'000'000'000}}, 1'000'000'000);
+        aggregator.AdvanceWatermark(ShanghaiEpochNs("20260211", 11, 30, 3, 500));
     ASSERT_EQ(flushed_bars.size(), 1U);
     EXPECT_EQ(flushed_bars[0].minute, "20260211 11:29");
 
-    // 11:30:00 closing tick: flushes "11:29" (already done above, so bucket erased)
-    // and creates a new "11:30" closing-auction bar.
+    // 11:30:00 closing tick creates a new endpoint bucket without reopening 11:29.
     const auto rolled_bars = aggregator.OnMarketSnapshot(MakeSnapshot(
         instrument_id, "20260211", "20260211", "11:30:00", 0, 2401.0, 101, 2'000'000'000));
     EXPECT_TRUE(rolled_bars.empty());  // "11:29" already flushed; "11:30" bar starts
 
-    // "11:30" bar should be flushed by FlushSessionEndBars (it IS a session-end minute).
-    EXPECT_TRUE(
-        aggregator.FlushSessionEndBars({{instrument_id, 2'000'000'000}}, 1'999'999'999).empty());
+    EXPECT_TRUE(aggregator.AdvanceWatermark(ShanghaiEpochNs("20260211", 11, 30, 3, 499)).empty());
     const auto end_minute_bars =
-        aggregator.FlushSessionEndBars({{instrument_id, 2'000'000'000}}, 2'000'000'000);
+        aggregator.AdvanceWatermark(ShanghaiEpochNs("20260211", 11, 30, 3, 500));
     ASSERT_EQ(end_minute_bars.size(), 1U);
     EXPECT_EQ(end_minute_bars[0].minute, "20260211 11:30");
     EXPECT_DOUBLE_EQ(end_minute_bars[0].open, 2401.0);
@@ -358,6 +378,91 @@ TEST(BarAggregatorTest, InferExchangeIdSupportsDotPrefixAndLongestSessionPrefixM
     EXPECT_EQ(aggregator.InferExchangeId("unknown2401"), "");
 
     std::remove(config_path.c_str());
+}
+
+TEST(BarAggregatorTest, EventTimeWatermarkReordersTicksAndRejectsMinuteReopen) {
+    BarAggregator aggregator;
+    const std::string instrument = "DCE.c2607";
+
+    EXPECT_TRUE(aggregator
+                    .OnMarketSnapshot(MakeSnapshot(instrument, "20260515", "20260515", "09:00:59",
+                                                   500, 101.0, 110))
+                    .empty());
+    EXPECT_TRUE(aggregator
+                    .OnMarketSnapshot(
+                        MakeSnapshot(instrument, "20260515", "20260515", "09:01:01", 0, 102.0, 120))
+                    .empty());
+    // A late tick for the previous minute remains inside the 3.5s window and
+    // must become the true event-time close rather than creating a fragment.
+    EXPECT_TRUE(aggregator
+                    .OnMarketSnapshot(MakeSnapshot(instrument, "20260515", "20260515", "09:00:59",
+                                                   800, 103.0, 115))
+                    .empty());
+
+    const auto bars = aggregator.AdvanceWatermark(ShanghaiEpochNs("20260515", 9, 1, 4));
+    ASSERT_EQ(bars.size(), 1U);
+    EXPECT_EQ(bars[0].minute, "20260515 09:00");
+    EXPECT_DOUBLE_EQ(bars[0].open, 101.0);
+    EXPECT_DOUBLE_EQ(bars[0].close, 103.0);
+    EXPECT_EQ(bars[0].volume, 5);
+
+    // Once final, even a later arrival carrying an older event time cannot
+    // reopen the minute or emit a second canonical bar.
+    EXPECT_TRUE(aggregator
+                    .OnMarketSnapshot(
+                        MakeSnapshot(instrument, "20260515", "20260515", "09:00:58", 0, 99.0, 109))
+                    .empty());
+    const auto later = aggregator.AdvanceWatermark(ShanghaiEpochNs("20260515", 9, 2, 4));
+    ASSERT_EQ(later.size(), 1U);
+    EXPECT_EQ(later[0].minute, "20260515 09:01");
+}
+
+TEST(BarAggregatorTest, CrossMinuteFirstTickVolumeDeltaBelongsToNewMinute) {
+    BarAggregator aggregator;
+    const std::string instrument = "DCE.c2607";
+    aggregator.OnMarketSnapshot(
+        MakeSnapshot(instrument, "20260515", "20260515", "09:00:01", 0, 100.0, 100));
+    aggregator.OnMarketSnapshot(
+        MakeSnapshot(instrument, "20260515", "20260515", "09:00:59", 0, 101.0, 110));
+    aggregator.OnMarketSnapshot(
+        MakeSnapshot(instrument, "20260515", "20260515", "09:01:00", 0, 102.0, 116));
+
+    const auto first = aggregator.AdvanceWatermark(ShanghaiEpochNs("20260515", 9, 1, 4));
+    ASSERT_EQ(first.size(), 1U);
+    EXPECT_EQ(first[0].volume, 10);
+    aggregator.OnMarketSnapshot(
+        MakeSnapshot(instrument, "20260515", "20260515", "09:01:59", 0, 103.0, 120));
+    const auto second = aggregator.AdvanceWatermark(ShanghaiEpochNs("20260515", 9, 2, 4));
+    ASSERT_EQ(second.size(), 1U);
+    EXPECT_EQ(second[0].volume, 10);  // includes 110 -> 116 at the boundary
+}
+
+TEST(BarAggregatorTest, EndpointAcceptsAllTicksInExactSecondAndFinalizesOnce) {
+    BarAggregator aggregator;
+    const std::string instrument = "DCE.c2607";
+    const auto endpoint0 =
+        MakeSnapshot(instrument, "20260515", "20260515", "15:00:00", 0, 100.0, 200);
+    const auto endpoint500 =
+        MakeSnapshot(instrument, "20260515", "20260515", "15:00:00", 500, 102.0, 202);
+    EXPECT_TRUE(aggregator.ShouldProcessSnapshot(endpoint0));
+    EXPECT_TRUE(aggregator.ShouldProcessSnapshot(endpoint500));
+    EXPECT_TRUE(aggregator.OnMarketSnapshot(endpoint0).empty());
+    EXPECT_TRUE(aggregator.OnMarketSnapshot(endpoint500).empty());
+    const auto bars = aggregator.AdvanceWatermark(ShanghaiEpochNs("20260515", 15, 0, 4));
+    ASSERT_EQ(bars.size(), 1U);
+    EXPECT_TRUE(bars[0].is_session_endpoint);
+    EXPECT_DOUBLE_EQ(bars[0].open, 100.0);
+    EXPECT_DOUBLE_EQ(bars[0].close, 102.0);
+    EXPECT_EQ(bars[0].volume, 2);
+    EXPECT_TRUE(aggregator.AdvanceWatermark(ShanghaiEpochNs("20260515", 15, 1, 0)).empty());
+}
+
+TEST(BarAggregatorTest, DiscardPendingDoesNotPublishShutdownPartial) {
+    BarAggregator aggregator;
+    aggregator.OnMarketSnapshot(
+        MakeSnapshot("DCE.c2607", "20260515", "20260515", "09:00:30", 0, 100.0, 100));
+    aggregator.DiscardPending();
+    EXPECT_TRUE(aggregator.Flush().empty());
 }
 
 TEST(BarAggregatorTest, RepositoryTradingSessionsInferDceForCornSymbol) {

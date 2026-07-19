@@ -129,7 +129,9 @@ add_library(quant_hft_core STATIC
     src/services/order/execution_router.cpp
     src/services/order/in_memory_order_gateway.cpp
     src/services/order/order_state_machine.cpp
+    src/services/order/pending_exit_store.cpp
     src/services/order/timeout_cancel_tracker.cpp
+    src/services/order/trading_permission_controller.cpp
     src/services/settlement/settlement_price_provider.cpp
     src/services/settlement/settlement_query_client.cpp
     src/services/settlement/daily_settlement_service.cpp
@@ -139,6 +141,8 @@ add_library(quant_hft_core STATIC
     src/services/portfolio/position_manager.cpp
     src/services/portfolio/in_memory_portfolio_ledger.cpp
     src/services/market_state/bar_aggregator.cpp
+    src/services/market_state/market_bar_pipeline.cpp
+    src/services/market_state/trading_session_calendar.cpp
     src/services/market_state/market_data_csv_recorder.cpp
     src/services/market_state/market_state_detector.cpp
     src/services/market_state/rule_market_state_engine.cpp
@@ -272,6 +276,10 @@ target_link_libraries(simnow_compare_cli PRIVATE quant_hft_core)
 
 add_executable(simnow_wal_export_cli src/apps/simnow_wal_export_cli_main.cpp)
 target_link_libraries(simnow_wal_export_cli PRIVATE quant_hft_core)
+
+find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+add_executable(market_data_repair_cli src/apps/market_data_repair_cli_main.cpp)
+target_link_libraries(market_data_repair_cli PRIVATE quant_hft_core OpenSSL::Crypto)
 
 add_executable(simnow_dashboard_cli src/apps/simnow_dashboard_cli_main.cpp)
 target_link_libraries(simnow_dashboard_cli PRIVATE quant_hft_core)
@@ -407,6 +415,13 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(ctp_account_ledger_test tests/unit/services/ctp_account_ledger_test.cpp)
     target_link_libraries(ctp_account_ledger_test PRIVATE quant_hft_core GTest::gtest_main)
 
+    add_executable(pending_exit_store_test tests/unit/services/pending_exit_store_test.cpp)
+    target_link_libraries(pending_exit_store_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(trading_permission_controller_test
+        tests/unit/services/trading_permission_controller_test.cpp)
+    target_link_libraries(trading_permission_controller_test PRIVATE quant_hft_core GTest::gtest_main)
+
     add_executable(self_trade_risk_engine_test tests/unit/services/self_trade_risk_engine_test.cpp)
     target_link_libraries(self_trade_risk_engine_test PRIVATE quant_hft_core GTest::gtest_main)
 
@@ -421,6 +436,13 @@ if(QUANT_HFT_BUILD_TESTS)
 
     add_executable(bar_aggregator_test tests/unit/services/bar_aggregator_test.cpp)
     target_link_libraries(bar_aggregator_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(market_bar_pipeline_test tests/unit/services/market_bar_pipeline_test.cpp)
+    target_link_libraries(market_bar_pipeline_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(trading_session_calendar_test
+        tests/unit/services/trading_session_calendar_test.cpp)
+    target_link_libraries(trading_session_calendar_test PRIVATE quant_hft_core GTest::gtest_main)
 
     add_executable(market_data_csv_recorder_test tests/unit/services/market_data_csv_recorder_test.cpp)
     target_link_libraries(market_data_csv_recorder_test PRIVATE quant_hft_core GTest::gtest_main)
@@ -619,6 +641,7 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(ops_cli_test tests/unit/apps/ops_cli_test.cpp)
     target_link_libraries(ops_cli_test PRIVATE GTest::gtest_main)
     target_compile_definitions(ops_cli_test PRIVATE QUANT_HFT_BUILD_DIR="${CMAKE_BINARY_DIR}")
+    add_dependencies(ops_cli_test market_data_repair_cli)
 
     add_executable(simnow_dashboard_cli_test tests/unit/apps/simnow_dashboard_cli_test.cpp)
     target_link_libraries(simnow_dashboard_cli_test PRIVATE GTest::gtest_main)
@@ -701,11 +724,15 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(ctp_position_ledger_test)
     gtest_discover_tests(ctp_close_offset_resolver_test)
     gtest_discover_tests(ctp_account_ledger_test)
+    gtest_discover_tests(pending_exit_store_test)
+    gtest_discover_tests(trading_permission_controller_test)
     gtest_discover_tests(self_trade_risk_engine_test)
     gtest_discover_tests(risk_rule_executor_test)
     gtest_discover_tests(rate_limiter_test)
     gtest_discover_tests(risk_manager_test)
     gtest_discover_tests(bar_aggregator_test)
+    gtest_discover_tests(market_bar_pipeline_test)
+    gtest_discover_tests(trading_session_calendar_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(market_data_csv_recorder_test)
     gtest_discover_tests(timeframe_state_fanout_test)
     gtest_discover_tests(order_state_machine_test)

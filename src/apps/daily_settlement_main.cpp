@@ -8,11 +8,11 @@
 #include "quant_hft/core/ctp_trader_adapter.h"
 #include "quant_hft/core/flow_controller.h"
 #include "quant_hft/core/settlement_store_client_adapter.h"
-#include "quant_hft/core/structured_log.h"
 #include "quant_hft/core/storage_client_factory.h"
 #include "quant_hft/core/storage_client_pool.h"
 #include "quant_hft/core/storage_connection_config.h"
 #include "quant_hft/core/storage_retry_policy.h"
+#include "quant_hft/core/structured_log.h"
 #include "quant_hft/core/trading_domain_store_client_adapter.h"
 #include "quant_hft/services/daily_settlement_service.h"
 #include "quant_hft/services/settlement_price_provider.h"
@@ -20,17 +20,10 @@
 
 namespace {
 
-bool ParseArgs(int argc,
-               char** argv,
-               std::string* config_path,
-               std::string* trading_day,
-               bool* force_run,
-               bool* shadow_mode,
-               bool* strict_backfill,
-               std::string* evidence_path,
-               std::string* settlement_price_json_path,
-               std::string* price_cache_db_path,
-               std::string* diff_report_path,
+bool ParseArgs(int argc, char** argv, std::string* config_path, std::string* trading_day,
+               bool* force_run, bool* shadow_mode, bool* strict_backfill,
+               std::string* evidence_path, std::string* settlement_price_json_path,
+               std::string* price_cache_db_path, std::string* diff_report_path,
                std::string* error) {
     if (config_path == nullptr || trading_day == nullptr || force_run == nullptr ||
         shadow_mode == nullptr || strict_backfill == nullptr || evidence_path == nullptr ||
@@ -163,22 +156,10 @@ int main(int argc, char** argv) {
     std::string price_cache_db_path;
     std::string diff_report_path;
     std::string parse_error;
-    if (!ParseArgs(argc,
-                   argv,
-                   &config_path,
-                   &trading_day,
-                   &force_run,
-                   &shadow_mode,
-                   &strict_backfill,
-                   &evidence_path,
-                   &settlement_price_json_path,
-                   &price_cache_db_path,
-                   &diff_report_path,
-                   &parse_error)) {
-        EmitStructuredLog(&bootstrap_runtime,
-                          "daily_settlement",
-                          "error",
-                          "invalid_arguments",
+    if (!ParseArgs(argc, argv, &config_path, &trading_day, &force_run, &shadow_mode,
+                   &strict_backfill, &evidence_path, &settlement_price_json_path,
+                   &price_cache_db_path, &diff_report_path, &parse_error)) {
+        EmitStructuredLog(&bootstrap_runtime, "daily_settlement", "error", "invalid_arguments",
                           {{"error", parse_error}});
         return 1;
     }
@@ -186,10 +167,7 @@ int main(int argc, char** argv) {
     CtpFileConfig file_config;
     std::string config_error;
     if (!CtpConfigLoader::LoadFromYaml(config_path, &file_config, &config_error)) {
-        EmitStructuredLog(&bootstrap_runtime,
-                          "daily_settlement",
-                          "error",
-                          "config_load_failed",
+        EmitStructuredLog(&bootstrap_runtime, "daily_settlement", "error", "config_load_failed",
                           {{"config_path", config_path}, {"error", config_error}});
         return 1;
     }
@@ -198,10 +176,7 @@ int main(int argc, char** argv) {
     const auto storage_config = StorageConnectionConfig::FromEnvironment();
     auto sql_client = StorageClientFactory::CreateTimescaleClient(storage_config, &config_error);
     if (sql_client == nullptr) {
-        EmitStructuredLog(&runtime,
-                          "daily_settlement",
-                          "error",
-                          "timescale_client_create_failed",
+        EmitStructuredLog(&runtime, "daily_settlement", "error", "timescale_client_create_failed",
                           {{"error", config_error}});
         return 1;
     }
@@ -212,18 +187,12 @@ int main(int argc, char** argv) {
     retry_policy.initial_backoff_ms = 1;
     retry_policy.max_backoff_ms = 8;
     auto settlement_store = std::make_shared<SettlementStoreClientAdapter>(
-        pooled_sql,
-        retry_policy,
-        storage_config.timescale.trading_schema,
-        "ops");
+        pooled_sql, retry_policy, storage_config.timescale.trading_schema, "ops");
     auto domain_store = std::make_shared<TradingDomainStoreClientAdapter>(
-        pooled_sql,
-        retry_policy,
-        storage_config.timescale.trading_schema);
+        pooled_sql, retry_policy, storage_config.timescale.trading_schema);
 
     auto trader = std::make_shared<CTPTraderAdapter>(
-        static_cast<std::size_t>(std::max(1, runtime.query_rate_per_sec)),
-        1);
+        static_cast<std::size_t>(std::max(1, runtime.query_rate_per_sec)), 1);
     MarketDataConnectConfig connect_cfg;
     connect_cfg.market_front_address = runtime.md_front;
     connect_cfg.trader_front_address = runtime.td_front;
@@ -245,18 +214,12 @@ int main(int argc, char** argv) {
     connect_cfg.recovery_quiet_period_ms = runtime.recovery_quiet_period_ms;
     connect_cfg.settlement_confirm_required = runtime.settlement_confirm_required;
     if (!trader->Connect(connect_cfg)) {
-        EmitStructuredLog(&runtime,
-                          "daily_settlement",
-                          "error",
-                          "trader_connect_failed",
+        EmitStructuredLog(&runtime, "daily_settlement", "error", "trader_connect_failed",
                           {{"diagnostic", trader->GetLastConnectDiagnostic()}});
         return 2;
     }
     if (runtime.settlement_confirm_required && !trader->ConfirmSettlement()) {
-        EmitStructuredLog(&runtime,
-                          "daily_settlement",
-                          "error",
-                          "settlement_confirm_failed");
+        EmitStructuredLog(&runtime, "daily_settlement", "error", "settlement_confirm_failed");
         trader->Disconnect();
         return 2;
     }
@@ -266,7 +229,8 @@ int main(int argc, char** argv) {
     settlement_query_rule.account_id =
         file_config.account_id.empty() ? runtime.user_id : file_config.account_id;
     settlement_query_rule.type = OperationType::kSettlementQuery;
-    settlement_query_rule.rate_per_second = static_cast<double>(runtime.settlement_query_rate_per_sec);
+    settlement_query_rule.rate_per_second =
+        static_cast<double>(runtime.settlement_query_rate_per_sec);
     settlement_query_rule.capacity = runtime.settlement_query_bucket_capacity;
     flow_controller->AddRule(settlement_query_rule);
 
@@ -290,28 +254,40 @@ int main(int argc, char** argv) {
     settlement_cfg.evidence_path = evidence_path;
     settlement_cfg.diff_report_path = diff_report_path;
 
-    DailySettlementService service(
-        settlement_price_provider, settlement_store, query_client, domain_store);
+    DailySettlementService service(settlement_price_provider, settlement_store, query_client,
+                                   domain_store);
     DailySettlementResult result;
     std::string run_error;
     const bool run_ok = service.Run(settlement_cfg, &result, &run_error);
 
     trader->Disconnect();
 
+    if (!run_ok && result.status.empty()) {
+        result.status = "FAILED";
+        result.message = run_error.empty() ? "daily settlement failed" : run_error;
+        result.success = false;
+        result.blocked = true;
+    }
+
+    if (!settlement_cfg.evidence_path.empty()) {
+        std::string evidence_error;
+        if (!service.WriteEvidenceAtomically(settlement_cfg, result, run_ok, run_error,
+                                             &evidence_error)) {
+            EmitStructuredLog(
+                &runtime, "daily_settlement", "error", "evidence_write_or_validation_failed",
+                {{"evidence_path", settlement_cfg.evidence_path}, {"error", evidence_error}});
+            return 2;
+        }
+    }
+
     if (!run_ok) {
-        EmitStructuredLog(&runtime,
-                          "daily_settlement",
-                          "error",
-                          "run_failed",
+        EmitStructuredLog(&runtime, "daily_settlement", "error", "run_failed",
                           {{"error", run_error}, {"trading_day", settlement_cfg.trading_day}});
         return 2;
     }
 
     EmitStructuredLog(
-        &runtime,
-        "daily_settlement",
-        "info",
-        "run_completed",
+        &runtime, "daily_settlement", "info", "run_completed",
         {{"trading_day", settlement_cfg.trading_day},
          {"account_id", settlement_cfg.account_id},
          {"success", result.success ? "true" : "false"},

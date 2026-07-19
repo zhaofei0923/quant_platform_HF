@@ -45,10 +45,30 @@ struct CtpTraderReadinessSnapshot {
     std::string last_connect_diagnostic;
 };
 
+struct CtpRecoveryReport {
+    std::uint64_t generation{0};
+    std::string trading_day;
+    bool order_query_complete{false};
+    bool trade_query_complete{false};
+    bool callbacks_drained{false};
+    std::size_t unresolved_mappings{0};
+    std::size_t duplicate_trades_suppressed{0};
+    std::size_t position_differences{0};
+    std::int64_t elapsed_ms{0};
+    std::string error_stage;
+    std::string error;
+
+    bool ok() const noexcept {
+        return order_query_complete && trade_query_complete && callbacks_drained &&
+               unresolved_mappings == 0 && position_differences == 0 && error.empty();
+    }
+};
+
 class CTPTraderAdapter {
    public:
     using OrderEventCallback = IOrderGateway::OrderEventCallback;
     using OrderSubmitMappingCallback = CtpGatewayAdapter::OrderSubmitMappingCallback;
+    using OrderSubmitPrepareCallback = CtpGatewayAdapter::OrderSubmitPrepareCallback;
     using TradingAccountSnapshotCallback = CtpGatewayAdapter::TradingAccountSnapshotCallback;
     using InvestorPositionSnapshotCallback = CtpGatewayAdapter::InvestorPositionSnapshotCallback;
     using InstrumentMetaSnapshotCallback = CtpGatewayAdapter::InstrumentMetaSnapshotCallback;
@@ -88,6 +108,7 @@ class CTPTraderAdapter {
                                                         const std::string& password,
                                                         int timeout_ms = 5000);
     bool RecoverOrdersAndTrades(int timeout_ms = 10000);
+    CtpRecoveryReport RecoverOrdersAndTradesReport(int timeout_ms = 10000);
 
     bool EnqueueUserSessionQuery(int request_id);
     int EnqueueUserSessionQuery();
@@ -114,6 +135,7 @@ class CTPTraderAdapter {
 
     void RegisterOrderEventCallback(OrderEventCallback callback);
     void RegisterOrderSubmitMappingCallback(OrderSubmitMappingCallback callback);
+    void RegisterOrderSubmitPrepareCallback(OrderSubmitPrepareCallback callback);
     void RegisterTradingAccountSnapshotCallback(TradingAccountSnapshotCallback callback);
     void RegisterInvestorPositionSnapshotCallback(InvestorPositionSnapshotCallback callback);
     void RegisterInstrumentMetaSnapshotCallback(InstrumentMetaSnapshotCallback callback);
@@ -143,10 +165,14 @@ class CTPTraderAdapter {
     void RejectAllPromises(const std::string& error_msg);
     void ScheduleReconnect();
     void OnReconnectTimer(std::uint64_t generation);
+    void OnReconnectExhaustionCooldown(std::uint64_t generation);
     void ResetReconnectState();
     void StopReconnectWorker();
     void ReconnectWorkerLoop();
     void JoinLoginTimeoutThreads();
+    void StartLoginTimeoutWorker();
+    void StopLoginTimeoutWorker();
+    void LoginTimeoutWorkerLoop();
     bool IsGenerationCurrent(std::uint64_t generation) const;
     void UnregisterGatewayCallbacks();
     void SetReconnectStageLocked(const std::string& stage);
@@ -154,10 +180,13 @@ class CTPTraderAdapter {
 
     mutable std::mutex mutex_;
     std::shared_ptr<CtpGatewayAdapter> gateway_;
+    bool owns_gateway_{false};
+    CtpGatewayAdapter::ConnectionListenerToken connection_listener_token_{0};
     EventDispatcher dispatcher_;
     CallbackDispatcher callback_dispatcher_;
     OrderEventCallback user_order_event_callback_;
     OrderSubmitMappingCallback user_order_submit_mapping_callback_;
+    OrderSubmitPrepareCallback user_order_submit_prepare_callback_;
     TradingAccountSnapshotCallback user_trading_account_callback_;
     InvestorPositionSnapshotCallback user_investor_position_callback_;
     InstrumentMetaSnapshotCallback user_instrument_meta_callback_;
@@ -180,6 +209,7 @@ class CTPTraderAdapter {
     std::thread reconnect_thread_;
     bool reconnect_stop_{false};
     bool reconnect_scheduled_{false};
+    bool reconnect_exhaustion_cooldown_{false};
     std::chrono::steady_clock::time_point reconnect_deadline_{};
     std::uint64_t reconnect_generation_{0};
     std::atomic<int> next_request_id_{1};
@@ -188,8 +218,15 @@ class CTPTraderAdapter {
     std::unordered_map<int, std::shared_ptr<std::promise<void>>> settlement_promises_;
     std::unordered_map<int, std::shared_ptr<std::promise<std::pair<int, std::string>>>>
         login_promises_;
-    mutable std::mutex login_timeout_threads_mutex_;
-    std::vector<std::thread> login_timeout_threads_;
+    struct LoginDeadline {
+        std::chrono::steady_clock::time_point deadline;
+        std::uint64_t generation{0};
+    };
+    mutable std::mutex login_timeout_mutex_;
+    std::condition_variable login_timeout_cv_;
+    std::unordered_map<int, LoginDeadline> login_deadlines_;
+    std::thread login_timeout_thread_;
+    bool login_timeout_stop_{false};
     mutable std::uint64_t order_ref_seq_{0};
     std::function<void(bool)> circuit_breaker_callback_;
 };

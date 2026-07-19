@@ -11,8 +11,10 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <set>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "quant_hft/apps/cli_support.h"
@@ -64,6 +66,9 @@ struct ExportStats {
     std::int64_t ignored_lines{0};
     std::int64_t exported_order_events{0};
     std::int64_t exported_trade_fills{0};
+    std::int64_t raw_trade_fill_records{0};
+    std::int64_t duplicate_trade_fills{0};
+    std::int64_t unresolved_trade_fills{0};
     std::int64_t projected_order_events{0};
     std::int64_t projected_trade_fills{0};
     std::int64_t db_projection_failures{0};
@@ -75,11 +80,22 @@ struct ExportStats {
     bool wal_missing{false};
     bool db_queried{false};
     bool fee_config_loaded{false};
+    bool order_identity_match{false};
+    bool trade_identity_match{false};
+    std::int64_t unresolved_order_identities{0};
+    std::int64_t db_unresolved_order_identities{0};
+    std::int64_t db_unresolved_trade_identities{0};
+    std::int64_t nonterminal_order_identities{0};
+    std::int64_t db_nonterminal_order_identities{0};
     std::string db_error;
     std::string fee_config_error;
     std::map<std::string, std::int64_t> orders_by_instrument;
     std::map<std::string, std::int64_t> fills_by_instrument;
     std::map<std::string, double> commission_by_instrument;
+    std::map<std::string, std::pair<std::int64_t, std::string>> wal_latest_order_status;
+    std::set<std::string> wal_trade_identity_set;
+    std::set<std::string> db_order_terminal_identity_set;
+    std::set<std::string> db_trade_identity_set;
 };
 
 std::string GetEnvOrDefault(const char* key, const std::string& fallback) {
@@ -102,6 +118,17 @@ std::string NormalizeTradingDay(std::string value) {
     value.erase(std::remove(value.begin(), value.end(), '-'), value.end());
     value.erase(std::remove_if(value.begin(), value.end(),
                                [](unsigned char ch) { return std::isspace(ch) != 0; }),
+                value.end());
+    return value;
+}
+
+std::string TrimCopy(std::string value) {
+    value.erase(value.begin(), std::find_if(value.begin(), value.end(), [](unsigned char ch) {
+                    return std::isspace(ch) == 0;
+                }));
+    value.erase(std::find_if(value.rbegin(), value.rend(),
+                             [](unsigned char ch) { return std::isspace(ch) == 0; })
+                    .base(),
                 value.end());
     return value;
 }
@@ -366,7 +393,11 @@ bool ParseWalRecord(const std::string& line, WalRecord* record) {
     }
 
     parsed.event = std::move(event);
-    parsed.trading_day = ExtractTradingDayFromRunId(parsed.run_id);
+    (void)ParseStringField(line, "trading_day", &parsed.trading_day);
+    parsed.trading_day = NormalizeTradingDay(parsed.trading_day);
+    if (parsed.trading_day.empty()) {
+        parsed.trading_day = ExtractTradingDayFromRunId(parsed.run_id);
+    }
     if (parsed.trading_day.empty()) {
         const std::int64_t effective_ts =
             parsed.event.recv_ts_ns > 0
@@ -374,6 +405,8 @@ bool ParseWalRecord(const std::string& line, WalRecord* record) {
                 : (parsed.event.ts_ns > 0 ? parsed.event.ts_ns : parsed.event.exchange_ts_ns);
         parsed.trading_day = FormatLocalTradingDay(effective_ts);
     }
+    parsed.event.trading_day = parsed.trading_day;
+    parsed.event.raw_trade_id = parsed.event.trade_id;
     *record = std::move(parsed);
     return true;
 }
@@ -386,6 +419,173 @@ bool IsOrderUpdate(const WalRecord& record) {
 bool IsTradeFill(const WalRecord& record) {
     return record.event_type == "trade_fill" ||
            (record.event_type.empty() && record.kind == "trade");
+}
+
+std::string CanonicalTradeKey(const WalRecord& record) {
+    const std::string trade_id = TrimCopy(record.event.trade_id);
+    if (trade_id.empty()) {
+        return "";
+    }
+    return TrimCopy(record.event.account_id) + "|" + NormalizeTradingDay(record.trading_day) + "|" +
+           TrimCopy(record.event.exchange_id) + "|" + trade_id;
+}
+
+bool IsTerminalStatus(quant_hft::OrderStatus status) {
+    return status == quant_hft::OrderStatus::kFilled ||
+           status == quant_hft::OrderStatus::kCanceled ||
+           status == quant_hft::OrderStatus::kRejected;
+}
+
+bool IsTerminalStatusText(const std::string& status) {
+    try {
+        const int raw = std::stoi(status);
+        if (raw < static_cast<int>(quant_hft::OrderStatus::kNew) ||
+            raw > static_cast<int>(quant_hft::OrderStatus::kRejected)) {
+            return false;
+        }
+        return IsTerminalStatus(static_cast<quant_hft::OrderStatus>(raw));
+    } catch (...) {
+        return false;
+    }
+}
+
+std::string StableOrderKey(const std::string& account_id, const std::string& trading_day,
+                           const std::string& client_order_id, const std::string& exchange_order_id,
+                           const std::string& exchange_id, const std::string& order_ref,
+                           const std::string& front_id, const std::string& session_id) {
+    const std::string account = TrimCopy(account_id);
+    const std::string day = NormalizeTradingDay(trading_day);
+    if (!client_order_id.empty()) {
+        return account + "|" + day + "|client|" + TrimCopy(client_order_id);
+    }
+    if (!exchange_order_id.empty() && !exchange_id.empty()) {
+        return account + "|" + day + "|broker|" + TrimCopy(exchange_id) + "|" +
+               TrimCopy(exchange_order_id);
+    }
+    if (!order_ref.empty()) {
+        return account + "|" + day + "|session|" + TrimCopy(front_id) + "|" + TrimCopy(session_id) +
+               "|" + TrimCopy(order_ref);
+    }
+    return {};
+}
+
+std::string StableOrderKey(const WalRecord& record) {
+    return StableOrderKey(record.event.account_id, record.trading_day, record.event.client_order_id,
+                          record.event.exchange_order_id, record.event.exchange_id,
+                          record.event.order_ref, std::to_string(record.event.front_id),
+                          std::to_string(record.event.session_id));
+}
+
+std::string RowValue(const std::unordered_map<std::string, std::string>& row,
+                     const std::string& key) {
+    const auto it = row.find(key);
+    return it == row.end() ? "" : it->second;
+}
+
+bool RowMatchesTradingDay(const std::unordered_map<std::string, std::string>& row,
+                          const std::string& trading_day) {
+    const auto it = row.find("trade_date");
+    return it == row.end() || trading_day.empty() || it->second == TradingDayForDb(trading_day) ||
+           NormalizeTradingDay(it->second) == NormalizeTradingDay(trading_day);
+}
+
+std::int64_t ParseRowInt64(const std::unordered_map<std::string, std::string>& row,
+                           const std::string& key) {
+    try {
+        return std::stoll(RowValue(row, key));
+    } catch (...) {
+        return 0;
+    }
+}
+
+void BuildWalTerminalIdentitySet(ExportStats* stats, std::set<std::string>* terminal_identities) {
+    if (stats == nullptr || terminal_identities == nullptr) {
+        return;
+    }
+    terminal_identities->clear();
+    stats->nonterminal_order_identities = 0;
+    for (const auto& [stable_key, latest] : stats->wal_latest_order_status) {
+        if (!IsTerminalStatusText(latest.second)) {
+            ++stats->nonterminal_order_identities;
+            continue;
+        }
+        terminal_identities->insert(stable_key + "|status|" + latest.second);
+    }
+}
+
+bool LoadDbIdentitySets(const std::shared_ptr<quant_hft::ITimescaleSqlClient>& client,
+                        const std::string& schema, const std::string& trading_day,
+                        ExportStats* stats, std::string* error) {
+    if (client == nullptr || stats == nullptr) {
+        if (error != nullptr) {
+            *error = "database client or stats is null";
+        }
+        return false;
+    }
+
+    std::string query_error;
+    const auto order_rows = client->QueryAllRows(schema + ".order_events", &query_error);
+    if (!query_error.empty()) {
+        if (error != nullptr) {
+            *error = query_error;
+        }
+        return false;
+    }
+    std::map<std::string, std::pair<std::int64_t, std::string>> latest_orders;
+    stats->db_order_events = 0;
+    for (const auto& row : order_rows) {
+        if (!RowMatchesTradingDay(row, trading_day)) {
+            continue;
+        }
+        ++stats->db_order_events;
+        const std::string stable_key = StableOrderKey(
+            RowValue(row, "account_id"), trading_day, RowValue(row, "client_order_id"),
+            RowValue(row, "exchange_order_id"), RowValue(row, "exchange_id"),
+            RowValue(row, "order_ref"), RowValue(row, "front_id"), RowValue(row, "session_id"));
+        if (stable_key.empty()) {
+            ++stats->db_unresolved_order_identities;
+            continue;
+        }
+        const std::int64_t ts_ns = ParseRowInt64(row, "ts_ns");
+        const std::string status = RowValue(row, "status");
+        auto& latest = latest_orders[stable_key];
+        if (latest.first <= ts_ns) {
+            latest = {ts_ns, status};
+        }
+    }
+    stats->db_order_terminal_identity_set.clear();
+    stats->db_nonterminal_order_identities = 0;
+    for (const auto& [stable_key, latest] : latest_orders) {
+        if (!IsTerminalStatusText(latest.second)) {
+            ++stats->db_nonterminal_order_identities;
+            continue;
+        }
+        stats->db_order_terminal_identity_set.insert(stable_key + "|status|" + latest.second);
+    }
+
+    query_error.clear();
+    const auto trade_rows = client->QueryAllRows(schema + ".trade_events", &query_error);
+    if (!query_error.empty()) {
+        if (error != nullptr) {
+            *error = query_error;
+        }
+        return false;
+    }
+    stats->db_trade_fills = 0;
+    stats->db_trade_identity_set.clear();
+    for (const auto& row : trade_rows) {
+        if (!RowMatchesTradingDay(row, trading_day)) {
+            continue;
+        }
+        ++stats->db_trade_fills;
+        const std::string canonical_key = TrimCopy(RowValue(row, "idempotency_key"));
+        if (canonical_key.empty()) {
+            ++stats->db_unresolved_trade_identities;
+            continue;
+        }
+        stats->db_trade_identity_set.insert(canonical_key);
+    }
+    return true;
 }
 
 std::string CsvEscape(const std::string& value) {
@@ -502,11 +702,15 @@ std::string RenderSummaryJson(const ExportSpec& spec, const ExportStats& stats) 
         << "  \"ignored_lines\": " << stats.ignored_lines << ",\n"
         << "  \"order_events\": " << stats.exported_order_events << ",\n"
         << "  \"trade_fills\": " << stats.exported_trade_fills << ",\n"
+        << "  \"raw_trade_fill_records\": " << stats.raw_trade_fill_records << ",\n"
+        << "  \"duplicate_trade_fills\": " << stats.duplicate_trade_fills << ",\n"
+        << "  \"unresolved_trade_fills\": " << stats.unresolved_trade_fills << ",\n"
+        << "  \"unresolved_order_identities\": " << stats.unresolved_order_identities << ",\n"
+        << "  \"nonterminal_order_identities\": " << stats.nonterminal_order_identities << ",\n"
         << "  \"total_commission\": " << ToText(stats.total_commission) << ",\n"
         << "  \"unpriced_fills\": " << stats.unpriced_fills << ",\n"
         << "  \"fee_config\": \"" << quant_hft::apps::JsonEscape(spec.fee_config) << "\",\n"
-        << "  \"fee_config_loaded\": " << (stats.fee_config_loaded ? "true" : "false")
-        << ",\n"
+        << "  \"fee_config_loaded\": " << (stats.fee_config_loaded ? "true" : "false") << ",\n"
         << "  \"project_db\": " << (spec.project_db ? "true" : "false") << ",\n"
         << "  \"projected_order_events\": " << stats.projected_order_events << ",\n"
         << "  \"projected_trade_fills\": " << stats.projected_trade_fills << ",\n"
@@ -525,25 +729,41 @@ std::string RenderSummaryJson(const ExportSpec& spec, const ExportStats& stats) 
 }
 
 std::string RenderReconcileJson(const ExportSpec& spec, const ExportStats& stats) {
-    const bool db_available =
-        stats.db_queried && stats.db_order_events >= 0 && stats.db_trade_fills >= 0;
-    const bool order_match = !db_available || stats.exported_order_events == stats.db_order_events;
-    const bool fill_match = !db_available || stats.exported_trade_fills == stats.db_trade_fills;
-    const bool ok = !stats.wal_missing && stats.parse_errors == 0 &&
+    const bool db_available = stats.db_queried && stats.db_error.empty() &&
+                              stats.db_order_events >= 0 && stats.db_trade_fills >= 0;
+    const bool order_match = db_available && stats.order_identity_match;
+    const bool fill_match = db_available && stats.trade_identity_match;
+    const bool incomplete =
+        !db_available || stats.unresolved_trade_fills > 0 ||
+        stats.unresolved_order_identities > 0 || stats.db_unresolved_order_identities > 0 ||
+        stats.db_unresolved_trade_identities > 0 || stats.nonterminal_order_identities > 0 ||
+        stats.db_nonterminal_order_identities > 0;
+    const bool ok = !incomplete && !stats.wal_missing && stats.parse_errors == 0 &&
                     stats.db_projection_failures == 0 && order_match && fill_match;
+    const char* status = ok ? "ok" : (incomplete ? "incomplete" : "failed");
 
     std::ostringstream out;
     out << "{\n"
         << "  \"trading_day\": \"" << quant_hft::apps::JsonEscape(spec.trading_day) << "\",\n"
-        << "  \"status\": \"" << (ok ? "ok" : "warning") << "\",\n"
+        << "  \"status\": \"" << status << "\",\n"
+        << "  \"complete\": " << (!incomplete ? "true" : "false") << ",\n"
         << "  \"db_queried\": " << (stats.db_queried ? "true" : "false") << ",\n"
         << "  \"db_error\": \"" << quant_hft::apps::JsonEscape(stats.db_error) << "\",\n"
         << "  \"wal\": {\"order_events\": " << stats.exported_order_events
-        << ", \"trade_fills\": " << stats.exported_trade_fills << "},\n"
+        << ", \"trade_fills\": " << stats.exported_trade_fills
+        << ", \"raw_trade_fill_records\": " << stats.raw_trade_fill_records
+        << ", \"duplicate_trade_fills\": " << stats.duplicate_trade_fills
+        << ", \"unresolved_trade_fills\": " << stats.unresolved_trade_fills
+        << ", \"unresolved_order_identities\": " << stats.unresolved_order_identities
+        << ", \"nonterminal_order_identities\": " << stats.nonterminal_order_identities << "},\n"
         << "  \"db\": {\"order_events\": " << stats.db_order_events
-        << ", \"trade_fills\": " << stats.db_trade_fills << "},\n"
+        << ", \"trade_fills\": " << stats.db_trade_fills
+        << ", \"unresolved_order_identities\": " << stats.db_unresolved_order_identities
+        << ", \"unresolved_trade_identities\": " << stats.db_unresolved_trade_identities
+        << ", \"nonterminal_order_identities\": " << stats.db_nonterminal_order_identities << "},\n"
         << "  \"match\": {\"order_events\": " << (order_match ? "true" : "false")
-        << ", \"trade_fills\": " << (fill_match ? "true" : "false") << "},\n"
+        << ", \"trade_fills\": " << (fill_match ? "true" : "false")
+        << ", \"comparison\": \"stable_identity_and_terminal_status\"},\n"
         << "  \"projected\": {\"order_events\": " << stats.projected_order_events
         << ", \"trade_fills\": " << stats.projected_trade_fills
         << ", \"failures\": " << stats.db_projection_failures << "}\n"
@@ -561,6 +781,11 @@ std::string RenderSummaryMd(const ExportSpec& spec, const ExportStats& stats) {
         << "- Lines: " << stats.lines_total << "\n"
         << "- Order events: " << stats.exported_order_events << "\n"
         << "- Trade fills: " << stats.exported_trade_fills << "\n"
+        << "- Raw trade fill records: " << stats.raw_trade_fill_records << "\n"
+        << "- Duplicate trade fills: " << stats.duplicate_trade_fills << "\n"
+        << "- Unresolved trade fills: " << stats.unresolved_trade_fills << "\n"
+        << "- Unresolved order identities: " << stats.unresolved_order_identities << "\n"
+        << "- Non-terminal order identities: " << stats.nonterminal_order_identities << "\n"
         << "- Total commission: " << ToText(stats.total_commission) << "\n"
         << "- Unpriced fills: " << stats.unpriced_fills << "\n"
         << "- Fee config: " << (stats.fee_config_loaded ? spec.fee_config : "disabled") << "\n"
@@ -578,6 +803,11 @@ std::string RenderReconcileMd(const ExportSpec& spec, const ExportStats& stats) 
         << "| WAL | " << stats.exported_order_events << " | " << stats.exported_trade_fills
         << " |\n"
         << "| DB | " << stats.db_order_events << " | " << stats.db_trade_fills << " |\n\n";
+    out << "- DB queried: " << (stats.db_queried ? "yes" : "no") << "\n"
+        << "- Canonical duplicate fills skipped: " << stats.duplicate_trade_fills << "\n"
+        << "- Unresolved fills (missing trade_id): " << stats.unresolved_trade_fills << "\n"
+        << "- Order identity sets match: " << (stats.order_identity_match ? "yes" : "no") << "\n"
+        << "- Trade identity sets match: " << (stats.trade_identity_match ? "yes" : "no") << "\n";
     if (!stats.db_error.empty()) {
         out << "DB query/projection note: " << stats.db_error << "\n";
     }
@@ -662,24 +892,6 @@ bool MatchesSpec(const ExportSpec& spec, const WalRecord& record) {
     return true;
 }
 
-std::int64_t CountDbRows(const std::shared_ptr<quant_hft::ITimescaleSqlClient>& client,
-                         const std::string& table, const std::string& trading_day,
-                         std::string* error) {
-    const auto rows = client->QueryAllRows(table, error);
-    if (error != nullptr && !error->empty()) {
-        return -1;
-    }
-    const std::string db_day = TradingDayForDb(trading_day);
-    std::int64_t count = 0;
-    for (const auto& row : rows) {
-        const auto it = row.find("trade_date");
-        if (it == row.end() || it->second == db_day || trading_day.empty()) {
-            ++count;
-        }
-    }
-    return count;
-}
-
 int RunExport(const ExportSpec& spec) {
     if (spec.trading_day.empty()) {
         std::cerr << "simnow_wal_export_cli: --trading-day is required\n";
@@ -697,6 +909,7 @@ int RunExport(const ExportSpec& spec) {
     }
 
     ExportStats stats;
+    std::set<std::string> canonical_trade_keys;
 
     // Load per-product fee config so trade fills can be priced. A missing or invalid
     // config is non-fatal: commission defaults to 0 and unpriced fills are counted.
@@ -768,6 +981,18 @@ int RunExport(const ExportSpec& spec) {
             events_out << record.raw_line << '\n';
 
             if (IsOrderUpdate(record)) {
+                const std::string stable_order_key = StableOrderKey(record);
+                if (stable_order_key.empty()) {
+                    ++stats.unresolved_order_identities;
+                } else {
+                    auto& latest = stats.wal_latest_order_status[stable_order_key];
+                    const std::int64_t order_sequence =
+                        record.seq > 0 ? record.seq : record.event.ts_ns;
+                    if (latest.first <= order_sequence) {
+                        latest = {order_sequence,
+                                  std::to_string(static_cast<int>(record.event.status))};
+                    }
+                }
                 WriteOrderCsvRow(orders_out, record);
                 ++stats.exported_order_events;
                 ++stats.orders_by_instrument[record.event.instrument_id];
@@ -784,14 +1009,24 @@ int RunExport(const ExportSpec& spec) {
                 }
             }
             if (IsTradeFill(record)) {
+                ++stats.raw_trade_fill_records;
+                const std::string trade_key = CanonicalTradeKey(record);
+                if (trade_key.empty()) {
+                    ++stats.unresolved_trade_fills;
+                    continue;
+                }
+                if (!canonical_trade_keys.insert(trade_key).second) {
+                    ++stats.duplicate_trade_fills;
+                    continue;
+                }
+                stats.wal_trade_identity_set.insert(trade_key);
                 const auto& event = record.event;
                 // Each trade_fill record represents a single exchange trade, so price the
                 // incremental last_trade_volume (fall back to filled_volume when absent).
                 std::int32_t fill_volume =
                     event.last_trade_volume > 0 ? event.last_trade_volume : event.filled_volume;
                 double commission = 0.0;
-                const quant_hft::ProductFeeEntry* fee_entry =
-                    fee_book.Find(event.instrument_id);
+                const quant_hft::ProductFeeEntry* fee_entry = fee_book.Find(event.instrument_id);
                 if (fee_entry != nullptr) {
                     commission = quant_hft::ProductFeeBook::ComputeCommission(
                         *fee_entry, event.offset, fill_volume, event.avg_fill_price);
@@ -835,18 +1070,21 @@ int RunExport(const ExportSpec& spec) {
     if (spec.query_db && db_client != nullptr && stats.db_error.empty()) {
         stats.db_queried = true;
         std::string query_error;
-        stats.db_order_events =
-            CountDbRows(db_client, schema + ".order_events", spec.trading_day, &query_error);
-        if (!query_error.empty()) {
-            stats.db_error = query_error;
-        }
-        query_error.clear();
-        stats.db_trade_fills =
-            CountDbRows(db_client, schema + ".trade_events", spec.trading_day, &query_error);
-        if (!query_error.empty() && stats.db_error.empty()) {
+        if (!LoadDbIdentitySets(db_client, schema, spec.trading_day, &stats, &query_error)) {
             stats.db_error = query_error;
         }
     }
+
+    std::set<std::string> wal_order_terminal_identity_set;
+    BuildWalTerminalIdentitySet(&stats, &wal_order_terminal_identity_set);
+    stats.order_identity_match =
+        stats.db_queried && stats.db_error.empty() && stats.unresolved_order_identities == 0 &&
+        stats.db_unresolved_order_identities == 0 &&
+        wal_order_terminal_identity_set == stats.db_order_terminal_identity_set;
+    stats.trade_identity_match = stats.db_queried && stats.db_error.empty() &&
+                                 stats.unresolved_trade_fills == 0 &&
+                                 stats.db_unresolved_trade_identities == 0 &&
+                                 stats.wal_trade_identity_set == stats.db_trade_identity_set;
 
     if (!quant_hft::apps::WriteTextFile(spec.summary_json, RenderSummaryJson(spec, stats),
                                         &error) ||
@@ -866,12 +1104,18 @@ int RunExport(const ExportSpec& spec) {
               << " outputs=" << std::filesystem::path(spec.orders_csv).parent_path().string()
               << '\n';
 
-    const bool db_mismatch = stats.db_queried && stats.db_order_events >= 0 &&
-                             stats.db_trade_fills >= 0 &&
-                             (stats.db_order_events != stats.exported_order_events ||
-                              stats.db_trade_fills != stats.exported_trade_fills);
+    const bool db_available = stats.db_queried && stats.db_order_events >= 0 &&
+                              stats.db_trade_fills >= 0 && stats.db_error.empty();
+    const bool db_mismatch =
+        db_available && (!stats.order_identity_match || !stats.trade_identity_match);
+    const bool reconcile_incomplete =
+        !db_available || stats.unresolved_trade_fills > 0 ||
+        stats.unresolved_order_identities > 0 || stats.db_unresolved_order_identities > 0 ||
+        stats.db_unresolved_trade_identities > 0 || stats.nonterminal_order_identities > 0 ||
+        stats.db_nonterminal_order_identities > 0;
     if ((stats.wal_missing && spec.strict_input) || stats.parse_errors > 0 ||
-        stats.db_projection_failures > 0 || (spec.strict_reconcile && db_mismatch)) {
+        stats.db_projection_failures > 0 ||
+        (spec.strict_reconcile && (db_mismatch || reconcile_incomplete))) {
         return 2;
     }
     return 0;

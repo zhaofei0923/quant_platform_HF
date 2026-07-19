@@ -39,6 +39,7 @@ struct CtpFileConfig {
     int strategy_metrics_emit_interval_ms{1'000};
     std::string account_id;
     ExecutionConfig execution;
+    MarketBarRuntimeConfig market_bar;
     MarketDataRecordingConfig market_data_recording;
     RiskConfig risk;
     MarketStateDetectorConfig market_state_detector;

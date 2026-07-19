@@ -62,17 +62,72 @@ std::string JsonNumber(double value) {
     return stream.str();
 }
 
+bool WriteTextAtomically(const std::string& path, const std::string& payload, std::string* error) {
+    if (path.empty()) {
+        if (error != nullptr) {
+            *error = "output path is empty";
+        }
+        return false;
+    }
+
+    const std::filesystem::path output(path);
+    std::error_code ec;
+    if (!output.parent_path().empty()) {
+        std::filesystem::create_directories(output.parent_path(), ec);
+        if (ec) {
+            if (error != nullptr) {
+                *error = "unable to create output directory: " + ec.message();
+            }
+            return false;
+        }
+    }
+
+    const auto suffix = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count();
+    const std::filesystem::path temporary = output.string() + ".tmp." + std::to_string(suffix);
+    {
+        std::ofstream out(temporary, std::ios::out | std::ios::trunc);
+        if (!out.is_open()) {
+            if (error != nullptr) {
+                *error = "unable to open temporary output: " + temporary.string();
+            }
+            return false;
+        }
+        out << payload;
+        out.flush();
+        if (!out.good()) {
+            out.close();
+            std::filesystem::remove(temporary, ec);
+            if (error != nullptr) {
+                *error = "unable to flush temporary output: " + temporary.string();
+            }
+            return false;
+        }
+    }
+
+    std::filesystem::rename(temporary, output, ec);
+    if (ec) {
+        const std::string rename_error = ec.message();
+        std::error_code remove_error;
+        std::filesystem::remove(temporary, remove_error);
+        if (error != nullptr) {
+            *error = "unable to publish output atomically: " + rename_error;
+        }
+        return false;
+    }
+    return true;
+}
+
 std::shared_ptr<MonitoringCounter> SettlementReconcileDiffCounter() {
     static auto metric = MetricRegistry::Instance().BuildCounter(
-        "quant_hft_settlement_reconcile_diff_total",
-        "Total settlement reconcile diff count");
+        "quant_hft_settlement_reconcile_diff_total", "Total settlement reconcile diff count");
     return metric;
 }
 
 std::shared_ptr<MonitoringHistogram> SettlementDurationHistogram() {
     static auto metric = MetricRegistry::Instance().BuildHistogram(
-        "quant_hft_settlement_duration_seconds",
-        "Daily settlement run duration in seconds",
+        "quant_hft_settlement_duration_seconds", "Daily settlement run duration in seconds",
         {0.1, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600});
     return metric;
 }
@@ -93,17 +148,16 @@ struct ScopeDurationObserve {
 
 }  // namespace
 
-DailySettlementService::DailySettlementService(std::shared_ptr<SettlementPriceProvider> price_provider,
-                                               std::shared_ptr<ISettlementStore> store,
-                                               std::shared_ptr<SettlementQueryClient> query_client,
-                                               std::shared_ptr<ITradingDomainStore> domain_store)
+DailySettlementService::DailySettlementService(
+    std::shared_ptr<SettlementPriceProvider> price_provider,
+    std::shared_ptr<ISettlementStore> store, std::shared_ptr<SettlementQueryClient> query_client,
+    std::shared_ptr<ITradingDomainStore> domain_store)
     : price_provider_(std::move(price_provider)),
       store_(std::move(store)),
       query_client_(std::move(query_client)),
       domain_store_(std::move(domain_store)) {}
 
-bool DailySettlementService::Run(const DailySettlementConfig& config,
-                                 DailySettlementResult* result,
+bool DailySettlementService::Run(const DailySettlementConfig& config, DailySettlementResult* result,
                                  std::string* error) {
     ScopeDurationObserve duration_observer(std::chrono::steady_clock::now());
     if (result == nullptr) {
@@ -170,8 +224,12 @@ bool DailySettlementService::Run(const DailySettlementConfig& config,
 
     std::vector<OrderEvent> backfill_events;
     std::string backfill_error;
-    if (!query_client_->QueryOrderTradeBackfill(&backfill_events, &backfill_error) &&
-        config.strict_order_trade_backfill) {
+    const bool backfill_completed =
+        query_client_->QueryOrderTradeBackfill(&backfill_events, &backfill_error);
+    result->backfill_completed = backfill_completed;
+    result->backfill_event_count = backfill_events.size();
+    result->backfill_error = backfill_error;
+    if (!backfill_completed && config.strict_order_trade_backfill) {
         if (!WriteBlockedRun(config, settlement_start_ts_ns, backfill_error, error)) {
             return false;
         }
@@ -184,8 +242,8 @@ bool DailySettlementService::Run(const DailySettlementConfig& config,
 
     if (!backfill_events.empty() && domain_store_ != nullptr) {
         std::string persist_error;
-        if (!PersistBackfillEvents(
-                config.account_id, backfill_events, settlement_start_ts_ns, &persist_error)) {
+        if (!PersistBackfillEvents(config.account_id, backfill_events, settlement_start_ts_ns,
+                                   &persist_error)) {
             if (!WriteBlockedRun(config, settlement_start_ts_ns, persist_error, error)) {
                 return false;
             }
@@ -200,12 +258,8 @@ bool DailySettlementService::Run(const DailySettlementConfig& config,
     std::vector<SettlementOpenPositionRecord> positions;
     std::string load_error;
     if (!store_->LoadOpenPositions(config.account_id, &positions, &load_error)) {
-        if (!WriteRunStatus(config,
-                            "FAILED",
-                            settlement_start_ts_ns,
-                            "LOAD_OPEN_POSITIONS_FAILED",
-                            load_error,
-                            error)) {
+        if (!WriteRunStatus(config, "FAILED", settlement_start_ts_ns, "LOAD_OPEN_POSITIONS_FAILED",
+                            load_error, error)) {
             return false;
         }
         if (error != nullptr) {
@@ -218,12 +272,8 @@ bool DailySettlementService::Run(const DailySettlementConfig& config,
     std::unordered_map<std::string, SettlementInstrumentRecord> instruments;
     std::string price_error;
     if (!LoadSettlementPrices(config, positions, &final_prices, &instruments, &price_error)) {
-        if (!WriteRunStatus(config,
-                            "PENDING_PRICE",
-                            settlement_start_ts_ns,
-                            "MISSING_SETTLEMENT_PRICE",
-                            price_error,
-                            error)) {
+        if (!WriteRunStatus(config, "PENDING_PRICE", settlement_start_ts_ns,
+                            "MISSING_SETTLEMENT_PRICE", price_error, error)) {
             return false;
         }
         result->success = false;
@@ -235,18 +285,10 @@ bool DailySettlementService::Run(const DailySettlementConfig& config,
 
     std::int64_t total_position_profit_cents = 0;
     std::string settlement_error;
-    if (!RunSettlementLoop(config,
-                           &positions,
-                           final_prices,
-                           instruments,
-                           &total_position_profit_cents,
-                           &settlement_error)) {
-        if (!WriteRunStatus(config,
-                            "FAILED",
-                            settlement_start_ts_ns,
-                            "SETTLEMENT_LOOP_FAILED",
-                            settlement_error,
-                            error)) {
+    if (!RunSettlementLoop(config, &positions, final_prices, instruments,
+                           &total_position_profit_cents, &settlement_error)) {
+        if (!WriteRunStatus(config, "FAILED", settlement_start_ts_ns, "SETTLEMENT_LOOP_FAILED",
+                            settlement_error, error)) {
             return false;
         }
         if (error != nullptr) {
@@ -257,12 +299,8 @@ bool DailySettlementService::Run(const DailySettlementConfig& config,
 
     std::string rollover_error;
     if (!RolloverPositions(config, &rollover_error)) {
-        if (!WriteRunStatus(config,
-                            "FAILED",
-                            settlement_start_ts_ns,
-                            "ROLLOVER_FAILED",
-                            rollover_error,
-                            error)) {
+        if (!WriteRunStatus(config, "FAILED", settlement_start_ts_ns, "ROLLOVER_FAILED",
+                            rollover_error, error)) {
             return false;
         }
         if (error != nullptr) {
@@ -274,20 +312,10 @@ bool DailySettlementService::Run(const DailySettlementConfig& config,
     SettlementAccountFundsRecord funds;
     SettlementSummaryRecord summary;
     std::string funds_error;
-    if (!RebuildAccountFunds(config,
-                             positions,
-                             final_prices,
-                             instruments,
-                             total_position_profit_cents,
-                             &funds,
-                             &summary,
-                             &funds_error)) {
-        if (!WriteRunStatus(config,
-                            "FAILED",
-                            settlement_start_ts_ns,
-                            "FUNDS_REBUILD_FAILED",
-                            funds_error,
-                            error)) {
+    if (!RebuildAccountFunds(config, positions, final_prices, instruments,
+                             total_position_profit_cents, &funds, &summary, &funds_error)) {
+        if (!WriteRunStatus(config, "FAILED", settlement_start_ts_ns, "FUNDS_REBUILD_FAILED",
+                            funds_error, error)) {
             return false;
         }
         if (error != nullptr) {
@@ -298,12 +326,8 @@ bool DailySettlementService::Run(const DailySettlementConfig& config,
 
     std::string write_error;
     if (!store_->UpsertAccountFunds(funds, &write_error)) {
-        if (!WriteRunStatus(config,
-                            "FAILED",
-                            settlement_start_ts_ns,
-                            "UPSERT_ACCOUNT_FUNDS_FAILED",
-                            write_error,
-                            error)) {
+        if (!WriteRunStatus(config, "FAILED", settlement_start_ts_ns, "UPSERT_ACCOUNT_FUNDS_FAILED",
+                            write_error, error)) {
             return false;
         }
         if (error != nullptr) {
@@ -313,12 +337,8 @@ bool DailySettlementService::Run(const DailySettlementConfig& config,
     }
 
     if (!store_->AppendSummary(summary, &write_error)) {
-        if (!WriteRunStatus(config,
-                            "FAILED",
-                            settlement_start_ts_ns,
-                            "APPEND_SUMMARY_FAILED",
-                            write_error,
-                            error)) {
+        if (!WriteRunStatus(config, "FAILED", settlement_start_ts_ns, "APPEND_SUMMARY_FAILED",
+                            write_error, error)) {
             return false;
         }
         if (error != nullptr) {
@@ -334,12 +354,8 @@ bool DailySettlementService::Run(const DailySettlementConfig& config,
     ReconcileResult reconcile;
     std::string reconcile_error;
     if (!VerifyAgainstCTP(config, funds, &reconcile, &reconcile_error)) {
-        if (!WriteRunStatus(config,
-                            "FAILED",
-                            settlement_start_ts_ns,
-                            "RECONCILE_FAILED",
-                            reconcile_error,
-                            error)) {
+        if (!WriteRunStatus(config, "FAILED", settlement_start_ts_ns, "RECONCILE_FAILED",
+                            reconcile_error, error)) {
             return false;
         }
         if (error != nullptr) {
@@ -347,6 +363,9 @@ bool DailySettlementService::Run(const DailySettlementConfig& config,
         }
         return false;
     }
+    result->reconcile_completed = true;
+    result->reconcile_passed = reconcile.passed;
+    result->reconcile_diff_count = reconcile.diffs.size();
 
     if (reconcile.blocked) {
         for (const auto& diff : reconcile.diffs) {
@@ -362,12 +381,8 @@ bool DailySettlementService::Run(const DailySettlementConfig& config,
         if (!GenerateDiffReport(config, reconcile.diffs, error)) {
             return false;
         }
-        if (!WriteRunStatus(config,
-                            "BLOCKED",
-                            settlement_start_ts_ns,
-                            "RECONCILE_MISMATCH",
-                            "local state mismatch with CTP snapshot",
-                            error)) {
+        if (!WriteRunStatus(config, "BLOCKED", settlement_start_ts_ns, "RECONCILE_MISMATCH",
+                            "local state mismatch with CTP snapshot", error)) {
             return false;
         }
         std::string config_error;
@@ -377,6 +392,10 @@ bool DailySettlementService::Run(const DailySettlementConfig& config,
         result->status = "BLOCKED";
         result->message = "reconcile mismatch";
         return true;
+    }
+
+    if (!GenerateDiffReport(config, reconcile.diffs, error)) {
+        return false;
     }
 
     if (!WriteCompletedRun(config, settlement_start_ts_ns, error)) {
@@ -394,12 +413,82 @@ bool DailySettlementService::Run(const DailySettlementConfig& config,
     return true;
 }
 
+bool DailySettlementService::WriteEvidenceAtomically(const DailySettlementConfig& config,
+                                                     const DailySettlementResult& result,
+                                                     bool run_ok, const std::string& run_error,
+                                                     std::string* error) const {
+    if (config.evidence_path.empty()) {
+        if (error != nullptr) {
+            *error = "evidence_path is empty";
+        }
+        return false;
+    }
+
+    const std::string status = result.status.empty() ? "FAILED" : result.status;
+    const std::string message = result.message.empty() ? run_error : result.message;
+    const bool valid_success =
+        run_ok && result.success && status == "COMPLETED" &&
+        (result.noop || (result.reconcile_completed && result.reconcile_passed));
+    const EpochNanos generated_ts_ns = NowEpochNanos();
+
+    std::ostringstream out;
+    out << "{\n"
+        << "  \"schema_version\": 1,\n"
+        << "  \"evidence_complete\": true,\n"
+        << "  \"generated_ts_ns\": " << generated_ts_ns << ",\n"
+        << "  \"trading_day\": \"" << EscapeJson(config.trading_day) << "\",\n"
+        << "  \"account_id\": \"" << EscapeJson(config.account_id) << "\",\n"
+        << "  \"run_ok\": " << (run_ok ? "true" : "false") << ",\n"
+        << "  \"valid_success\": " << (valid_success ? "true" : "false") << ",\n"
+        << "  \"success\": " << (result.success ? "true" : "false") << ",\n"
+        << "  \"noop\": " << (result.noop ? "true" : "false") << ",\n"
+        << "  \"blocked\": " << (result.blocked ? "true" : "false") << ",\n"
+        << "  \"status\": \"" << EscapeJson(status) << "\",\n"
+        << "  \"message\": \"" << EscapeJson(message) << "\",\n"
+        << "  \"strict_order_trade_backfill\": "
+        << (config.strict_order_trade_backfill ? "true" : "false") << ",\n"
+        << "  \"backfill_completed\": " << (result.backfill_completed ? "true" : "false") << ",\n"
+        << "  \"backfill_event_count\": " << result.backfill_event_count << ",\n"
+        << "  \"backfill_error\": \"" << EscapeJson(result.backfill_error) << "\",\n"
+        << "  \"reconcile_completed\": " << (result.reconcile_completed ? "true" : "false") << ",\n"
+        << "  \"reconcile_passed\": " << (result.reconcile_passed ? "true" : "false") << ",\n"
+        << "  \"reconcile_diff_count\": " << result.reconcile_diff_count << ",\n"
+        << "  \"diff_report_path\": \"" << EscapeJson(config.diff_report_path) << "\",\n"
+        << "  \"run_error\": \"" << EscapeJson(run_error) << "\"\n"
+        << "}\n";
+
+    if (!WriteTextAtomically(config.evidence_path, out.str(), error)) {
+        return false;
+    }
+
+    std::ifstream evidence(config.evidence_path);
+    std::ostringstream published;
+    published << evidence.rdbuf();
+    const std::string payload = published.str();
+    const std::string expected_day = "\"trading_day\": \"" + EscapeJson(config.trading_day) + "\"";
+    const std::string expected_status = "\"status\": \"" + EscapeJson(status) + "\"";
+    if (!evidence.good() && !evidence.eof()) {
+        if (error != nullptr) {
+            *error = "unable to read published evidence";
+        }
+        return false;
+    }
+    if (payload.find("\"schema_version\": 1") == std::string::npos ||
+        payload.find("\"evidence_complete\": true") == std::string::npos ||
+        payload.find(expected_day) == std::string::npos ||
+        payload.find(expected_status) == std::string::npos) {
+        if (error != nullptr) {
+            *error = "published evidence validation failed";
+        }
+        return false;
+    }
+    return true;
+}
+
 bool DailySettlementService::LoadSettlementPrices(
-    const DailySettlementConfig& config,
-    const std::vector<SettlementOpenPositionRecord>& positions,
+    const DailySettlementConfig& config, const std::vector<SettlementOpenPositionRecord>& positions,
     std::unordered_map<std::string, double>* final_prices,
-    std::unordered_map<std::string, SettlementInstrumentRecord>* instruments,
-    std::string* error) {
+    std::unordered_map<std::string, SettlementInstrumentRecord>* instruments, std::string* error) {
     if (final_prices == nullptr || instruments == nullptr) {
         if (error != nullptr) {
             *error = "settlement price outputs are null";
@@ -429,7 +518,8 @@ bool DailySettlementService::LoadSettlementPrices(
             SettlementPriceRecord missing_record;
             missing_record.trading_day = config.trading_day;
             missing_record.instrument_id = instrument_id;
-            if (const auto inst_it = instruments->find(instrument_id); inst_it != instruments->end()) {
+            if (const auto inst_it = instruments->find(instrument_id);
+                inst_it != instruments->end()) {
                 (void)inst_it;
             }
             missing_record.exchange_id = "";
@@ -489,12 +579,10 @@ bool DailySettlementService::LoadSettlementPrices(
 }
 
 bool DailySettlementService::RunSettlementLoop(
-    const DailySettlementConfig& config,
-    std::vector<SettlementOpenPositionRecord>* positions,
+    const DailySettlementConfig& config, std::vector<SettlementOpenPositionRecord>* positions,
     const std::unordered_map<std::string, double>& final_prices,
     const std::unordered_map<std::string, SettlementInstrumentRecord>& instruments,
-    std::int64_t* total_position_profit_cents,
-    std::string* error) {
+    std::int64_t* total_position_profit_cents, std::string* error) {
     if (positions == nullptr || total_position_profit_cents == nullptr) {
         if (error != nullptr) {
             *error = "settlement loop outputs are null";
@@ -535,11 +623,13 @@ bool DailySettlementService::RunSettlementLoop(
 
         const long double settlement_price = static_cast<long double>(price_it->second);
         const long double open_price = static_cast<long double>(position.open_price);
-        const long double multiplier = static_cast<long double>(instrument_it->second.contract_multiplier);
+        const long double multiplier =
+            static_cast<long double>(instrument_it->second.contract_multiplier);
         const long double volume = static_cast<long double>(position.volume);
         const long double raw_profit = (settlement_price - open_price) * multiplier * volume;
 
-        const std::int64_t profit_cents = ToCents(static_cast<double>(raw_profit), FixedRoundingMode::kHalfUp);
+        const std::int64_t profit_cents =
+            ToCents(static_cast<double>(raw_profit), FixedRoundingMode::kHalfUp);
         position.last_settlement_profit = CentsToDouble(profit_cents);
         position.accumulated_mtm = CentsToDouble(
             ToCents(position.accumulated_mtm, FixedRoundingMode::kHalfUp) + profit_cents);
@@ -618,14 +708,11 @@ bool DailySettlementService::RolloverPositions(const DailySettlementConfig& conf
 }
 
 bool DailySettlementService::RebuildAccountFunds(
-    const DailySettlementConfig& config,
-    const std::vector<SettlementOpenPositionRecord>& positions,
+    const DailySettlementConfig& config, const std::vector<SettlementOpenPositionRecord>& positions,
     const std::unordered_map<std::string, double>& final_prices,
     const std::unordered_map<std::string, SettlementInstrumentRecord>& instruments,
-    std::int64_t total_position_profit_cents,
-    SettlementAccountFundsRecord* funds_out,
-    SettlementSummaryRecord* summary_out,
-    std::string* error) {
+    std::int64_t total_position_profit_cents, SettlementAccountFundsRecord* funds_out,
+    SettlementSummaryRecord* summary_out, std::string* error) {
     if (funds_out == nullptr || summary_out == nullptr) {
         if (error != nullptr) {
             *error = "fund outputs are null";
@@ -650,7 +737,8 @@ bool DailySettlementService::RebuildAccountFunds(
     if (!store_->SumDeposit(config.account_id, config.trading_day, &deposit, &load_error) ||
         !store_->SumWithdraw(config.account_id, config.trading_day, &withdraw, &load_error) ||
         !store_->SumCommission(config.account_id, config.trading_day, &commission, &load_error) ||
-        !store_->SumCloseProfit(config.account_id, config.trading_day, &close_profit, &load_error)) {
+        !store_->SumCloseProfit(config.account_id, config.trading_day, &close_profit,
+                                &load_error)) {
         if (error != nullptr) {
             *error = "sum account deltas failed: " + load_error;
         }
@@ -694,8 +782,8 @@ bool DailySettlementService::RebuildAccountFunds(
     const std::int64_t available_cents = balance_cents - margin_cents;
     double risk_degree = 0.0;
     if (margin_cents > 0) {
-        const long double raw_risk = static_cast<long double>(balance_cents) /
-                                     static_cast<long double>(margin_cents);
+        const long double raw_risk =
+            static_cast<long double>(balance_cents) / static_cast<long double>(margin_cents);
         const auto scaled = FixedDecimal::ToScaled(raw_risk, 4, FixedRoundingMode::kHalfUp);
         risk_degree = static_cast<double>(FixedDecimal::ToLongDouble(scaled, 4));
     }
@@ -837,8 +925,8 @@ bool DailySettlementService::VerifyAgainstCTP(const DailySettlementConfig& confi
     std::unordered_map<std::string, PositionAgg> ctp_agg;
     for (const auto& item : ctp_positions) {
         auto& agg = ctp_agg[item.instrument_id];
-        const bool is_long = item.posi_direction == "2" || item.posi_direction == "L" ||
-                             item.posi_direction == "l";
+        const bool is_long =
+            item.posi_direction == "2" || item.posi_direction == "L" || item.posi_direction == "l";
         if (is_long) {
             agg.long_position += item.position;
             agg.long_today += item.today_position;
@@ -860,10 +948,8 @@ bool DailySettlementService::VerifyAgainstCTP(const DailySettlementConfig& confi
         instruments.insert(instrument_id);
     }
 
-    auto append_position_diff = [&](const std::string& instrument_id,
-                                    const std::string& field,
-                                    int local_value,
-                                    int ctp_value) {
+    auto append_position_diff = [&](const std::string& instrument_id, const std::string& field,
+                                    int local_value, int ctp_value) {
         if (local_value == ctp_value) {
             return;
         }
@@ -887,8 +973,10 @@ bool DailySettlementService::VerifyAgainstCTP(const DailySettlementConfig& confi
         const PositionAgg local = local_it == local_agg.end() ? PositionAgg{} : local_it->second;
         const PositionAgg ctp = ctp_it == ctp_agg.end() ? PositionAgg{} : ctp_it->second;
 
-        append_position_diff(instrument_id, "long_position", local.long_position, ctp.long_position);
-        append_position_diff(instrument_id, "short_position", local.short_position, ctp.short_position);
+        append_position_diff(instrument_id, "long_position", local.long_position,
+                             ctp.long_position);
+        append_position_diff(instrument_id, "short_position", local.short_position,
+                             ctp.short_position);
         append_position_diff(instrument_id, "long_today", local.long_today, ctp.long_today);
         append_position_diff(instrument_id, "short_today", local.short_today, ctp.short_today);
         append_position_diff(instrument_id, "long_yd", local.long_yd, ctp.long_yd);
@@ -901,30 +989,19 @@ bool DailySettlementService::VerifyAgainstCTP(const DailySettlementConfig& confi
 }
 
 bool DailySettlementService::GenerateDiffReport(
-    const DailySettlementConfig& config,
-    const std::vector<SettlementReconcileDiffRecord>& diffs,
+    const DailySettlementConfig& config, const std::vector<SettlementReconcileDiffRecord>& diffs,
     std::string* error) const {
     std::string path = config.diff_report_path;
     if (path.empty()) {
         path = "docs/results/settlement_diff_" + config.trading_day + ".json";
     }
 
-    std::filesystem::path output(path);
-    std::error_code ec;
-    std::filesystem::create_directories(output.parent_path(), ec);
-
-    std::ofstream out(output);
-    if (!out.is_open()) {
-        if (error != nullptr) {
-            *error = "unable to write diff report: " + output.string();
-        }
-        return false;
-    }
-
+    std::ostringstream out;
     out << "{\n";
     out << "  \"trading_day\": \"" << EscapeJson(config.trading_day) << "\",\n";
     out << "  \"account_id\": \"" << EscapeJson(config.account_id) << "\",\n";
     out << "  \"generated_at_ns\": " << NowEpochNanos() << ",\n";
+    out << "  \"reconcile_performed\": true,\n";
     out << "  \"diff_count\": " << diffs.size() << ",\n";
     out << "  \"diffs\": [\n";
     for (std::size_t i = 0; i < diffs.size(); ++i) {
@@ -940,12 +1017,11 @@ bool DailySettlementService::GenerateDiffReport(
     }
     out << "  ]\n";
     out << "}\n";
-    return true;
+    return WriteTextAtomically(path, out.str(), error);
 }
 
 bool DailySettlementService::WriteRunStatus(const DailySettlementConfig& config,
-                                            const std::string& status,
-                                            EpochNanos started_ts_ns,
+                                            const std::string& status, EpochNanos started_ts_ns,
                                             const std::string& error_code,
                                             const std::string& error_msg,
                                             std::string* error) const {
@@ -970,11 +1046,9 @@ bool DailySettlementService::WriteRunStatus(const DailySettlementConfig& config,
 }
 
 bool DailySettlementService::WriteBlockedRun(const DailySettlementConfig& config,
-                                             EpochNanos started_ts_ns,
-                                             const std::string& reason,
+                                             EpochNanos started_ts_ns, const std::string& reason,
                                              std::string* error) const {
-    if (!WriteRunStatus(
-            config, "BLOCKED", started_ts_ns, "SETTLEMENT_BLOCKED", reason, error)) {
+    if (!WriteRunStatus(config, "BLOCKED", started_ts_ns, "SETTLEMENT_BLOCKED", reason, error)) {
         return false;
     }
 
@@ -998,8 +1072,7 @@ bool DailySettlementService::WriteBlockedRun(const DailySettlementConfig& config
 }
 
 bool DailySettlementService::WriteCompletedRun(const DailySettlementConfig& config,
-                                               EpochNanos started_ts_ns,
-                                               std::string* error) const {
+                                               EpochNanos started_ts_ns, std::string* error) const {
     return WriteRunStatus(config, "COMPLETED", started_ts_ns, "", "", error);
 }
 
@@ -1077,11 +1150,11 @@ bool DailySettlementService::PersistBackfillEvents(const std::string& account_id
     for (const auto& [trade_key, event] : unique_trade_events) {
         (void)trade_key;
         Trade trade;
-        trade.trade_id = !event.trade_id.empty()
-                             ? event.trade_id
-                             : (!event.order_ref.empty()
-                                    ? event.order_ref + "_" + std::to_string(event.ts_ns)
-                                    : "settlement_backfill_" + std::to_string(event.ts_ns));
+        trade.trade_id =
+            !event.trade_id.empty()
+                ? event.trade_id
+                : (!event.order_ref.empty() ? event.order_ref + "_" + std::to_string(event.ts_ns)
+                                            : "settlement_backfill_" + std::to_string(event.ts_ns));
         trade.order_id = !event.order_ref.empty() ? event.order_ref : event.client_order_id;
         trade.account_id = event.account_id.empty() ? account_id : event.account_id;
         trade.strategy_id = kBackfillStrategyId;
@@ -1090,8 +1163,8 @@ bool DailySettlementService::PersistBackfillEvents(const std::string& account_id
         trade.side = event.side;
         trade.offset = event.offset;
         trade.price = event.avg_fill_price;
-        trade.quantity = std::max(1, event.last_trade_volume > 0 ? event.last_trade_volume
-                                     : event.filled_volume);
+        trade.quantity = std::max(
+            1, event.last_trade_volume > 0 ? event.last_trade_volume : event.filled_volume);
         const EpochNanos event_ts_ns = event.exchange_ts_ns > 0
                                            ? event.exchange_ts_ns
                                            : (event.ts_ns > 0 ? event.ts_ns : NowEpochNanos());

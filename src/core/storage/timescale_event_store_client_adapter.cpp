@@ -22,15 +22,13 @@ constexpr const char* kTableInstrumentOrderCommRates = "ctp_instrument_order_com
 }  // namespace
 
 TimescaleEventStoreClientAdapter::TimescaleEventStoreClientAdapter(
-    std::shared_ptr<ITimescaleSqlClient> client,
-    StorageRetryPolicy retry_policy,
+    std::shared_ptr<ITimescaleSqlClient> client, StorageRetryPolicy retry_policy,
     std::string schema)
     : client_(std::move(client)),
       retry_policy_(retry_policy),
       schema_(schema.empty() ? "public" : std::move(schema)) {}
 
-void TimescaleEventStoreClientAdapter::AppendMarketSnapshot(
-    const MarketSnapshot& snapshot) {
+void TimescaleEventStoreClientAdapter::AppendMarketSnapshot(const MarketSnapshot& snapshot) {
     if (snapshot.instrument_id.empty()) {
         return;
     }
@@ -51,6 +49,7 @@ void TimescaleEventStoreClientAdapter::AppendMarketSnapshot(
         {"settlement_price", ToString(snapshot.settlement_price)},
         {"average_price_raw", ToString(snapshot.average_price_raw)},
         {"average_price_norm", ToString(snapshot.average_price_norm)},
+        {"average_price_norm_valid", snapshot.average_price_norm_valid ? "1" : "0"},
         {"is_valid_settlement", snapshot.is_valid_settlement ? "1" : "0"},
         {"exchange_ts_ns", ToString(snapshot.exchange_ts_ns)},
         {"recv_ts_ns", ToString(snapshot.recv_ts_ns)},
@@ -98,11 +97,10 @@ void TimescaleEventStoreClientAdapter::AppendOrderEvent(const OrderEvent& event)
     (void)InsertWithRetry(kTableOrderEvents, row);
 }
 
-void TimescaleEventStoreClientAdapter::AppendRiskDecision(
-    const OrderIntent& intent,
-    const RiskDecision& decision) {
-    const auto decision_ts_ns = decision.decision_ts_ns > 0 ? decision.decision_ts_ns
-                                                             : NowEpochNanos();
+void TimescaleEventStoreClientAdapter::AppendRiskDecision(const OrderIntent& intent,
+                                                          const RiskDecision& decision) {
+    const auto decision_ts_ns =
+        decision.decision_ts_ns > 0 ? decision.decision_ts_ns : NowEpochNanos();
     std::unordered_map<std::string, std::string> row{
         {"account_id", intent.account_id},
         {"client_order_id", intent.client_order_id},
@@ -296,8 +294,8 @@ std::vector<MarketSnapshot> TimescaleEventStoreClientAdapter::GetMarketSnapshots
     }
 
     std::string error;
-    const auto rows =
-        client_->QueryRows(TableName(kTableMarketSnapshots), "instrument_id", instrument_id, &error);
+    const auto rows = client_->QueryRows(TableName(kTableMarketSnapshots), "instrument_id",
+                                         instrument_id, &error);
     std::vector<MarketSnapshot> out;
     out.reserve(rows.size());
     for (const auto& row : rows) {
@@ -319,6 +317,10 @@ std::vector<MarketSnapshot> TimescaleEventStoreClientAdapter::GetMarketSnapshots
         (void)ParseDouble(row, "settlement_price", &snapshot.settlement_price);
         (void)ParseDouble(row, "average_price_raw", &snapshot.average_price_raw);
         (void)ParseDouble(row, "average_price_norm", &snapshot.average_price_norm);
+        std::int32_t average_price_norm_valid = 0;
+        if (ParseInt32(row, "average_price_norm_valid", &average_price_norm_valid)) {
+            snapshot.average_price_norm_valid = average_price_norm_valid > 0;
+        }
         std::int32_t valid_settlement = 0;
         if (ParseInt32(row, "is_valid_settlement", &valid_settlement)) {
             snapshot.is_valid_settlement = valid_settlement > 0;
@@ -337,8 +339,8 @@ std::vector<OrderEvent> TimescaleEventStoreClientAdapter::GetOrderEvents(
     }
 
     std::string error;
-    const auto rows =
-        client_->QueryRows(TableName(kTableOrderEvents), "client_order_id", client_order_id, &error);
+    const auto rows = client_->QueryRows(TableName(kTableOrderEvents), "client_order_id",
+                                         client_order_id, &error);
     std::vector<OrderEvent> out;
     out.reserve(rows.size());
     for (const auto& row : rows) {
@@ -501,8 +503,7 @@ std::vector<TradingAccountSnapshot> TimescaleEventStoreClientAdapter::GetTrading
 
 std::vector<InvestorPositionSnapshot>
 TimescaleEventStoreClientAdapter::GetInvestorPositionSnapshots(
-    const std::string& account_id,
-    const std::string& instrument_id) const {
+    const std::string& account_id, const std::string& instrument_id) const {
     if (client_ == nullptr || account_id.empty()) {
         return {};
     }
@@ -611,8 +612,8 @@ TimescaleEventStoreClientAdapter::GetInstrumentMarginRateSnapshots(
     }
 
     std::string error;
-    const auto rows = client_->QueryRows(TableName(kTableInstrumentMarginRates),
-                                         "instrument_id", instrument_id, &error);
+    const auto rows = client_->QueryRows(TableName(kTableInstrumentMarginRates), "instrument_id",
+                                         instrument_id, &error);
     std::vector<InstrumentMarginRateSnapshot> out;
     out.reserve(rows.size());
     for (const auto& row : rows) {
@@ -623,9 +624,12 @@ TimescaleEventStoreClientAdapter::GetInstrumentMarginRateSnapshots(
         snapshot.exchange_id = GetOrEmpty(row, "exchange_id");
         snapshot.hedge_flag = GetOrEmpty(row, "hedge_flag");
         (void)ParseDouble(row, "long_margin_ratio_by_money", &snapshot.long_margin_ratio_by_money);
-        (void)ParseDouble(row, "long_margin_ratio_by_volume", &snapshot.long_margin_ratio_by_volume);
-        (void)ParseDouble(row, "short_margin_ratio_by_money", &snapshot.short_margin_ratio_by_money);
-        (void)ParseDouble(row, "short_margin_ratio_by_volume", &snapshot.short_margin_ratio_by_volume);
+        (void)ParseDouble(row, "long_margin_ratio_by_volume",
+                          &snapshot.long_margin_ratio_by_volume);
+        (void)ParseDouble(row, "short_margin_ratio_by_money",
+                          &snapshot.short_margin_ratio_by_money);
+        (void)ParseDouble(row, "short_margin_ratio_by_volume",
+                          &snapshot.short_margin_ratio_by_volume);
         std::int32_t is_relative = 0;
         if (ParseInt32(row, "is_relative", &is_relative)) {
             snapshot.is_relative = is_relative != 0;
@@ -660,7 +664,8 @@ TimescaleEventStoreClientAdapter::GetInstrumentCommissionRateSnapshots(
         (void)ParseDouble(row, "close_ratio_by_money", &snapshot.close_ratio_by_money);
         (void)ParseDouble(row, "close_ratio_by_volume", &snapshot.close_ratio_by_volume);
         (void)ParseDouble(row, "close_today_ratio_by_money", &snapshot.close_today_ratio_by_money);
-        (void)ParseDouble(row, "close_today_ratio_by_volume", &snapshot.close_today_ratio_by_volume);
+        (void)ParseDouble(row, "close_today_ratio_by_volume",
+                          &snapshot.close_today_ratio_by_volume);
         (void)ParseInt64(row, "ts_ns", &snapshot.ts_ns);
         snapshot.source = GetOrEmpty(row, "source");
         out.push_back(snapshot);
@@ -676,8 +681,8 @@ TimescaleEventStoreClientAdapter::GetInstrumentOrderCommRateSnapshots(
     }
 
     std::string error;
-    const auto rows = client_->QueryRows(TableName(kTableInstrumentOrderCommRates),
-                                         "instrument_id", instrument_id, &error);
+    const auto rows = client_->QueryRows(TableName(kTableInstrumentOrderCommRates), "instrument_id",
+                                         instrument_id, &error);
     std::vector<InstrumentOrderCommRateSnapshot> out;
     out.reserve(rows.size());
     for (const auto& row : rows) {
@@ -688,7 +693,8 @@ TimescaleEventStoreClientAdapter::GetInstrumentOrderCommRateSnapshots(
         snapshot.exchange_id = GetOrEmpty(row, "exchange_id");
         snapshot.hedge_flag = GetOrEmpty(row, "hedge_flag");
         (void)ParseDouble(row, "order_comm_by_volume", &snapshot.order_comm_by_volume);
-        (void)ParseDouble(row, "order_action_comm_by_volume", &snapshot.order_action_comm_by_volume);
+        (void)ParseDouble(row, "order_action_comm_by_volume",
+                          &snapshot.order_action_comm_by_volume);
         (void)ParseInt64(row, "ts_ns", &snapshot.ts_ns);
         snapshot.source = GetOrEmpty(row, "source");
         out.push_back(snapshot);
@@ -697,8 +703,7 @@ TimescaleEventStoreClientAdapter::GetInstrumentOrderCommRateSnapshots(
 }
 
 bool TimescaleEventStoreClientAdapter::InsertWithRetry(
-    const std::string& table,
-    const std::unordered_map<std::string, std::string>& row) const {
+    const std::string& table, const std::unordered_map<std::string, std::string>& row) const {
     if (client_ == nullptr || table.empty()) {
         return false;
     }
@@ -772,8 +777,7 @@ std::string TimescaleEventStoreClientAdapter::OffsetToString(OffsetFlag offset) 
     return "OPEN";
 }
 
-bool TimescaleEventStoreClientAdapter::ParseOffset(const std::string& text,
-                                                   OffsetFlag* out) {
+bool TimescaleEventStoreClientAdapter::ParseOffset(const std::string& text, OffsetFlag* out) {
     if (out == nullptr) {
         return false;
     }
@@ -808,8 +812,7 @@ std::string TimescaleEventStoreClientAdapter::RiskActionToString(RiskAction acti
     return "REVIEW";
 }
 
-bool TimescaleEventStoreClientAdapter::ParseRiskAction(const std::string& text,
-                                                       RiskAction* out) {
+bool TimescaleEventStoreClientAdapter::ParseRiskAction(const std::string& text, RiskAction* out) {
     if (out == nullptr) {
         return false;
     }
@@ -846,8 +849,7 @@ std::string TimescaleEventStoreClientAdapter::OrderStatusToString(OrderStatus st
     return "REJECTED";
 }
 
-bool TimescaleEventStoreClientAdapter::ParseOrderStatus(const std::string& text,
-                                                        OrderStatus* out) {
+bool TimescaleEventStoreClientAdapter::ParseOrderStatus(const std::string& text, OrderStatus* out) {
     if (out == nullptr) {
         return false;
     }
@@ -879,8 +881,7 @@ bool TimescaleEventStoreClientAdapter::ParseOrderStatus(const std::string& text,
 }
 
 std::string TimescaleEventStoreClientAdapter::GetOrEmpty(
-    const std::unordered_map<std::string, std::string>& row,
-    const std::string& key) {
+    const std::unordered_map<std::string, std::string>& row, const std::string& key) {
     const auto it = row.find(key);
     if (it == row.end()) {
         return "";
@@ -889,8 +890,7 @@ std::string TimescaleEventStoreClientAdapter::GetOrEmpty(
 }
 
 bool TimescaleEventStoreClientAdapter::ParseInt32(
-    const std::unordered_map<std::string, std::string>& row,
-    const std::string& key,
+    const std::unordered_map<std::string, std::string>& row, const std::string& key,
     std::int32_t* out) {
     if (out == nullptr) {
         return false;
@@ -908,8 +908,7 @@ bool TimescaleEventStoreClientAdapter::ParseInt32(
 }
 
 bool TimescaleEventStoreClientAdapter::ParseInt64(
-    const std::unordered_map<std::string, std::string>& row,
-    const std::string& key,
+    const std::unordered_map<std::string, std::string>& row, const std::string& key,
     std::int64_t* out) {
     if (out == nullptr) {
         return false;
@@ -927,9 +926,7 @@ bool TimescaleEventStoreClientAdapter::ParseInt64(
 }
 
 bool TimescaleEventStoreClientAdapter::ParseDouble(
-    const std::unordered_map<std::string, std::string>& row,
-    const std::string& key,
-    double* out) {
+    const std::unordered_map<std::string, std::string>& row, const std::string& key, double* out) {
     if (out == nullptr) {
         return false;
     }

@@ -40,10 +40,14 @@ CREATE TABLE IF NOT EXISTS analytics_ts.market_snapshots (
     settlement_price DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     average_price_raw DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     average_price_norm DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    average_price_norm_valid BOOLEAN NOT NULL DEFAULT FALSE,
     is_valid_settlement BOOLEAN NOT NULL DEFAULT FALSE,
     exchange_ts_ns BIGINT NOT NULL,
     recv_ts_ns BIGINT NOT NULL
 );
+
+ALTER TABLE analytics_ts.market_snapshots
+    ADD COLUMN IF NOT EXISTS average_price_norm_valid BOOLEAN NOT NULL DEFAULT FALSE;
 
 SELECT create_hypertable('analytics_ts.market_snapshots',
                          by_range('recv_ts_ns'),

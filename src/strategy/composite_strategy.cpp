@@ -475,6 +475,7 @@ std::vector<SignalIntent> CompositeStrategy::OnState(const StateSnapshot7D& stat
     atomic_context_.market_regime = state.market_regime;
     std::vector<SignalIntent> non_open_signals;
     std::vector<SignalIntent> opening_signals;
+    std::unordered_map<std::string, std::string> candidate_trace_by_strategy;
     const std::int32_t state_timeframe_minutes =
         state.timeframe_minutes > 0 ? state.timeframe_minutes : 1;
     const EpochNanos open_window_ts_ns = state.ts_ns;
@@ -499,8 +500,9 @@ std::vector<SignalIntent> CompositeStrategy::OnState(const StateSnapshot7D& stat
             if (signal.instrument_id.empty()) {
                 continue;
             }
+            last_blocked_reason_by_strategy_[slot.strategy_id] = "raw_signal";
+            candidate_trace_by_strategy[slot.strategy_id] = signal.trace_id;
             if (signal.signal_type == SignalType::kOpen) {
-                last_blocked_reason_by_strategy_[slot.strategy_id] = "raw_signal";
                 if (definition_.market_state_mode &&
                     !IsOpenSignalAllowedByRegime(slot, state.market_regime)) {
                     last_blocked_reason_by_strategy_[slot.strategy_id] = "market_regime";
@@ -534,6 +536,26 @@ std::vector<SignalIntent> CompositeStrategy::OnState(const StateSnapshot7D& stat
                        opening_gate.reverse_close_signals.end());
 
     std::vector<SignalIntent> merged_signals = MergeSignals(all_signals);
+    for (const SubStrategySlot& slot : sub_strategies_) {
+        if (slot.timeframe_minutes != state_timeframe_minutes) {
+            continue;
+        }
+        const auto reason_it = last_blocked_reason_by_strategy_.find(slot.strategy_id);
+        const std::string reason = reason_it == last_blocked_reason_by_strategy_.end()
+                                       ? "no_raw_signal"
+                                       : reason_it->second;
+        const std::string disposition =
+            reason == "no_raw_signal" ? "no_candidate" : (reason == "none" ? "allowed" : "blocked");
+        EmitCompositeLog(atomic_context_, "info", "strategy_decision",
+                         {{"strategy_id", slot.strategy_id},
+                          {"event_type", "strategy_decision"},
+                          {"event_ts_ns", std::to_string(state.ts_ns)},
+                          {"instrument_id", state.instrument_id},
+                          {"timeframe_minutes", std::to_string(state_timeframe_minutes)},
+                          {"disposition", disposition},
+                          {"reason", reason},
+                          {"trace_id", candidate_trace_by_strategy[slot.strategy_id]}});
+    }
     if (opening_gate.reverse_open_by_close_trace.empty()) {
         return merged_signals;
     }
@@ -1441,6 +1463,7 @@ std::vector<SignalIntent> CompositeStrategy::ApplyNonOpenSignalGate(
         const std::int32_t position =
             pos_it == atomic_context_.net_positions.end() ? 0 : pos_it->second;
         if (position == 0) {
+            last_blocked_reason_by_strategy_[signal.strategy_id] = "no_position";
             continue;
         }
 
@@ -1448,6 +1471,7 @@ std::vector<SignalIntent> CompositeStrategy::ApplyNonOpenSignalGate(
         const bool has_owner =
             owner_it != position_owner_by_instrument_.end() && !owner_it->second.empty();
         if (has_owner && owner_it->second != signal.strategy_id) {
+            last_blocked_reason_by_strategy_[signal.strategy_id] = "position_owner_mismatch";
             continue;
         }
 
@@ -1460,6 +1484,7 @@ std::vector<SignalIntent> CompositeStrategy::ApplyNonOpenSignalGate(
         if (normalized.volume <= 0 || normalized.volume > abs_pos) {
             normalized.volume = abs_pos;
         }
+        last_blocked_reason_by_strategy_[signal.strategy_id] = "none";
         gated.push_back(std::move(normalized));
     }
     return gated;

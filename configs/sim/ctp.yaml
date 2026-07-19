@@ -57,6 +57,18 @@ ctp:
   breaker_account_enabled: true
   breaker_system_enabled: true
   recovery_quiet_period_ms: 3000
+  gateway_reconnect_cycle_cooldown_ms: 8000
+  session_gate_enabled: true
+  max_signal_age_ms: 2000
+  max_market_tick_age_ms: 6000
+  open_session_end_guard_ms: 30000
+  recovery_query_timeout_ms: 30000
+  open_reenable_stability_ms: 30000
+  market_bar_allowed_lateness_ms: 3500
+  market_bar_poll_interval_ms: 100
+  market_bar_checkpoint_interval_ms: 1000
+  market_event_delay_hard_ms: 5000
+  require_complete_timeframe_bar: true
 
   # --- storage & audit ---
   kafka_bootstrap_servers: "${KAFKA_BOOTSTRAP_SERVERS}"

@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "status": "pass",
+  "period": {"start": "20260701", "end": "20260718"},
+  "input_root": "runtime/market_data/simnow",
+  "output_root": "runtime/market_data/simnow_corrected_v2",
+  "fixed_lateness_ms": 3500,
+  "trading_days": 13,
+  "product_days": 26,
+  "input_tick_rows": 989210,
+  "parse_errors": 0,
+  "duplicate_ticks": 0,
+  "late_ticks": 0,
+  "one_minute": {"expected_slots": 8970, "canonical_bars": 8968, "explicit_no_tick_gaps": 2, "endpoint_bars": 85, "duplicate_keys": 0},
+  "five_minute": {"expected_keys": 1794, "canonical_results": 1794, "explicit_no_tick_gaps": 0, "incomplete_bars": 2, "endpoint_bars": 85, "duplicate_keys": 0},
+  "strategy": {"evaluations": 1766, "candidates": 521, "integrity_eligibility_violations": 0},
+  "hc_20260713_1125": {"old_rows": 2, "old_sell_candidates": 1, "corrected_bars": 1, "complete": true, "close": 3277, "corrected_raw_signal": "", "false_sell_removed": true},
+  "critical_conflicts": 0,
+  "evidence": {"files": 565, "bytes": 1308818660, "manifest": "baseline_sha256.csv"}
+}

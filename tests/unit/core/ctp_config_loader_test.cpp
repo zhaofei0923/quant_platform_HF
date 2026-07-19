@@ -811,6 +811,18 @@ TEST(CtpConfigLoaderTest, LoadsFlowBreakerAndAuditSettings) {
         "  breaker_account_enabled: true\n"
         "  breaker_system_enabled: true\n"
         "  recovery_quiet_period_ms: 3500\n"
+        "  gateway_reconnect_cycle_cooldown_ms: 9000\n"
+        "  session_gate_enabled: true\n"
+        "  max_signal_age_ms: 2100\n"
+        "  max_market_tick_age_ms: 6100\n"
+        "  open_session_end_guard_ms: 31000\n"
+        "  recovery_query_timeout_ms: 32000\n"
+        "  open_reenable_stability_ms: 33000\n"
+        "  market_bar_allowed_lateness_ms: 3500\n"
+        "  market_bar_poll_interval_ms: 100\n"
+        "  market_bar_checkpoint_interval_ms: 1000\n"
+        "  market_event_delay_hard_ms: 5000\n"
+        "  require_complete_timeframe_bar: true\n"
         "  kafka_bootstrap_servers: \"127.0.0.1:9092\"\n"
         "  kafka_topic_ticks: \"market.ticks.v1\"\n"
         "  clickhouse_dsn: \"clickhouse://localhost:9000/default\"\n"
@@ -835,6 +847,18 @@ TEST(CtpConfigLoaderTest, LoadsFlowBreakerAndAuditSettings) {
     EXPECT_EQ(config.runtime.breaker_timeout_ms, 1200);
     EXPECT_EQ(config.runtime.breaker_half_open_timeout_ms, 6000);
     EXPECT_EQ(config.runtime.recovery_quiet_period_ms, 3500);
+    EXPECT_EQ(config.runtime.reconnect_cycle_cooldown_ms, 9000);
+    EXPECT_TRUE(config.execution.session_gate_enabled);
+    EXPECT_EQ(config.execution.max_signal_age_ms, 2100);
+    EXPECT_EQ(config.execution.max_market_tick_age_ms, 6100);
+    EXPECT_EQ(config.execution.open_session_end_guard_ms, 31000);
+    EXPECT_EQ(config.execution.recovery_query_timeout_ms, 32000);
+    EXPECT_EQ(config.execution.open_reenable_stability_ms, 33000);
+    EXPECT_EQ(config.market_bar.allowed_lateness_ms, 3500);
+    EXPECT_EQ(config.market_bar.poll_interval_ms, 100);
+    EXPECT_EQ(config.market_bar.checkpoint_interval_ms, 1000);
+    EXPECT_EQ(config.market_bar.event_delay_hard_ms, 5000);
+    EXPECT_TRUE(config.market_bar.require_complete_timeframe_bar);
     EXPECT_EQ(config.runtime.kafka_bootstrap_servers, "127.0.0.1:9092");
     EXPECT_EQ(config.runtime.kafka_topic_ticks, "market.ticks.v1");
     EXPECT_EQ(config.runtime.clickhouse_dsn, "clickhouse://localhost:9000/default");

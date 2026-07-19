@@ -347,6 +347,11 @@ std::string BuildCtpTradeId(const std::string& exchange_id, Side side,
     }
     return exchange_id + "|" + direction + "|" + trade_id;
 }
+
+bool IsTerminalOrderStatus(OrderStatus status) {
+    return status == OrderStatus::kFilled || status == OrderStatus::kCanceled ||
+           status == OrderStatus::kRejected;
+}
 #endif
 
 std::string InferExchangeIdFromInstrument(const std::string& instrument_id) {
@@ -622,6 +627,8 @@ class CtpMdSpi final : public CThostFtdcMdSpi {
         snapshot.open_interest = static_cast<std::int64_t>(p_depth_market_data->OpenInterest);
         snapshot.settlement_price = p_depth_market_data->SettlementPrice;
         snapshot.average_price_raw = p_depth_market_data->AveragePrice;
+        snapshot.exchange_ts_ns = CtpGatewayAdapter::ParseMarketExchangeTimestamp(
+            snapshot.action_day, snapshot.update_time, snapshot.update_millisec);
         snapshot.recv_ts_ns = NowEpochNanos();
         CtpGatewayAdapter::NormalizeMarketSnapshot(&snapshot);
         std::function<void(const MarketSnapshot&)> callback;
@@ -635,10 +642,13 @@ class CtpMdSpi final : public CThostFtdcMdSpi {
                     snapshot.exchange_id = meta.exchange_id;
                 }
                 if (!IsInvalidMarketPrice(snapshot.average_price_raw) &&
-                    snapshot.average_price_raw > 0.0 && meta.volume_multiple > 0 &&
-                    snapshot.exchange_id != "CZCE") {
+                    snapshot.average_price_raw > 0.0 && meta.volume_multiple > 0) {
                     snapshot.average_price_norm =
-                        snapshot.average_price_raw / static_cast<double>(meta.volume_multiple);
+                        snapshot.exchange_id == "CZCE"
+                            ? snapshot.average_price_raw
+                            : snapshot.average_price_raw /
+                                  static_cast<double>(meta.volume_multiple);
+                    snapshot.average_price_norm_valid = true;
                 }
                 break;
             }
@@ -778,6 +788,18 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
             owner_->user_session_.login_time = SafeCtpString(p_rsp_user_login->LoginTime);
             owner_->user_session_.last_login_time = owner_->runtime_config_.last_login_time;
             owner_->user_session_.reserve_info = owner_->runtime_config_.reserve_info;
+            owner_->user_session_.trading_day = SafeCtpString(p_rsp_user_login->TradingDay);
+            owner_->user_session_.max_order_ref = SafeCtpString(p_rsp_user_login->MaxOrderRef);
+            owner_->user_session_.front_id = p_rsp_user_login->FrontID;
+            owner_->user_session_.session_id = p_rsp_user_login->SessionID;
+            try {
+                owner_->order_ref_seq_ = std::max(
+                    owner_->order_ref_seq_,
+                    static_cast<std::uint64_t>(std::stoull(owner_->user_session_.max_order_ref)));
+            } catch (...) {
+                // Some brokers return an empty/non-numeric MaxOrderRef. WAL seeding in the
+                // application layer remains the fallback in that case.
+            }
         }
 
         {
@@ -1211,7 +1233,10 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
             owner_->CompleteScheduledQuery();
         }
         const bool success = IsRspSuccess(p_rsp_info);
-        if (b_is_last) {
+        auto notify_complete = [&]() {
+            if (!b_is_last) {
+                return;
+            }
             CtpGatewayAdapter::QueryCompleteCallback query_callback;
             {
                 std::lock_guard<std::mutex> lock(owner_->mutex_);
@@ -1220,8 +1245,9 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
             if (query_callback) {
                 query_callback(n_request_id, "order", success);
             }
-        }
+        };
         if (!success || p_order == nullptr) {
+            notify_complete();
             return;
         }
 
@@ -1240,9 +1266,11 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
         event.status_msg = SafeCtpString(p_order->StatusMsg);
         event.order_submit_status = std::string(1, p_order->OrderSubmitStatus);
         event.order_ref = SafeCtpString(p_order->OrderRef);
+        event.trading_day = SafeCtpString(p_order->TradingDay);
         event.front_id = p_order->FrontID;
         event.session_id = p_order->SessionID;
         event.event_source = "OnRspQryOrder";
+        event.query_request_id = n_request_id;
         event.ts_ns = NowEpochNanos();
         event.exchange_ts_ns = ParseCtpDateTimeToEpochNanos(SafeCtpString(p_order->InsertDate),
                                                             SafeCtpString(p_order->InsertTime));
@@ -1260,13 +1288,22 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
             const auto meta_it = owner_->client_order_meta_.find(event.client_order_id);
             if (meta_it != owner_->client_order_meta_.end()) {
                 event.strategy_id = meta_it->second.strategy_id;
+                meta_it->second.terminal = IsTerminalOrderStatus(event.status);
+                if (event.trading_day.empty()) {
+                    event.trading_day = meta_it->second.trading_day;
+                }
             }
+            if (event.trading_day.empty()) {
+                event.trading_day = owner_->user_session_.trading_day;
+            }
+            event.recovery_generation = owner_->session_generation_;
             callback = owner_->order_event_callback_;
         }
         if (callback) {
             StampOrderEventTimestamps(&event);
             callback(event);
         }
+        notify_complete();
     }
 
     void OnRspQryTrade(CThostFtdcTradeField* p_trade, CThostFtdcRspInfoField* p_rsp_info,
@@ -1279,7 +1316,10 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
             owner_->CompleteScheduledQuery();
         }
         const bool success = IsRspSuccess(p_rsp_info);
-        if (b_is_last) {
+        auto notify_complete = [&]() {
+            if (!b_is_last) {
+                return;
+            }
             CtpGatewayAdapter::QueryCompleteCallback query_callback;
             {
                 std::lock_guard<std::mutex> lock(owner_->mutex_);
@@ -1288,8 +1328,9 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
             if (query_callback) {
                 query_callback(n_request_id, "trade", success);
             }
-        }
+        };
         if (!success || p_trade == nullptr) {
+            notify_complete();
             return;
         }
 
@@ -1307,9 +1348,11 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
         event.avg_fill_price = p_trade->Price;
         event.reason = "trade_query";
         event.order_ref = SafeCtpString(p_trade->OrderRef);
-        event.trade_id =
-            BuildCtpTradeId(event.exchange_id, event.side, SafeCtpString(p_trade->TradeID));
+        event.raw_trade_id = SafeCtpString(p_trade->TradeID);
+        event.trading_day = SafeCtpString(p_trade->TradeDate);
+        event.trade_id = BuildCtpTradeId(event.exchange_id, event.side, event.raw_trade_id);
         event.event_source = "OnRspQryTrade";
+        event.query_request_id = n_request_id;
         event.ts_ns = NowEpochNanos();
         event.exchange_ts_ns = ParseCtpDateTimeToEpochNanos(SafeCtpString(p_trade->TradeDate),
                                                             SafeCtpString(p_trade->TradeTime));
@@ -1325,19 +1368,40 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
             if (meta_it != owner_->client_order_meta_.end()) {
                 auto& meta = meta_it->second;
                 event.strategy_id = meta.strategy_id;
+                if (event.trading_day.empty()) {
+                    event.trading_day = meta.trading_day;
+                }
+            }
+            if (event.trading_day.empty()) {
+                event.trading_day = owner_->user_session_.trading_day;
+            }
+            if (event.account_id.empty()) {
+                event.account_id = owner_->runtime_config_.investor_id;
+            }
+            event.recovery_generation = owner_->session_generation_;
+            const std::string trade_key = BuildCanonicalTradeKey(event);
+            const bool duplicate =
+                !trade_key.empty() && !owner_->seen_trade_keys_.insert(trade_key).second;
+            if (duplicate) {
+                ++owner_->duplicate_trades_suppressed_;
+            }
+            if (!duplicate && meta_it != owner_->client_order_meta_.end()) {
+                auto& meta = meta_it->second;
                 meta.cumulative_filled_volume += std::max(0, p_trade->Volume);
                 event.total_volume = meta.total_volume > 0 ? meta.total_volume : p_trade->Volume;
                 event.filled_volume = meta.cumulative_filled_volume;
                 event.status = event.filled_volume >= event.total_volume
                                    ? OrderStatus::kFilled
                                    : OrderStatus::kPartiallyFilled;
+                meta.terminal = IsTerminalOrderStatus(event.status);
             }
-            callback = owner_->order_event_callback_;
+            callback = duplicate ? nullptr : owner_->order_event_callback_;
         }
         if (callback) {
             StampOrderEventTimestamps(&event);
             callback(event);
         }
+        notify_complete();
     }
 
     void OnRspOrderInsert(CThostFtdcInputOrderField* p_input_order,
@@ -1495,6 +1559,7 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
         event.status_msg = SafeCtpString(p_order->StatusMsg);
         event.order_submit_status = std::string(1, p_order->OrderSubmitStatus);
         event.order_ref = SafeCtpString(p_order->OrderRef);
+        event.trading_day = SafeCtpString(p_order->TradingDay);
         event.front_id = p_order->FrontID;
         event.session_id = p_order->SessionID;
         event.event_source = "OnRtnOrder";
@@ -1510,15 +1575,18 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
                 const auto meta_it = owner_->client_order_meta_.find(it->second);
                 if (meta_it != owner_->client_order_meta_.end()) {
                     event.strategy_id = meta_it->second.strategy_id;
-                }
-                if (event.status == OrderStatus::kCanceled ||
-                    event.status == OrderStatus::kRejected) {
-                    owner_->client_order_meta_.erase(it->second);
-                    owner_->order_ref_to_client_id_.erase(it);
+                    meta_it->second.terminal = IsTerminalOrderStatus(event.status);
+                    if (event.trading_day.empty()) {
+                        event.trading_day = meta_it->second.trading_day;
+                    }
                 }
             } else {
                 event.client_order_id = order_ref;
             }
+            if (event.trading_day.empty()) {
+                event.trading_day = owner_->user_session_.trading_day;
+            }
+            event.recovery_generation = owner_->session_generation_;
             callback = owner_->order_event_callback_;
         }
 
@@ -1551,10 +1619,13 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
         event.avg_fill_price = p_trade->Price;
         event.reason = "trade";
         event.order_ref = SafeCtpString(p_trade->OrderRef);
-        event.trade_id =
-            BuildCtpTradeId(event.exchange_id, event.side, SafeCtpString(p_trade->TradeID));
+        event.raw_trade_id = SafeCtpString(p_trade->TradeID);
+        event.trading_day = SafeCtpString(p_trade->TradeDate);
+        event.trade_id = BuildCtpTradeId(event.exchange_id, event.side, event.raw_trade_id);
         event.event_source = "OnRtnTrade";
         event.ts_ns = NowEpochNanos();
+        event.exchange_ts_ns = ParseCtpDateTimeToEpochNanos(SafeCtpString(p_trade->TradeDate),
+                                                            SafeCtpString(p_trade->TradeTime));
 
         std::function<void(const OrderEvent&)> callback;
         {
@@ -1567,18 +1638,34 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
             if (meta_it != owner_->client_order_meta_.end()) {
                 auto& meta = meta_it->second;
                 event.strategy_id = meta.strategy_id;
+                if (event.trading_day.empty()) {
+                    event.trading_day = meta.trading_day;
+                }
+            }
+            if (event.trading_day.empty()) {
+                event.trading_day = owner_->user_session_.trading_day;
+            }
+            if (event.account_id.empty()) {
+                event.account_id = owner_->runtime_config_.investor_id;
+            }
+            event.recovery_generation = owner_->session_generation_;
+            const std::string trade_key = BuildCanonicalTradeKey(event);
+            const bool duplicate =
+                !trade_key.empty() && !owner_->seen_trade_keys_.insert(trade_key).second;
+            if (duplicate) {
+                ++owner_->duplicate_trades_suppressed_;
+            }
+            if (!duplicate && meta_it != owner_->client_order_meta_.end()) {
+                auto& meta = meta_it->second;
                 meta.cumulative_filled_volume += std::max(0, p_trade->Volume);
                 event.total_volume = meta.total_volume > 0 ? meta.total_volume : p_trade->Volume;
                 event.filled_volume = meta.cumulative_filled_volume;
                 event.status = event.filled_volume >= event.total_volume
                                    ? OrderStatus::kFilled
                                    : OrderStatus::kPartiallyFilled;
-                if (event.status == OrderStatus::kFilled) {
-                    owner_->order_ref_to_client_id_.erase(meta.order_ref);
-                    owner_->client_order_meta_.erase(event.client_order_id);
-                }
+                meta.terminal = IsTerminalOrderStatus(event.status);
             }
-            callback = owner_->order_event_callback_;
+            callback = duplicate ? nullptr : owner_->order_event_callback_;
         }
 
         if (callback) {
@@ -1631,6 +1718,7 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
     }
 
     void EmitOrderEvent(OrderEvent event, bool erase_terminal_mapping) {
+        (void)erase_terminal_mapping;
         std::function<void(const OrderEvent&)> callback;
         {
             std::lock_guard<std::mutex> lock(owner_->mutex_);
@@ -1649,13 +1737,12 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
             const auto meta_it = owner_->client_order_meta_.find(event.client_order_id);
             if (meta_it != owner_->client_order_meta_.end()) {
                 event.strategy_id = meta_it->second.strategy_id;
+                event.trading_day = meta_it->second.trading_day;
             }
-            if (erase_terminal_mapping && !event.client_order_id.empty()) {
-                owner_->client_order_meta_.erase(event.client_order_id);
-                if (!event.order_ref.empty()) {
-                    owner_->order_ref_to_client_id_.erase(event.order_ref);
-                }
+            if (event.trading_day.empty()) {
+                event.trading_day = owner_->user_session_.trading_day;
             }
+            event.recovery_generation = owner_->session_generation_;
             callback = owner_->order_event_callback_;
         }
         if (callback) {
@@ -1689,11 +1776,12 @@ void CtpGatewayAdapter::NormalizeMarketSnapshot(MarketSnapshot* snapshot) {
     if (snapshot->trading_day.empty()) {
         snapshot->trading_day = snapshot->action_day;
     }
-    if (snapshot->action_day.empty()) {
-        snapshot->action_day = snapshot->trading_day;
-    }
     if (snapshot->update_millisec < 0) {
         snapshot->update_millisec = 0;
+    }
+    if (snapshot->exchange_ts_ns <= 0) {
+        snapshot->exchange_ts_ns = ParseMarketExchangeTimestamp(
+            snapshot->action_day, snapshot->update_time, snapshot->update_millisec);
     }
 
     if (IsInvalidMarketPrice(snapshot->settlement_price) || snapshot->settlement_price <= 0.0) {
@@ -1705,9 +1793,57 @@ void CtpGatewayAdapter::NormalizeMarketSnapshot(MarketSnapshot* snapshot) {
 
     if (IsInvalidMarketPrice(snapshot->average_price_raw) || snapshot->average_price_raw <= 0.0) {
         snapshot->average_price_norm = 0.0;
+        snapshot->average_price_norm_valid = false;
     } else {
-        snapshot->average_price_norm = snapshot->average_price_raw;
+        // Contract metadata is required to establish exchange-specific AveragePrice semantics.
+        // The market-data callback sets the normalized value and validity after metadata lookup.
+        snapshot->average_price_norm = 0.0;
+        snapshot->average_price_norm_valid = false;
     }
+}
+
+EpochNanos CtpGatewayAdapter::ParseMarketExchangeTimestamp(const std::string& action_day,
+                                                           const std::string& update_time,
+                                                           std::int32_t update_millisec) {
+    if (action_day.size() != 8 || update_time.size() < 8) {
+        return 0;
+    }
+    int year = 0;
+    int month = 0;
+    int day = 0;
+    int hour = 0;
+    int minute = 0;
+    int second = 0;
+    if (std::sscanf(action_day.c_str(), "%4d%2d%2d", &year, &month, &day) != 3 ||
+        std::sscanf(update_time.c_str(), "%2d:%2d:%2d", &hour, &minute, &second) != 3 ||
+        year < 1970 || month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 || hour > 23 ||
+        minute < 0 || minute > 59 || second < 0 || second > 59) {
+        return 0;
+    }
+    std::tm utc_tm{};
+    utc_tm.tm_year = year - 1900;
+    utc_tm.tm_mon = month - 1;
+    utc_tm.tm_mday = day;
+    utc_tm.tm_hour = hour;
+    utc_tm.tm_min = minute;
+    utc_tm.tm_sec = second;
+#if defined(_WIN32)
+    const auto local_as_utc = static_cast<std::int64_t>(_mkgmtime(&utc_tm));
+#else
+    const auto local_as_utc = static_cast<std::int64_t>(timegm(&utc_tm));
+#endif
+    if (local_as_utc <= 0) {
+        return 0;
+    }
+    constexpr std::int64_t kShanghaiUtcOffsetSeconds = 8LL * 60 * 60;
+    return (local_as_utc - kShanghaiUtcOffsetSeconds) * 1'000'000'000LL +
+           static_cast<std::int64_t>(std::clamp(update_millisec, 0, 999)) * 1'000'000LL;
+}
+
+void CtpGatewayAdapter::UpdateInstrumentMetadata(
+    const std::vector<InstrumentMetaSnapshot>& snapshots) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    instrument_meta_snapshots_ = snapshots;
 }
 
 bool CtpGatewayAdapter::Connect(const MarketDataConnectConfig& config) {
@@ -1721,6 +1857,7 @@ bool CtpGatewayAdapter::Connect(const MarketDataConnectConfig& config) {
     runtime.reconnect_max_attempts = config.reconnect_max_attempts;
     runtime.reconnect_initial_backoff_ms = config.reconnect_initial_backoff_ms;
     runtime.reconnect_max_backoff_ms = config.reconnect_max_backoff_ms;
+    runtime.reconnect_cycle_cooldown_ms = config.reconnect_cycle_cooldown_ms;
     runtime.query_retry_backoff_ms = config.query_retry_backoff_ms;
     runtime.recovery_quiet_period_ms = config.recovery_quiet_period_ms;
     runtime.settlement_confirm_required = config.settlement_confirm_required;
@@ -1747,11 +1884,13 @@ bool CtpGatewayAdapter::Connect(const MarketDataConnectConfig& config) {
     Disconnect();
 
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::unique_lock<std::mutex> lock(mutex_);
         runtime_config_ = std::move(runtime);
         subscriptions_.clear();
         client_order_meta_.clear();
         order_ref_to_client_id_.clear();
+        seen_trade_keys_.clear();
+        duplicate_trades_suppressed_ = 0;
         front_id_ = 0;
         session_id_ = 0;
         request_id_seq_ = 0;
@@ -1759,10 +1898,18 @@ bool CtpGatewayAdapter::Connect(const MarketDataConnectConfig& config) {
         last_connect_diagnostic_.clear();
         reconnect_requested_ = false;
         reconnect_in_progress_ = false;
+        desired_connected_ = true;
     }
 
     if (runtime_config_.enable_real_api) {
-        return ConnectRealApi();
+        // desired_connected_ is durable until an explicit Disconnect.  Start the coordinator
+        // after the first synchronous attempt so a disconnect callback cannot race that attempt.
+        const bool connected = ConnectRealApi();
+        if (!connected) {
+            StartReconnectWorker();
+            RequestReconnect();
+        }
+        return connected;
     }
     return ConnectSimulated();
 }
@@ -1770,15 +1917,26 @@ bool CtpGatewayAdapter::Connect(const MarketDataConnectConfig& config) {
 bool CtpGatewayAdapter::ConnectSimulated() {
     DisconnectRealApi();
     ConnectionStateCallback callback;
+    std::vector<ConnectionStateCallback> listeners;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         connected_ = true;
         healthy_ = true;
+        ++session_generation_;
         last_connect_diagnostic_.clear();
         callback = connection_state_callback_;
+        for (const auto& [token, listener] : connection_state_listeners_) {
+            (void)token;
+            listeners.push_back(listener);
+        }
     }
     if (callback) {
         callback(true);
+    }
+    for (const auto& listener : listeners) {
+        if (listener) {
+            listener(true);
+        }
     }
     return true;
 }
@@ -1919,6 +2077,9 @@ bool CtpGatewayAdapter::ConnectRealApiWithFrontPair(const CtpRuntimeConfig& runt
     {
         std::lock_guard<std::mutex> lock(mutex_);
         connected_ = ok ? true : was_connected;
+        if (ok && !healthy_) {
+            ++session_generation_;
+        }
         healthy_ = ok;
         reconnect_requested_ = false;
         reconnect_in_progress_ = false;
@@ -1986,7 +2147,7 @@ void CtpGatewayAdapter::StopReconnectWorker() {
 void CtpGatewayAdapter::RequestReconnect() {
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (reconnect_stop_ || !connected_ || !runtime_config_.enable_real_api) {
+        if (reconnect_stop_ || !desired_connected_ || !runtime_config_.enable_real_api) {
             return;
         }
         reconnect_requested_ = true;
@@ -1996,16 +2157,26 @@ void CtpGatewayAdapter::RequestReconnect() {
 
 void CtpGatewayAdapter::HandleConnectionLoss() {
     ConnectionStateCallback callback;
+    std::vector<ConnectionStateCallback> listeners;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (!connected_) {
+        if (!desired_connected_) {
             return;
         }
         healthy_ = false;
         callback = connection_state_callback_;
+        for (const auto& [token, listener] : connection_state_listeners_) {
+            (void)token;
+            listeners.push_back(listener);
+        }
     }
     if (callback) {
         callback(false);
+    }
+    for (const auto& listener : listeners) {
+        if (listener) {
+            listener(false);
+        }
     }
     RequestReconnect();
 }
@@ -2036,7 +2207,7 @@ void CtpGatewayAdapter::ReconnectWorkerLoop() {
         while (attempt < max_attempts) {
             {
                 std::lock_guard<std::mutex> lock(mutex_);
-                if (reconnect_stop_ || !connected_ || !runtime_config_.enable_real_api) {
+                if (reconnect_stop_ || !desired_connected_ || !runtime_config_.enable_real_api) {
                     reconnect_in_progress_ = false;
                     return;
                 }
@@ -2066,22 +2237,39 @@ void CtpGatewayAdapter::ReconnectWorkerLoop() {
                 std::lock_guard<std::mutex> lock(mutex_);
                 healthy_ = false;
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(backoff_ms));
+            {
+                std::unique_lock<std::mutex> lock(mutex_);
+                if (reconnect_cv_.wait_for(lock, std::chrono::milliseconds(backoff_ms), [this]() {
+                        return reconnect_stop_ || !desired_connected_;
+                    })) {
+                    reconnect_in_progress_ = false;
+                    return;
+                }
+            }
             backoff_ms = std::min(max_backoff_ms, backoff_ms * 2);
         }
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
             reconnect_in_progress_ = false;
-            if (!recovered) {
-                connected_ = false;
-            }
         }
         if (!recovered) {
             EmitStructuredLog(&runtime, "ctp_gateway_adapter", "error",
                               "ctp_gateway_reconnect_exhausted",
                               {{"max_attempts", std::to_string(max_attempts)},
                                {"diagnostic", GetLastConnectDiagnostic()}});
+            std::unique_lock<std::mutex> lock(mutex_);
+            const int cooldown_ms = std::max(1, runtime.reconnect_cycle_cooldown_ms);
+            if (reconnect_cv_.wait_for(lock, std::chrono::milliseconds(cooldown_ms), [this]() {
+                    return reconnect_stop_ || !desired_connected_;
+                })) {
+                if (reconnect_stop_ || !desired_connected_) {
+                    return;
+                }
+            }
+            if (desired_connected_) {
+                reconnect_requested_ = true;
+            }
         }
     }
 #endif
@@ -2093,6 +2281,7 @@ void CtpGatewayAdapter::TryMarkHealthyFromState() {
 #else
     bool healthy = false;
     ConnectionStateCallback callback;
+    std::vector<ConnectionStateCallback> listeners;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!real_api_) {
@@ -2101,14 +2290,26 @@ void CtpGatewayAdapter::TryMarkHealthyFromState() {
         std::lock_guard<std::mutex> event_lock(real_api_->event_mutex);
         healthy =
             real_api_->md_logged_in && real_api_->td_logged_in && real_api_->last_error.empty();
-        if (healthy) {
+        if (healthy && !healthy_) {
+            ++session_generation_;
             healthy_ = true;
             connected_ = true;
             callback = connection_state_callback_;
+            for (const auto& [token, listener] : connection_state_listeners_) {
+                (void)token;
+                listeners.push_back(listener);
+            }
         }
     }
     if (healthy && callback) {
         callback(true);
+    }
+    if (healthy) {
+        for (const auto& listener : listeners) {
+            if (listener) {
+                listener(true);
+            }
+        }
     }
 #endif
 }
@@ -2188,10 +2389,16 @@ void CtpGatewayAdapter::DisconnectRealApi() {
 }
 
 void CtpGatewayAdapter::Disconnect() {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        desired_connected_ = false;
+    }
+    reconnect_cv_.notify_all();
     StopReconnectWorker();
     DisconnectRealApi();
 
     ConnectionStateCallback callback;
+    std::vector<ConnectionStateCallback> listeners;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         connected_ = false;
@@ -2209,10 +2416,20 @@ void CtpGatewayAdapter::Disconnect() {
         instrument_order_comm_rate_snapshots_.clear();
         reconnect_requested_ = false;
         reconnect_in_progress_ = false;
+        desired_connected_ = false;
         callback = connection_state_callback_;
+        for (const auto& [token, listener] : connection_state_listeners_) {
+            (void)token;
+            listeners.push_back(listener);
+        }
     }
     if (callback) {
         callback(false);
+    }
+    for (const auto& listener : listeners) {
+        if (listener) {
+            listener(false);
+        }
     }
 }
 
@@ -2324,6 +2541,7 @@ bool CtpGatewayAdapter::PlaceOrder(const OrderIntent& intent) {
     bool use_real = false;
     std::function<void(const OrderEvent&)> callback;
     OrderSubmitMappingCallback submit_mapping_callback;
+    OrderSubmitPrepareCallback submit_prepare_callback;
     CtpOrderSubmitMapping submit_mapping;
     OrderEvent simulated_event;
     bool emit_simulated_event = false;
@@ -2334,7 +2552,7 @@ bool CtpGatewayAdapter::PlaceOrder(const OrderIntent& intent) {
 #endif
 
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::unique_lock<std::mutex> lock(mutex_);
         if (!connected_ || (runtime_config_.enable_real_api && !healthy_)) {
             EmitStructuredLog(&runtime_config_, "ctp_gateway_adapter", "warn",
                               "ctp_order_submit_rejected",
@@ -2387,20 +2605,6 @@ bool CtpGatewayAdapter::PlaceOrder(const OrderIntent& intent) {
             req.MinVolume = 1;
 
             const int request_id = NextRequestIdLocked();
-            const int submit_ret = td_api->ReqOrderInsert(&req, request_id);
-            if (submit_ret != 0) {
-                EmitStructuredLog(&runtime_config_, "ctp_gateway_adapter", "warn",
-                                  "ctp_order_submit_rejected",
-                                  {{"reason", "req_order_insert_failed"},
-                                   {"return_code", std::to_string(submit_ret)},
-                                   {"request_id", std::to_string(request_id)},
-                                   {"order_ref", order_ref},
-                                   {"client_order_id", intent.client_order_id},
-                                   {"instrument_id", intent.instrument_id},
-                                   {"strategy_id", intent.strategy_id}});
-                return false;
-            }
-
             OrderMeta meta;
             meta.order_ref = order_ref;
             meta.strategy_id = intent.strategy_id;
@@ -2410,6 +2614,8 @@ bool CtpGatewayAdapter::PlaceOrder(const OrderIntent& intent) {
             meta.front_id = front_id_;
             meta.session_id = session_id_;
             meta.total_volume = intent.volume;
+            meta.trading_day =
+                intent.trading_day.empty() ? user_session_.trading_day : intent.trading_day;
             client_order_meta_[intent.client_order_id] = meta;
             order_ref_to_client_id_[order_ref] = intent.client_order_id;
             submit_mapping.run_id.clear();
@@ -2429,10 +2635,73 @@ bool CtpGatewayAdapter::PlaceOrder(const OrderIntent& intent) {
             submit_mapping.session_id = session_id_;
             submit_mapping.request_id = request_id;
             submit_mapping.submit_ts_ns = NowEpochNanos();
+            submit_mapping.trading_day = meta.trading_day;
+            submit_mapping.phase = OrderSubmitMappingPhase::kPrepared;
+            submit_prepare_callback = order_submit_prepare_callback_;
             submit_mapping_callback = order_submit_mapping_callback_;
-            if (submit_mapping_callback) {
-                submit_mapping_callback(submit_mapping);
+
+            std::string prepare_error;
+            if (!submit_prepare_callback) {
+                client_order_meta_.erase(intent.client_order_id);
+                order_ref_to_client_id_.erase(order_ref);
+                EmitStructuredLog(&runtime_config_, "ctp_gateway_adapter", "error",
+                                  "ctp_order_submit_rejected",
+                                  {{"reason", "durable_prepare_callback_missing"},
+                                   {"order_ref", order_ref},
+                                   {"client_order_id", intent.client_order_id}});
+                return false;
             }
+            lock.unlock();
+            const bool prepared = submit_prepare_callback(submit_mapping, &prepare_error);
+            lock.lock();
+            if (!prepared) {
+                const auto meta_it = client_order_meta_.find(intent.client_order_id);
+                if (meta_it != client_order_meta_.end() && meta_it->second.order_ref == order_ref) {
+                    client_order_meta_.erase(meta_it);
+                    order_ref_to_client_id_.erase(order_ref);
+                }
+                EmitStructuredLog(&runtime_config_, "ctp_gateway_adapter", "error",
+                                  "ctp_order_submit_rejected",
+                                  {{"reason", "durable_prepare_failed"},
+                                   {"error", prepare_error},
+                                   {"order_ref", order_ref},
+                                   {"client_order_id", intent.client_order_id}});
+                return false;
+            }
+
+            if (!connected_ || !healthy_ || !real_api_ || real_api_->td_api == nullptr) {
+                submit_mapping.phase = OrderSubmitMappingPhase::kSubmitFailed;
+                client_order_meta_.erase(intent.client_order_id);
+                order_ref_to_client_id_.erase(order_ref);
+                lock.unlock();
+                if (submit_mapping_callback) {
+                    submit_mapping_callback(submit_mapping);
+                }
+                return false;
+            }
+            td_api = real_api_->td_api;
+            const int submit_ret = td_api->ReqOrderInsert(&req, request_id);
+            if (submit_ret != 0) {
+                submit_mapping.phase = OrderSubmitMappingPhase::kSubmitFailed;
+                client_order_meta_.erase(intent.client_order_id);
+                order_ref_to_client_id_.erase(order_ref);
+                EmitStructuredLog(&runtime_config_, "ctp_gateway_adapter", "warn",
+                                  "ctp_order_submit_rejected",
+                                  {{"reason", "req_order_insert_failed"},
+                                   {"return_code", std::to_string(submit_ret)},
+                                   {"request_id", std::to_string(request_id)},
+                                   {"order_ref", order_ref},
+                                   {"client_order_id", intent.client_order_id},
+                                   {"instrument_id", intent.instrument_id},
+                                   {"strategy_id", intent.strategy_id}});
+                lock.unlock();
+                if (submit_mapping_callback) {
+                    submit_mapping_callback(submit_mapping);
+                }
+                return false;
+            }
+
+            submit_mapping.phase = OrderSubmitMappingPhase::kSubmitted;
             EmitStructuredLog(&runtime_config_, "ctp_gateway_adapter", "info",
                               "ctp_order_submitted",
                               {{"request_id", std::to_string(request_id)},
@@ -2440,6 +2709,10 @@ bool CtpGatewayAdapter::PlaceOrder(const OrderIntent& intent) {
                                {"client_order_id", intent.client_order_id},
                                {"instrument_id", intent.instrument_id},
                                {"strategy_id", intent.strategy_id}});
+            lock.unlock();
+            if (submit_mapping_callback) {
+                submit_mapping_callback(submit_mapping);
+            }
             return true;
         }
 #else
@@ -2482,6 +2755,8 @@ bool CtpGatewayAdapter::PlaceOrder(const OrderIntent& intent) {
         meta.front_id = front_id_;
         meta.session_id = session_id_;
         meta.total_volume = intent.volume;
+        meta.trading_day =
+            intent.trading_day.empty() ? user_session_.trading_day : intent.trading_day;
         client_order_meta_[intent.client_order_id] = meta;
         order_ref_to_client_id_[meta.order_ref] = intent.client_order_id;
         submit_mapping.account_id =
@@ -2500,9 +2775,28 @@ bool CtpGatewayAdapter::PlaceOrder(const OrderIntent& intent) {
         submit_mapping.session_id = meta.session_id;
         submit_mapping.request_id = 0;
         submit_mapping.submit_ts_ns = simulated_event.ts_ns;
+        submit_mapping.trading_day = meta.trading_day;
+        submit_mapping.phase = OrderSubmitMappingPhase::kPrepared;
+        submit_prepare_callback = order_submit_prepare_callback_;
         submit_mapping_callback = order_submit_mapping_callback_;
+        std::string prepare_error;
+        lock.unlock();
+        const bool prepared =
+            !submit_prepare_callback || submit_prepare_callback(submit_mapping, &prepare_error);
+        lock.lock();
+        if (!prepared || !connected_ || (runtime_config_.enable_real_api && !healthy_)) {
+            const auto meta_it = client_order_meta_.find(intent.client_order_id);
+            if (meta_it != client_order_meta_.end() &&
+                meta_it->second.order_ref == meta.order_ref) {
+                client_order_meta_.erase(meta_it);
+                order_ref_to_client_id_.erase(meta.order_ref);
+            }
+            return false;
+        }
+        submit_mapping.phase = OrderSubmitMappingPhase::kSubmitted;
         emit_submit_mapping = true;
         emit_simulated_event = true;
+        lock.unlock();
     }
 
     if (emit_submit_mapping && submit_mapping_callback) {
@@ -2546,7 +2840,7 @@ bool CtpGatewayAdapter::CancelOrder(const std::string& client_order_id,
             }
 
             const auto it = client_order_meta_.find(client_order_id);
-            if (it == client_order_meta_.end()) {
+            if (it == client_order_meta_.end() || it->second.terminal) {
                 return false;
             }
 
@@ -2577,6 +2871,12 @@ bool CtpGatewayAdapter::CancelOrder(const std::string& client_order_id,
             return false;
         }
 
+        const auto it = client_order_meta_.find(client_order_id);
+        if (it == client_order_meta_.end() || it->second.terminal) {
+            // An unknown broker identity must be queried/reconciled; never fabricate a cancel.
+            return false;
+        }
+
         simulated_event.account_id = runtime_config_.user_id;
         simulated_event.client_order_id = client_order_id;
         simulated_event.exchange_order_id = "ctp-sim-" + client_order_id;
@@ -2586,16 +2886,12 @@ bool CtpGatewayAdapter::CancelOrder(const std::string& client_order_id,
         simulated_event.event_source = "simulated_cancel_order";
         simulated_event.ts_ns = NowEpochNanos();
         simulated_event.trace_id = trace_id;
-        const auto it = client_order_meta_.find(client_order_id);
-        if (it != client_order_meta_.end()) {
-            simulated_event.strategy_id = it->second.strategy_id;
-            simulated_event.instrument_id = it->second.instrument_id;
-            simulated_event.side = it->second.side;
-            simulated_event.offset = it->second.offset;
-            simulated_event.order_ref = it->second.order_ref;
-            order_ref_to_client_id_.erase(it->second.order_ref);
-            client_order_meta_.erase(it);
-        }
+        simulated_event.strategy_id = it->second.strategy_id;
+        simulated_event.instrument_id = it->second.instrument_id;
+        simulated_event.side = it->second.side;
+        simulated_event.offset = it->second.offset;
+        simulated_event.order_ref = it->second.order_ref;
+        it->second.terminal = true;
         emit_simulated_event = true;
     }
 
@@ -2617,9 +2913,33 @@ void CtpGatewayAdapter::RegisterOrderSubmitMappingCallback(OrderSubmitMappingCal
     order_submit_mapping_callback_ = std::move(callback);
 }
 
+void CtpGatewayAdapter::RegisterOrderSubmitPrepareCallback(OrderSubmitPrepareCallback callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    order_submit_prepare_callback_ = std::move(callback);
+}
+
 void CtpGatewayAdapter::RegisterConnectionStateCallback(ConnectionStateCallback callback) {
     std::lock_guard<std::mutex> lock(mutex_);
     connection_state_callback_ = std::move(callback);
+}
+
+CtpGatewayAdapter::ConnectionListenerToken CtpGatewayAdapter::AddConnectionStateListener(
+    ConnectionStateCallback callback) {
+    if (!callback) {
+        return 0;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    const ConnectionListenerToken token = next_connection_listener_token_++;
+    connection_state_listeners_.emplace(token, std::move(callback));
+    return token;
+}
+
+void CtpGatewayAdapter::RemoveConnectionStateListener(ConnectionListenerToken token) {
+    if (token == 0) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    connection_state_listeners_.erase(token);
 }
 
 void CtpGatewayAdapter::RegisterLoginResponseCallback(LoginResponseCallback callback) {
@@ -3552,6 +3872,16 @@ char CtpGatewayAdapter::GetOffsetApplySrc() const {
 std::string CtpGatewayAdapter::GetLastConnectDiagnostic() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return last_connect_diagnostic_;
+}
+
+std::uint64_t CtpGatewayAdapter::GetSessionGeneration() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return session_generation_;
+}
+
+std::uint64_t CtpGatewayAdapter::GetDuplicateTradesSuppressed() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return duplicate_trades_suppressed_;
 }
 
 bool CtpGatewayAdapter::ExecuteTdQueryWithRetry(const std::function<int()>& request_fn) const {

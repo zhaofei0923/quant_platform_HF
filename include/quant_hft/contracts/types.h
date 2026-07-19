@@ -298,6 +298,10 @@ struct SignalIntent {
     // Wall-clock generation time assigned by StrategyEngine. ts_ns remains the source market
     // event time so candidate audit and execution-age semantics are not conflated.
     EpochNanos generated_ts_ns{0};
+    // Dominant-contract identity captured when the source market event entered the strategy
+    // engine.  Execution must reject opens whose generation is no longer current.
+    std::string product_id;
+    std::uint64_t contract_generation{0};
 };
 
 struct OrderIntent {
@@ -319,6 +323,8 @@ struct OrderIntent {
     std::string trading_day;
     EpochNanos signal_ts_ns{0};
     EpochNanos market_recv_ts_ns{0};
+    std::string product_id;
+    std::uint64_t contract_generation{0};
 };
 
 struct CtpOrderSubmitMapping {
@@ -489,6 +495,12 @@ struct InstrumentMetaSnapshot {
     bool max_margin_side_algorithm{false};
     EpochNanos ts_ns{0};
     std::string source;
+    // CTP instrument-lifecycle fields.  Empty dates retain backward compatibility with
+    // legacy caches, but are not sufficient to authorize a new dominant-contract open.
+    std::string open_date;
+    std::string expire_date;
+    bool is_trading{false};
+    std::string product_class;
 };
 
 struct InstrumentMarginRateSnapshot {

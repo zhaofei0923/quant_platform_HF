@@ -164,6 +164,22 @@ void SetOptionalInt(const std::unordered_map<std::string, std::string>& kv, cons
     *target = parsed;
 }
 
+void SetOptionalBool(const std::unordered_map<std::string, std::string>& kv, const char* key,
+                     bool* target, std::string* error) {
+    const auto it = kv.find(key);
+    if (it == kv.end()) {
+        return;
+    }
+    bool parsed = false;
+    if (!ParseBoolValue(it->second, &parsed)) {
+        if (error != nullptr) {
+            *error = std::string("invalid bool for key: ") + key;
+        }
+        return;
+    }
+    *target = parsed;
+}
+
 void SetOptionalDouble(const std::unordered_map<std::string, std::string>& kv, const char* key,
                        double* target, std::string* error) {
     const auto it = kv.find(key);
@@ -1076,7 +1092,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* confi
         return false;
     }
 
-    loaded.dominant_contract_min_lead_ratio = 0.1;
+    loaded.dominant_contract_min_lead_ratio = 0.15;
     SetOptionalDouble(kv, "dominant_contract_min_lead_ratio",
                       &loaded.dominant_contract_min_lead_ratio, &load_error);
     if (!load_error.empty()) {
@@ -1108,7 +1124,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* confi
         return false;
     }
 
-    loaded.dominant_contract_min_hold_ms = 0;
+    loaded.dominant_contract_min_hold_ms = 900'000;
     SetOptionalInt(kv, "dominant_contract_min_hold_ms", &loaded.dominant_contract_min_hold_ms,
                    &load_error);
     if (!load_error.empty()) {
@@ -1120,6 +1136,38 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* confi
     if (loaded.dominant_contract_min_hold_ms < 0) {
         if (error != nullptr) {
             *error = "dominant_contract_min_hold_ms must be >= 0";
+        }
+        return false;
+    }
+
+    SetOptionalInt(kv, "dominant_contract_cache_max_age_ms",
+                   &loaded.dominant_contract_cache_max_age_ms, &load_error);
+    SetOptionalInt(kv, "dominant_contract_max_tick_age_ms",
+                   &loaded.dominant_contract_max_tick_age_ms, &load_error);
+    SetOptionalInt(kv, "dominant_contract_warmup_bars", &loaded.dominant_contract_warmup_bars,
+                   &load_error);
+    SetOptionalInt(kv, "dominant_contract_switch_timeout_ms",
+                   &loaded.dominant_contract_switch_timeout_ms, &load_error);
+    SetOptionalBool(kv, "dominant_contract_require_complete_baseline",
+                    &loaded.dominant_contract_require_complete_baseline, &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.dominant_contract_cache_max_age_ms <= 0 ||
+        loaded.dominant_contract_max_tick_age_ms <= 0 ||
+        loaded.dominant_contract_warmup_bars <= 0 ||
+        loaded.dominant_contract_switch_timeout_ms <= 0) {
+        if (error != nullptr) {
+            *error = "dominant contract cache/tick/warmup/switch limits must be > 0";
+        }
+        return false;
+    }
+    if (!loaded.dominant_contract_require_complete_baseline) {
+        if (error != nullptr) {
+            *error = "dominant_contract_require_complete_baseline must be true";
         }
         return false;
     }

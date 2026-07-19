@@ -47,6 +47,7 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
         std::function<void(const std::vector<InvestorPositionSnapshot>&)>;
     using InstrumentMetaSnapshotCallback =
         std::function<void(const std::vector<InstrumentMetaSnapshot>&)>;
+    using DepthMarketSnapshotCallback = std::function<void(const std::vector<MarketSnapshot>&)>;
     using BrokerTradingParamsSnapshotCallback =
         std::function<void(const BrokerTradingParamsSnapshot&)>;
     using InstrumentMarginRateSnapshotCallback =
@@ -79,6 +80,7 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
     virtual bool EnqueueInvestorPositionQuery(int request_id);
     virtual bool EnqueueInstrumentQuery(int request_id);
     virtual bool EnqueueInstrumentQuery(int request_id, const std::string& instrument_id);
+    virtual bool EnqueueDepthMarketDataQuery(int request_id);
     virtual bool EnqueueInstrumentMarginRateQuery(int request_id, const std::string& instrument_id);
     virtual bool EnqueueInstrumentCommissionRateQuery(int request_id,
                                                       const std::string& instrument_id);
@@ -102,6 +104,7 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
     void RegisterTradingAccountSnapshotCallback(TradingAccountSnapshotCallback callback);
     void RegisterInvestorPositionSnapshotCallback(InvestorPositionSnapshotCallback callback);
     void RegisterInstrumentMetaSnapshotCallback(InstrumentMetaSnapshotCallback callback);
+    void RegisterDepthMarketSnapshotCallback(DepthMarketSnapshotCallback callback);
     void RegisterBrokerTradingParamsSnapshotCallback(BrokerTradingParamsSnapshotCallback callback);
     void RegisterInstrumentMarginRateSnapshotCallback(
         InstrumentMarginRateSnapshotCallback callback);
@@ -114,6 +117,7 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
     TradingAccountSnapshot GetLastTradingAccountSnapshot() const;
     std::vector<InvestorPositionSnapshot> GetLastInvestorPositionSnapshots() const;
     std::vector<InstrumentMetaSnapshot> GetLastInstrumentMetaSnapshots() const;
+    std::vector<MarketSnapshot> GetLastDepthMarketSnapshots() const;
     BrokerTradingParamsSnapshot GetLastBrokerTradingParamsSnapshot() const;
     std::vector<InstrumentMarginRateSnapshot> GetLastInstrumentMarginRateSnapshots() const;
     std::vector<InstrumentCommissionRateSnapshot> GetLastInstrumentCommissionRateSnapshots() const;
@@ -189,6 +193,7 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
     TradingAccountSnapshot trading_account_snapshot_;
     std::vector<InvestorPositionSnapshot> investor_position_snapshots_;
     std::vector<InstrumentMetaSnapshot> instrument_meta_snapshots_;
+    std::vector<MarketSnapshot> depth_market_snapshots_;
     BrokerTradingParamsSnapshot broker_trading_params_snapshot_;
     std::vector<InstrumentMarginRateSnapshot> instrument_margin_rate_snapshots_;
     std::vector<InstrumentCommissionRateSnapshot> instrument_commission_rate_snapshots_;
@@ -197,6 +202,7 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
     TradingAccountSnapshotCallback trading_account_snapshot_callback_;
     InvestorPositionSnapshotCallback investor_position_snapshot_callback_;
     InstrumentMetaSnapshotCallback instrument_meta_snapshot_callback_;
+    DepthMarketSnapshotCallback depth_market_snapshot_callback_;
     BrokerTradingParamsSnapshotCallback broker_trading_params_snapshot_callback_;
     InstrumentMarginRateSnapshotCallback instrument_margin_rate_snapshot_callback_;
     InstrumentCommissionRateSnapshotCallback instrument_commission_rate_snapshot_callback_;

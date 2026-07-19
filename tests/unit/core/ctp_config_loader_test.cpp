@@ -277,6 +277,11 @@ TEST(CtpConfigLoaderTest, LoadsDominantRuntimeRecheckKeys) {
         "  dominant_contract_min_lead_ratio: 0.15\n"
         "  dominant_contract_min_lead_windows: 4\n"
         "  dominant_contract_min_hold_ms: 900000\n"
+        "  dominant_contract_cache_max_age_ms: 3600000\n"
+        "  dominant_contract_max_tick_age_ms: 5500\n"
+        "  dominant_contract_warmup_bars: 40\n"
+        "  dominant_contract_switch_timeout_ms: 45000\n"
+        "  dominant_contract_require_complete_baseline: true\n"
         "  dominant_contract_switch_mode: \"flat_only\"\n");
 
     CtpFileConfig config;
@@ -290,6 +295,11 @@ TEST(CtpConfigLoaderTest, LoadsDominantRuntimeRecheckKeys) {
     EXPECT_DOUBLE_EQ(config.dominant_contract_min_lead_ratio, 0.15);
     EXPECT_EQ(config.dominant_contract_min_lead_windows, 4);
     EXPECT_EQ(config.dominant_contract_min_hold_ms, 900000);
+    EXPECT_EQ(config.dominant_contract_cache_max_age_ms, 3600000);
+    EXPECT_EQ(config.dominant_contract_max_tick_age_ms, 5500);
+    EXPECT_EQ(config.dominant_contract_warmup_bars, 40);
+    EXPECT_EQ(config.dominant_contract_switch_timeout_ms, 45000);
+    EXPECT_TRUE(config.dominant_contract_require_complete_baseline);
     EXPECT_EQ(config.dominant_contract_switch_mode, "flat_only");
 
     std::filesystem::remove(config_path);

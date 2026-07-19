@@ -72,6 +72,7 @@ class CTPTraderAdapter {
     using TradingAccountSnapshotCallback = CtpGatewayAdapter::TradingAccountSnapshotCallback;
     using InvestorPositionSnapshotCallback = CtpGatewayAdapter::InvestorPositionSnapshotCallback;
     using InstrumentMetaSnapshotCallback = CtpGatewayAdapter::InstrumentMetaSnapshotCallback;
+    using DepthMarketSnapshotCallback = CtpGatewayAdapter::DepthMarketSnapshotCallback;
     using BrokerTradingParamsSnapshotCallback =
         CtpGatewayAdapter::BrokerTradingParamsSnapshotCallback;
     using InstrumentMarginRateSnapshotCallback =
@@ -120,6 +121,8 @@ class CTPTraderAdapter {
     bool EnqueueInstrumentQuery(int request_id, const std::string& instrument_id);
     int EnqueueInstrumentQuery();
     int EnqueueInstrumentQuery(const std::string& instrument_id);
+    bool EnqueueDepthMarketDataQuery(int request_id);
+    int EnqueueDepthMarketDataQuery();
     bool EnqueueInstrumentMarginRateQuery(int request_id, const std::string& instrument_id);
     int EnqueueInstrumentMarginRateQuery(const std::string& instrument_id);
     bool EnqueueInstrumentCommissionRateQuery(int request_id, const std::string& instrument_id);
@@ -139,6 +142,7 @@ class CTPTraderAdapter {
     void RegisterTradingAccountSnapshotCallback(TradingAccountSnapshotCallback callback);
     void RegisterInvestorPositionSnapshotCallback(InvestorPositionSnapshotCallback callback);
     void RegisterInstrumentMetaSnapshotCallback(InstrumentMetaSnapshotCallback callback);
+    void RegisterDepthMarketSnapshotCallback(DepthMarketSnapshotCallback callback);
     void RegisterBrokerTradingParamsSnapshotCallback(BrokerTradingParamsSnapshotCallback callback);
     void RegisterInstrumentMarginRateSnapshotCallback(
         InstrumentMarginRateSnapshotCallback callback);
@@ -151,6 +155,7 @@ class CTPTraderAdapter {
     CtpUserSessionInfo GetLastUserSession() const;
     TradingAccountSnapshot GetLastTradingAccountSnapshot() const;
     std::vector<InvestorPositionSnapshot> GetLastInvestorPositionSnapshots() const;
+    std::uint64_t GetInvestorPositionSnapshotGeneration() const noexcept;
     std::string GetLastConnectDiagnostic() const;
     std::string BuildOrderRef(const std::string& strategy_id) const;
 
@@ -190,6 +195,7 @@ class CTPTraderAdapter {
     TradingAccountSnapshotCallback user_trading_account_callback_;
     InvestorPositionSnapshotCallback user_investor_position_callback_;
     InstrumentMetaSnapshotCallback user_instrument_meta_callback_;
+    DepthMarketSnapshotCallback user_depth_market_callback_;
     BrokerTradingParamsSnapshotCallback user_broker_trading_params_callback_;
     InstrumentMarginRateSnapshotCallback user_instrument_margin_rate_callback_;
     InstrumentCommissionRateSnapshotCallback user_instrument_commission_rate_callback_;
@@ -202,6 +208,7 @@ class CTPTraderAdapter {
     std::string last_reconnect_stage_{"disconnected"};
     std::atomic<bool> need_reconnect_{false};
     std::atomic<int> reconnect_attempts_{0};
+    std::atomic<std::uint64_t> investor_position_snapshot_generation_{0};
     std::chrono::steady_clock::time_point last_reconnect_time_{};
     std::atomic<std::uint64_t> lifecycle_generation_{1};
     mutable std::mutex reconnect_mutex_;

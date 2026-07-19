@@ -20,9 +20,14 @@ struct CtpFileConfig {
     std::string active_contract_mode{"static"};
     int dominant_contract_wait_ms{5000};
     int dominant_contract_recheck_interval_ms{0};
-    double dominant_contract_min_lead_ratio{0.1};
+    double dominant_contract_min_lead_ratio{0.15};
     int dominant_contract_min_lead_windows{3};
-    int dominant_contract_min_hold_ms{0};
+    int dominant_contract_min_hold_ms{900'000};
+    int dominant_contract_cache_max_age_ms{86'400'000};
+    int dominant_contract_max_tick_age_ms{6'000};
+    int dominant_contract_warmup_bars{30};
+    int dominant_contract_switch_timeout_ms{30'000};
+    bool dominant_contract_require_complete_baseline{true};
     std::string dominant_contract_switch_mode{"startup_only"};
     std::vector<std::string> strategy_ids;
     std::string run_type{"live"};

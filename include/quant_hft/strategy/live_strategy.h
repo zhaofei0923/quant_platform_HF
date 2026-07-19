@@ -21,6 +21,13 @@ struct StrategyMetric {
     std::unordered_map<std::string, std::string> labels;
 };
 
+struct ContractSwitchContext {
+    std::string product_id;
+    std::string previous_instrument_id;
+    std::string current_instrument_id;
+    std::uint64_t generation{0};
+};
+
 using StrategyState = std::unordered_map<std::string, std::string>;
 
 class ILiveStrategy {
@@ -62,6 +69,18 @@ class ILiveStrategy {
         (void)state;
         (void)error;
         return true;
+    }
+    // Resets only market-derived state for a flat-only dominant-contract switch.  Account and
+    // daily risk state must be preserved.  The default keeps non-composite strategies source
+    // compatible and reports no special reset requirement.
+    virtual bool ResetForContractSwitch(const ContractSwitchContext& context, std::string* error) {
+        (void)context;
+        (void)error;
+        return true;
+    }
+    virtual std::int32_t RequiredContractWarmupBars(const ContractSwitchContext& context) const {
+        (void)context;
+        return 0;
     }
     virtual void Shutdown() = 0;
 };

@@ -177,6 +177,8 @@ message SignalIntent {
   string trace_id = 8;
   uint32 signal_type = 9;
   int64 generated_ts_ns = 10;
+  string product_id = 11;
+  uint64 contract_generation = 12;
 }
 
 message OrderIntent {
@@ -198,6 +200,8 @@ message OrderIntent {
   string trading_day = 16;
   int64 signal_ts_ns = 17;
   int64 market_recv_ts_ns = 18;
+  string product_id = 19;
+  uint64 contract_generation = 20;
 }
 
 message RiskDecision {
@@ -333,4 +337,8 @@ message InstrumentMetaSnapshot {
   bool max_margin_side_algorithm = 6;
   int64 ts_ns = 7;
   string source = 8;
+  string open_date = 9;
+  string expire_date = 10;
+  bool is_trading = 11;
+  string product_class = 12;
 }

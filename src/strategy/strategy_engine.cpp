@@ -202,17 +202,26 @@ void StrategyEngine::Stop() {
     }
 }
 
-void StrategyEngine::EnqueueState(const StateSnapshot7D& state) {
+void StrategyEngine::EnqueueState(const StateSnapshot7D& state, const std::string& product_id,
+                                  std::uint64_t contract_generation, bool emit_intents) {
     EngineEvent event;
     event.type = EventType::kState;
     event.state = state;
+    event.product_id = product_id;
+    event.contract_generation = contract_generation;
+    event.emit_intents = emit_intents;
     EnqueueEvent(std::move(event));
 }
 
-void StrategyEngine::EnqueueMarketTick(const MarketSnapshot& snapshot) {
+void StrategyEngine::EnqueueMarketTick(const MarketSnapshot& snapshot,
+                                       const std::string& product_id,
+                                       std::uint64_t contract_generation, bool emit_intents) {
     EngineEvent event;
     event.type = EventType::kMarketTick;
     event.market_tick = snapshot;
+    event.product_id = product_id;
+    event.contract_generation = contract_generation;
+    event.emit_intents = emit_intents;
     EnqueueEvent(std::move(event));
 }
 
@@ -251,6 +260,71 @@ bool StrategyEngine::WaitUntilDrained(std::int64_t timeout_ms) {
     std::unique_lock<std::mutex> lock(mutex_);
     return cv_.wait_for(lock, std::chrono::milliseconds(std::max<std::int64_t>(0, timeout_ms)),
                         [&]() { return queue_.empty() && !dispatching_; });
+}
+
+StrategyEngine::ContractSwitchReport StrategyEngine::ApplyContractSwitch(
+    const ContractSwitchContext& context, const std::vector<StateSnapshot7D>& warmup_states,
+    std::int64_t timeout_ms) {
+    ContractSwitchReport failed;
+    failed.generation = context.generation;
+    if (context.product_id.empty() || context.current_instrument_id.empty() ||
+        context.generation == 0) {
+        failed.error = "invalid contract switch context";
+        return failed;
+    }
+    auto promise = std::make_shared<std::promise<ContractSwitchReport>>();
+    auto future = promise->get_future();
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!running_ || stop_requested_) {
+            failed.error = "strategy engine is not running";
+            return failed;
+        }
+        EngineEvent event;
+        event.type = EventType::kContractSwitch;
+        event.contract_switch = context;
+        event.warmup_states = warmup_states;
+        event.contract_switch_promise = promise;
+        queue_.push_back(std::move(event));
+        ++stats_.enqueued_events;
+    }
+    cv_.notify_one();
+    const auto wait = std::chrono::milliseconds(std::max<std::int64_t>(0, timeout_ms));
+    if (future.wait_for(wait) != std::future_status::ready) {
+        failed.error = "strategy contract switch barrier timeout";
+        return failed;
+    }
+    return future.get();
+}
+
+bool StrategyEngine::ApplyContractWarmupState(const StateSnapshot7D& state,
+                                              const std::string& product_id,
+                                              std::uint64_t contract_generation,
+                                              std::int64_t timeout_ms) {
+    if (state.instrument_id.empty() || product_id.empty() || contract_generation == 0) {
+        return false;
+    }
+    auto promise = std::make_shared<std::promise<bool>>();
+    auto future = promise->get_future();
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!running_ || stop_requested_) {
+            return false;
+        }
+        EngineEvent event;
+        event.type = EventType::kContractWarmupState;
+        event.state = state;
+        event.product_id = product_id;
+        event.contract_generation = contract_generation;
+        event.emit_intents = false;
+        event.contract_warmup_promise = promise;
+        // Contract control events are never dropped by the ordinary bounded-queue policy.
+        queue_.push_back(std::move(event));
+        ++stats_.enqueued_events;
+    }
+    cv_.notify_one();
+    const auto wait = std::chrono::milliseconds(std::max<std::int64_t>(0, timeout_ms));
+    return future.wait_for(wait) == std::future_status::ready && future.get();
 }
 
 StrategyEngine::Stats StrategyEngine::GetStats() const {
@@ -300,14 +374,34 @@ void StrategyEngine::WorkerLoop() {
 
         if (has_event) {
             if (event.type == EventType::kState) {
-                DispatchState(event.state);
+                DispatchState(event.state, event.product_id, event.contract_generation,
+                              event.emit_intents);
             } else if (event.type == EventType::kMarketTick) {
-                DispatchMarketTick(event.market_tick);
+                DispatchMarketTick(event.market_tick, event.product_id, event.contract_generation,
+                                   event.emit_intents);
             } else if (event.type == EventType::kOrderEvent) {
                 DispatchOrderEvent(event.order_event);
             } else if (event.type == EventType::kReconcilePositions) {
                 DispatchReconcilePositions(event.reconcile_account_id, event.reconcile_net,
                                            event.reconcile_avg_open);
+            } else if (event.type == EventType::kContractSwitch) {
+                ContractSwitchReport report =
+                    DispatchContractSwitch(event.contract_switch, event.warmup_states);
+                if (event.contract_switch_promise != nullptr) {
+                    try {
+                        event.contract_switch_promise->set_value(std::move(report));
+                    } catch (...) {
+                    }
+                }
+            } else if (event.type == EventType::kContractWarmupState) {
+                const bool success =
+                    DispatchState(event.state, event.product_id, event.contract_generation, false);
+                if (event.contract_warmup_promise != nullptr) {
+                    try {
+                        event.contract_warmup_promise->set_value(success);
+                    } catch (...) {
+                    }
+                }
             } else {
                 DispatchAccountSnapshot(event.account_snapshot);
             }
@@ -332,7 +426,9 @@ void StrategyEngine::WorkerLoop() {
     }
 }
 
-void StrategyEngine::DispatchState(const StateSnapshot7D& state) {
+bool StrategyEngine::DispatchState(const StateSnapshot7D& state, const std::string& product_id,
+                                   std::uint64_t contract_generation, bool emit_intents) {
+    bool success = true;
     std::vector<SignalIntent> intents;
     for (auto& entry : strategies_) {
         try {
@@ -367,22 +463,29 @@ void StrategyEngine::DispatchState(const StateSnapshot7D& state) {
                     }
                 }
             }
-            EmitIntents(entry.strategy_id, std::move(intents));
+            if (emit_intents) {
+                EmitIntents(entry.strategy_id, std::move(intents), product_id, contract_generation);
+            }
         } catch (const std::exception& ex) {
+            success = false;
             EmitStrategyExceptionLog("strategy_callback_exception", "state", entry.strategy_id,
                                      ex.what());
             std::lock_guard<std::mutex> lock(mutex_);
             ++stats_.strategy_callback_exceptions;
         } catch (...) {
+            success = false;
             EmitStrategyExceptionLog("strategy_callback_exception", "state", entry.strategy_id,
                                      "unknown exception");
             std::lock_guard<std::mutex> lock(mutex_);
             ++stats_.strategy_callback_exceptions;
         }
     }
+    return success;
 }
 
-void StrategyEngine::DispatchMarketTick(const MarketSnapshot& snapshot) {
+void StrategyEngine::DispatchMarketTick(const MarketSnapshot& snapshot,
+                                        const std::string& product_id,
+                                        std::uint64_t contract_generation, bool emit_intents) {
     std::vector<SignalIntent> intents;
     for (auto& entry : strategies_) {
         try {
@@ -395,7 +498,9 @@ void StrategyEngine::DispatchMarketTick(const MarketSnapshot& snapshot) {
                 }
             }
             intents = entry.strategy->OnMarketTick(snapshot);
-            EmitIntents(entry.strategy_id, std::move(intents));
+            if (emit_intents) {
+                EmitIntents(entry.strategy_id, std::move(intents), product_id, contract_generation);
+            }
         } catch (const std::exception& ex) {
             EmitStrategyExceptionLog("strategy_callback_exception", "market_tick",
                                      entry.strategy_id, ex.what());
@@ -521,6 +626,67 @@ void StrategyEngine::DispatchReconcilePositions(
     }
 }
 
+StrategyEngine::ContractSwitchReport StrategyEngine::DispatchContractSwitch(
+    const ContractSwitchContext& context, const std::vector<StateSnapshot7D>& warmup_states) {
+    ContractSwitchReport report;
+    report.generation = context.generation;
+    try {
+        for (auto& entry : strategies_) {
+            std::string reset_error;
+            if (!entry.strategy->ResetForContractSwitch(context, &reset_error)) {
+                report.error = "strategy `" + entry.strategy_id + "` reset failed: " + reset_error;
+                return report;
+            }
+            report.required_warmup_bars = std::max(
+                report.required_warmup_bars, entry.strategy->RequiredContractWarmupBars(context));
+        }
+
+        std::vector<StateSnapshot7D> ordered = warmup_states;
+        std::sort(ordered.begin(), ordered.end(), [](const auto& lhs, const auto& rhs) {
+            if (lhs.ts_ns != rhs.ts_ns) {
+                return lhs.ts_ns < rhs.ts_ns;
+            }
+            if (lhs.instrument_id != rhs.instrument_id) {
+                return lhs.instrument_id < rhs.instrument_id;
+            }
+            return lhs.timeframe_minutes < rhs.timeframe_minutes;
+        });
+        ordered.erase(std::unique(ordered.begin(), ordered.end(),
+                                  [](const auto& lhs, const auto& rhs) {
+                                      return lhs.ts_ns == rhs.ts_ns &&
+                                             lhs.instrument_id == rhs.instrument_id &&
+                                             lhs.timeframe_minutes == rhs.timeframe_minutes;
+                                  }),
+                      ordered.end());
+        ordered.erase(std::remove_if(ordered.begin(), ordered.end(),
+                                     [&](const auto& state) {
+                                         return state.instrument_id !=
+                                                    context.current_instrument_id ||
+                                                state.timeframe_minutes != 5 || !state.has_bar;
+                                     }),
+                      ordered.end());
+        if (report.required_warmup_bars > 0 &&
+            ordered.size() > static_cast<std::size_t>(report.required_warmup_bars)) {
+            ordered.erase(ordered.begin(), ordered.end() - report.required_warmup_bars);
+        }
+        for (const auto& state : ordered) {
+            for (auto& entry : strategies_) {
+                // Warmup deliberately suppresses every returned intent.  The state mutation is
+                // identical to live evaluation, but execution cannot observe a replay signal.
+                (void)entry.strategy->OnState(state);
+            }
+            ++report.replayed_warmup_bars;
+        }
+        report.success = true;
+        return report;
+    } catch (const std::exception& ex) {
+        report.error = ex.what();
+    } catch (...) {
+        report.error = "unknown strategy contract switch failure";
+    }
+    return report;
+}
+
 void StrategyEngine::DispatchTimer(EpochNanos now_ns) {
     std::vector<SignalIntent> intents;
     for (auto& entry : strategies_) {
@@ -625,8 +791,8 @@ void StrategyEngine::MaybeCollectMetrics(EpochNanos now_ns) {
     }
 }
 
-void StrategyEngine::EmitIntents(const std::string& strategy_id,
-                                 std::vector<SignalIntent> intents) {
+void StrategyEngine::EmitIntents(const std::string& strategy_id, std::vector<SignalIntent> intents,
+                                 const std::string& product_id, std::uint64_t contract_generation) {
     if (!intent_sink_) {
         return;
     }
@@ -636,6 +802,24 @@ void StrategyEngine::EmitIntents(const std::string& strategy_id,
         }
         if (intent.generated_ts_ns <= 0) {
             intent.generated_ts_ns = NowEpochNanos();
+        }
+        if (intent.product_id.empty()) {
+            intent.product_id = product_id;
+        }
+        if (intent.contract_generation == 0) {
+            intent.contract_generation = contract_generation;
+        }
+        if ((intent.product_id.empty() || intent.contract_generation == 0) &&
+            config_.contract_identity_resolver && !intent.instrument_id.empty()) {
+            const auto identity = config_.contract_identity_resolver(intent.instrument_id);
+            if (identity.has_value()) {
+                if (intent.product_id.empty()) {
+                    intent.product_id = identity->product_id;
+                }
+                if (intent.contract_generation == 0) {
+                    intent.contract_generation = identity->generation;
+                }
+            }
         }
         try {
             intent_sink_(intent);

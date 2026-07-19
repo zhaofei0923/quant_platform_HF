@@ -91,6 +91,7 @@ add_library(quant_hft_core STATIC
     src/core/common/fixed_decimal.cpp
     src/core/ctp/ctp_config.cpp
     src/core/ctp/ctp_config_loader.cpp
+    src/core/ctp/instrument_meta_cache.cpp
     src/core/ctp/ctp_trader_adapter.cpp
     src/core/ctp/ctp_md_adapter.cpp
     src/core/ctp/ctp_gateway_adapter.cpp
@@ -142,6 +143,7 @@ add_library(quant_hft_core STATIC
     src/services/portfolio/in_memory_portfolio_ledger.cpp
     src/services/market_state/bar_aggregator.cpp
     src/services/market_state/market_bar_pipeline.cpp
+    src/services/market_state/dominant_contract_coordinator.cpp
     src/services/market_state/trading_session_calendar.cpp
     src/services/market_state/market_data_csv_recorder.cpp
     src/services/market_state/market_state_detector.cpp
@@ -328,6 +330,10 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(ctp_config_loader_test tests/unit/core/ctp_config_loader_test.cpp)
     target_link_libraries(ctp_config_loader_test PRIVATE quant_hft_core GTest::gtest_main)
 
+    add_executable(instrument_meta_cache_test
+        tests/unit/core/instrument_meta_cache_test.cpp)
+    target_link_libraries(instrument_meta_cache_test PRIVATE quant_hft_core GTest::gtest_main)
+
     add_executable(ctp_gateway_adapter_test tests/unit/core/ctp_gateway_adapter_test.cpp)
     target_link_libraries(ctp_gateway_adapter_test PRIVATE quant_hft_core GTest::gtest_main)
 
@@ -439,6 +445,11 @@ if(QUANT_HFT_BUILD_TESTS)
 
     add_executable(market_bar_pipeline_test tests/unit/services/market_bar_pipeline_test.cpp)
     target_link_libraries(market_bar_pipeline_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(dominant_contract_coordinator_test
+        tests/unit/services/dominant_contract_coordinator_test.cpp)
+    target_link_libraries(dominant_contract_coordinator_test
+        PRIVATE quant_hft_core GTest::gtest_main)
 
     add_executable(trading_session_calendar_test
         tests/unit/services/trading_session_calendar_test.cpp)
@@ -695,6 +706,7 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(query_scheduler_test)
     gtest_discover_tests(ctp_config_test)
     gtest_discover_tests(ctp_config_loader_test)
+    gtest_discover_tests(instrument_meta_cache_test)
     gtest_discover_tests(ctp_gateway_adapter_test)
     gtest_discover_tests(ctp_trader_adapter_test)
     gtest_discover_tests(ctp_md_adapter_test)
@@ -732,6 +744,7 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(risk_manager_test)
     gtest_discover_tests(bar_aggregator_test)
     gtest_discover_tests(market_bar_pipeline_test)
+    gtest_discover_tests(dominant_contract_coordinator_test)
     gtest_discover_tests(trading_session_calendar_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(market_data_csv_recorder_test)
     gtest_discover_tests(timeframe_state_fanout_test)

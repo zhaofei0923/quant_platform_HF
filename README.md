@@ -125,6 +125,9 @@ LD_LIBRARY_PATH=$PWD/ctp_api/v6.7.11_20250617_api_traderapi_se_linux64:$LD_LIBRA
 Optional probe runtime flags:
 - `--monitor-seconds` (default `300`, use `<0` for no time limit)
 - `--health-interval-ms` (default `1000`)
+- `--instrument-timeout-seconds` (default `15`)
+- `--force-instrument-refresh` bypasses any same-day v2 candidate cache; the probe and
+  `core_engine` still perform the mandatory complete broker instrument query before opens.
 - Probe emits `[health] ts_ns=... state=healthy|unhealthy` lines for SLO analysis.
 - On connect failure, probe prints `Connect diagnostic:` with per-front attempt detail
   and CTP `ErrorID/ErrorMsg` (when available).

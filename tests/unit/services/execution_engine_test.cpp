@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -447,6 +448,21 @@ TEST(ExecutionEngineTest, QueryTradingAccountAsyncReturnsSnapshot) {
     auto bundle = BuildEngineBundle();
     auto snapshot = bundle.engine->QueryTradingAccountAsync().get();
     EXPECT_FALSE(snapshot.account_id.empty());
+}
+
+TEST(ExecutionEngineTest, EmptyPositionQueryCompletesAfterDispatcherCallback) {
+    auto bundle = BuildEngineBundle();
+    std::atomic<bool> callback_completed{false};
+    bundle.adapter->RegisterInvestorPositionSnapshotCallback(
+        [&](const std::vector<InvestorPositionSnapshot>& snapshots) {
+            EXPECT_TRUE(snapshots.empty());
+            callback_completed.store(true);
+        });
+
+    const auto snapshots = bundle.engine->QueryInvestorPositionAsync().get();
+
+    EXPECT_TRUE(snapshots.empty());
+    EXPECT_TRUE(callback_completed.load());
 }
 
 }  // namespace

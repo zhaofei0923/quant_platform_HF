@@ -346,6 +346,53 @@ TEST(SimnowDashboardCli, EmptyWalAndDailyReportsRenderHtmlAndState) {
     EXPECT_NE(html.find("20260514"), std::string::npos);
 }
 
+TEST(SimnowDashboardCli, RendersStructuredDominantContractV2State) {
+    const auto root = MakeTempDir("dominant_v2");
+    const auto output = root / "dashboard";
+    WriteFile(root / "ctp_instruments" / "c_dominant_contract.json",
+              "{\n"
+              "  \"schema_version\": 2,\n"
+              "  \"trading_day\": \"20260719\",\n"
+              "  \"product_id\": \"c\",\n"
+              "  \"current_instrument_id\": \"c2609\",\n"
+              "  \"candidate_instrument_id\": \"c2611\",\n"
+              "  \"phase\": \"warming\",\n"
+              "  \"generation\": 4,\n"
+              "  \"selection_metric\": \"open_interest\",\n"
+              "  \"lead_ratio\": 0.18,\n"
+              "  \"eligible_count\": 3,\n"
+              "  \"baseline_count\": 3,\n"
+              "  \"broker_position\": 0,\n"
+              "  \"broker_frozen\": 0,\n"
+              "  \"active_open_orders\": 0,\n"
+              "  \"active_close_orders\": 0,\n"
+              "  \"warmup_observed_bars\": 12,\n"
+              "  \"warmup_required_bars\": 30,\n"
+              "  \"generation_rejections\": 2,\n"
+              "  \"phase_started_ts_ns\": 1,\n"
+              "  \"last_error\": \"\"\n"
+              "}\n");
+    WriteFile(root / "ctp_instruments" / "c_contracts.json",
+              "{\"schema_version\":2,\"broker_trading_day\":\"20260719\"}\n");
+
+    const int rc = RunCommandCapture(DashboardCommand(root, output), root / "stdout.log");
+    EXPECT_EQ(rc, 0);
+    const std::string state = ReadFile(output / "dashboard_state.json");
+    EXPECT_NE(state.find("\"instrument_id\": \"c2609\""), std::string::npos);
+    EXPECT_NE(state.find("\"candidate_instrument_id\": \"c2611\""), std::string::npos);
+    EXPECT_NE(state.find("\"phase\": \"warming\""), std::string::npos);
+    EXPECT_NE(state.find("\"generation\": 4"), std::string::npos);
+    EXPECT_NE(state.find("\"warmup_observed_bars\": 12"), std::string::npos);
+    EXPECT_NE(state.find("\"generation_rejections\": 2"), std::string::npos);
+    EXPECT_NE(state.find("\"cache_trading_day_mismatch\": false"), std::string::npos);
+    const std::string html = ReadFile(output / "index.html");
+    EXPECT_NE(html.find("Dominant Contract State"), std::string::npos);
+    EXPECT_NE(html.find("c2609"), std::string::npos);
+    EXPECT_NE(html.find("12/30"), std::string::npos);
+    EXPECT_NE(html.find("Generation Rejects"), std::string::npos);
+    std::filesystem::remove_all(root);
+}
+
 TEST(SimnowDashboardCli, PriceBoardDoesNotRenderBarStatusAsBadge) {
     const auto root = MakeTempDir("price_board_stale_badges");
     const auto output_dir = root / "dashboard";

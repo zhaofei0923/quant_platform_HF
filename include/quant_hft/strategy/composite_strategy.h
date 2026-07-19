@@ -84,6 +84,8 @@ class CompositeStrategy : public ILiveStrategy {
     std::vector<StrategyMetric> CollectMetrics() const override;
     bool SaveState(StrategyState* out, std::string* error) const override;
     bool LoadState(const StrategyState& state, std::string* error) override;
+    bool ResetForContractSwitch(const ContractSwitchContext& context, std::string* error) override;
+    std::int32_t RequiredContractWarmupBars(const ContractSwitchContext& context) const override;
     void Shutdown() override;
     std::vector<CompositeAtomicTraceRow> CollectAtomicIndicatorTrace() const;
     void SetBacktestAccountSnapshot(double equity, double pnl_after_cost);

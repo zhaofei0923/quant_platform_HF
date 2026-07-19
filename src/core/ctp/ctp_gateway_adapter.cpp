@@ -416,6 +416,9 @@ struct ScheduledQueryTaskState {
     CtpGatewayAdapter::InstrumentMetaSnapshotCallback instrument_meta_callback;
     std::vector<InstrumentMetaSnapshot> instrument_meta_snapshots;
 
+    CtpGatewayAdapter::DepthMarketSnapshotCallback depth_market_callback;
+    std::vector<MarketSnapshot> depth_market_snapshots;
+
     CtpGatewayAdapter::InstrumentMarginRateSnapshotCallback instrument_margin_rate_callback;
     std::vector<InstrumentMarginRateSnapshot> instrument_margin_rate_snapshots;
 
@@ -1009,6 +1012,10 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
                                                  p_instrument->MaxMarginSideAlgorithm != '0';
                 meta.ts_ns = NowEpochNanos();
                 meta.source = "ctp";
+                meta.open_date = SafeCtpString(p_instrument->OpenDate);
+                meta.expire_date = SafeCtpString(p_instrument->ExpireDate);
+                meta.is_trading = p_instrument->IsTrading != 0;
+                meta.product_class = std::string(1, p_instrument->ProductClass);
                 owner_->instrument_meta_snapshots_.erase(
                     std::remove_if(
                         owner_->instrument_meta_snapshots_.begin(),
@@ -1020,6 +1027,64 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
             if (b_is_last) {
                 snapshots = owner_->instrument_meta_snapshots_;
                 callback = owner_->instrument_meta_snapshot_callback_;
+            }
+        }
+        if (b_is_last && callback) {
+            callback(snapshots);
+        }
+    }
+
+    void OnRspQryDepthMarketData(CThostFtdcDepthMarketDataField* p_depth_market_data,
+                                 CThostFtdcRspInfoField* p_rsp_info, int, bool b_is_last) override {
+        CtpCallbackScope scope(state_);
+        if (!scope.active()) {
+            return;
+        }
+        if (b_is_last) {
+            owner_->CompleteScheduledQuery();
+        }
+        if (!IsRspSuccess(p_rsp_info)) {
+            return;
+        }
+
+        std::function<void(const std::vector<MarketSnapshot>&)> callback;
+        std::vector<MarketSnapshot> snapshots;
+        {
+            std::lock_guard<std::mutex> lock(owner_->mutex_);
+            if (p_depth_market_data != nullptr) {
+                MarketSnapshot snapshot;
+                snapshot.instrument_id = SafeCtpString(p_depth_market_data->InstrumentID);
+                snapshot.exchange_id = SafeCtpString(p_depth_market_data->ExchangeID);
+                snapshot.trading_day = SafeCtpString(p_depth_market_data->TradingDay);
+                snapshot.action_day = SafeCtpString(p_depth_market_data->ActionDay);
+                snapshot.update_time = SafeCtpString(p_depth_market_data->UpdateTime);
+                snapshot.update_millisec = p_depth_market_data->UpdateMillisec;
+                snapshot.last_price = p_depth_market_data->LastPrice;
+                snapshot.bid_price_1 = p_depth_market_data->BidPrice1;
+                snapshot.ask_price_1 = p_depth_market_data->AskPrice1;
+                snapshot.bid_volume_1 = p_depth_market_data->BidVolume1;
+                snapshot.ask_volume_1 = p_depth_market_data->AskVolume1;
+                snapshot.volume = p_depth_market_data->Volume;
+                snapshot.open_interest =
+                    static_cast<std::int64_t>(p_depth_market_data->OpenInterest);
+                snapshot.settlement_price = p_depth_market_data->SettlementPrice;
+                snapshot.average_price_raw = p_depth_market_data->AveragePrice;
+                snapshot.exchange_ts_ns = CtpGatewayAdapter::ParseMarketExchangeTimestamp(
+                    snapshot.action_day, snapshot.update_time, snapshot.update_millisec);
+                snapshot.recv_ts_ns = NowEpochNanos();
+                CtpGatewayAdapter::NormalizeMarketSnapshot(&snapshot);
+                owner_->depth_market_snapshots_.erase(
+                    std::remove_if(owner_->depth_market_snapshots_.begin(),
+                                   owner_->depth_market_snapshots_.end(),
+                                   [&](const auto& row) {
+                                       return row.instrument_id == snapshot.instrument_id;
+                                   }),
+                    owner_->depth_market_snapshots_.end());
+                owner_->depth_market_snapshots_.push_back(std::move(snapshot));
+            }
+            if (b_is_last) {
+                snapshots = owner_->depth_market_snapshots_;
+                callback = owner_->depth_market_snapshot_callback_;
             }
         }
         if (b_is_last && callback) {
@@ -1843,7 +1908,16 @@ EpochNanos CtpGatewayAdapter::ParseMarketExchangeTimestamp(const std::string& ac
 void CtpGatewayAdapter::UpdateInstrumentMetadata(
     const std::vector<InstrumentMetaSnapshot>& snapshots) {
     std::lock_guard<std::mutex> lock(mutex_);
-    instrument_meta_snapshots_ = snapshots;
+    for (const auto& snapshot : snapshots) {
+        const auto existing = std::find_if(
+            instrument_meta_snapshots_.begin(), instrument_meta_snapshots_.end(),
+            [&](const auto& row) { return row.instrument_id == snapshot.instrument_id; });
+        if (existing == instrument_meta_snapshots_.end()) {
+            instrument_meta_snapshots_.push_back(snapshot);
+        } else {
+            *existing = snapshot;
+        }
+    }
 }
 
 bool CtpGatewayAdapter::Connect(const MarketDataConnectConfig& config) {
@@ -3266,6 +3340,10 @@ bool CtpGatewayAdapter::EnqueueInstrumentQuery(int request_id, const std::string
                     meta.volume_multiple = 1;
                     meta.source = "simulated";
                     meta.ts_ns = NowEpochNanos();
+                    meta.open_date = "19700101";
+                    meta.expire_date = "29991231";
+                    meta.is_trading = true;
+                    meta.product_class = "1";
                     instrument_meta_snapshots_.erase(
                         std::remove_if(instrument_meta_snapshots_.begin(),
                                        instrument_meta_snapshots_.end(),
@@ -3301,6 +3379,68 @@ bool CtpGatewayAdapter::EnqueueInstrumentQuery(int request_id, const std::string
     }
     if (state->instrument_meta_callback) {
         state->instrument_meta_callback(state->instrument_meta_snapshots);
+    }
+    return true;
+}
+
+bool CtpGatewayAdapter::EnqueueDepthMarketDataQuery(int request_id) {
+    auto state = std::make_shared<ScheduledQueryTaskState>();
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!connected_) {
+            return false;
+        }
+    }
+
+    QueryScheduler::QueryTask task;
+    task.request_id = request_id;
+    task.priority = QueryScheduler::Priority::kNormal;
+    task.execute = [this, request_id, state]() {
+        auto mark_failed = [&]() {
+            state->query_ok = false;
+            query_scheduler_.MarkComplete();
+        };
+#if QUANT_HFT_HAS_REAL_CTP
+        CThostFtdcTraderApi* td_api = nullptr;
+#endif
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            depth_market_snapshots_.clear();
+            if (runtime_config_.enable_real_api) {
+#if QUANT_HFT_HAS_REAL_CTP
+                if (!healthy_ || !real_api_ || !real_api_->td_api) {
+                    mark_failed();
+                    return;
+                }
+                td_api = real_api_->td_api;
+#else
+                mark_failed();
+                return;
+#endif
+            } else {
+                state->depth_market_snapshots = depth_market_snapshots_;
+                state->depth_market_callback = depth_market_snapshot_callback_;
+                return;
+            }
+        }
+#if QUANT_HFT_HAS_REAL_CTP
+        CThostFtdcQryDepthMarketDataField req{};
+        state->query_ok = ExecuteTdQueryWithRetry(
+            [&]() { return td_api->ReqQryDepthMarketData(&req, request_id); });
+        if (!state->query_ok) {
+            query_scheduler_.MarkComplete();
+        }
+#endif
+    };
+
+    if (!query_scheduler_.TrySchedule(std::move(task))) {
+        return false;
+    }
+    if (!FinishQuerySchedule(query_scheduler_.DrainOnce(), state->query_ok)) {
+        return false;
+    }
+    if (state->depth_market_callback) {
+        state->depth_market_callback(state->depth_market_snapshots);
     }
     return true;
 }
@@ -3792,6 +3932,11 @@ void CtpGatewayAdapter::RegisterInstrumentMetaSnapshotCallback(
     instrument_meta_snapshot_callback_ = std::move(callback);
 }
 
+void CtpGatewayAdapter::RegisterDepthMarketSnapshotCallback(DepthMarketSnapshotCallback callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    depth_market_snapshot_callback_ = std::move(callback);
+}
+
 void CtpGatewayAdapter::RegisterBrokerTradingParamsSnapshotCallback(
     BrokerTradingParamsSnapshotCallback callback) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -3834,6 +3979,11 @@ std::vector<InvestorPositionSnapshot> CtpGatewayAdapter::GetLastInvestorPosition
 std::vector<InstrumentMetaSnapshot> CtpGatewayAdapter::GetLastInstrumentMetaSnapshots() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return instrument_meta_snapshots_;
+}
+
+std::vector<MarketSnapshot> CtpGatewayAdapter::GetLastDepthMarketSnapshots() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return depth_market_snapshots_;
 }
 
 BrokerTradingParamsSnapshot CtpGatewayAdapter::GetLastBrokerTradingParamsSnapshot() const {

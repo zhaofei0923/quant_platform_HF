@@ -57,6 +57,31 @@ bool ParseInteger(const MarketBarPipeline::PersistenceState& state, const std::s
     }
 }
 
+bool ParseDouble(const MarketBarPipeline::PersistenceState& state, const std::string& key,
+                 double* out, std::string* error) {
+    const std::string* value = RequireValue(state, key, error);
+    if (value == nullptr || out == nullptr) {
+        return false;
+    }
+    try {
+        std::size_t consumed = 0;
+        *out = std::stod(*value, &consumed);
+        if (consumed != value->size()) {
+            throw std::invalid_argument("trailing characters");
+        }
+        return true;
+    } catch (...) {
+        SetError(error, "invalid double market bar pipeline state key: " + key);
+        return false;
+    }
+}
+
+std::string FormatDouble(double value) {
+    std::ostringstream stream;
+    stream << std::setprecision(17) << value;
+    return stream.str();
+}
+
 std::string ErrnoMessage(const std::string& action) { return action + ": " + std::strerror(errno); }
 
 #if !defined(_WIN32)
@@ -341,7 +366,27 @@ void MarketBarPipeline::ResetInstrument(const std::string& instrument_id,
             ++it;
         }
     }
+    for (auto it = recent_complete_states_.begin(); it != recent_complete_states_.end();) {
+        if (it->first.rfind(prefix, 0) == 0) {
+            it = recent_complete_states_.erase(it);
+        } else {
+            ++it;
+        }
+    }
     recovery_by_instrument_.erase(instrument_id);
+}
+
+std::vector<StateSnapshot7D> MarketBarPipeline::RecentCompleteStates(
+    const std::string& instrument_id, std::int32_t timeframe_minutes, std::size_t limit) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const std::string key = instrument_id + "|" + std::to_string(timeframe_minutes);
+    const auto it = recent_complete_states_.find(key);
+    if (it == recent_complete_states_.end() || limit == 0) {
+        return {};
+    }
+    const std::size_t offset = it->second.size() > limit ? it->second.size() - limit : 0;
+    return std::vector<StateSnapshot7D>(it->second.begin() + static_cast<std::ptrdiff_t>(offset),
+                                        it->second.end());
 }
 
 std::string MarketBarPipeline::TickFingerprint(const MarketSnapshot& snapshot) {
@@ -497,6 +542,17 @@ void MarketBarPipeline::AppendCanonicalEmissionLocked(TimeframeStateEmission emi
         return;
     }
     canonical_bar_fingerprints_[key] = fingerprint;
+    if (emission.strategy_eligible && emission.bar.strategy_eligible && emission.bar.is_complete &&
+        !emission.bar.is_session_endpoint && !emission.bar.is_recovery_replay &&
+        !emission.bar.has_conflict && emission.state.has_bar) {
+        auto& recent = recent_complete_states_[emission.bar.instrument_id + "|" +
+                                               std::to_string(emission.timeframe_minutes)];
+        recent.push_back(emission.state);
+        const std::size_t limit = std::max<std::size_t>(1, config_.recent_complete_state_limit);
+        while (recent.size() > limit) {
+            recent.pop_front();
+        }
+    }
     result->timeframe_emissions.push_back(std::move(emission));
 }
 
@@ -589,6 +645,41 @@ bool MarketBarPipeline::SaveStateLocked(PersistenceState* out, std::string* erro
         (*out)[prefix + ".complete_five_minute_bars"] =
             std::to_string(recovery.consecutive_complete_five_minute_bars);
     }
+
+    std::size_t recent_count = 0;
+    for (const auto& [key, states] : recent_complete_states_) {
+        (void)key;
+        recent_count += states.size();
+    }
+    (*out)["recent_states.count"] = std::to_string(recent_count);
+    std::size_t recent_index = 0;
+    for (const auto& [key, states] : recent_complete_states_) {
+        (void)key;
+        for (const auto& state : states) {
+            const std::string prefix = "recent_states." + std::to_string(recent_index++);
+            (*out)[prefix + ".instrument_id"] = state.instrument_id;
+            (*out)[prefix + ".timeframe_minutes"] = std::to_string(state.timeframe_minutes);
+            (*out)[prefix + ".bar_open"] = FormatDouble(state.bar_open);
+            (*out)[prefix + ".bar_high"] = FormatDouble(state.bar_high);
+            (*out)[prefix + ".bar_low"] = FormatDouble(state.bar_low);
+            (*out)[prefix + ".bar_close"] = FormatDouble(state.bar_close);
+            (*out)[prefix + ".analysis_bar_open"] = FormatDouble(state.analysis_bar_open);
+            (*out)[prefix + ".analysis_bar_high"] = FormatDouble(state.analysis_bar_high);
+            (*out)[prefix + ".analysis_bar_low"] = FormatDouble(state.analysis_bar_low);
+            (*out)[prefix + ".analysis_bar_close"] = FormatDouble(state.analysis_bar_close);
+            (*out)[prefix + ".analysis_price_offset"] = FormatDouble(state.analysis_price_offset);
+            (*out)[prefix + ".bar_volume"] = FormatDouble(state.bar_volume);
+            (*out)[prefix + ".market_regime"] =
+                std::to_string(static_cast<int>(state.market_regime));
+            (*out)[prefix + ".market_state_adx"] = FormatDouble(state.market_state_adx);
+            (*out)[prefix + ".market_state_kama_er"] = FormatDouble(state.market_state_kama_er);
+            (*out)[prefix + ".market_state_atr_ratio"] = FormatDouble(state.market_state_atr_ratio);
+            (*out)[prefix + ".market_state_bars_seen"] =
+                std::to_string(state.market_state_bars_seen);
+            (*out)[prefix + ".market_state_decision_reason"] = state.market_state_decision_reason;
+            (*out)[prefix + ".ts_ns"] = std::to_string(state.ts_ns);
+        }
+    }
     return true;
 }
 
@@ -660,6 +751,70 @@ bool MarketBarPipeline::LoadStateLocked(const PersistenceState& state, std::stri
         loaded_recovery[*instrument_id] = recovery;
     }
 
+    std::unordered_map<std::string, std::deque<StateSnapshot7D>> loaded_recent;
+    std::int64_t recent_count = 0;
+    const auto recent_count_it = state.find("recent_states.count");
+    if (recent_count_it != state.end()) {
+        if (!ParseInteger(state, "recent_states.count", &recent_count, error) || recent_count < 0) {
+            return false;
+        }
+        for (std::int64_t index = 0; index < recent_count; ++index) {
+            const std::string prefix = "recent_states." + std::to_string(index);
+            const std::string* instrument_id =
+                RequireValue(state, prefix + ".instrument_id", error);
+            const std::string* decision_reason =
+                RequireValue(state, prefix + ".market_state_decision_reason", error);
+            StateSnapshot7D recent;
+            int regime = 0;
+            if (instrument_id == nullptr || instrument_id->empty() || decision_reason == nullptr ||
+                !ParseInteger(state, prefix + ".timeframe_minutes", &recent.timeframe_minutes,
+                              error) ||
+                !ParseDouble(state, prefix + ".bar_open", &recent.bar_open, error) ||
+                !ParseDouble(state, prefix + ".bar_high", &recent.bar_high, error) ||
+                !ParseDouble(state, prefix + ".bar_low", &recent.bar_low, error) ||
+                !ParseDouble(state, prefix + ".bar_close", &recent.bar_close, error) ||
+                !ParseDouble(state, prefix + ".analysis_bar_open", &recent.analysis_bar_open,
+                             error) ||
+                !ParseDouble(state, prefix + ".analysis_bar_high", &recent.analysis_bar_high,
+                             error) ||
+                !ParseDouble(state, prefix + ".analysis_bar_low", &recent.analysis_bar_low,
+                             error) ||
+                !ParseDouble(state, prefix + ".analysis_bar_close", &recent.analysis_bar_close,
+                             error) ||
+                !ParseDouble(state, prefix + ".analysis_price_offset",
+                             &recent.analysis_price_offset, error) ||
+                !ParseDouble(state, prefix + ".bar_volume", &recent.bar_volume, error) ||
+                !ParseInteger(state, prefix + ".market_regime", &regime, error) ||
+                !ParseDouble(state, prefix + ".market_state_adx", &recent.market_state_adx,
+                             error) ||
+                !ParseDouble(state, prefix + ".market_state_kama_er", &recent.market_state_kama_er,
+                             error) ||
+                !ParseDouble(state, prefix + ".market_state_atr_ratio",
+                             &recent.market_state_atr_ratio, error) ||
+                !ParseInteger(state, prefix + ".market_state_bars_seen",
+                              &recent.market_state_bars_seen, error) ||
+                !ParseInteger(state, prefix + ".ts_ns", &recent.ts_ns, error)) {
+                return false;
+            }
+            if (regime < static_cast<int>(MarketRegime::kUnknown) ||
+                regime > static_cast<int>(MarketRegime::kFlat)) {
+                SetError(error, "invalid recent state market regime");
+                return false;
+            }
+            recent.instrument_id = *instrument_id;
+            recent.market_regime = static_cast<MarketRegime>(regime);
+            recent.market_state_decision_reason = *decision_reason;
+            recent.has_bar = true;
+            auto& rows = loaded_recent[recent.instrument_id + "|" +
+                                       std::to_string(recent.timeframe_minutes)];
+            rows.push_back(std::move(recent));
+            const std::size_t limit = std::max<std::size_t>(1, config_.recent_complete_state_limit);
+            while (rows.size() > limit) {
+                rows.pop_front();
+            }
+        }
+    }
+
     // Validate all nested state before mutating the live pipeline.  This prevents a valid
     // aggregator section followed by a corrupt fanout section from producing a half-restore.
     BarAggregator validated_aggregator(config_.bar_aggregator);
@@ -679,6 +834,7 @@ bool MarketBarPipeline::LoadStateLocked(const PersistenceState& state, std::stri
     tick_fingerprint_seen_ts_ = std::move(loaded_tick_fingerprints);
     canonical_bar_fingerprints_ = std::move(loaded_canonical);
     recovery_by_instrument_ = std::move(loaded_recovery);
+    recent_complete_states_ = std::move(loaded_recent);
     replaying_ = false;
     return true;
 }

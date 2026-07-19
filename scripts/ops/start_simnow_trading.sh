@@ -19,6 +19,7 @@ PROBE_TIMEOUT_SECONDS="${SIMNOW_PROBE_TIMEOUT_SECONDS:-120}"
 HEALTH_INTERVAL_MS="${SIMNOW_HEALTH_INTERVAL_MS:-1000}"
 INSTRUMENT_TIMEOUT_SECONDS="${SIMNOW_INSTRUMENT_TIMEOUT_SECONDS:-45}"
 ALLOW_UNCONFIRMED_SETTLEMENT="${SIMNOW_ALLOW_UNCONFIRMED_SETTLEMENT:-0}"
+FORCE_INSTRUMENT_REFRESH="${SIMNOW_FORCE_INSTRUMENT_REFRESH:-0}"
 MIN_FREE_MB="${SIMNOW_MIN_FREE_MB:-2048}"
 LOG_MAX_BYTES="${SIMNOW_LOG_MAX_BYTES:-104857600}"
 LOG_RETENTION_DAYS="${SIMNOW_LOG_RETENTION_DAYS:-14}"
@@ -34,6 +35,7 @@ WAL_FILE_SET_BY_CLI=0
 PROBE_SECONDS_SET_BY_CLI=0
 PROBE_TIMEOUT_SECONDS_SET_BY_CLI=0
 INSTRUMENT_TIMEOUT_SECONDS_SET_BY_CLI=0
+FORCE_INSTRUMENT_REFRESH_SET_BY_CLI=0
 
 usage() {
   cat <<USAGE
@@ -56,6 +58,7 @@ Options:
   --health-interval-ms <int>     simnow_probe health interval (default: ${HEALTH_INTERVAL_MS})
   --instrument-timeout-seconds <int>
                                   simnow_probe instrument query timeout (default: ${INSTRUMENT_TIMEOUT_SECONDS})
+  --force-instrument-refresh      Bypass the candidate cache in probe and core_engine
   --min-free-mb <int>            Required free disk space under run root (default: ${MIN_FREE_MB})
   --log-max-bytes <int>          Rotate log files above this size (default: ${LOG_MAX_BYTES})
   --log-retention-days <int>     Delete old rotated logs after N days (default: ${LOG_RETENTION_DAYS})
@@ -254,6 +257,7 @@ while [[ $# -gt 0 ]]; do
     --probe-timeout-seconds) require_value "$1" "${2:-}"; PROBE_TIMEOUT_SECONDS="$2"; PROBE_TIMEOUT_SECONDS_SET_BY_CLI=1; shift 2 ;;
     --health-interval-ms) require_value "$1" "${2:-}"; HEALTH_INTERVAL_MS="$2"; shift 2 ;;
     --instrument-timeout-seconds) require_value "$1" "${2:-}"; INSTRUMENT_TIMEOUT_SECONDS="$2"; INSTRUMENT_TIMEOUT_SECONDS_SET_BY_CLI=1; shift 2 ;;
+    --force-instrument-refresh) FORCE_INSTRUMENT_REFRESH=1; FORCE_INSTRUMENT_REFRESH_SET_BY_CLI=1; shift ;;
     --min-free-mb) require_value "$1" "${2:-}"; MIN_FREE_MB="$2"; shift 2 ;;
     --log-max-bytes) require_value "$1" "${2:-}"; LOG_MAX_BYTES="$2"; shift 2 ;;
     --log-retention-days) require_value "$1" "${2:-}"; LOG_RETENTION_DAYS="$2"; shift 2 ;;
@@ -306,10 +310,14 @@ if [[ ${INSTRUMENT_TIMEOUT_SECONDS_SET_BY_CLI} -eq 0 ]]; then
   INSTRUMENT_TIMEOUT_SECONDS="${SIMNOW_INSTRUMENT_TIMEOUT_SECONDS:-${INSTRUMENT_TIMEOUT_SECONDS}}"
 fi
 ALLOW_UNCONFIRMED_SETTLEMENT="${SIMNOW_ALLOW_UNCONFIRMED_SETTLEMENT:-${ALLOW_UNCONFIRMED_SETTLEMENT}}"
+if [[ ${FORCE_INSTRUMENT_REFRESH_SET_BY_CLI} -eq 0 ]]; then
+  FORCE_INSTRUMENT_REFRESH="${SIMNOW_FORCE_INSTRUMENT_REFRESH:-${FORCE_INSTRUMENT_REFRESH}}"
+fi
 is_positive_int "${PROBE_SECONDS}" || die "SIMNOW_PROBE_SECONDS must be a positive integer"
 is_positive_int "${PROBE_TIMEOUT_SECONDS}" || die "SIMNOW_PROBE_TIMEOUT_SECONDS must be a positive integer"
 is_positive_int "${INSTRUMENT_TIMEOUT_SECONDS}" || die "SIMNOW_INSTRUMENT_TIMEOUT_SECONDS must be a positive integer"
 is_bool_flag "${ALLOW_UNCONFIRMED_SETTLEMENT}" || die "SIMNOW_ALLOW_UNCONFIRMED_SETTLEMENT must be 0 or 1"
+is_bool_flag "${FORCE_INSTRUMENT_REFRESH}" || die "SIMNOW_FORCE_INSTRUMENT_REFRESH must be 0 or 1"
 [[ -n "${RUN_ROOT}" ]] || die "SIMNOW_RUN_ROOT must not be empty"
 [[ -n "${WAL_FILE}" ]] || die "SIMNOW_WAL_FILE must not be empty"
 
@@ -432,6 +440,11 @@ candidate_groups=group1(30011/30001),group2(30012/30002),group3(30013/30003)
 EOF
 
 core_cmd=("${CORE_ENGINE_BIN}" --config "${CONFIG_PATH}")
+instrument_refresh_args=()
+if [[ "${FORCE_INSTRUMENT_REFRESH}" == "1" ]]; then
+  core_cmd+=(--force-instrument-refresh)
+  instrument_refresh_args+=(--force-instrument-refresh)
+fi
 if [[ "${RUN_SECONDS}" != "0" ]]; then
   core_cmd+=(--run-seconds "${RUN_SECONDS}")
 fi
@@ -446,7 +459,7 @@ if [[ ${DRY_RUN} -eq 1 ]]; then
   echo "[dry-run] disk check: ${RUN_ROOT} free >= ${MIN_FREE_MB}MB"
   echo "[dry-run] duplicate check: no live core_engine detected"
   echo "[dry-run] wal file: ${WAL_FILE}"
-  echo "[dry-run] probe: timeout ${PROBE_TIMEOUT_SECONDS}s ${SIMNOW_PROBE_BIN} ${CONFIG_PATH} --monitor-seconds ${PROBE_SECONDS} --health-interval-ms ${HEALTH_INTERVAL_MS} --instrument-timeout-seconds ${INSTRUMENT_TIMEOUT_SECONDS}"
+  echo "[dry-run] probe: timeout ${PROBE_TIMEOUT_SECONDS}s ${SIMNOW_PROBE_BIN} ${CONFIG_PATH} --monitor-seconds ${PROBE_SECONDS} --health-interval-ms ${HEALTH_INTERVAL_MS} --instrument-timeout-seconds ${INSTRUMENT_TIMEOUT_SECONDS} ${instrument_refresh_args[*]}"
   printf '[dry-run] core_engine:'
   printf ' %q' "${core_cmd[@]}"
   printf '\n'
@@ -459,6 +472,7 @@ if [[ ${SKIP_PROBE} -eq 0 ]]; then
       --monitor-seconds "${PROBE_SECONDS}" \
       --health-interval-ms "${HEALTH_INTERVAL_MS}" \
       --instrument-timeout-seconds "${INSTRUMENT_TIMEOUT_SECONDS}" \
+      "${instrument_refresh_args[@]}" \
       > "${PROBE_LOG}" 2>&1; then
     send_alert "critical" "simnow_probe failed before starting core_engine; run_dir=${RUN_DIR}"
     echo "error: simnow_probe failed; redacted tail follows" >&2

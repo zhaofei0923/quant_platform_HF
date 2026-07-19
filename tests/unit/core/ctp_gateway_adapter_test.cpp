@@ -244,6 +244,7 @@ TEST(CtpGatewayAdapterTest, QuerySnapshotsInSimulatedMode) {
     std::atomic<int> account_callbacks{0};
     std::atomic<int> position_callbacks{0};
     std::atomic<int> instrument_callbacks{0};
+    std::atomic<int> depth_market_callbacks{0};
     std::atomic<int> broker_param_callbacks{0};
     std::atomic<int> margin_rate_callbacks{0};
     std::atomic<int> commission_rate_callbacks{0};
@@ -262,6 +263,10 @@ TEST(CtpGatewayAdapterTest, QuerySnapshotsInSimulatedMode) {
             EXPECT_FALSE(snapshots.empty());
             instrument_callbacks.fetch_add(1);
         });
+    adapter.RegisterDepthMarketSnapshotCallback([&](const std::vector<MarketSnapshot>& snapshots) {
+        (void)snapshots;
+        depth_market_callbacks.fetch_add(1);
+    });
     adapter.RegisterBrokerTradingParamsSnapshotCallback(
         [&](const BrokerTradingParamsSnapshot& snapshot) {
             EXPECT_FALSE(snapshot.margin_price_type.empty());
@@ -293,6 +298,7 @@ TEST(CtpGatewayAdapterTest, QuerySnapshotsInSimulatedMode) {
     EXPECT_TRUE(adapter.EnqueueInvestorPositionQuery(12));
     EXPECT_TRUE(adapter.EnqueueInstrumentQuery(13));
     EXPECT_TRUE(adapter.EnqueueInstrumentQuery(18, "DCE.c2607"));
+    EXPECT_TRUE(adapter.EnqueueDepthMarketDataQuery(19));
     EXPECT_TRUE(adapter.EnqueueBrokerTradingParamsQuery(14));
     EXPECT_TRUE(adapter.EnqueueInstrumentMarginRateQuery(15, "SHFE.ag2406"));
     EXPECT_TRUE(adapter.EnqueueInstrumentCommissionRateQuery(16, "SHFE.ag2406"));
@@ -307,9 +313,14 @@ TEST(CtpGatewayAdapterTest, QuerySnapshotsInSimulatedMode) {
     EXPECT_NE(std::find_if(metas.begin(), metas.end(),
                            [](const auto& meta) { return meta.instrument_id == "SHFE.ag2406"; }),
               metas.end());
-    EXPECT_NE(std::find_if(metas.begin(), metas.end(),
-                           [](const auto& meta) { return meta.instrument_id == "DCE.c2607"; }),
-              metas.end());
+    const auto c_meta = std::find_if(metas.begin(), metas.end(), [](const auto& meta) {
+        return meta.instrument_id == "DCE.c2607";
+    });
+    ASSERT_NE(c_meta, metas.end());
+    EXPECT_TRUE(c_meta->is_trading);
+    EXPECT_EQ(c_meta->product_class, "1");
+    EXPECT_EQ(c_meta->open_date, "19700101");
+    EXPECT_EQ(c_meta->expire_date, "29991231");
     const auto broker_params = adapter.GetLastBrokerTradingParamsSnapshot();
     EXPECT_FALSE(broker_params.margin_price_type.empty());
     EXPECT_EQ(adapter.GetLastInstrumentMarginRateSnapshots().size(), 1U);
@@ -319,6 +330,7 @@ TEST(CtpGatewayAdapterTest, QuerySnapshotsInSimulatedMode) {
     EXPECT_EQ(account_callbacks.load(), 1);
     EXPECT_EQ(position_callbacks.load(), 1);
     EXPECT_EQ(instrument_callbacks.load(), 2);
+    EXPECT_EQ(depth_market_callbacks.load(), 1);
     EXPECT_EQ(broker_param_callbacks.load(), 1);
     EXPECT_EQ(margin_rate_callbacks.load(), 1);
     EXPECT_EQ(commission_rate_callbacks.load(), 1);

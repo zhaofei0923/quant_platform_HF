@@ -1135,6 +1135,49 @@ bool CompositeStrategy::LoadState(const StrategyState& state, std::string* error
     return true;
 }
 
+bool CompositeStrategy::ResetForContractSwitch(const ContractSwitchContext& context,
+                                               std::string* error) {
+    if (context.product_id.empty() || context.current_instrument_id.empty()) {
+        if (error != nullptr) {
+            *error = "contract switch product and current instrument are required";
+        }
+        return false;
+    }
+    if (!MatchesProduct(context.current_instrument_id)) {
+        return true;
+    }
+    for (auto& strategy : owned_atomic_strategies_) {
+        strategy->Reset();
+    }
+    pending_open_orders_by_product_.erase(context.product_id);
+    for (auto it = pending_open_product_by_order_id_.begin();
+         it != pending_open_product_by_order_id_.end();) {
+        if (it->second == context.product_id) {
+            it = pending_open_product_by_order_id_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (!context.previous_instrument_id.empty()) {
+        atomic_context_.net_positions.erase(context.previous_instrument_id);
+        atomic_context_.avg_open_prices.erase(context.previous_instrument_id);
+        position_owner_by_instrument_.erase(context.previous_instrument_id);
+        active_force_close_window_by_instrument_.erase(context.previous_instrument_id);
+    }
+    atomic_context_.net_positions.erase(context.current_instrument_id);
+    atomic_context_.avg_open_prices.erase(context.current_instrument_id);
+    position_owner_by_instrument_.erase(context.current_instrument_id);
+    active_force_close_window_by_instrument_.erase(context.current_instrument_id);
+    last_blocked_reason_by_strategy_.clear();
+    last_state_matched_for_trace_ = false;
+    return true;
+}
+
+std::int32_t CompositeStrategy::RequiredContractWarmupBars(
+    const ContractSwitchContext& context) const {
+    return MatchesProduct(context.current_instrument_id) ? 30 : 0;
+}
+
 std::vector<CompositeAtomicTraceRow> CompositeStrategy::CollectAtomicIndicatorTrace() const {
     if (!last_state_matched_for_trace_) {
         return {};

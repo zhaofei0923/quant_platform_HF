@@ -5,8 +5,10 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <future>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -19,6 +21,11 @@
 
 namespace quant_hft {
 
+struct StrategyContractIdentity {
+    std::string product_id;
+    std::uint64_t generation{0};
+};
+
 struct StrategyEngineConfig {
     std::size_t queue_capacity{8192};
     EpochNanos timer_interval_ns{100'000'000};  // 100ms
@@ -26,6 +33,8 @@ struct StrategyEngineConfig {
     std::function<void(const StateSnapshot7D&, const std::string&, const CompositeAtomicTraceRow&)>
         indicator_trace_sink;
     std::function<double(const std::string&)> contract_multiplier_resolver;
+    std::function<std::optional<StrategyContractIdentity>(const std::string&)>
+        contract_identity_resolver;
     bool load_state_on_start{false};
     EpochNanos state_snapshot_interval_ns{0};
     EpochNanos metrics_collect_interval_ns{1'000'000'000};
@@ -33,6 +42,13 @@ struct StrategyEngineConfig {
 
 class StrategyEngine {
    public:
+    struct ContractSwitchReport {
+        bool success{false};
+        std::uint64_t generation{0};
+        std::int32_t required_warmup_bars{0};
+        std::int32_t replayed_warmup_bars{0};
+        std::string error;
+    };
     struct StrategyLaunchSpec {
         std::string strategy_id;
         std::string strategy_factory;
@@ -61,8 +77,10 @@ class StrategyEngine {
     bool Start(const std::vector<StrategyLaunchSpec>& launch_specs, std::string* error);
     void Stop();
 
-    void EnqueueState(const StateSnapshot7D& state);
-    void EnqueueMarketTick(const MarketSnapshot& snapshot);
+    void EnqueueState(const StateSnapshot7D& state, const std::string& product_id = {},
+                      std::uint64_t contract_generation = 0, bool emit_intents = true);
+    void EnqueueMarketTick(const MarketSnapshot& snapshot, const std::string& product_id = {},
+                           std::uint64_t contract_generation = 0, bool emit_intents = true);
     void EnqueueOrderEvent(const OrderEvent& event);
     void EnqueueAccountSnapshot(const TradingAccountSnapshot& snapshot);
     // Enqueue an authoritative (broker-truth) signed net position snapshot so the
@@ -80,6 +98,11 @@ class StrategyEngine {
     // Waits until every event enqueued before the call has completed its strategy callback.
     // Used as the recovery barrier before trading permission can leave Blocked.
     bool WaitUntilDrained(std::int64_t timeout_ms);
+    ContractSwitchReport ApplyContractSwitch(const ContractSwitchContext& context,
+                                             const std::vector<StateSnapshot7D>& warmup_states,
+                                             std::int64_t timeout_ms);
+    bool ApplyContractWarmupState(const StateSnapshot7D& state, const std::string& product_id,
+                                  std::uint64_t contract_generation, std::int64_t timeout_ms);
 
     Stats GetStats() const;
 
@@ -90,6 +113,8 @@ class StrategyEngine {
         kOrderEvent,
         kAccountSnapshot,
         kReconcilePositions,
+        kContractSwitch,
+        kContractWarmupState,
     };
 
     struct EngineEvent {
@@ -101,6 +126,13 @@ class StrategyEngine {
         std::string reconcile_account_id;
         std::unordered_map<std::string, std::int32_t> reconcile_net;
         std::unordered_map<std::string, double> reconcile_avg_open;
+        std::string product_id;
+        std::uint64_t contract_generation{0};
+        bool emit_intents{true};
+        ContractSwitchContext contract_switch;
+        std::vector<StateSnapshot7D> warmup_states;
+        std::shared_ptr<std::promise<ContractSwitchReport>> contract_switch_promise;
+        std::shared_ptr<std::promise<bool>> contract_warmup_promise;
     };
 
     struct StrategyEntry {
@@ -111,8 +143,10 @@ class StrategyEngine {
 
     void EnqueueEvent(EngineEvent event);
     void WorkerLoop();
-    void DispatchState(const StateSnapshot7D& state);
-    void DispatchMarketTick(const MarketSnapshot& snapshot);
+    bool DispatchState(const StateSnapshot7D& state, const std::string& product_id,
+                       std::uint64_t contract_generation, bool emit_intents);
+    void DispatchMarketTick(const MarketSnapshot& snapshot, const std::string& product_id,
+                            std::uint64_t contract_generation, bool emit_intents);
     void DispatchOrderEvent(const OrderEvent& event);
     void DispatchAccountSnapshot(const TradingAccountSnapshot& snapshot);
     void DispatchReconcilePositions(
@@ -120,10 +154,13 @@ class StrategyEngine {
         const std::unordered_map<std::string, std::int32_t>& authoritative_net,
         const std::unordered_map<std::string, double>& authoritative_avg_open);
     void DispatchTimer(EpochNanos now_ns);
+    ContractSwitchReport DispatchContractSwitch(const ContractSwitchContext& context,
+                                                const std::vector<StateSnapshot7D>& warmup_states);
     void MaybeSnapshotStates(EpochNanos now_ns);
     void SnapshotStates(EpochNanos now_ns);
     void MaybeCollectMetrics(EpochNanos now_ns);
-    void EmitIntents(const std::string& strategy_id, std::vector<SignalIntent> intents);
+    void EmitIntents(const std::string& strategy_id, std::vector<SignalIntent> intents,
+                     const std::string& product_id = {}, std::uint64_t contract_generation = 0);
 
     StrategyEngineConfig config_;
     IntentSink intent_sink_;

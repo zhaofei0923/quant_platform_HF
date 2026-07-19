@@ -241,14 +241,14 @@ std::future<std::vector<InvestorPositionSnapshot>> ExecutionEngine::QueryInvesto
             })) {
             throw std::runtime_error("query flow control rejected");
         }
-        std::size_t before_size = adapter_->GetLastInvestorPositionSnapshots().size();
+        const std::uint64_t before_generation = adapter_->GetInvestorPositionSnapshotGeneration();
         if (adapter_->EnqueueInvestorPositionQuery() <= 0) {
             throw std::runtime_error("failed to enqueue investor position query");
         }
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(3000);
         while (std::chrono::steady_clock::now() < deadline) {
             auto snapshots = adapter_->GetLastInvestorPositionSnapshots();
-            if (snapshots.size() != before_size || !snapshots.empty()) {
+            if (adapter_->GetInvestorPositionSnapshotGeneration() > before_generation) {
                 return snapshots;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(10));

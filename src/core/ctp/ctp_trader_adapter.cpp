@@ -188,6 +188,8 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
                         if (callback) {
                             callback(copied);
                         }
+                        investor_position_snapshot_generation_.fetch_add(1,
+                                                                         std::memory_order_release);
                     },
                     EventPriority::kNormal)) {
                 const auto stats = dispatcher_.GetStats();
@@ -207,6 +209,29 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
                         {
                             std::lock_guard<std::mutex> lock(mutex_);
                             callback = user_instrument_meta_callback_;
+                        }
+                        if (callback) {
+                            callback(copied);
+                        }
+                    },
+                    EventPriority::kNormal)) {
+                const auto stats = dispatcher_.GetStats();
+                EmitStructuredLog(nullptr, "ctp_trader_adapter", "warn", "dispatcher_queue_full",
+                                  {{"priority", "normal"},
+                                   {"queue_depth", std::to_string(stats.pending_normal)},
+                                   {"dropped_total", std::to_string(stats.dropped_total)}});
+            }
+        });
+
+    gateway_->RegisterDepthMarketSnapshotCallback(
+        [this](const std::vector<MarketSnapshot>& snapshots) {
+            auto copied = snapshots;
+            if (!dispatcher_.Post(
+                    [this, copied = std::move(copied)]() {
+                        DepthMarketSnapshotCallback callback;
+                        {
+                            std::lock_guard<std::mutex> lock(mutex_);
+                            callback = user_depth_market_callback_;
                         }
                         if (callback) {
                             callback(copied);
@@ -810,6 +835,19 @@ int CTPTraderAdapter::EnqueueInstrumentQuery(const std::string& instrument_id) {
     return EnqueueInstrumentQuery(request_id, instrument_id) ? request_id : -1;
 }
 
+bool CTPTraderAdapter::EnqueueDepthMarketDataQuery(int request_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (state_ < TraderSessionState::kLoggedIn) {
+        return false;
+    }
+    return gateway_->EnqueueDepthMarketDataQuery(request_id);
+}
+
+int CTPTraderAdapter::EnqueueDepthMarketDataQuery() {
+    const int request_id = AllocateRequestId();
+    return EnqueueDepthMarketDataQuery(request_id) ? request_id : -1;
+}
+
 bool CTPTraderAdapter::EnqueueInstrumentMarginRateQuery(int request_id,
                                                         const std::string& instrument_id) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -924,6 +962,11 @@ void CTPTraderAdapter::RegisterInstrumentMetaSnapshotCallback(
     user_instrument_meta_callback_ = std::move(callback);
 }
 
+void CTPTraderAdapter::RegisterDepthMarketSnapshotCallback(DepthMarketSnapshotCallback callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    user_depth_market_callback_ = std::move(callback);
+}
+
 void CTPTraderAdapter::RegisterBrokerTradingParamsSnapshotCallback(
     BrokerTradingParamsSnapshotCallback callback) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -963,6 +1006,10 @@ TradingAccountSnapshot CTPTraderAdapter::GetLastTradingAccountSnapshot() const {
 
 std::vector<InvestorPositionSnapshot> CTPTraderAdapter::GetLastInvestorPositionSnapshots() const {
     return gateway_->GetLastInvestorPositionSnapshots();
+}
+
+std::uint64_t CTPTraderAdapter::GetInvestorPositionSnapshotGeneration() const noexcept {
+    return investor_position_snapshot_generation_.load(std::memory_order_acquire);
 }
 
 std::string CTPTraderAdapter::GetLastConnectDiagnostic() const {
@@ -1445,6 +1492,7 @@ void CTPTraderAdapter::UnregisterGatewayCallbacks() {
     gateway_->RegisterTradingAccountSnapshotCallback(nullptr);
     gateway_->RegisterInvestorPositionSnapshotCallback(nullptr);
     gateway_->RegisterInstrumentMetaSnapshotCallback(nullptr);
+    gateway_->RegisterDepthMarketSnapshotCallback(nullptr);
     gateway_->RegisterBrokerTradingParamsSnapshotCallback(nullptr);
     gateway_->RegisterInstrumentMarginRateSnapshotCallback(nullptr);
     gateway_->RegisterInstrumentCommissionRateSnapshotCallback(nullptr);

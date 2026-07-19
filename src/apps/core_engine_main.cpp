@@ -31,6 +31,7 @@
 #include "quant_hft/core/ctp_order_mapping_store.h"
 #include "quant_hft/core/ctp_trader_adapter.h"
 #include "quant_hft/core/flow_controller.h"
+#include "quant_hft/core/instrument_meta_cache.h"
 #include "quant_hft/core/local_wal_regulatory_sink.h"
 #include "quant_hft/core/market_bus_producer.h"
 #include "quant_hft/core/redis_realtime_store_client_adapter.h"
@@ -51,6 +52,7 @@
 #include "quant_hft/services/ctp_account_ledger.h"
 #include "quant_hft/services/ctp_close_offset_resolver.h"
 #include "quant_hft/services/ctp_position_ledger.h"
+#include "quant_hft/services/dominant_contract_coordinator.h"
 #include "quant_hft/services/execution_engine.h"
 #include "quant_hft/services/execution_planner.h"
 #include "quant_hft/services/execution_router.h"
@@ -219,8 +221,8 @@ void EmitCompositeStrategyInitLogs(const quant_hft::CtpRuntimeConfig& config,
 }
 
 bool ParseArgs(int argc, char** argv, std::string* config_path, int* run_seconds,
-               std::string* error) {
-    if (config_path == nullptr || run_seconds == nullptr) {
+               bool* force_instrument_refresh, std::string* error) {
+    if (config_path == nullptr || run_seconds == nullptr || force_instrument_refresh == nullptr) {
         if (error != nullptr) {
             *error = "output argument pointer is null";
         }
@@ -232,9 +234,14 @@ bool ParseArgs(int argc, char** argv, std::string* config_path, int* run_seconds
         quant_root.empty() ? "configs/sim/ctp.yaml" : (quant_root + "/configs/sim/ctp.yaml");
     *config_path = quant_hft::GetEnvOrDefault("CTP_CONFIG_PATH", default_config);
     *run_seconds = 0;
+    *force_instrument_refresh = false;
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
+        if (arg == "--force-instrument-refresh") {
+            *force_instrument_refresh = true;
+            continue;
+        }
         if (arg == "--config") {
             if (i + 1 >= argc) {
                 if (error != nullptr) {
@@ -1581,8 +1588,10 @@ int main(int argc, char** argv) {
 
     std::string config_path;
     int run_seconds = 0;
+    bool force_instrument_refresh = false;
     std::string parse_error;
-    if (!ParseArgs(argc, argv, &config_path, &run_seconds, &parse_error)) {
+    if (!ParseArgs(argc, argv, &config_path, &run_seconds, &force_instrument_refresh,
+                   &parse_error)) {
         EmitStructuredLog(&bootstrap_runtime, "core_engine", "error", "invalid_arguments",
                           {{"error", parse_error}});
         return 1;
@@ -1602,10 +1611,7 @@ int main(int argc, char** argv) {
                                           ? ResolveConfiguredProductIds(file_config)
                                           : std::vector<std::string>{};
     const bool dominant_contract_runtime_recheck_enabled =
-        dominant_contract_mode &&
-        (file_config.dominant_contract_switch_mode == "dry_run" ||
-         file_config.dominant_contract_switch_mode == "flat_only") &&
-        file_config.dominant_contract_recheck_interval_ms > 0;
+        dominant_contract_mode && file_config.dominant_contract_recheck_interval_ms > 0;
     const bool dominant_contract_flat_only_enabled =
         dominant_contract_mode && file_config.dominant_contract_switch_mode == "flat_only";
     auto instruments = ResolveInstruments(file_config);
@@ -1658,7 +1664,21 @@ int main(int argc, char** argv) {
     bool instrument_meta_ready = false;
     std::vector<InstrumentMetaSnapshot> instrument_meta_snapshots;
     std::unordered_map<std::string, InstrumentMetaSnapshot> instrument_meta_by_id;
+    std::mutex depth_market_mutex;
+    std::condition_variable depth_market_cv;
+    bool depth_market_ready = false;
+    std::vector<MarketSnapshot> depth_market_snapshots;
+    DominantContractCoordinatorConfig dominant_coordinator_config;
+    dominant_coordinator_config.min_lead_ratio = file_config.dominant_contract_min_lead_ratio;
+    dominant_coordinator_config.min_lead_windows = file_config.dominant_contract_min_lead_windows;
+    dominant_coordinator_config.min_hold_ms = file_config.dominant_contract_min_hold_ms;
+    dominant_coordinator_config.max_tick_age_ms = file_config.dominant_contract_max_tick_age_ms;
+    dominant_coordinator_config.min_warmup_bars = file_config.dominant_contract_warmup_bars;
+    dominant_coordinator_config.require_complete_baseline =
+        file_config.dominant_contract_require_complete_baseline;
+    DominantContractCoordinator dominant_contract_coordinator(dominant_coordinator_config);
     std::mutex fee_rate_mutex;
+    std::condition_variable fee_rate_cv;
     std::unordered_map<std::string, InstrumentMarginRateSnapshot> margin_rate_by_instrument;
     std::unordered_map<std::string, InstrumentCommissionRateSnapshot> commission_rate_by_instrument;
     std::unordered_map<std::string, InstrumentOrderCommRateSnapshot> order_comm_rate_by_instrument;
@@ -1667,12 +1687,9 @@ int main(int argc, char** argv) {
     std::unordered_map<std::string, MarketSnapshot> dominant_candidate_snapshots;
     std::unordered_set<std::string> dominant_candidate_ids;
     std::unordered_map<std::string, std::vector<std::string>> dominant_candidate_ids_by_product;
+    std::string dominant_broker_trading_day;
+    std::unordered_set<std::string> dominant_subscribed_instrument_ids;
     std::atomic<bool> dominant_contract_selection_active{dominant_contract_mode};
-    std::mutex dominant_recheck_mutex;
-    std::condition_variable dominant_recheck_cv;
-    std::unordered_map<std::string, MarketSnapshot> dominant_recheck_candidate_snapshots;
-    std::unordered_set<std::string> dominant_recheck_candidate_ids;
-    std::atomic<bool> dominant_contract_recheck_active{false};
     std::mutex active_instrument_state_mutex;
     std::mutex latest_market_snapshot_mutex;
     std::unordered_map<std::string, MarketSnapshot> latest_market_snapshots;
@@ -1825,6 +1842,19 @@ int main(int argc, char** argv) {
         }
     };
     strategy_engine_config.contract_multiplier_resolver = resolve_contract_multiplier;
+    strategy_engine_config.contract_identity_resolver =
+        [&](const std::string& instrument_id) -> std::optional<StrategyContractIdentity> {
+        if (!dominant_contract_mode) {
+            return std::nullopt;
+        }
+        const auto product = dominant_contract_coordinator.ProductForInstrument(instrument_id);
+        const auto generation =
+            dominant_contract_coordinator.GenerationForInstrument(instrument_id);
+        if (!product.has_value() || !generation.has_value()) {
+            return std::nullopt;
+        }
+        return StrategyContractIdentity{*product, *generation};
+    };
     strategy_engine_config.load_state_on_start = file_config.strategy_state_persist_enabled;
     strategy_engine_config.state_snapshot_interval_ns =
         static_cast<EpochNanos>(file_config.strategy_state_snapshot_interval_ms) * 1'000'000;
@@ -2607,6 +2637,83 @@ int main(int argc, char** argv) {
             EmitSignalPlanRejectedLog(config, signal, "missing_trace_id");
             return;
         }
+        if (dominant_contract_mode) {
+            std::int32_t broker_close_volume = 0;
+            if (IsCloseLikeSignal(signal)) {
+                const PositionDirection close_direction = signal.side == Side::kSell
+                                                              ? PositionDirection::kLong
+                                                              : PositionDirection::kShort;
+                const std::string exchange_id =
+                    InferCtpExchangeIdFromInstrumentId(signal.instrument_id);
+                std::lock_guard<std::mutex> lock(ctp_ledger_mutex);
+                for (const std::string& position_date :
+                     {std::string("today"), std::string("yesterday")}) {
+                    broker_close_volume +=
+                        ctp_position_ledger
+                            .GetPosition(account_id, signal.instrument_id, close_direction,
+                                         position_date, exchange_id)
+                            .position;
+                }
+            }
+            const auto contract_validation =
+                dominant_contract_coordinator.ValidateSignal(signal, broker_close_volume);
+            if (!contract_validation.allowed) {
+                EmitStructuredLog(
+                    &config, "core_engine", "warn", "dominant_contract_signal_rejected",
+                    {{"strategy_id", signal.strategy_id},
+                     {"instrument_id", signal.instrument_id},
+                     {"product_id", signal.product_id},
+                     {"contract_generation", std::to_string(signal.contract_generation)},
+                     {"reason", contract_validation.reason},
+                     {"trace_id", signal.trace_id}});
+                if (contract_validation.persist_pending_exit) {
+                    (void)persist_pending_exit(signal, contract_validation.reason);
+                } else {
+                    EmitSignalPlanRejectedLog(config, signal, contract_validation.reason);
+                }
+                return;
+            }
+            if (!IsCloseLikeSignal(signal)) {
+                const std::string product_id = signal.product_id.empty()
+                                                   ? ExtractProductId(signal.instrument_id)
+                                                   : signal.product_id;
+                const std::string broker_trading_day = ctp_trader->GetLastUserSession().trading_day;
+                InstrumentMetaSnapshot instrument_meta;
+                bool instrument_meta_ready_for_open = false;
+                {
+                    std::lock_guard<std::mutex> lock(instrument_meta_mutex);
+                    const auto meta_it = instrument_meta_by_id.find(signal.instrument_id);
+                    if (meta_it != instrument_meta_by_id.end()) {
+                        instrument_meta = meta_it->second;
+                        instrument_meta_ready_for_open = IsEligibleFuturesContract(
+                            instrument_meta, product_id, broker_trading_day);
+                    }
+                }
+                bool fee_rates_ready_for_open = false;
+                {
+                    std::lock_guard<std::mutex> lock(fee_rate_mutex);
+                    fee_rates_ready_for_open =
+                        margin_rate_by_instrument.count(signal.instrument_id) > 0U &&
+                        commission_rate_by_instrument.count(signal.instrument_id) > 0U &&
+                        order_comm_rate_by_instrument.count(signal.instrument_id) > 0U;
+                }
+                if (!instrument_meta_ready_for_open || !fee_rates_ready_for_open) {
+                    const std::string reason = !instrument_meta_ready_for_open
+                                                   ? "dominant_contract_metadata_not_ready"
+                                                   : "dominant_contract_fee_metadata_not_ready";
+                    EmitStructuredLog(
+                        &config, "core_engine", "warn", "dominant_contract_signal_rejected",
+                        {{"strategy_id", signal.strategy_id},
+                         {"instrument_id", signal.instrument_id},
+                         {"product_id", product_id},
+                         {"contract_generation", std::to_string(signal.contract_generation)},
+                         {"reason", reason},
+                         {"trace_id", signal.trace_id}});
+                    EmitSignalPlanRejectedLog(config, signal, reason);
+                    return;
+                }
+            }
+        }
         if (should_suppress_signal_submit(signal)) {
             (void)persist_pending_exit(signal, "submit_cooldown");
             return;
@@ -2710,6 +2817,45 @@ int main(int argc, char** argv) {
 
         for (const auto& planned : plans) {
             const auto& intent = planned.intent;
+            if (dominant_contract_mode) {
+                SignalIntent order_validation_signal;
+                order_validation_signal.strategy_id = intent.strategy_id;
+                order_validation_signal.instrument_id = intent.instrument_id;
+                order_validation_signal.signal_type =
+                    intent.offset == OffsetFlag::kOpen ? SignalType::kOpen : SignalType::kClose;
+                order_validation_signal.side = intent.side;
+                order_validation_signal.offset = intent.offset;
+                order_validation_signal.trace_id = intent.trace_id;
+                order_validation_signal.product_id = intent.product_id;
+                order_validation_signal.contract_generation = intent.contract_generation;
+                std::int32_t broker_close_volume = 0;
+                if (intent.offset != OffsetFlag::kOpen) {
+                    const PositionDirection close_direction = intent.side == Side::kSell
+                                                                  ? PositionDirection::kLong
+                                                                  : PositionDirection::kShort;
+                    const std::string exchange_id =
+                        InferCtpExchangeIdFromInstrumentId(intent.instrument_id);
+                    std::lock_guard<std::mutex> lock(ctp_ledger_mutex);
+                    for (const std::string& position_date :
+                         {std::string("today"), std::string("yesterday")}) {
+                        broker_close_volume +=
+                            ctp_position_ledger
+                                .GetPosition(account_id, intent.instrument_id, close_direction,
+                                             position_date, exchange_id)
+                                .position;
+                    }
+                }
+                const auto validation = dominant_contract_coordinator.ValidateSignal(
+                    order_validation_signal, broker_close_volume);
+                if (!validation.allowed) {
+                    EmitOrderRejectedIntentLog(config, intent,
+                                               "dominant_contract:" + validation.reason,
+                                               ExecutionMetadata{});
+                    process_order_event(BuildRejectedEvent(
+                        intent, "dominant_contract:" + validation.reason, ExecutionMetadata{}));
+                    continue;
+                }
+            }
             ExecutionMetadata metadata;
             metadata.strategy_id = intent.strategy_id;
             metadata.execution_algo_id = planned.execution_algo_id;
@@ -2949,7 +3095,82 @@ int main(int argc, char** argv) {
             }
             realtime_cache.UpsertStateSnapshot7D(emission.state);
             if (strategy_engine != nullptr) {
-                strategy_engine->EnqueueState(emission.state);
+                if (dominant_contract_mode) {
+                    const auto product = dominant_contract_coordinator.ProductForInstrument(
+                        emission.state.instrument_id);
+                    const auto generation = dominant_contract_coordinator.GenerationForInstrument(
+                        emission.state.instrument_id);
+                    if (!product.has_value() || !generation.has_value() ||
+                        !dominant_contract_coordinator.CanDispatchToStrategy(
+                            emission.state.instrument_id)) {
+                        continue;
+                    }
+                    const auto before = dominant_contract_coordinator.GetStatus(*product);
+                    const bool warming_event =
+                        before.phase == DominantContractPhase::kWarming &&
+                        before.current_instrument_id == emission.state.instrument_id;
+                    if (emission.timeframe_minutes == 5 && warming_event) {
+                        if (!strategy_engine->ApplyContractWarmupState(
+                                emission.state, *product, *generation,
+                                file_config.dominant_contract_switch_timeout_ms)) {
+                            dominant_contract_coordinator.MarkFault(
+                                *product, "live_warmup_barrier_timeout", NowEpochNanos());
+                            trading_permission_controller.SetCloseOnly(
+                                "dominant_contract_warmup_barrier_failed");
+                            const std::filesystem::path fault_status_path =
+                                std::filesystem::path("runtime/ctp_instruments") /
+                                (*product + "_dominant_contract.json");
+                            std::string fault_persist_error;
+                            (void)dominant_contract_coordinator.PersistStatusAtomically(
+                                *product, fault_status_path.string(), &fault_persist_error);
+                            EmitStructuredLog(&config, "core_engine", "critical",
+                                              "dominant_contract_warmup_barrier_failed",
+                                              {{"product_id", *product},
+                                               {"instrument_id", emission.state.instrument_id},
+                                               {"generation", std::to_string(*generation)},
+                                               {"persist_error", fault_persist_error}});
+                            continue;
+                        }
+                        const std::string warmup_key = emission.state.instrument_id + "|5|" +
+                                                       emission.bar.trading_day + "|" +
+                                                       emission.bar.minute;
+                        if (dominant_contract_coordinator.RecordWarmupBar(
+                                *product, emission.state.instrument_id, warmup_key,
+                                NowEpochNanos())) {
+                            const auto after = dominant_contract_coordinator.GetStatus(*product);
+                            const std::filesystem::path status_path =
+                                std::filesystem::path("runtime/ctp_instruments") /
+                                (*product + "_dominant_contract.json");
+                            std::string persist_error;
+                            if (!dominant_contract_coordinator.PersistStatusAtomically(
+                                    *product, status_path.string(), &persist_error)) {
+                                dominant_contract_coordinator.MarkFault(
+                                    *product, "status_write_failed:" + persist_error,
+                                    NowEpochNanos());
+                                trading_permission_controller.SetCloseOnly(
+                                    "dominant_contract_status_write_failed");
+                                EmitStructuredLog(
+                                    &config, "core_engine", "critical",
+                                    "dominant_contract_status_write_failed",
+                                    {{"product_id", *product}, {"error", persist_error}});
+                            } else if (before.phase == DominantContractPhase::kWarming &&
+                                       after.phase == DominantContractPhase::kReady) {
+                                EmitStructuredLog(
+                                    &config, "core_engine", "info",
+                                    "dominant_contract_warmup_completed",
+                                    {{"product_id", *product},
+                                     {"instrument_id", after.current_instrument_id},
+                                     {"generation", std::to_string(after.generation)},
+                                     {"warmup_bars", std::to_string(after.warmup_observed_bars)}});
+                            }
+                        }
+                    } else {
+                        strategy_engine->EnqueueState(emission.state, *product, *generation,
+                                                      !warming_event);
+                    }
+                } else {
+                    strategy_engine->EnqueueState(emission.state);
+                }
             }
         }
     };
@@ -3000,7 +3221,16 @@ int main(int argc, char** argv) {
         }
         {
             std::lock_guard<std::mutex> lock(latest_market_snapshot_mutex);
-            latest_market_snapshots[snapshot.instrument_id] = snapshot;
+            auto& latest = latest_market_snapshots[snapshot.instrument_id];
+            const EpochNanos incoming_event_ts =
+                snapshot.exchange_ts_ns > 0 ? snapshot.exchange_ts_ns : snapshot.recv_ts_ns;
+            const EpochNanos current_event_ts =
+                latest.exchange_ts_ns > 0 ? latest.exchange_ts_ns : latest.recv_ts_ns;
+            if (latest.instrument_id.empty() || incoming_event_ts > current_event_ts ||
+                (incoming_event_ts == current_event_ts &&
+                 snapshot.recv_ts_ns >= latest.recv_ts_ns)) {
+                latest = snapshot;
+            }
         }
         realtime_cache.UpsertMarketSnapshot(snapshot);
         timeseries_store.AppendMarketSnapshot(snapshot);
@@ -3061,33 +3291,54 @@ int main(int argc, char** argv) {
         [&](const OrderEvent& event) { process_order_event(event); });
     ctp_md->RegisterTickCallback([&](const MarketSnapshot& snapshot) {
         record_market_tick(snapshot);
+        if (dominant_contract_mode) {
+            dominant_contract_coordinator.UpdateLiveSnapshot(snapshot);
+        }
         if (dominant_contract_selection_active.load()) {
             bool tracked = false;
             {
                 std::lock_guard<std::mutex> lock(dominant_candidate_mutex);
                 if (dominant_candidate_ids.find(snapshot.instrument_id) !=
                     dominant_candidate_ids.end()) {
-                    dominant_candidate_snapshots[snapshot.instrument_id] = snapshot;
+                    auto& latest = dominant_candidate_snapshots[snapshot.instrument_id];
+                    const EpochNanos incoming_event_ts =
+                        snapshot.exchange_ts_ns > 0 ? snapshot.exchange_ts_ns : snapshot.recv_ts_ns;
+                    const EpochNanos current_event_ts =
+                        latest.exchange_ts_ns > 0 ? latest.exchange_ts_ns : latest.recv_ts_ns;
+                    if (latest.instrument_id.empty() || incoming_event_ts > current_event_ts ||
+                        (incoming_event_ts == current_event_ts &&
+                         snapshot.recv_ts_ns >= latest.recv_ts_ns)) {
+                        latest = snapshot;
+                    }
                     tracked = true;
                 }
             }
             if (tracked) {
                 dominant_candidate_cv.notify_all();
             }
-            return;
         }
-        bool tracked_runtime_candidate = false;
-        {
-            std::lock_guard<std::mutex> lock(dominant_recheck_mutex);
-            if (dominant_contract_recheck_active.load() &&
-                dominant_recheck_candidate_ids.find(snapshot.instrument_id) !=
-                    dominant_recheck_candidate_ids.end()) {
-                dominant_recheck_candidate_snapshots[snapshot.instrument_id] = snapshot;
-                tracked_runtime_candidate = true;
+        const bool candidate_instrument =
+            dominant_contract_mode &&
+            dominant_contract_coordinator.IsCandidateInstrument(snapshot.instrument_id);
+        if (candidate_instrument) {
+            process_market_snapshot(snapshot);
+            if (strategy_engine != nullptr && std::isfinite(snapshot.last_price) &&
+                snapshot.last_price > 0.0 &&
+                dominant_contract_coordinator.CanDispatchToStrategy(snapshot.instrument_id)) {
+                const auto product =
+                    dominant_contract_coordinator.ProductForInstrument(snapshot.instrument_id);
+                const auto generation =
+                    dominant_contract_coordinator.GenerationForInstrument(snapshot.instrument_id);
+                if (product.has_value() && generation.has_value()) {
+                    const auto status = dominant_contract_coordinator.GetStatus(*product);
+                    const bool warming_event =
+                        status.phase == DominantContractPhase::kWarming &&
+                        status.current_instrument_id == snapshot.instrument_id;
+                    strategy_engine->EnqueueMarketTick(snapshot, *product, *generation,
+                                                       !warming_event);
+                }
             }
-        }
-        if (tracked_runtime_candidate) {
-            dominant_recheck_cv.notify_all();
+            return;
         }
         if (!is_active_instrument(snapshot.instrument_id)) {
             return;
@@ -3235,7 +3486,6 @@ int main(int argc, char** argv) {
             {
                 std::lock_guard<std::mutex> lock(instrument_meta_mutex);
                 instrument_meta_snapshots = snapshots;
-                instrument_meta_by_id.clear();
                 for (const auto& snapshot : snapshots) {
                     instrument_meta_by_id[snapshot.instrument_id] = snapshot;
                 }
@@ -3245,6 +3495,15 @@ int main(int argc, char** argv) {
             for (const auto& snapshot : snapshots) {
                 ctp_query_snapshot_store.AppendInstrumentMetaSnapshot(snapshot);
             }
+        });
+    ctp_trader->RegisterDepthMarketSnapshotCallback(
+        [&](const std::vector<MarketSnapshot>& snapshots) {
+            {
+                std::lock_guard<std::mutex> lock(depth_market_mutex);
+                depth_market_snapshots = snapshots;
+                depth_market_ready = true;
+            }
+            depth_market_cv.notify_all();
         });
     // Once broker trading params (margin price type) are known they do not change
     // within a session, so the periodic query loop below only re-queries while
@@ -3292,6 +3551,7 @@ int main(int argc, char** argv) {
             for (const auto& snapshot : snapshots) {
                 ctp_query_snapshot_store.AppendInstrumentMarginRateSnapshot(snapshot);
             }
+            fee_rate_cv.notify_all();
             persist_fee_rates();
         });
     ctp_trader->RegisterInstrumentCommissionRateSnapshotCallback(
@@ -3305,6 +3565,7 @@ int main(int argc, char** argv) {
             for (const auto& snapshot : snapshots) {
                 ctp_query_snapshot_store.AppendInstrumentCommissionRateSnapshot(snapshot);
             }
+            fee_rate_cv.notify_all();
             persist_fee_rates();
         });
     ctp_trader->RegisterInstrumentOrderCommRateSnapshotCallback(
@@ -3318,6 +3579,7 @@ int main(int argc, char** argv) {
             for (const auto& snapshot : snapshots) {
                 ctp_query_snapshot_store.AppendInstrumentOrderCommRateSnapshot(snapshot);
             }
+            fee_rate_cv.notify_all();
             persist_fee_rates();
         });
     auto query_selected_instrument_meta = [&](const std::string& instrument_id,
@@ -3364,7 +3626,21 @@ int main(int argc, char** argv) {
     market_state.RegisterStateCallback([&](const StateSnapshot7D& state) {
         realtime_cache.UpsertStateSnapshot7D(state);
         if (strategy_factory != "composite" && strategy_engine != nullptr) {
-            strategy_engine->EnqueueState(state);
+            if (dominant_contract_mode) {
+                const auto product =
+                    dominant_contract_coordinator.ProductForInstrument(state.instrument_id);
+                const auto generation =
+                    dominant_contract_coordinator.GenerationForInstrument(state.instrument_id);
+                if (product.has_value() && generation.has_value() &&
+                    dominant_contract_coordinator.CanDispatchToStrategy(state.instrument_id)) {
+                    const auto status = dominant_contract_coordinator.GetStatus(*product);
+                    const bool warming_event = status.phase == DominantContractPhase::kWarming &&
+                                               status.current_instrument_id == state.instrument_id;
+                    strategy_engine->EnqueueState(state, *product, *generation, !warming_event);
+                }
+            } else {
+                strategy_engine->EnqueueState(state);
+            }
         }
     });
 
@@ -3514,106 +3790,102 @@ int main(int argc, char** argv) {
             return 2;
         }
 
-        std::vector<InstrumentMetaSnapshot> received_instrument_meta;
-        bool loaded_all_candidates_from_cache = true;
-        for (const auto& product_id : product_ids) {
-            std::vector<InstrumentMetaSnapshot> cached_meta;
-            std::string cache_error;
-            if (!LoadInstrumentMetaCache(product_id, &cached_meta, &cache_error)) {
-                loaded_all_candidates_from_cache = false;
-                EmitStructuredLog(&config, "core_engine", "warn",
-                                  "dominant_contract_candidate_cache_unavailable",
-                                  {{"product_id", product_id}, {"error", cache_error}});
-                break;
-            }
-            EmitStructuredLog(&config, "core_engine", "info",
-                              "dominant_contract_candidate_cache_loaded",
-                              {{"product_id", product_id},
-                               {"path", InstrumentMetaCachePath(product_id).string()},
-                               {"candidate_count", std::to_string(cached_meta.size())}});
-            received_instrument_meta.insert(received_instrument_meta.end(), cached_meta.begin(),
-                                            cached_meta.end());
+        const CtpUserSessionInfo session_info = ctp_trader->GetLastUserSession();
+        const std::string broker_trading_day = !session_info.trading_day.empty()
+                                                   ? session_info.trading_day
+                                                   : initial_recovery_report.trading_day;
+        if (broker_trading_day.size() != 8U) {
+            EmitStructuredLog(&config, "core_engine", "error",
+                              "dominant_contract_trading_day_missing");
+            return 2;
         }
-        if (loaded_all_candidates_from_cache) {
-            ctp_md->UpdateInstrumentMetadata(received_instrument_meta);
-            std::lock_guard<std::mutex> lock(instrument_meta_mutex);
-            instrument_meta_snapshots = received_instrument_meta;
-            instrument_meta_by_id.clear();
-            for (const auto& snapshot : received_instrument_meta) {
-                instrument_meta_by_id[snapshot.instrument_id] = snapshot;
+        dominant_broker_trading_day = broker_trading_day;
+
+        // Cache is acceleration/evidence only.  A complete CTP query is mandatory once per
+        // process/trading day before dominant-contract opens can be authorized.
+        for (const auto& product_id : product_ids) {
+            const std::string cache_path = InstrumentMetaCachePath(product_id).string();
+            InstrumentMetaCacheDocument cached;
+            std::string cache_error;
+            std::string cache_reason;
+            const bool cache_loaded =
+                !force_instrument_refresh &&
+                LoadInstrumentMetaCacheDocument(cache_path, &cached, &cache_error);
+            const bool cache_current =
+                cache_loaded && IsInstrumentMetaCacheCurrent(
+                                    cached, broker_trading_day, NowEpochNanos(),
+                                    file_config.dominant_contract_cache_max_age_ms, &cache_reason);
+            EmitStructuredLog(&config, "core_engine", cache_current ? "info" : "warn",
+                              cache_current ? "dominant_contract_candidate_cache_current"
+                                            : "dominant_contract_candidate_cache_refresh_required",
+                              {{"product_id", product_id},
+                               {"path", cache_path},
+                               {"force_refresh", force_instrument_refresh ? "true" : "false"},
+                               {"reason", force_instrument_refresh
+                                              ? "force_instrument_refresh"
+                                              : (cache_loaded ? cache_reason : cache_error)}});
+            if (cache_current) {
+                ctp_md->UpdateInstrumentMetadata(cached.instruments);
             }
-            instrument_meta_ready = true;
-        } else {
-            const int instrument_query_request_id = next_query_request_id();
-            if (!ctp_trader->EnqueueInstrumentQuery(instrument_query_request_id)) {
-                EmitStructuredLog(&config, "core_engine", "error",
-                                  "dominant_contract_instrument_query_submit_failed");
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(instrument_meta_mutex);
+            instrument_meta_ready = false;
+            instrument_meta_snapshots.clear();
+            instrument_meta_by_id.clear();
+        }
+        const int instrument_query_request_id = next_query_request_id();
+        if (!ctp_trader->EnqueueInstrumentQuery(instrument_query_request_id)) {
+            EmitStructuredLog(&config, "core_engine", "error",
+                              "dominant_contract_instrument_query_submit_failed");
+            return 2;
+        }
+        std::vector<InstrumentMetaSnapshot> received_instrument_meta;
+        {
+            std::unique_lock<std::mutex> lock(instrument_meta_mutex);
+            constexpr int kInstrumentMetaQueryTimeoutSeconds = 120;
+            if (!instrument_meta_cv.wait_for(
+                    lock, std::chrono::seconds(kInstrumentMetaQueryTimeoutSeconds),
+                    [&]() { return instrument_meta_ready; })) {
+                EmitStructuredLog(
+                    &config, "core_engine", "error", "dominant_contract_instrument_query_timeout",
+                    {{"request_id", std::to_string(instrument_query_request_id)},
+                     {"timeout_seconds", std::to_string(kInstrumentMetaQueryTimeoutSeconds)}});
                 return 2;
             }
-
-            {
-                std::unique_lock<std::mutex> lock(instrument_meta_mutex);
-                constexpr int kInstrumentMetaQueryTimeoutSeconds = 120;
-                if (!instrument_meta_cv.wait_for(
-                        lock, std::chrono::seconds(kInstrumentMetaQueryTimeoutSeconds),
-                        [&]() { return instrument_meta_ready; })) {
-                    EmitStructuredLog(
-                        &config, "core_engine", "error",
-                        "dominant_contract_instrument_query_timeout",
-                        {{"request_id", std::to_string(instrument_query_request_id)},
-                         {"timeout_seconds", std::to_string(kInstrumentMetaQueryTimeoutSeconds)}});
-                    return 2;
-                }
-                received_instrument_meta = instrument_meta_snapshots;
-            }
-            for (const auto& product_id : product_ids) {
-                std::vector<InstrumentMetaSnapshot> filtered_meta;
-                filtered_meta.reserve(received_instrument_meta.size());
-                for (const auto& snapshot : received_instrument_meta) {
-                    if (MatchesProductId(snapshot, product_id)) {
-                        filtered_meta.push_back(snapshot);
-                    }
-                }
-                if (filtered_meta.empty()) {
-                    continue;
-                }
-                const std::filesystem::path cache_path = InstrumentMetaCachePath(product_id);
-                std::string write_error;
-                if (!WriteInstrumentMetaJson(cache_path, filtered_meta, &write_error)) {
-                    EmitStructuredLog(&config, "core_engine", "warn",
-                                      "dominant_contract_candidate_cache_save_failed",
-                                      {{"product_id", product_id},
-                                       {"path", cache_path.string()},
-                                       {"error", write_error}});
-                } else {
-                    EmitStructuredLog(&config, "core_engine", "info",
-                                      "dominant_contract_candidate_cache_saved",
-                                      {{"product_id", product_id},
-                                       {"path", cache_path.string()},
-                                       {"candidate_count", std::to_string(filtered_meta.size())}});
-                }
-            }
+            received_instrument_meta = instrument_meta_snapshots;
         }
 
         std::unordered_map<std::string, std::vector<std::string>> candidate_ids_by_product;
         std::vector<std::string> all_candidate_ids;
         for (const auto& product_id : product_ids) {
+            auto eligible = FilterEligibleFuturesContracts(received_instrument_meta, product_id,
+                                                           broker_trading_day);
+            if (eligible.empty()) {
+                EmitStructuredLog(
+                    &config, "core_engine", "error", "dominant_contract_candidate_empty",
+                    {{"product_id", product_id}, {"trading_day", broker_trading_day}});
+                return 2;
+            }
             std::vector<std::string> candidate_ids;
-            candidate_ids.reserve(received_instrument_meta.size());
-            for (const auto& snapshot : received_instrument_meta) {
-                if (!MatchesProductId(snapshot, product_id) ||
-                    !IsPlainFuturesContractId(snapshot.instrument_id, product_id)) {
-                    continue;
-                }
+            candidate_ids.reserve(eligible.size());
+            for (const auto& snapshot : eligible) {
                 candidate_ids.push_back(snapshot.instrument_id);
             }
-            std::sort(candidate_ids.begin(), candidate_ids.end());
-            candidate_ids.erase(std::unique(candidate_ids.begin(), candidate_ids.end()),
-                                candidate_ids.end());
-            if (candidate_ids.empty()) {
-                EmitStructuredLog(&config, "core_engine", "error",
-                                  "dominant_contract_candidate_empty",
-                                  {{"product_id", product_id}});
+            const auto product_metadata =
+                CollectProductInstrumentMetadata(received_instrument_meta, product_id);
+            const std::string cache_path = InstrumentMetaCachePath(product_id).string();
+            std::string cache_write_error;
+            if (!WriteInstrumentMetaCacheV2Atomically(cache_path, product_id, broker_trading_day,
+                                                      product_metadata, NowEpochNanos(),
+                                                      &cache_write_error)) {
+                EmitStructuredLog(&config, "core_engine", "critical",
+                                  "dominant_contract_candidate_cache_save_failed",
+                                  {{"product_id", product_id},
+                                   {"path", cache_path},
+                                   {"error", cache_write_error}});
+                trading_permission_controller.SetCloseOnly("dominant_contract_cache_write_failed");
                 return 2;
             }
             all_candidate_ids.insert(all_candidate_ids.end(), candidate_ids.begin(),
@@ -3625,19 +3897,130 @@ int main(int argc, char** argv) {
                                 all_candidate_ids.end());
         dominant_candidate_ids_by_product = candidate_ids_by_product;
 
+        const std::unordered_set<std::string> configured_dominant_products(product_ids.begin(),
+                                                                           product_ids.end());
+        std::unordered_map<std::string, DominantContractBrokerState> broker_state_by_product;
+        std::vector<std::string> broker_required_instrument_ids;
+        bool initial_unowned_broker_position = false;
+        bool initial_unowned_active_order = false;
+        const auto recovered_positions = ctp_trader->GetLastInvestorPositionSnapshots();
+        for (const auto& row : recovered_positions) {
+            if (row.position <= 0 && row.long_frozen <= 0 && row.short_frozen <= 0) {
+                continue;
+            }
+            broker_required_instrument_ids.push_back(row.instrument_id);
+            const std::string product_id = ExtractProductId(row.instrument_id);
+            if (configured_dominant_products.count(product_id) == 0U) {
+                initial_unowned_broker_position = true;
+                continue;
+            }
+            auto& broker = broker_state_by_product[product_id];
+            broker.position += std::max(0, row.position);
+            broker.frozen += std::max(0, row.long_frozen) + std::max(0, row.short_frozen);
+            broker.held_instrument_ids.insert(row.instrument_id);
+        }
+        for (const auto& order : execution_engine.GetActiveOrders()) {
+            broker_required_instrument_ids.push_back(order.symbol);
+            const std::string product_id = ExtractProductId(order.symbol);
+            if (configured_dominant_products.count(product_id) == 0U) {
+                initial_unowned_active_order = true;
+                continue;
+            }
+            auto& broker = broker_state_by_product[product_id];
+            if (order.offset == OffsetFlag::kOpen) {
+                ++broker.active_open_orders;
+            } else {
+                ++broker.active_close_orders;
+            }
+        }
+        if (initial_unowned_broker_position) {
+            trading_permission_controller.SetCloseOnly("dominant_contract_unowned_broker_position");
+        }
+        if (initial_unowned_active_order) {
+            trading_permission_controller.SetCloseOnly("dominant_contract_unowned_active_order");
+        }
+        if (initial_unowned_broker_position || initial_unowned_active_order) {
+            EmitStructuredLog(
+                &config, "core_engine", "critical", "dominant_contract_unowned_broker_state",
+                {{"unowned_position", initial_unowned_broker_position ? "true" : "false"},
+                 {"unowned_active_order", initial_unowned_active_order ? "true" : "false"}});
+        }
+        std::vector<std::string> subscribed_instrument_ids = all_candidate_ids;
+        subscribed_instrument_ids.insert(subscribed_instrument_ids.end(),
+                                         broker_required_instrument_ids.begin(),
+                                         broker_required_instrument_ids.end());
+        std::sort(subscribed_instrument_ids.begin(), subscribed_instrument_ids.end());
+        subscribed_instrument_ids.erase(
+            std::unique(subscribed_instrument_ids.begin(), subscribed_instrument_ids.end()),
+            subscribed_instrument_ids.end());
+        dominant_subscribed_instrument_ids.insert(subscribed_instrument_ids.begin(),
+                                                  subscribed_instrument_ids.end());
+        for (const auto& product_id : product_ids) {
+            auto& broker = broker_state_by_product[product_id];
+            broker.truth_complete = initial_recovery_ok;
+            broker.has_unmapped_position_or_order = initial_unresolved_mappings > 0U ||
+                                                    initial_unowned_broker_position ||
+                                                    initial_unowned_active_order;
+            std::string held_current;
+            if (!broker.held_instrument_ids.empty()) {
+                held_current = *std::min_element(broker.held_instrument_ids.begin(),
+                                                 broker.held_instrument_ids.end());
+            }
+            std::string register_error;
+            if (!dominant_contract_coordinator.RegisterProduct(
+                    product_id, broker_trading_day, held_current,
+                    candidate_ids_by_product.at(product_id), NowEpochNanos(), &register_error)) {
+                EmitStructuredLog(&config, "core_engine", "error",
+                                  "dominant_contract_state_register_failed",
+                                  {{"product_id", product_id}, {"error", register_error}});
+                return 2;
+            }
+            dominant_contract_coordinator.UpdateBrokerState(product_id, broker);
+        }
+
         {
             std::lock_guard<std::mutex> lock(dominant_candidate_mutex);
             dominant_candidate_ids.clear();
             dominant_candidate_ids.insert(all_candidate_ids.begin(), all_candidate_ids.end());
             dominant_candidate_snapshots.clear();
         }
-
-        if (!ctp_md->Subscribe(all_candidate_ids)) {
-            EmitStructuredLog(&config, "core_engine", "error",
-                              "dominant_contract_candidate_subscribe_failed",
-                              {{"product_count", std::to_string(product_ids.size())},
-                               {"candidate_count", std::to_string(all_candidate_ids.size())}});
+        market_data_recorder.SetAllowedInstrumentIds(subscribed_instrument_ids);
+        if (!ctp_md->Subscribe(subscribed_instrument_ids)) {
+            EmitStructuredLog(
+                &config, "core_engine", "error", "dominant_contract_candidate_subscribe_failed",
+                {{"product_count", std::to_string(product_ids.size())},
+                 {"candidate_count", std::to_string(subscribed_instrument_ids.size())}});
             return 2;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(depth_market_mutex);
+            depth_market_ready = false;
+            depth_market_snapshots.clear();
+        }
+        const int depth_query_request_id = next_query_request_id();
+        if (!ctp_trader->EnqueueDepthMarketDataQuery(depth_query_request_id)) {
+            EmitStructuredLog(&config, "core_engine", "error",
+                              "dominant_contract_depth_query_submit_failed");
+            return 2;
+        }
+        {
+            std::unique_lock<std::mutex> lock(depth_market_mutex);
+            constexpr int kDepthQueryTimeoutSeconds = 120;
+            if (!depth_market_cv.wait_for(lock, std::chrono::seconds(kDepthQueryTimeoutSeconds),
+                                          [&]() { return depth_market_ready; })) {
+                EmitStructuredLog(&config, "core_engine", "error",
+                                  "dominant_contract_depth_query_timeout",
+                                  {{"request_id", std::to_string(depth_query_request_id)}});
+                return 2;
+            }
+            for (const auto& snapshot : depth_market_snapshots) {
+                const auto product =
+                    dominant_contract_coordinator.ProductForInstrument(snapshot.instrument_id);
+                if (product.has_value()) {
+                    dominant_contract_coordinator.UpdateBaselineSnapshot(*product, snapshot);
+                }
+            }
         }
 
         const auto sample_deadline =
@@ -3645,125 +4028,202 @@ int main(int argc, char** argv) {
             std::chrono::milliseconds(file_config.dominant_contract_wait_ms);
         {
             std::unique_lock<std::mutex> lock(dominant_candidate_mutex);
-            while (dominant_candidate_snapshots.size() < all_candidate_ids.size()) {
+            while (std::chrono::steady_clock::now() < sample_deadline) {
                 if (dominant_candidate_cv.wait_until(lock, sample_deadline) ==
                     std::cv_status::timeout) {
                     break;
                 }
             }
+            for (const auto& [instrument_id, snapshot] : dominant_candidate_snapshots) {
+                (void)instrument_id;
+                dominant_contract_coordinator.UpdateLiveSnapshot(snapshot);
+            }
         }
 
-        auto better_by_open_interest = [](const MarketSnapshot& lhs, const MarketSnapshot& rhs) {
-            if (lhs.open_interest != rhs.open_interest) {
-                return lhs.open_interest < rhs.open_interest;
-            }
-            if (lhs.volume != rhs.volume) {
-                return lhs.volume < rhs.volume;
-            }
-            return lhs.instrument_id > rhs.instrument_id;
-        };
-        auto better_by_volume = [](const MarketSnapshot& lhs, const MarketSnapshot& rhs) {
-            if (lhs.volume != rhs.volume) {
-                return lhs.volume < rhs.volume;
-            }
-            if (lhs.open_interest != rhs.open_interest) {
-                return lhs.open_interest < rhs.open_interest;
-            }
-            return lhs.instrument_id > rhs.instrument_id;
-        };
-
         instruments.clear();
-        instruments.reserve(product_ids.size());
-        std::vector<std::string> unsubscribe_ids;
-        unsubscribe_ids.reserve(all_candidate_ids.size());
-        std::vector<std::string> selected_instruments;
-        selected_instruments.reserve(product_ids.size());
         for (const auto& product_id : product_ids) {
-            const auto& candidate_ids = candidate_ids_by_product.at(product_id);
-            std::vector<MarketSnapshot> observed_snapshots;
-            observed_snapshots.reserve(candidate_ids.size());
-            {
-                std::lock_guard<std::mutex> lock(dominant_candidate_mutex);
-                for (const auto& candidate_id : candidate_ids) {
-                    const auto snapshot_it = dominant_candidate_snapshots.find(candidate_id);
-                    if (snapshot_it != dominant_candidate_snapshots.end()) {
-                        observed_snapshots.push_back(snapshot_it->second);
+            auto status = dominant_contract_coordinator.GetStatus(product_id);
+            if (status.current_instrument_id.empty()) {
+                MarketSnapshot session_tick;
+                bool have_session_tick = false;
+                {
+                    std::lock_guard<std::mutex> lock(dominant_candidate_mutex);
+                    for (const auto& candidate_id : candidate_ids_by_product.at(product_id)) {
+                        const auto snapshot_it = dominant_candidate_snapshots.find(candidate_id);
+                        if (snapshot_it == dominant_candidate_snapshots.end()) {
+                            continue;
+                        }
+                        if (!have_session_tick ||
+                            snapshot_it->second.recv_ts_ns > session_tick.recv_ts_ns) {
+                            session_tick = snapshot_it->second;
+                            have_session_tick = true;
+                        }
+                    }
+                }
+                const EpochNanos selection_now_ns = NowEpochNanos();
+                const bool fresh_session_tick =
+                    have_session_tick && session_tick.recv_ts_ns > 0 &&
+                    selection_now_ns >= session_tick.recv_ts_ns &&
+                    selection_now_ns - session_tick.recv_ts_ns <=
+                        static_cast<EpochNanos>(file_config.dominant_contract_max_tick_age_ms) *
+                            1'000'000;
+                const auto selection_session = trading_session_calendar.EvaluateOrderTime(
+                    session_tick.exchange_id, session_tick.instrument_id, broker_trading_day,
+                    selection_now_ns, 0, fresh_session_tick);
+                const auto decision = dominant_contract_coordinator.Evaluate(
+                    product_id, selection_now_ns,
+                    selection_session.in_session && fresh_session_tick);
+                if (decision.action != DominantContractAction::kSelectInitial) {
+                    EmitStructuredLog(&config, "core_engine", "error",
+                                      "dominant_contract_select_failed",
+                                      {{"product_id", product_id}, {"reason", decision.reason}});
+                    return 2;
+                }
+                std::string commit_error;
+                if (!dominant_contract_coordinator.CommitInitialSelection(
+                        product_id, decision.candidate_instrument_id, NowEpochNanos(),
+                        &commit_error)) {
+                    EmitStructuredLog(&config, "core_engine", "error",
+                                      "dominant_contract_initial_commit_failed",
+                                      {{"product_id", product_id}, {"error", commit_error}});
+                    return 2;
+                }
+                status = dominant_contract_coordinator.GetStatus(product_id);
+                const ContractSwitchContext switch_context{
+                    product_id, "", status.current_instrument_id, status.generation};
+                const auto warmup =
+                    market_bar_pipeline.RecentCompleteStates(status.current_instrument_id, 5, 128);
+                const auto switch_report = strategy_engine->ApplyContractSwitch(
+                    switch_context, warmup, file_config.dominant_contract_switch_timeout_ms);
+                if (!switch_report.success) {
+                    dominant_contract_coordinator.MarkFault(product_id, switch_report.error,
+                                                            NowEpochNanos());
+                    trading_permission_controller.SetCloseOnly("dominant_contract_warmup_failed");
+                    EmitStructuredLog(&config, "core_engine", "critical",
+                                      "dominant_contract_initial_warmup_failed",
+                                      {{"product_id", product_id}, {"error", switch_report.error}});
+                    return 2;
+                }
+                // Initial commit is already Warming. Seed replay progress without permitting any
+                // replay signal to escape the strategy barrier.
+                for (std::int32_t i = 0; i < switch_report.replayed_warmup_bars; ++i) {
+                    (void)dominant_contract_coordinator.RecordWarmupBar(
+                        product_id, status.current_instrument_id,
+                        "initial_replay|" + std::to_string(i), NowEpochNanos());
+                }
+                status = dominant_contract_coordinator.GetStatus(product_id);
+            } else {
+                const auto broker_it = broker_state_by_product.find(product_id);
+                const bool recovery_warmup_allowed =
+                    broker_it != broker_state_by_product.end() &&
+                    broker_it->second.truth_complete &&
+                    !broker_it->second.has_unmapped_position_or_order &&
+                    broker_it->second.held_instrument_ids.size() == 1U;
+                if (!recovery_warmup_allowed) {
+                    EmitStructuredLog(&config, "core_engine", "warn",
+                                      "dominant_contract_recovery_warmup_deferred",
+                                      {{"product_id", product_id},
+                                       {"instrument_id", status.current_instrument_id},
+                                       {"reason", "broker_truth_or_contract_identity_incomplete"}});
+                } else {
+                    std::uint64_t recovery_generation = 0;
+                    std::string recovery_error;
+                    if (!dominant_contract_coordinator.BeginRecoveryWarmup(
+                            product_id, status.current_instrument_id, NowEpochNanos(),
+                            &recovery_generation, &recovery_error)) {
+                        EmitStructuredLog(&config, "core_engine", "error",
+                                          "dominant_contract_recovery_warmup_begin_failed",
+                                          {{"product_id", product_id}, {"error", recovery_error}});
+                        return 2;
+                    }
+                    const std::filesystem::path recovery_status_path =
+                        std::filesystem::path("runtime/ctp_instruments") /
+                        (product_id + "_dominant_contract.json");
+                    if (!dominant_contract_coordinator.PersistStatusAtomically(
+                            product_id, recovery_status_path.string(), &recovery_error)) {
+                        dominant_contract_coordinator.MarkFault(
+                            product_id, "status_write_failed:" + recovery_error, NowEpochNanos());
+                        trading_permission_controller.SetCloseOnly(
+                            "dominant_contract_status_write_failed");
+                        return 2;
+                    }
+                    if (!strategy_engine->WaitUntilDrained(
+                            file_config.dominant_contract_switch_timeout_ms)) {
+                        dominant_contract_coordinator.MarkFault(
+                            product_id, "recovery_strategy_queue_drain_timeout", NowEpochNanos());
+                        trading_permission_controller.SetCloseOnly(
+                            "dominant_contract_strategy_drain_timeout");
+                        (void)dominant_contract_coordinator.PersistStatusAtomically(
+                            product_id, recovery_status_path.string(), &recovery_error);
+                        return 2;
+                    }
+                    const auto warmup = market_bar_pipeline.RecentCompleteStates(
+                        status.current_instrument_id, 5, 128);
+                    const ContractSwitchContext switch_context{
+                        product_id, status.current_instrument_id, status.current_instrument_id,
+                        recovery_generation};
+                    const auto switch_report = strategy_engine->ApplyContractSwitch(
+                        switch_context, warmup, file_config.dominant_contract_switch_timeout_ms);
+                    if (!switch_report.success) {
+                        dominant_contract_coordinator.MarkFault(
+                            product_id,
+                            "recovery_strategy_reset_or_warmup_failed:" + switch_report.error,
+                            NowEpochNanos());
+                        trading_permission_controller.SetCloseOnly(
+                            "dominant_contract_warmup_failed");
+                        (void)dominant_contract_coordinator.PersistStatusAtomically(
+                            product_id, recovery_status_path.string(), &recovery_error);
+                        return 2;
+                    }
+                    if (!dominant_contract_coordinator.CommitRecoveryWarmup(
+                            product_id, status.current_instrument_id,
+                            switch_report.replayed_warmup_bars, switch_report.required_warmup_bars,
+                            NowEpochNanos(), &recovery_error)) {
+                        dominant_contract_coordinator.MarkFault(
+                            product_id, "recovery_warmup_commit_failed:" + recovery_error,
+                            NowEpochNanos());
+                        trading_permission_controller.SetCloseOnly(
+                            "dominant_contract_warmup_failed");
+                        (void)dominant_contract_coordinator.PersistStatusAtomically(
+                            product_id, recovery_status_path.string(), &recovery_error);
+                        return 2;
+                    }
+                    status = dominant_contract_coordinator.GetStatus(product_id);
+                }
+            }
+            active_instrument_by_product[product_id] = status.current_instrument_id;
+            active_instrument_selected_at[product_id] = std::chrono::steady_clock::now();
+            instruments.push_back(status.current_instrument_id);
+            const auto broker_it = broker_state_by_product.find(product_id);
+            if (broker_it != broker_state_by_product.end()) {
+                for (const auto& held : broker_it->second.held_instrument_ids) {
+                    if (std::find(instruments.begin(), instruments.end(), held) ==
+                        instruments.end()) {
+                        instruments.push_back(held);
                     }
                 }
             }
-            if (observed_snapshots.empty()) {
-                EmitStructuredLog(
-                    &config, "core_engine", "error", "dominant_contract_sample_timeout",
-                    {{"product_id", product_id},
-                     {"wait_ms", std::to_string(file_config.dominant_contract_wait_ms)}});
-                return 2;
-            }
-
-            const bool has_positive_open_interest = std::any_of(
-                observed_snapshots.begin(), observed_snapshots.end(),
-                [](const MarketSnapshot& snapshot) { return snapshot.open_interest > 0; });
-            const std::string selection_metric =
-                has_positive_open_interest ? "open_interest" : "volume";
-            const auto best_it = std::max_element(
-                observed_snapshots.begin(), observed_snapshots.end(),
-                has_positive_open_interest ? better_by_open_interest : better_by_volume);
-            if (best_it == observed_snapshots.end()) {
-                EmitStructuredLog(&config, "core_engine", "error",
-                                  "dominant_contract_select_failed", {{"product_id", product_id}});
-                return 2;
-            }
-
-            instruments.push_back(best_it->instrument_id);
-            selected_instruments.push_back(best_it->instrument_id);
-            active_instrument_by_product[product_id] = best_it->instrument_id;
-            active_instrument_selected_at[product_id] = std::chrono::steady_clock::now();
-            {
-                std::lock_guard<std::mutex> lock(latest_market_snapshot_mutex);
-                latest_market_snapshots[best_it->instrument_id] = *best_it;
-            }
-            for (const auto& candidate_id : candidate_ids) {
-                if (candidate_id != best_it->instrument_id) {
-                    unsubscribe_ids.push_back(candidate_id);
-                }
-            }
-
-            const std::filesystem::path dominant_output_path =
+            const std::filesystem::path status_path =
                 std::filesystem::path("runtime/ctp_instruments") /
                 (product_id + "_dominant_contract.json");
-            std::string write_error;
-            if (!WriteDominantContractJson(dominant_output_path, product_id, *best_it,
-                                           selection_metric, &write_error)) {
-                EmitStructuredLog(&config, "core_engine", "warn", "dominant_contract_save_failed",
-                                  {{"product_id", product_id},
-                                   {"path", dominant_output_path.string()},
-                                   {"error", write_error}});
+            std::string status_error;
+            if (!dominant_contract_coordinator.PersistStatusAtomically(
+                    product_id, status_path.string(), &status_error)) {
+                trading_permission_controller.SetCloseOnly("dominant_contract_status_write_failed");
+                EmitStructuredLog(&config, "core_engine", "critical",
+                                  "dominant_contract_status_write_failed",
+                                  {{"product_id", product_id}, {"error", status_error}});
+                return 2;
             }
-
             EmitStructuredLog(&config, "core_engine", "info", "dominant_contract_selected",
                               {{"product_id", product_id},
-                               {"instrument_id", best_it->instrument_id},
-                               {"exchange_id", best_it->exchange_id},
-                               {"selection_metric", selection_metric},
-                               {"open_interest", std::to_string(best_it->open_interest)},
-                               {"volume", std::to_string(best_it->volume)},
-                               {"candidate_count", std::to_string(candidate_ids.size())},
-                               {"observed_count", std::to_string(observed_snapshots.size())},
-                               {"path", dominant_output_path.string()}});
-        }
-        std::sort(unsubscribe_ids.begin(), unsubscribe_ids.end());
-        unsubscribe_ids.erase(std::unique(unsubscribe_ids.begin(), unsubscribe_ids.end()),
-                              unsubscribe_ids.end());
-        if (!unsubscribe_ids.empty() && !ctp_md->Unsubscribe(unsubscribe_ids)) {
-            EmitStructuredLog(&config, "core_engine", "warn",
-                              "dominant_contract_unsubscribe_partial_failed",
-                              {{"product_count", std::to_string(product_ids.size())},
-                               {"unsubscribe_count", std::to_string(unsubscribe_ids.size())}});
-        }
-
-        {
-            std::lock_guard<std::mutex> lock(dominant_candidate_mutex);
-            dominant_candidate_ids.clear();
-            dominant_candidate_ids.insert(selected_instruments.begin(), selected_instruments.end());
+                               {"instrument_id", status.current_instrument_id},
+                               {"selection_metric", status.selection_metric},
+                               {"candidate_count", std::to_string(status.eligible_count)},
+                               {"observed_count", std::to_string(status.baseline_count)},
+                               {"phase", DominantContractPhaseName(status.phase)},
+                               {"generation", std::to_string(status.generation)},
+                               {"path", status_path.string()}});
         }
     } else if (!ctp_md->Subscribe(instruments)) {
         EmitStructuredLog(&config, "core_engine", "error", "ctp_subscribe_failed",
@@ -3776,10 +4236,6 @@ int main(int argc, char** argv) {
         active_instrument_ids.clear();
         active_instrument_ids.insert(instruments.begin(), instruments.end());
     }
-    if (dominant_contract_mode) {
-        market_data_recorder.SetAllowedInstrumentIds(instruments);
-    }
-
     if (!timeframe_fanout_state_loaded) {
         for (const auto& instrument_id : instruments) {
             market_bar_pipeline.ResetInstrument(instrument_id, false);
@@ -3973,39 +4429,366 @@ int main(int argc, char** argv) {
                           {{"product_count", std::to_string(dominant_product_ids.size())},
                            {"recheck_interval_ms",
                             std::to_string(file_config.dominant_contract_recheck_interval_ms)},
-                           {"wait_ms", std::to_string(file_config.dominant_contract_wait_ms)},
                            {"switch_mode", file_config.dominant_contract_switch_mode}});
         dominant_recheck_thread = std::thread([&]() {
+            const std::unordered_set<std::string> configured_products(dominant_product_ids.begin(),
+                                                                      dominant_product_ids.end());
             auto next_recheck =
                 std::chrono::steady_clock::now() +
                 std::chrono::milliseconds(file_config.dominant_contract_recheck_interval_ms);
-            std::unordered_map<std::string, std::string> lead_candidate_by_product;
-            std::unordered_map<std::string, int> lead_windows_by_product;
 
-            auto better_by_open_interest = [](const MarketSnapshot& lhs,
-                                              const MarketSnapshot& rhs) {
-                if (lhs.open_interest != rhs.open_interest) {
-                    return lhs.open_interest < rhs.open_interest;
-                }
-                if (lhs.volume != rhs.volume) {
-                    return lhs.volume < rhs.volume;
-                }
-                return lhs.instrument_id > rhs.instrument_id;
+            const auto status_path_for = [](const std::string& product_id) {
+                return (std::filesystem::path("runtime/ctp_instruments") /
+                        (product_id + "_dominant_contract.json"))
+                    .string();
             };
-            auto better_by_volume = [](const MarketSnapshot& lhs, const MarketSnapshot& rhs) {
-                if (lhs.volume != rhs.volume) {
-                    return lhs.volume < rhs.volume;
+            const auto persist_product_status = [&](const std::string& product_id) {
+                std::string persist_error;
+                if (dominant_contract_coordinator.PersistStatusAtomically(
+                        product_id, status_path_for(product_id), &persist_error)) {
+                    return true;
                 }
-                if (lhs.open_interest != rhs.open_interest) {
-                    return lhs.open_interest < rhs.open_interest;
-                }
-                return lhs.instrument_id > rhs.instrument_id;
+                trading_permission_controller.SetCloseOnly("dominant_contract_status_write_failed");
+                dominant_contract_coordinator.MarkFault(
+                    product_id, "status_write_failed:" + persist_error, NowEpochNanos());
+                EmitStructuredLog(&config, "core_engine", "critical",
+                                  "dominant_contract_status_write_failed",
+                                  {{"product_id", product_id}, {"error", persist_error}});
+                return false;
             };
-            auto metric_value = [](const MarketSnapshot& snapshot,
-                                   const std::string& selection_metric) {
-                return selection_metric == "open_interest"
-                           ? static_cast<double>(snapshot.open_interest)
-                           : static_cast<double>(snapshot.volume);
+            const auto build_broker_state = [&](const std::string& product_id,
+                                                bool position_query_complete,
+                                                bool recovery_complete) {
+                DominantContractBrokerState broker;
+                broker.truth_complete = position_query_complete && recovery_complete;
+                {
+                    std::lock_guard<std::mutex> lock(unresolved_mapping_mutex);
+                    broker.has_unmapped_position_or_order = !unresolved_order_mapping_keys.empty();
+                }
+                for (const auto& row : ctp_trader->GetLastInvestorPositionSnapshots()) {
+                    if (row.position <= 0 && row.long_frozen <= 0 && row.short_frozen <= 0) {
+                        continue;
+                    }
+                    const std::string row_product = ExtractProductId(row.instrument_id);
+                    if (configured_products.count(row_product) == 0U) {
+                        continue;
+                    }
+                    if (row_product != product_id) {
+                        continue;
+                    }
+                    broker.position += std::max(0, row.position);
+                    broker.frozen += std::max(0, row.long_frozen) + std::max(0, row.short_frozen);
+                    broker.held_instrument_ids.insert(row.instrument_id);
+                }
+                for (const auto& order : execution_engine.GetActiveOrders()) {
+                    const std::string order_product = ExtractProductId(order.symbol);
+                    if (configured_products.count(order_product) == 0U) {
+                        continue;
+                    }
+                    if (order_product != product_id) {
+                        continue;
+                    }
+                    if (order.offset == OffsetFlag::kOpen) {
+                        ++broker.active_open_orders;
+                    } else {
+                        ++broker.active_close_orders;
+                    }
+                }
+                // Multiple broker-held contracts for one product cannot be represented by
+                // a single active contract. Keep the product close-only until all but one
+                // have been closed and reconciled.
+                if (broker.held_instrument_ids.size() > 1U) {
+                    broker.has_unmapped_position_or_order = true;
+                }
+                return broker;
+            };
+            const auto update_unowned_broker_gate = [&](EpochNanos now_ns) {
+                bool has_unowned_position = false;
+                bool has_unowned_active_order = false;
+                for (const auto& row : ctp_trader->GetLastInvestorPositionSnapshots()) {
+                    if ((row.position > 0 || row.long_frozen > 0 || row.short_frozen > 0) &&
+                        configured_products.count(ExtractProductId(row.instrument_id)) == 0U) {
+                        has_unowned_position = true;
+                        break;
+                    }
+                }
+                for (const auto& order : execution_engine.GetActiveOrders()) {
+                    if (configured_products.count(ExtractProductId(order.symbol)) == 0U) {
+                        has_unowned_active_order = true;
+                        break;
+                    }
+                }
+                if (has_unowned_position) {
+                    trading_permission_controller.SetCloseOnly(
+                        "dominant_contract_unowned_broker_position", now_ns);
+                } else {
+                    trading_permission_controller.ClearReason(
+                        "dominant_contract_unowned_broker_position", now_ns);
+                }
+                if (has_unowned_active_order) {
+                    trading_permission_controller.SetCloseOnly(
+                        "dominant_contract_unowned_active_order", now_ns);
+                } else {
+                    trading_permission_controller.ClearReason(
+                        "dominant_contract_unowned_active_order", now_ns);
+                }
+                return !has_unowned_position && !has_unowned_active_order;
+            };
+            const auto selection_session_open = [&](const DominantContractStatus& status,
+                                                    EpochNanos now_ns) {
+                if (status.current_instrument_id.empty()) {
+                    return false;
+                }
+                MarketSnapshot latest;
+                bool have_latest = false;
+                {
+                    std::lock_guard<std::mutex> lock(latest_market_snapshot_mutex);
+                    const auto it = latest_market_snapshots.find(status.current_instrument_id);
+                    if (it != latest_market_snapshots.end()) {
+                        latest = it->second;
+                        have_latest = true;
+                    }
+                }
+                const bool fresh =
+                    have_latest && latest.recv_ts_ns > 0 && now_ns >= latest.recv_ts_ns &&
+                    now_ns - latest.recv_ts_ns <=
+                        static_cast<EpochNanos>(file_config.dominant_contract_max_tick_age_ms) *
+                            1'000'000;
+                const std::string exchange_id =
+                    latest.exchange_id.empty()
+                        ? InferCtpExchangeIdFromInstrumentId(status.current_instrument_id)
+                        : latest.exchange_id;
+                const std::string trading_day =
+                    latest.trading_day.empty() ? status.trading_day : latest.trading_day;
+                const auto session = trading_session_calendar.EvaluateOrderTime(
+                    exchange_id, status.current_instrument_id, trading_day, now_ns, 0, fresh);
+                return session.in_session && fresh;
+            };
+            const auto rates_ready = [&](const std::string& instrument_id) {
+                return margin_rate_by_instrument.count(instrument_id) > 0U &&
+                       commission_rate_by_instrument.count(instrument_id) > 0U &&
+                       order_comm_rate_by_instrument.count(instrument_id) > 0U;
+            };
+            const auto subscribe_additional_instruments =
+                [&](const std::vector<std::string>& requested_instrument_ids) {
+                    std::vector<std::string> additional;
+                    for (const auto& instrument_id : requested_instrument_ids) {
+                        if (!instrument_id.empty() &&
+                            dominant_subscribed_instrument_ids.count(instrument_id) == 0U) {
+                            additional.push_back(instrument_id);
+                        }
+                    }
+                    std::sort(additional.begin(), additional.end());
+                    additional.erase(std::unique(additional.begin(), additional.end()),
+                                     additional.end());
+                    if (additional.empty()) {
+                        return true;
+                    }
+                    if (!ctp_md->Subscribe(additional)) {
+                        return false;
+                    }
+                    dominant_subscribed_instrument_ids.insert(additional.begin(), additional.end());
+                    std::vector<std::string> allowed(dominant_subscribed_instrument_ids.begin(),
+                                                     dominant_subscribed_instrument_ids.end());
+                    std::sort(allowed.begin(), allowed.end());
+                    market_data_recorder.SetAllowedInstrumentIds(allowed);
+                    return true;
+                };
+            const auto fail_daily_refresh = [&](const std::string& reason,
+                                                const std::string& trading_day) {
+                trading_permission_controller.SetCloseOnly("dominant_contract_daily_refresh");
+                for (const auto& product_id : dominant_product_ids) {
+                    dominant_contract_coordinator.MarkFault(product_id, reason, NowEpochNanos());
+                    (void)persist_product_status(product_id);
+                }
+                EmitStructuredLog(&config, "core_engine", "critical",
+                                  "dominant_contract_daily_refresh_failed",
+                                  {{"trading_day", trading_day}, {"error", reason}});
+                return false;
+            };
+            const auto refresh_for_trading_day = [&](const std::string& trading_day) {
+                trading_permission_controller.SetCloseOnly("dominant_contract_daily_refresh");
+                broker_trading_params_ready.store(false);
+                {
+                    std::lock_guard<std::mutex> lock(fee_rate_mutex);
+                    margin_rate_by_instrument.clear();
+                    commission_rate_by_instrument.clear();
+                    order_comm_rate_by_instrument.clear();
+                }
+                for (const auto& status : dominant_contract_coordinator.GetAllStatuses()) {
+                    if (status.phase == DominantContractPhase::kDraining ||
+                        status.phase == DominantContractPhase::kWarming) {
+                        return fail_daily_refresh(
+                            "trading_day_changed_during_" +
+                                std::string(DominantContractPhaseName(status.phase)),
+                            trading_day);
+                    }
+                }
+
+                {
+                    std::lock_guard<std::mutex> lock(instrument_meta_mutex);
+                    instrument_meta_ready = false;
+                    instrument_meta_snapshots.clear();
+                    instrument_meta_by_id.clear();
+                }
+                const int request_id = next_query_request_id();
+                if (!ctp_trader->EnqueueInstrumentQuery(request_id)) {
+                    return fail_daily_refresh("instrument_query_submit_failed", trading_day);
+                }
+                std::vector<InstrumentMetaSnapshot> received;
+                {
+                    std::unique_lock<std::mutex> lock(instrument_meta_mutex);
+                    if (!instrument_meta_cv.wait_for(
+                            lock,
+                            std::chrono::milliseconds(
+                                file_config.dominant_contract_switch_timeout_ms),
+                            [&]() {
+                                return instrument_meta_ready || dominant_recheck_loop_stop.load();
+                            }) ||
+                        !instrument_meta_ready) {
+                        return fail_daily_refresh("instrument_query_timeout", trading_day);
+                    }
+                    received = instrument_meta_snapshots;
+                }
+
+                std::unordered_map<std::string, std::vector<std::string>> refreshed_ids;
+                std::vector<std::string> all_refreshed_ids;
+                for (const auto& product_id : dominant_product_ids) {
+                    const auto eligible =
+                        FilterEligibleFuturesContracts(received, product_id, trading_day);
+                    if (eligible.empty()) {
+                        return fail_daily_refresh("eligible_contracts_empty:" + product_id,
+                                                  trading_day);
+                    }
+                    std::vector<std::string> ids;
+                    ids.reserve(eligible.size());
+                    for (const auto& snapshot : eligible) {
+                        ids.push_back(snapshot.instrument_id);
+                    }
+                    const auto product_metadata =
+                        CollectProductInstrumentMetadata(received, product_id);
+                    std::string cache_error;
+                    if (!WriteInstrumentMetaCacheV2Atomically(
+                            InstrumentMetaCachePath(product_id).string(), product_id, trading_day,
+                            product_metadata, NowEpochNanos(), &cache_error)) {
+                        return fail_daily_refresh(
+                            "cache_write_failed:" + product_id + ":" + cache_error, trading_day);
+                    }
+                    all_refreshed_ids.insert(all_refreshed_ids.end(), ids.begin(), ids.end());
+                    refreshed_ids.emplace(product_id, std::move(ids));
+                }
+                if (!subscribe_additional_instruments(all_refreshed_ids)) {
+                    return fail_daily_refresh("candidate_subscription_failed", trading_day);
+                }
+
+                for (const auto& product_id : dominant_product_ids) {
+                    std::string refresh_error;
+                    if (!dominant_contract_coordinator.RefreshTradingDay(
+                            product_id, trading_day, refreshed_ids.at(product_id), NowEpochNanos(),
+                            &refresh_error)) {
+                        return fail_daily_refresh(
+                            "coordinator_refresh_failed:" + product_id + ":" + refresh_error,
+                            trading_day);
+                    }
+                }
+                {
+                    std::lock_guard<std::mutex> lock(dominant_candidate_mutex);
+                    dominant_candidate_ids.clear();
+                    dominant_candidate_snapshots.clear();
+                    dominant_candidate_ids_by_product = refreshed_ids;
+                    dominant_candidate_ids.insert(all_refreshed_ids.begin(),
+                                                  all_refreshed_ids.end());
+                }
+
+                {
+                    std::lock_guard<std::mutex> lock(depth_market_mutex);
+                    depth_market_ready = false;
+                    depth_market_snapshots.clear();
+                }
+                const int depth_request_id = next_query_request_id();
+                if (!ctp_trader->EnqueueDepthMarketDataQuery(depth_request_id)) {
+                    return fail_daily_refresh("depth_query_submit_failed", trading_day);
+                }
+                std::vector<MarketSnapshot> depth_snapshots;
+                {
+                    std::unique_lock<std::mutex> lock(depth_market_mutex);
+                    if (!depth_market_cv.wait_for(
+                            lock,
+                            std::chrono::milliseconds(
+                                file_config.dominant_contract_switch_timeout_ms),
+                            [&]() {
+                                return depth_market_ready || dominant_recheck_loop_stop.load();
+                            }) ||
+                        !depth_market_ready) {
+                        return fail_daily_refresh("depth_query_timeout", trading_day);
+                    }
+                    depth_snapshots = depth_market_snapshots;
+                }
+                for (const auto& snapshot : depth_snapshots) {
+                    const auto product =
+                        dominant_contract_coordinator.ProductForInstrument(snapshot.instrument_id);
+                    if (product.has_value()) {
+                        dominant_contract_coordinator.UpdateBaselineSnapshot(*product, snapshot);
+                    }
+                }
+
+                std::vector<std::string> current_instrument_ids;
+                for (const auto& status : dominant_contract_coordinator.GetAllStatuses()) {
+                    if (!status.current_instrument_id.empty()) {
+                        current_instrument_ids.push_back(status.current_instrument_id);
+                    }
+                }
+                for (const auto& instrument_id : current_instrument_ids) {
+                    if (!ctp_trader->EnqueueInstrumentMarginRateQuery(next_query_request_id(),
+                                                                      instrument_id) ||
+                        !ctp_trader->EnqueueInstrumentCommissionRateQuery(next_query_request_id(),
+                                                                          instrument_id) ||
+                        !ctp_trader->EnqueueInstrumentOrderCommRateQuery(next_query_request_id(),
+                                                                         instrument_id)) {
+                        return fail_daily_refresh("fee_query_submit_failed:" + instrument_id,
+                                                  trading_day);
+                    }
+                }
+                {
+                    std::unique_lock<std::mutex> lock(fee_rate_mutex);
+                    if (!fee_rate_cv.wait_for(lock,
+                                              std::chrono::milliseconds(
+                                                  file_config.dominant_contract_switch_timeout_ms),
+                                              [&]() {
+                                                  return dominant_recheck_loop_stop.load() ||
+                                                         std::all_of(current_instrument_ids.begin(),
+                                                                     current_instrument_ids.end(),
+                                                                     rates_ready);
+                                              }) ||
+                        !std::all_of(current_instrument_ids.begin(), current_instrument_ids.end(),
+                                     rates_ready)) {
+                        return fail_daily_refresh("fee_query_timeout", trading_day);
+                    }
+                }
+
+                for (const auto& product_id : dominant_product_ids) {
+                    const auto status = dominant_contract_coordinator.GetStatus(product_id);
+                    if (status.baseline_count != status.eligible_count) {
+                        EmitStructuredLog(
+                            &config, "core_engine", "warn",
+                            "dominant_contract_daily_baseline_incomplete",
+                            {{"product_id", product_id},
+                             {"trading_day", trading_day},
+                             {"eligible_count", std::to_string(status.eligible_count)},
+                             {"baseline_count", std::to_string(status.baseline_count)}});
+                    }
+                    if (!persist_product_status(product_id)) {
+                        return false;
+                    }
+                }
+                dominant_broker_trading_day = trading_day;
+                trading_permission_controller.ClearReason("dominant_contract_daily_refresh",
+                                                          NowEpochNanos());
+                EmitStructuredLog(&config, "core_engine", "info",
+                                  "dominant_contract_daily_refresh_completed",
+                                  {{"trading_day", trading_day},
+                                   {"candidate_count", std::to_string(all_refreshed_ids.size())}});
+                return true;
             };
 
             while (!dominant_recheck_loop_stop.load()) {
@@ -4017,380 +4800,321 @@ int main(int argc, char** argv) {
                 next_recheck = now + std::chrono::milliseconds(
                                          file_config.dominant_contract_recheck_interval_ms);
 
-                std::unordered_map<std::string, std::vector<std::string>> candidate_ids_by_product;
-                std::vector<std::string> passive_candidate_ids;
-                bool candidate_set_valid = true;
-                std::unordered_set<std::string> active_instrument_ids_snapshot;
-                std::unordered_map<std::string, std::string> active_instrument_by_product_snapshot;
-                std::unordered_map<std::string, std::chrono::steady_clock::time_point>
-                    active_instrument_selected_at_snapshot;
-                {
-                    std::lock_guard<std::mutex> lock(active_instrument_state_mutex);
-                    active_instrument_ids_snapshot = active_instrument_ids;
-                    active_instrument_by_product_snapshot = active_instrument_by_product;
-                    active_instrument_selected_at_snapshot = active_instrument_selected_at;
+                const std::string broker_trading_day = ctp_trader->GetLastUserSession().trading_day;
+                if (broker_trading_day.size() != 8U) {
+                    trading_permission_controller.SetCloseOnly("dominant_contract_daily_refresh");
+                    EmitStructuredLog(&config, "core_engine", "warn",
+                                      "dominant_contract_runtime_trading_day_missing");
+                    continue;
                 }
-                for (const auto& product_id : dominant_product_ids) {
-                    auto cached_candidates_it = dominant_candidate_ids_by_product.find(product_id);
-                    std::vector<std::string> candidate_ids =
-                        cached_candidates_it == dominant_candidate_ids_by_product.end()
-                            ? std::vector<std::string>{}
-                            : cached_candidates_it->second;
-                    if (candidate_ids.empty()) {
-                        EmitStructuredLog(&config, "core_engine", "warn",
-                                          "dominant_contract_recheck_candidate_cache_empty",
-                                          {{"product_id", product_id}});
-                        candidate_set_valid = false;
-                        break;
-                    }
-                    for (const auto& candidate_id : candidate_ids) {
-                        if (active_instrument_ids_snapshot.find(candidate_id) ==
-                            active_instrument_ids_snapshot.end()) {
-                            passive_candidate_ids.push_back(candidate_id);
-                        }
-                    }
-                    candidate_ids_by_product.emplace(product_id, std::move(candidate_ids));
-                }
-                if (!candidate_set_valid) {
+                if (broker_trading_day != dominant_broker_trading_day &&
+                    !refresh_for_trading_day(broker_trading_day)) {
                     continue;
                 }
 
-                std::sort(passive_candidate_ids.begin(), passive_candidate_ids.end());
-                passive_candidate_ids.erase(
-                    std::unique(passive_candidate_ids.begin(), passive_candidate_ids.end()),
-                    passive_candidate_ids.end());
-
-                {
-                    std::lock_guard<std::mutex> lock(dominant_recheck_mutex);
-                    dominant_recheck_candidate_ids.clear();
-                    dominant_recheck_candidate_ids.insert(passive_candidate_ids.begin(),
-                                                          passive_candidate_ids.end());
-                    dominant_recheck_candidate_snapshots.clear();
+                bool position_query_complete = false;
+                try {
+                    (void)execution_engine.QueryInvestorPositionAsync().get();
+                    position_query_complete = true;
+                } catch (const std::exception& ex) {
+                    EmitStructuredLog(&config, "core_engine", "warn",
+                                      "dominant_contract_position_query_failed",
+                                      {{"error", ex.what()}});
+                } catch (...) {
+                    EmitStructuredLog(&config, "core_engine", "warn",
+                                      "dominant_contract_position_query_failed",
+                                      {{"error", "unknown exception"}});
                 }
 
-                dominant_contract_recheck_active.store(true);
-                if (!passive_candidate_ids.empty()) {
-                    if (!ctp_md->Subscribe(passive_candidate_ids)) {
-                        EmitStructuredLog(
-                            &config, "core_engine", "warn",
-                            "dominant_contract_recheck_candidate_subscribe_failed",
-                            {{"candidate_count", std::to_string(passive_candidate_ids.size())}});
-                        dominant_contract_recheck_active.store(false);
-                        {
-                            std::lock_guard<std::mutex> lock(dominant_recheck_mutex);
-                            dominant_recheck_candidate_ids.clear();
-                            dominant_recheck_candidate_snapshots.clear();
-                        }
-                        continue;
-                    }
+                (void)update_unowned_broker_gate(NowEpochNanos());
 
-                    const auto sample_deadline =
-                        std::chrono::steady_clock::now() +
-                        std::chrono::milliseconds(file_config.dominant_contract_wait_ms);
-                    std::unique_lock<std::mutex> lock(dominant_recheck_mutex);
-                    while (dominant_recheck_candidate_snapshots.size() <
-                           passive_candidate_ids.size()) {
-                        if (dominant_recheck_cv.wait_until(lock, sample_deadline) ==
-                            std::cv_status::timeout) {
-                            break;
-                        }
-                        if (dominant_recheck_loop_stop.load()) {
-                            break;
-                        }
+                std::vector<std::string> held_instrument_ids;
+                for (const auto& row : ctp_trader->GetLastInvestorPositionSnapshots()) {
+                    if (row.position > 0 || row.long_frozen > 0 || row.short_frozen > 0) {
+                        held_instrument_ids.push_back(row.instrument_id);
                     }
                 }
+                if (!subscribe_additional_instruments(held_instrument_ids)) {
+                    trading_permission_controller.SetCloseOnly(
+                        "dominant_contract_held_subscription_failed");
+                    EmitStructuredLog(
+                        &config, "core_engine", "critical",
+                        "dominant_contract_held_subscription_failed",
+                        {{"instrument_count", std::to_string(held_instrument_ids.size())}});
+                } else {
+                    trading_permission_controller.ClearReason(
+                        "dominant_contract_held_subscription_failed", NowEpochNanos());
+                }
 
-                std::vector<std::string> retained_candidate_ids;
-                std::vector<std::string> switched_out_instrument_ids;
                 for (const auto& product_id : dominant_product_ids) {
-                    const auto active_it = active_instrument_by_product_snapshot.find(product_id);
-                    if (active_it == active_instrument_by_product_snapshot.end()) {
+                    const EpochNanos evaluation_ts_ns = NowEpochNanos();
+                    auto broker = build_broker_state(product_id, position_query_complete,
+                                                     recovery_order_trade_queries_complete.load());
+                    dominant_contract_coordinator.UpdateBrokerState(product_id, broker);
+                    auto status = dominant_contract_coordinator.GetStatus(product_id);
+                    const auto decision = dominant_contract_coordinator.Evaluate(
+                        product_id, evaluation_ts_ns,
+                        selection_session_open(status, evaluation_ts_ns));
+                    status = dominant_contract_coordinator.GetStatus(product_id);
+                    if (!persist_product_status(product_id)) {
                         continue;
                     }
-                    const std::string& current_instrument_id = active_it->second;
-                    const auto& candidate_ids = candidate_ids_by_product.at(product_id);
-                    std::vector<MarketSnapshot> observed_snapshots;
-                    observed_snapshots.reserve(candidate_ids.size());
-                    {
-                        std::lock_guard<std::mutex> active_lock(latest_market_snapshot_mutex);
-                        std::lock_guard<std::mutex> candidate_lock(dominant_recheck_mutex);
-                        for (const auto& candidate_id : candidate_ids) {
-                            if (const auto latest_it = latest_market_snapshots.find(candidate_id);
-                                latest_it != latest_market_snapshots.end()) {
-                                observed_snapshots.push_back(latest_it->second);
+
+                    if (decision.action == DominantContractAction::kCancelOpenOrders) {
+                        for (const auto& order : execution_engine.GetActiveOrders()) {
+                            if (ExtractProductId(order.symbol) != product_id ||
+                                order.offset != OffsetFlag::kOpen) {
                                 continue;
                             }
-                            if (const auto sample_it =
-                                    dominant_recheck_candidate_snapshots.find(candidate_id);
-                                sample_it != dominant_recheck_candidate_snapshots.end()) {
-                                observed_snapshots.push_back(sample_it->second);
+                            bool canceled = false;
+                            try {
+                                canceled = execution_engine.CancelOrderAsync(order.order_id).get();
+                            } catch (...) {
+                                canceled = false;
                             }
+                            EmitStructuredLog(&config, "core_engine", canceled ? "warn" : "error",
+                                              "dominant_contract_open_order_cancel_requested",
+                                              {{"product_id", product_id},
+                                               {"instrument_id", order.symbol},
+                                               {"client_order_id", order.order_id},
+                                               {"success", canceled ? "true" : "false"}});
                         }
+                        continue;
                     }
-                    if (observed_snapshots.empty()) {
+                    if (decision.action == DominantContractAction::kEnterPendingFlat) {
                         EmitStructuredLog(
-                            &config, "core_engine", "warn",
-                            "dominant_contract_recheck_sample_timeout",
+                            &config, "core_engine", "info", "dominant_contract_pending_flat",
                             {{"product_id", product_id},
-                             {"wait_ms", std::to_string(file_config.dominant_contract_wait_ms)}});
+                             {"current_instrument_id", decision.previous_instrument_id},
+                             {"candidate_instrument_id", decision.candidate_instrument_id},
+                             {"position", std::to_string(status.broker_position)},
+                             {"frozen", std::to_string(status.broker_frozen)},
+                             {"active_close_orders", std::to_string(status.active_close_orders)}});
                         continue;
                     }
-
-                    const bool has_positive_open_interest = std::any_of(
-                        observed_snapshots.begin(), observed_snapshots.end(),
-                        [](const MarketSnapshot& snapshot) { return snapshot.open_interest > 0; });
-                    const std::string selection_metric =
-                        has_positive_open_interest ? "open_interest" : "volume";
-                    const auto best_it = std::max_element(
-                        observed_snapshots.begin(), observed_snapshots.end(),
-                        has_positive_open_interest ? better_by_open_interest : better_by_volume);
-                    if (best_it == observed_snapshots.end()) {
+                    if (decision.action != DominantContractAction::kBeginSwitch) {
                         continue;
                     }
-
-                    const auto current_snapshot_it =
-                        std::find_if(observed_snapshots.begin(), observed_snapshots.end(),
-                                     [&](const MarketSnapshot& snapshot) {
-                                         return snapshot.instrument_id == current_instrument_id;
-                                     });
-                    if (current_snapshot_it == observed_snapshots.end()) {
-                        EmitStructuredLog(
-                            &config, "core_engine", "warn",
-                            "dominant_contract_recheck_current_snapshot_missing",
-                            {{"product_id", product_id}, {"instrument_id", current_instrument_id}});
-                        continue;
-                    }
-
-                    if (best_it->instrument_id == current_instrument_id) {
-                        lead_candidate_by_product.erase(product_id);
-                        lead_windows_by_product.erase(product_id);
-                        continue;
-                    }
-
-                    const double current_metric_value =
-                        metric_value(*current_snapshot_it, selection_metric);
-                    const double candidate_metric_value = metric_value(*best_it, selection_metric);
-                    double observed_lead_ratio = 0.0;
-                    bool lead_ratio_satisfied = false;
-                    if (current_metric_value > 0.0) {
-                        observed_lead_ratio =
-                            (candidate_metric_value - current_metric_value) / current_metric_value;
-                        lead_ratio_satisfied =
-                            observed_lead_ratio >= file_config.dominant_contract_min_lead_ratio;
-                    } else if (candidate_metric_value > current_metric_value) {
-                        observed_lead_ratio = 1.0;
-                        lead_ratio_satisfied = true;
-                    }
-
-                    if (!lead_ratio_satisfied) {
-                        lead_candidate_by_product.erase(product_id);
-                        lead_windows_by_product.erase(product_id);
-                        continue;
-                    }
-
-                    if (lead_candidate_by_product[product_id] != best_it->instrument_id) {
-                        lead_candidate_by_product[product_id] = best_it->instrument_id;
-                        lead_windows_by_product[product_id] = 1;
-                    } else {
-                        ++lead_windows_by_product[product_id];
-                    }
-
-                    const int window_count = lead_windows_by_product[product_id];
-                    if (window_count < file_config.dominant_contract_min_lead_windows) {
-                        continue;
-                    }
-
-                    const auto selected_at_it =
-                        active_instrument_selected_at_snapshot.find(product_id);
-                    const auto held_for_ms =
-                        selected_at_it == active_instrument_selected_at_snapshot.end()
-                            ? 0LL
-                            : std::chrono::duration_cast<std::chrono::milliseconds>(
-                                  std::chrono::steady_clock::now() - selected_at_it->second)
-                                  .count();
-                    if (held_for_ms < file_config.dominant_contract_min_hold_ms) {
-                        EmitStructuredLog(
-                            &config, "core_engine", "info", "dominant_contract_switch_suppressed",
-                            {{"product_id", product_id},
-                             {"current_instrument_id", current_instrument_id},
-                             {"candidate_instrument_id", best_it->instrument_id},
-                             {"reason", "min_hold"},
-                             {"selection_metric", selection_metric},
-                             {"current_metric", FormatDouble(current_metric_value)},
-                             {"candidate_metric", FormatDouble(candidate_metric_value)},
-                             {"lead_ratio", FormatDouble(observed_lead_ratio)},
-                             {"window_count", std::to_string(window_count)},
-                             {"held_for_ms", std::to_string(held_for_ms)}});
-                        continue;
-                    }
-
                     if (!dominant_contract_flat_only_enabled) {
                         EmitStructuredLog(
-                            &config, "core_engine", "info", "dominant_contract_switch_dry_run",
+                            &config, "core_engine", "info",
+                            "dominant_contract_switch_observed_no_execution",
                             {{"product_id", product_id},
-                             {"current_instrument_id", current_instrument_id},
-                             {"candidate_instrument_id", best_it->instrument_id},
-                             {"selection_metric", selection_metric},
-                             {"current_metric", FormatDouble(current_metric_value)},
-                             {"candidate_metric", FormatDouble(candidate_metric_value)},
-                             {"lead_ratio", FormatDouble(observed_lead_ratio)},
-                             {"window_count", std::to_string(window_count)},
-                             {"required_windows",
-                              std::to_string(file_config.dominant_contract_min_lead_windows)},
-                             {"observed_count", std::to_string(observed_snapshots.size())}});
+                             {"switch_mode", file_config.dominant_contract_switch_mode},
+                             {"current_instrument_id", decision.previous_instrument_id},
+                             {"candidate_instrument_id", decision.candidate_instrument_id},
+                             {"lead_ratio", FormatDouble(status.lead_ratio)},
+                             {"window_count", std::to_string(status.lead_windows)}});
                         continue;
                     }
 
-                    std::int32_t total_position = 0;
-                    std::int32_t total_frozen = 0;
-                    const auto current_exchange_id =
-                        InferCtpExchangeIdFromInstrumentId(current_instrument_id);
+                    // Re-read broker order/trade/position truth immediately before the
+                    // transaction. A stale periodic snapshot is never sufficient to switch.
+                    const CtpRecoveryReport recovery_report =
+                        ctp_trader->RecoverOrdersAndTradesReport(
+                            execution_config.recovery_query_timeout_ms);
+                    bool final_position_query_complete = false;
+                    try {
+                        (void)execution_engine.QueryInvestorPositionAsync().get();
+                        final_position_query_complete = true;
+                    } catch (...) {
+                        final_position_query_complete = false;
+                    }
+                    if (!recovery_report.ok() || !final_position_query_complete) {
+                        trading_permission_controller.SetCloseOnly(
+                            "dominant_contract_broker_recovery_failed");
+                        EmitStructuredLog(
+                            &config, "core_engine", "error",
+                            "dominant_contract_switch_recovery_failed",
+                            {{"product_id", product_id},
+                             {"candidate_instrument_id", decision.candidate_instrument_id},
+                             {"error_stage", recovery_report.error_stage},
+                             {"error", recovery_report.error}});
+                        (void)persist_product_status(product_id);
+                        continue;
+                    }
+
+                    broker = build_broker_state(product_id, true, true);
+                    dominant_contract_coordinator.UpdateBrokerState(product_id, broker);
+                    status = dominant_contract_coordinator.GetStatus(product_id);
+                    const EpochNanos final_check_ts_ns = NowEpochNanos();
+                    const auto final_decision = dominant_contract_coordinator.Evaluate(
+                        product_id, final_check_ts_ns,
+                        selection_session_open(status, final_check_ts_ns));
+                    if (final_decision.action != DominantContractAction::kBeginSwitch ||
+                        final_decision.previous_instrument_id != decision.previous_instrument_id ||
+                        final_decision.candidate_instrument_id !=
+                            decision.candidate_instrument_id) {
+                        EmitStructuredLog(
+                            &config, "core_engine", "warn",
+                            "dominant_contract_switch_revalidation_failed",
+                            {{"product_id", product_id}, {"reason", final_decision.reason}});
+                        (void)persist_product_status(product_id);
+                        continue;
+                    }
+
+                    const std::string& candidate_instrument_id =
+                        final_decision.candidate_instrument_id;
+                    if (!query_selected_instrument_meta(candidate_instrument_id,
+                                                        "dominant_contract_switch_meta_query")) {
+                        (void)persist_product_status(product_id);
+                        continue;
+                    }
+                    InstrumentMetaSnapshot candidate_meta;
+                    bool candidate_meta_valid = false;
+                    const std::string broker_trading_day =
+                        ctp_trader->GetLastUserSession().trading_day;
                     {
-                        std::lock_guard<std::mutex> lock(ctp_ledger_mutex);
-                        const std::array<PositionDirection, 2> directions = {
-                            PositionDirection::kLong, PositionDirection::kShort};
-                        const std::array<std::string, 2> position_dates = {"today", "yesterday"};
-                        for (const auto direction : directions) {
-                            for (const auto& position_date : position_dates) {
-                                const auto view = ctp_position_ledger.GetPosition(
-                                    account_id, current_instrument_id, direction, position_date,
-                                    current_exchange_id);
-                                total_position += view.position;
-                                total_frozen += view.frozen;
-                            }
+                        std::lock_guard<std::mutex> lock(instrument_meta_mutex);
+                        const auto meta_it = instrument_meta_by_id.find(candidate_instrument_id);
+                        if (meta_it != instrument_meta_by_id.end()) {
+                            candidate_meta = meta_it->second;
+                            candidate_meta_valid = IsEligibleFuturesContract(
+                                candidate_meta, product_id, broker_trading_day);
                         }
                     }
-                    if (total_position > 0 || total_frozen > 0) {
-                        EmitStructuredLog(
-                            &config, "core_engine", "info", "dominant_contract_switch_suppressed",
-                            {{"product_id", product_id},
-                             {"current_instrument_id", current_instrument_id},
-                             {"candidate_instrument_id", best_it->instrument_id},
-                             {"reason", "non_flat_position"},
-                             {"position", std::to_string(total_position)},
-                             {"frozen", std::to_string(total_frozen)},
-                             {"selection_metric", selection_metric},
-                             {"current_metric", FormatDouble(current_metric_value)},
-                             {"candidate_metric", FormatDouble(candidate_metric_value)},
-                             {"lead_ratio", FormatDouble(observed_lead_ratio)},
-                             {"window_count", std::to_string(window_count)}});
+                    if (!candidate_meta_valid) {
+                        EmitStructuredLog(&config, "core_engine", "error",
+                                          "dominant_contract_switch_metadata_invalid",
+                                          {{"product_id", product_id},
+                                           {"candidate_instrument_id", candidate_instrument_id},
+                                           {"trading_day", broker_trading_day}});
+                        (void)persist_product_status(product_id);
                         continue;
                     }
 
-                    std::size_t active_order_count = 0;
-                    for (const auto& order : execution_engine.GetActiveOrders()) {
-                        if (order.symbol == current_instrument_id) {
-                            ++active_order_count;
-                        }
-                    }
-                    if (active_order_count > 0U) {
-                        EmitStructuredLog(
-                            &config, "core_engine", "info", "dominant_contract_switch_suppressed",
-                            {{"product_id", product_id},
-                             {"current_instrument_id", current_instrument_id},
-                             {"candidate_instrument_id", best_it->instrument_id},
-                             {"reason", "active_orders"},
-                             {"active_order_count", std::to_string(active_order_count)},
-                             {"selection_metric", selection_metric},
-                             {"current_metric", FormatDouble(current_metric_value)},
-                             {"candidate_metric", FormatDouble(candidate_metric_value)},
-                             {"lead_ratio", FormatDouble(observed_lead_ratio)},
-                             {"window_count", std::to_string(window_count)}});
+                    const bool rate_queries_submitted =
+                        ctp_trader->EnqueueInstrumentMarginRateQuery(next_query_request_id(),
+                                                                     candidate_instrument_id) &&
+                        ctp_trader->EnqueueInstrumentCommissionRateQuery(next_query_request_id(),
+                                                                         candidate_instrument_id) &&
+                        ctp_trader->EnqueueInstrumentOrderCommRateQuery(next_query_request_id(),
+                                                                        candidate_instrument_id);
+                    if (!rate_queries_submitted) {
+                        EmitStructuredLog(&config, "core_engine", "error",
+                                          "dominant_contract_switch_fee_query_submit_failed",
+                                          {{"product_id", product_id},
+                                           {"candidate_instrument_id", candidate_instrument_id}});
+                        (void)persist_product_status(product_id);
                         continue;
                     }
-
-                    std::vector<std::string> updated_active_instruments;
                     {
-                        std::lock_guard<std::mutex> lock(active_instrument_state_mutex);
-                        auto current_binding_it = active_instrument_by_product.find(product_id);
-                        if (current_binding_it == active_instrument_by_product.end() ||
-                            current_binding_it->second != current_instrument_id) {
+                        std::unique_lock<std::mutex> lock(fee_rate_mutex);
+                        if (!fee_rate_cv.wait_for(
+                                lock,
+                                std::chrono::milliseconds(
+                                    file_config.dominant_contract_switch_timeout_ms),
+                                [&]() { return rates_ready(candidate_instrument_id); })) {
+                            EmitStructuredLog(
+                                &config, "core_engine", "error",
+                                "dominant_contract_switch_fee_query_timeout",
+                                {{"product_id", product_id},
+                                 {"candidate_instrument_id", candidate_instrument_id}});
+                            (void)persist_product_status(product_id);
                             continue;
                         }
-                        current_binding_it->second = best_it->instrument_id;
+                    }
+
+                    std::uint64_t new_generation = 0;
+                    std::string begin_error;
+                    if (!dominant_contract_coordinator.BeginSwitch(
+                            product_id, final_decision.previous_instrument_id,
+                            candidate_instrument_id, NowEpochNanos(), &new_generation,
+                            &begin_error)) {
+                        EmitStructuredLog(&config, "core_engine", "warn",
+                                          "dominant_contract_switch_begin_failed",
+                                          {{"product_id", product_id}, {"error", begin_error}});
+                        (void)persist_product_status(product_id);
+                        continue;
+                    }
+                    if (!persist_product_status(product_id)) {
+                        (void)dominant_contract_coordinator.AbortBeforeStrategyReset(
+                            product_id, "status_write_failed_before_strategy_reset",
+                            NowEpochNanos());
+                        continue;
+                    }
+                    if (!strategy_engine->WaitUntilDrained(
+                            file_config.dominant_contract_switch_timeout_ms)) {
+                        (void)dominant_contract_coordinator.AbortBeforeStrategyReset(
+                            product_id, "strategy_queue_drain_timeout", NowEpochNanos());
+                        trading_permission_controller.SetCloseOnly(
+                            "dominant_contract_strategy_drain_timeout");
+                        (void)persist_product_status(product_id);
+                        continue;
+                    }
+
+                    const auto warmup_states =
+                        market_bar_pipeline.RecentCompleteStates(candidate_instrument_id, 5, 128);
+                    const ContractSwitchContext switch_context{
+                        product_id, final_decision.previous_instrument_id, candidate_instrument_id,
+                        new_generation};
+                    const auto switch_report = strategy_engine->ApplyContractSwitch(
+                        switch_context, warmup_states,
+                        file_config.dominant_contract_switch_timeout_ms);
+                    if (!switch_report.success) {
+                        dominant_contract_coordinator.MarkFault(
+                            product_id, "strategy_reset_or_warmup_failed:" + switch_report.error,
+                            NowEpochNanos());
+                        trading_permission_controller.SetCloseOnly(
+                            "dominant_contract_strategy_switch_failed");
+                        (void)persist_product_status(product_id);
+                        EmitStructuredLog(
+                            &config, "core_engine", "critical",
+                            "dominant_contract_strategy_switch_failed",
+                            {{"product_id", product_id}, {"error", switch_report.error}});
+                        continue;
+                    }
+
+                    {
+                        std::lock_guard<std::mutex> lock(active_instrument_state_mutex);
+                        auto binding = active_instrument_by_product.find(product_id);
+                        if (binding == active_instrument_by_product.end() ||
+                            binding->second != final_decision.previous_instrument_id) {
+                            dominant_contract_coordinator.MarkFault(
+                                product_id, "active_contract_binding_changed", NowEpochNanos());
+                            trading_permission_controller.SetCloseOnly(
+                                "dominant_contract_binding_changed");
+                            (void)persist_product_status(product_id);
+                            continue;
+                        }
+                        binding->second = candidate_instrument_id;
                         active_instrument_selected_at[product_id] =
                             std::chrono::steady_clock::now();
-                        active_instrument_ids.erase(current_instrument_id);
-                        active_instrument_ids.insert(best_it->instrument_id);
-                        auto instrument_it = std::find(instruments.begin(), instruments.end(),
-                                                       current_instrument_id);
-                        if (instrument_it != instruments.end()) {
-                            *instrument_it = best_it->instrument_id;
+                        active_instrument_ids.erase(final_decision.previous_instrument_id);
+                        active_instrument_ids.insert(candidate_instrument_id);
+                        instruments.erase(std::remove(instruments.begin(), instruments.end(),
+                                                      final_decision.previous_instrument_id),
+                                          instruments.end());
+                        if (std::find(instruments.begin(), instruments.end(),
+                                      candidate_instrument_id) == instruments.end()) {
+                            instruments.push_back(candidate_instrument_id);
                         }
-                        updated_active_instruments = instruments;
                     }
-                    market_data_recorder.SetAllowedInstrumentIds(updated_active_instruments);
-                    {
-                        std::lock_guard<std::mutex> lock(latest_market_snapshot_mutex);
-                        latest_market_snapshots[best_it->instrument_id] = *best_it;
-                    }
-                    market_bar_pipeline.ResetInstrument(best_it->instrument_id, true);
-                    retained_candidate_ids.push_back(best_it->instrument_id);
-                    switched_out_instrument_ids.push_back(current_instrument_id);
-                    lead_candidate_by_product.erase(product_id);
-                    lead_windows_by_product.erase(product_id);
 
+                    std::string commit_error;
+                    if (!dominant_contract_coordinator.CommitSwitch(
+                            product_id, candidate_instrument_id, switch_report.replayed_warmup_bars,
+                            switch_report.required_warmup_bars, NowEpochNanos(), &commit_error)) {
+                        dominant_contract_coordinator.MarkFault(
+                            product_id, "switch_commit_failed:" + commit_error, NowEpochNanos());
+                        trading_permission_controller.SetCloseOnly(
+                            "dominant_contract_switch_commit_failed");
+                        (void)persist_product_status(product_id);
+                        continue;
+                    }
+                    if (!persist_product_status(product_id)) {
+                        continue;
+                    }
+                    status = dominant_contract_coordinator.GetStatus(product_id);
                     EmitStructuredLog(
                         &config, "core_engine", "info", "dominant_contract_switched",
                         {{"product_id", product_id},
-                         {"previous_instrument_id", current_instrument_id},
-                         {"instrument_id", best_it->instrument_id},
-                         {"selection_metric", selection_metric},
-                         {"current_metric", FormatDouble(current_metric_value)},
-                         {"candidate_metric", FormatDouble(candidate_metric_value)},
-                         {"lead_ratio", FormatDouble(observed_lead_ratio)},
-                         {"window_count", std::to_string(window_count)},
-                         {"required_windows",
-                          std::to_string(file_config.dominant_contract_min_lead_windows)},
-                         {"switch_mode", file_config.dominant_contract_switch_mode}});
-
-                    (void)query_selected_instrument_meta(best_it->instrument_id,
-                                                         "dominant_contract_switch_meta_query");
-                    if (!ctp_trader->EnqueueInstrumentMarginRateQuery(next_query_request_id(),
-                                                                      best_it->instrument_id)) {
-                        EmitStructuredLog(&config, "core_engine", "warn",
-                                          "dominant_contract_switch_margin_rate_query_failed",
-                                          {{"product_id", product_id},
-                                           {"instrument_id", best_it->instrument_id}});
-                    }
-                    if (!ctp_trader->EnqueueInstrumentCommissionRateQuery(next_query_request_id(),
-                                                                          best_it->instrument_id)) {
-                        EmitStructuredLog(&config, "core_engine", "warn",
-                                          "dominant_contract_switch_commission_rate_query_failed",
-                                          {{"product_id", product_id},
-                                           {"instrument_id", best_it->instrument_id}});
-                    }
-                    if (!ctp_trader->EnqueueInstrumentOrderCommRateQuery(next_query_request_id(),
-                                                                         best_it->instrument_id)) {
-                        EmitStructuredLog(&config, "core_engine", "warn",
-                                          "dominant_contract_switch_order_comm_rate_query_failed",
-                                          {{"product_id", product_id},
-                                           {"instrument_id", best_it->instrument_id}});
-                    }
-                }
-
-                dominant_contract_recheck_active.store(false);
-                std::vector<std::string> unsubscribe_ids = passive_candidate_ids;
-                for (const auto& retained_candidate_id : retained_candidate_ids) {
-                    unsubscribe_ids.erase(std::remove(unsubscribe_ids.begin(),
-                                                      unsubscribe_ids.end(), retained_candidate_id),
-                                          unsubscribe_ids.end());
-                }
-                unsubscribe_ids.insert(unsubscribe_ids.end(), switched_out_instrument_ids.begin(),
-                                       switched_out_instrument_ids.end());
-                std::sort(unsubscribe_ids.begin(), unsubscribe_ids.end());
-                unsubscribe_ids.erase(std::unique(unsubscribe_ids.begin(), unsubscribe_ids.end()),
-                                      unsubscribe_ids.end());
-                if (!unsubscribe_ids.empty() && !ctp_md->Unsubscribe(unsubscribe_ids)) {
-                    EmitStructuredLog(
-                        &config, "core_engine", "warn",
-                        "dominant_contract_recheck_candidate_unsubscribe_failed",
-                        {{"candidate_count", std::to_string(unsubscribe_ids.size())}});
-                }
-                {
-                    std::lock_guard<std::mutex> lock(dominant_recheck_mutex);
-                    dominant_recheck_candidate_ids.clear();
-                    dominant_recheck_candidate_snapshots.clear();
+                         {"previous_instrument_id", final_decision.previous_instrument_id},
+                         {"instrument_id", candidate_instrument_id},
+                         {"generation", std::to_string(status.generation)},
+                         {"phase", DominantContractPhaseName(status.phase)},
+                         {"warmup_replayed", std::to_string(switch_report.replayed_warmup_bars)},
+                         {"warmup_required", std::to_string(status.warmup_required_bars)}});
                 }
             }
         });
@@ -4596,6 +5320,18 @@ int main(int argc, char** argv) {
                         recovered_exit.generated_ts_ns = now_ns;
                         recovered_exit.trace_id =
                             pending.trace_id + "#pending-exit-" + std::to_string(now_ns);
+                        if (dominant_contract_mode) {
+                            const auto product = dominant_contract_coordinator.ProductForInstrument(
+                                pending.instrument_id);
+                            const auto generation =
+                                dominant_contract_coordinator.GenerationForInstrument(
+                                    pending.instrument_id);
+                            if (!product.has_value() || !generation.has_value()) {
+                                continue;
+                            }
+                            recovered_exit.product_id = *product;
+                            recovered_exit.contract_generation = *generation;
+                        }
                         pending_exit_next_attempt_ns[pending_key] = now_ns + 5'000'000'000LL;
                         process_signal_intent(recovered_exit);
                     }
@@ -4795,9 +5531,7 @@ int main(int argc, char** argv) {
         execution_maintenance_thread.join();
     }
     dominant_recheck_loop_stop.store(true);
-    dominant_contract_recheck_active.store(false);
     instrument_meta_cv.notify_all();
-    dominant_recheck_cv.notify_all();
     if (dominant_recheck_thread.joinable()) {
         dominant_recheck_thread.join();
     }

@@ -119,6 +119,8 @@ std::vector<PlannedOrder> ExecutionPlanner::BuildPlan(
         planned.intent.price = *order_price;
         planned.intent.ts_ns = base_ts + static_cast<EpochNanos>(idx + 1);
         planned.intent.signal_ts_ns = base_ts;
+        planned.intent.product_id = signal.product_id;
+        planned.intent.contract_generation = signal.contract_generation;
         if (latest_market != nullptr) {
             planned.intent.exchange_id = latest_market->exchange_id;
             planned.intent.trading_day = latest_market->trading_day.empty()

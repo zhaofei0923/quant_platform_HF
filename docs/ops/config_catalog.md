@@ -242,6 +242,10 @@
 - 字段说明: 见“CTP 通用字段字典”；本文件重点字段：
   - 生产 KAMA 策略入口（`strategy_ids` / `strategy_composite_config`）
   - 生产交易品种（`product_ids`，默认启用 `c,hc`）
+  - 安全空仓换月（`active_contract_mode=dominant_open_interest`、
+    `dominant_contract_switch_mode=flat_only`）
+  - 候选/切换门控（15% 领先、3 个 60 秒窗口、15 分钟最短持有、6 秒 Tick 新鲜度、
+    完整深度行情基线和至少 30 根 canonical 5m 无信号暖机）
   - 执行算法参数（`execution_*`）
   - 默认风控模板（`risk_default_*`）
   - 自定义风控组模板（`risk_rule_<group>_*`）

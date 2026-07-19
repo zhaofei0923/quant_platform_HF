@@ -182,7 +182,12 @@ dominant_instrument_id() {
   local product="$1"
   local dominant_path="${QUANT_ROOT}/runtime/ctp_instruments/${product}_dominant_contract.json"
   [[ -f "${dominant_path}" ]] || return 1
-  json_value instrument_id "${dominant_path}"
+  local instrument_id
+  instrument_id="$(json_value current_instrument_id "${dominant_path}")"
+  if [[ -z "${instrument_id}" ]]; then
+    instrument_id="$(json_value instrument_id "${dominant_path}")"
+  fi
+  printf '%s\n' "${instrument_id}"
 }
 
 last_tick_minute() {
@@ -386,10 +391,12 @@ print_once() {
       [[ -n "${product}" ]] || continue
       dominant_path="${QUANT_ROOT}/runtime/ctp_instruments/${product}_dominant_contract.json"
       if [[ -f "${dominant_path}" ]]; then
-        instrument_id="$(json_value instrument_id "${dominant_path}")"
+        instrument_id="$(dominant_instrument_id "${product}")"
         exchange_id="$(json_value exchange_id "${dominant_path}")"
         selection_metric="$(json_value selection_metric "${dominant_path}")"
-        echo "${product}: instrument=${instrument_id:-unknown} exchange=${exchange_id:-unknown} metric=${selection_metric:-unknown}"
+        phase="$(json_value phase "${dominant_path}")"
+        candidate_id="$(json_value candidate_instrument_id "${dominant_path}")"
+        echo "${product}: instrument=${instrument_id:-unknown} candidate=${candidate_id:-none} phase=${phase:-legacy} exchange=${exchange_id:-unknown} metric=${selection_metric:-unknown}"
       else
         echo "${product}: dominant_contract=missing path=${dominant_path}"
       fi

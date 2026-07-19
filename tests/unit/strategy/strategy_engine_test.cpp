@@ -29,6 +29,7 @@ struct Probe {
     std::vector<std::string> observed_order_events;
     std::vector<std::string> observed_account_snapshots;
     std::vector<std::string> observed_timer_strategies;
+    std::vector<std::string> contract_switches;
 };
 
 Probe* g_probe = nullptr;
@@ -174,6 +175,24 @@ class RecordingStrategy final : public ILiveStrategy {
         return {StrategyMetric{"strategy_engine_test_metric",
                                loaded_from_state_ ? 1.0 : 0.0,
                                {{"strategy_id", strategy_id_}}}};
+    }
+
+    bool ResetForContractSwitch(const ContractSwitchContext& context, std::string* error) override {
+        if (error != nullptr) {
+            error->clear();
+        }
+        if (g_probe != nullptr) {
+            std::lock_guard<std::mutex> lock(g_probe->mutex);
+            g_probe->contract_switches.push_back(
+                context.product_id + ":" + context.previous_instrument_id + "->" +
+                context.current_instrument_id + ":" + std::to_string(context.generation));
+        }
+        return true;
+    }
+
+    std::int32_t RequiredContractWarmupBars(const ContractSwitchContext& context) const override {
+        (void)context;
+        return 2;
     }
 
     bool SaveState(StrategyState* out, std::string* error) const override {
@@ -770,6 +789,122 @@ TEST(StrategyEngineTest, DropsOldestEventsWhenQueueIsFull) {
 
     const auto stats = engine.GetStats();
     EXPECT_GT(stats.dropped_oldest_events, 0U);
+}
+
+TEST(StrategyEngineTest, ContractSwitchWarmsWithoutEmittingAndStampsNextIntent) {
+    Probe probe;
+    g_probe = &probe;
+    ResetThrowingBehavior();
+
+    std::string error;
+    const auto factory_name = UniqueFactoryName();
+    ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
+        factory_name, []() { return std::make_unique<RecordingStrategy>(); }, &error))
+        << error;
+
+    std::mutex sink_mutex;
+    std::vector<SignalIntent> emitted_intents;
+    StrategyEngineConfig cfg;
+    cfg.queue_capacity = 64;
+    cfg.timer_interval_ns = 1'000'000'000;
+    cfg.contract_identity_resolver =
+        [](const std::string& instrument_id) -> std::optional<StrategyContractIdentity> {
+        if (instrument_id == "c2609") {
+            return StrategyContractIdentity{"c", 9};
+        }
+        return std::nullopt;
+    };
+    StrategyEngine engine(cfg, [&](const SignalIntent& intent) {
+        std::lock_guard<std::mutex> lock(sink_mutex);
+        emitted_intents.push_back(intent);
+    });
+    StrategyContext context;
+    ASSERT_TRUE(engine.Start({"alpha"}, factory_name, context, &error)) << error;
+
+    std::vector<StateSnapshot7D> warmup;
+    for (EpochNanos ts : {1, 2, 3}) {
+        StateSnapshot7D state;
+        state.instrument_id = "c2609";
+        state.timeframe_minutes = 5;
+        state.ts_ns = ts;
+        state.has_bar = true;
+        warmup.push_back(state);
+    }
+    const ContractSwitchContext switch_context{"c", "c2607", "c2609", 7};
+    const auto report = engine.ApplyContractSwitch(switch_context, warmup, 1'000);
+    ASSERT_TRUE(report.success) << report.error;
+    EXPECT_EQ(report.required_warmup_bars, 2);
+    EXPECT_EQ(report.replayed_warmup_bars, 2);
+    {
+        std::lock_guard<std::mutex> lock(sink_mutex);
+        EXPECT_TRUE(emitted_intents.empty());
+    }
+    {
+        std::lock_guard<std::mutex> lock(probe.mutex);
+        ASSERT_EQ(probe.contract_switches.size(), 1U);
+        EXPECT_EQ(probe.contract_switches.front(), "c:c2607->c2609:7");
+        ASSERT_EQ(probe.observed_state_ts.size(), 2U);
+        EXPECT_EQ(probe.observed_state_ts[0], 2);
+        EXPECT_EQ(probe.observed_state_ts[1], 3);
+    }
+
+    StateSnapshot7D suppressed;
+    suppressed.instrument_id = "c2609";
+    suppressed.timeframe_minutes = 5;
+    suppressed.ts_ns = 4;
+    suppressed.has_bar = true;
+    ASSERT_TRUE(engine.ApplyContractWarmupState(suppressed, "c", 7, 1'000));
+    {
+        std::lock_guard<std::mutex> lock(sink_mutex);
+        EXPECT_TRUE(emitted_intents.empty());
+    }
+    {
+        std::lock_guard<std::mutex> lock(probe.mutex);
+        ASSERT_EQ(probe.observed_state_ts.size(), 3U);
+        EXPECT_EQ(probe.observed_state_ts.back(), 4);
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_behavior_mutex);
+        g_throw_on_state_strategy = "alpha";
+    }
+    StateSnapshot7D failed_warmup = suppressed;
+    failed_warmup.ts_ns = 41;
+    EXPECT_FALSE(engine.ApplyContractWarmupState(failed_warmup, "c", 7, 1'000));
+    ResetThrowingBehavior();
+
+    StateSnapshot7D ready = suppressed;
+    ready.ts_ns = 5;
+    engine.EnqueueState(ready, "c", 7, true);
+    ASSERT_TRUE(WaitUntil(
+        [&]() {
+            std::lock_guard<std::mutex> lock(sink_mutex);
+            return emitted_intents.size() == 1U;
+        },
+        std::chrono::milliseconds(500)));
+    {
+        std::lock_guard<std::mutex> lock(sink_mutex);
+        EXPECT_EQ(emitted_intents.front().product_id, "c");
+        EXPECT_EQ(emitted_intents.front().contract_generation, 7U);
+    }
+
+    StateSnapshot7D resolved = ready;
+    resolved.ts_ns = 6;
+    engine.EnqueueState(resolved);
+    ASSERT_TRUE(WaitUntil(
+        [&]() {
+            std::lock_guard<std::mutex> lock(sink_mutex);
+            return emitted_intents.size() == 2U;
+        },
+        std::chrono::milliseconds(500)));
+    {
+        std::lock_guard<std::mutex> lock(sink_mutex);
+        EXPECT_EQ(emitted_intents.back().product_id, "c");
+        EXPECT_EQ(emitted_intents.back().contract_generation, 9U);
+    }
+
+    engine.Stop();
+    g_probe = nullptr;
 }
 
 }  // namespace

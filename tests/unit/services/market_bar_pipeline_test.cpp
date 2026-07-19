@@ -115,6 +115,28 @@ TEST(MarketBarPipelineTest, CheckpointRestartMatchesContinuousPendingAggregation
     EXPECT_EQ(lhs.observed_source_bars, rhs.observed_source_bars);
 }
 
+TEST(MarketBarPipelineTest, RecentCanonicalFiveMinuteStatesSurviveCheckpoint) {
+    MarketBarPipeline pipeline(MakeConfig());
+    for (int minute = 0; minute <= 9; ++minute) {
+        FeedAndFinalizeMinute(&pipeline, minute, 100 + minute * 10);
+    }
+    const auto recent = pipeline.RecentCompleteStates("DCE.c2609", 5, 30);
+    ASSERT_EQ(recent.size(), 1U);
+    EXPECT_TRUE(recent.front().has_bar);
+    EXPECT_EQ(recent.front().timeframe_minutes, 5);
+
+    MarketBarPipeline::PersistenceState checkpoint;
+    std::string error;
+    ASSERT_TRUE(pipeline.SaveState(&checkpoint, &error)) << error;
+    MarketBarPipeline restored(MakeConfig());
+    ASSERT_TRUE(restored.LoadState(checkpoint, &error)) << error;
+    const auto restored_recent = restored.RecentCompleteStates("DCE.c2609", 5, 30);
+    ASSERT_EQ(restored_recent.size(), 1U);
+    EXPECT_EQ(restored_recent.front().instrument_id, "DCE.c2609");
+    EXPECT_EQ(restored_recent.front().ts_ns, recent.front().ts_ns);
+    EXPECT_DOUBLE_EQ(restored_recent.front().bar_close, recent.front().bar_close);
+}
+
 TEST(MarketBarPipelineTest, RecoveryTailNeverProducesTradableEmission) {
     MarketBarPipeline source(MakeConfig());
     FeedAndFinalizeMinute(&source, 0, 100);

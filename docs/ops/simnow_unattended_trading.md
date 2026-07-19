@@ -130,22 +130,29 @@ runtime/simnow_trading/current_core_engine_log
 
 ## 合约元数据查询
 
-主力合约模式下，启动时会优先读取产品级合约缓存：
+主力合约模式下，启动时会读取产品级 v2 合约缓存用于加速元数据注入和订阅准备：
 
 ```text
 runtime/ctp_instruments/<product>_contracts.json
 runtime/ctp_instruments/<product>_dominant_contract.json
 ```
 
-如果缓存存在，`simnow_probe` 和 `core_engine` 不再每次启动全量查询所有 CTP 合约；它们只用缓存中的候选合约订阅行情并选择主力。选出交易合约后，仅对当前交易合约执行一次 `ReqQryInstrument`，并继续查询该合约的保证金率、手续费率和报单手续费率。运行中发生主力切换时，也只对新主力合约补查一次合约元数据。
+缓存包含 `schema_version=2`、Broker 交易日、生成时间和完整合约生命周期字段。每个进程在 Broker 交易日首次登录后仍必须完成一次全量 `ReqQryInstrument`；缓存跨日、损坏、legacy 数组格式或查询未完成时，系统保持 CloseOnly/启动失败，不能据此开放开仓。legacy 文件只读识别，成功全量查询后通过临时文件、`fsync` 和 `rename` 原子发布 v2。
+
+候选仅包含普通、已上市、未到期且 CTP 标记可交易的期货合约。所有候选持续订阅并写入行情/Bar 流水线；非当前合约只记录并暖机，不投递可执行策略信号。系统还会执行完整 `ReqQryDepthMarketData` barrier 建立当日持仓量基线，任一候选缺失时禁止重新选主力。
 
 费率（保证金率 / 手续费率 / 报单手续费率）在会话内基本稳定，因此 `core_engine` 只在缺口时查询：启动首查、主力换月补查，以及后台轮询中仅对尚未缓存到的合约补查一次；一旦所有活跃合约的费率均已缓存，轮询不再重复查询。查询到的费率会写入本地文件 `runtime/ctp_instruments/fee_rates.json`（按合约汇总 margin/commission/order_comm，含 `account_id`、`trading_day`、`ts_ns`），供后续复盘离线读取。该文件为写入用途；下单时读取的是内存缓存，进程内始终以实时查询结果为准。
 
-如果产品缓存不存在或为空，会做一次全量合约查询作为兜底，并重新写入 `<product>_contracts.json`。首次接入新品种或交易所合约规则变更后，可先运行一次：
+首次接入新品种、交易所合约规则变更或需要明确绕过缓存时，可先运行：
 
 ```bash
-scripts/ops/start_simnow_trading.sh --probe-only --run-id simnow-refresh-contracts
+scripts/ops/start_simnow_trading.sh --probe-only --force-instrument-refresh \
+  --run-id simnow-refresh-contracts
 ```
+
+`<product>_dominant_contract.json` 是 v2 原子状态快照，包含当前/候选合约、`phase`、
+`generation`、领先窗口、Broker 仓位/活动订单、候选覆盖和暖机进度。该文件只用于审计和
+Dashboard；重启后不会凭此恢复交易权限，仍以 Broker 订单、成交、持仓和候选行情查询为准。
 
 ## 无人值守 Supervisor
 

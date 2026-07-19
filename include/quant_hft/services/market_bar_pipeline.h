@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <deque>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -21,6 +22,7 @@ struct MarketBarPipelineConfig {
     MarketStateDetectorConfigByProduct detector_by_product;
     std::int64_t tick_fingerprint_retention_ms{10'000};
     std::int32_t complete_five_minute_bars_to_reenable{2};
+    std::size_t recent_complete_state_limit{128};
 };
 
 struct MarketBarPipelineResult {
@@ -63,6 +65,9 @@ class MarketBarPipeline {
     bool IsOpeningSuppressed(const std::string& instrument_id) const;
     std::vector<std::string> SuppressedInstruments() const;
     void ResetInstrument(const std::string& instrument_id, bool preserve_detector_state = true);
+    std::vector<StateSnapshot7D> RecentCompleteStates(const std::string& instrument_id,
+                                                      std::int32_t timeframe_minutes = 5,
+                                                      std::size_t limit = 30) const;
 
    private:
     struct RecoveryState {
@@ -95,6 +100,7 @@ class MarketBarPipeline {
     std::unordered_map<std::string, EpochNanos> tick_fingerprint_seen_ts_;
     std::unordered_map<std::string, std::string> canonical_bar_fingerprints_;
     std::unordered_map<std::string, RecoveryState> recovery_by_instrument_;
+    std::unordered_map<std::string, std::deque<StateSnapshot7D>> recent_complete_states_;
 };
 
 }  // namespace quant_hft

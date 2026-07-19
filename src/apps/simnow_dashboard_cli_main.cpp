@@ -69,8 +69,27 @@ struct ProcessStatus {
 struct ContractStatus {
     std::string product;
     std::string instrument_id;
+    std::string candidate_instrument_id;
     std::string exchange_id;
+    std::string trading_day;
+    std::string cache_trading_day;
+    std::string phase{"legacy"};
     std::string selection_metric;
+    std::string last_error;
+    double lead_ratio{0.0};
+    std::int64_t generation{0};
+    std::int64_t eligible_count{0};
+    std::int64_t baseline_count{0};
+    std::int64_t broker_position{0};
+    std::int64_t broker_frozen{0};
+    std::int64_t active_open_orders{0};
+    std::int64_t active_close_orders{0};
+    std::int64_t warmup_observed_bars{0};
+    std::int64_t warmup_required_bars{0};
+    std::int64_t generation_rejections{0};
+    std::optional<std::int64_t> phase_age_seconds;
+    bool cache_trading_day_mismatch{false};
+    bool healthy{false};
     std::string path;
 };
 
@@ -842,6 +861,29 @@ std::optional<bool> ExtractJsonBool(const std::string& text, const std::string& 
     return std::nullopt;
 }
 
+std::optional<double> ExtractJsonDouble(const std::string& text, const std::string& key) {
+    const std::string marker = "\"" + key + "\"";
+    const auto key_pos = text.find(marker);
+    if (key_pos == std::string::npos) {
+        return std::nullopt;
+    }
+    auto colon = text.find(':', key_pos + marker.size());
+    if (colon == std::string::npos) {
+        return std::nullopt;
+    }
+    ++colon;
+    while (colon < text.size() && std::isspace(static_cast<unsigned char>(text[colon])) != 0) {
+        ++colon;
+    }
+    std::size_t parsed = 0;
+    try {
+        const double value = std::stod(text.substr(colon), &parsed);
+        return parsed == 0 ? std::nullopt : std::optional<double>(value);
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
 std::int64_t CountOccurrences(const std::string& text, const std::string& needle) {
     if (needle.empty()) {
         return 0;
@@ -1234,9 +1276,52 @@ std::vector<ContractStatus> DiscoverContracts(const std::string& ctp_instrument_
         }
         ContractStatus contract;
         contract.product = filename.substr(0, filename.size() - suffix.size());
-        contract.instrument_id = ExtractJsonString(*payload, "instrument_id");
+        contract.instrument_id = ExtractJsonString(*payload, "current_instrument_id");
+        if (contract.instrument_id.empty()) {
+            contract.instrument_id = ExtractJsonString(*payload, "instrument_id");
+        }
+        contract.candidate_instrument_id = ExtractJsonString(*payload, "candidate_instrument_id");
         contract.exchange_id = ExtractJsonString(*payload, "exchange_id");
+        contract.trading_day = ExtractJsonString(*payload, "trading_day");
+        contract.phase = ExtractJsonString(*payload, "phase");
+        if (contract.phase.empty()) {
+            contract.phase = "legacy";
+        }
         contract.selection_metric = ExtractJsonString(*payload, "selection_metric");
+        contract.last_error = ExtractJsonString(*payload, "last_error");
+        contract.lead_ratio = ExtractJsonDouble(*payload, "lead_ratio").value_or(0.0);
+        contract.generation = ExtractJsonInt(*payload, "generation").value_or(0);
+        contract.eligible_count = ExtractJsonInt(*payload, "eligible_count").value_or(0);
+        contract.baseline_count = ExtractJsonInt(*payload, "baseline_count").value_or(0);
+        contract.broker_position = ExtractJsonInt(*payload, "broker_position").value_or(0);
+        contract.broker_frozen = ExtractJsonInt(*payload, "broker_frozen").value_or(0);
+        contract.active_open_orders = ExtractJsonInt(*payload, "active_open_orders").value_or(0);
+        contract.active_close_orders = ExtractJsonInt(*payload, "active_close_orders").value_or(0);
+        contract.warmup_observed_bars =
+            ExtractJsonInt(*payload, "warmup_observed_bars").value_or(0);
+        contract.warmup_required_bars =
+            ExtractJsonInt(*payload, "warmup_required_bars").value_or(0);
+        contract.generation_rejections =
+            ExtractJsonInt(*payload, "generation_rejections").value_or(0);
+        const auto phase_started_ts_ns =
+            ExtractJsonInt(*payload, "phase_started_ts_ns").value_or(0);
+        if (phase_started_ts_ns > 0) {
+            contract.phase_age_seconds = std::max<std::int64_t>(
+                0, (UnixEpochNanosNow() - phase_started_ts_ns) / 1'000'000'000LL);
+        }
+        const fs::path cache_path = root / (contract.product + "_contracts.json");
+        if (const auto cache_payload = ReadTextFile(cache_path); cache_payload.has_value()) {
+            contract.cache_trading_day = ExtractJsonString(*cache_payload, "broker_trading_day");
+        }
+        contract.cache_trading_day_mismatch =
+            !contract.trading_day.empty() && contract.cache_trading_day != contract.trading_day;
+        const bool coverage_complete =
+            contract.eligible_count > 0 && contract.baseline_count == contract.eligible_count;
+        contract.healthy = !contract.instrument_id.empty() &&
+                           (contract.phase == "ready" || contract.phase == "legacy") &&
+                           !contract.cache_trading_day_mismatch &&
+                           (contract.phase == "legacy" || coverage_complete) &&
+                           contract.last_error.empty();
         contract.path = entry.path().string();
         contracts.push_back(std::move(contract));
     }
@@ -2331,8 +2416,30 @@ std::string RenderStateJson(const DashboardState& state) {
         const auto& item = state.contracts[i];
         out << "    {\"product\": " << JsonString(item.product)
             << ", \"instrument_id\": " << JsonString(item.instrument_id)
+            << ", \"candidate_instrument_id\": " << JsonString(item.candidate_instrument_id)
             << ", \"exchange_id\": " << JsonString(item.exchange_id)
+            << ", \"trading_day\": " << JsonString(item.trading_day)
+            << ", \"cache_trading_day\": " << JsonString(item.cache_trading_day)
+            << ", \"phase\": " << JsonString(item.phase)
+            << ", \"healthy\": " << (item.healthy ? "true" : "false")
+            << ", \"generation\": " << item.generation
             << ", \"selection_metric\": " << JsonString(item.selection_metric)
+            << ", \"lead_ratio\": " << item.lead_ratio
+            << ", \"eligible_count\": " << item.eligible_count
+            << ", \"baseline_count\": " << item.baseline_count
+            << ", \"broker_position\": " << item.broker_position
+            << ", \"broker_frozen\": " << item.broker_frozen
+            << ", \"active_open_orders\": " << item.active_open_orders
+            << ", \"active_close_orders\": " << item.active_close_orders
+            << ", \"warmup_observed_bars\": " << item.warmup_observed_bars
+            << ", \"warmup_required_bars\": " << item.warmup_required_bars
+            << ", \"generation_rejections\": " << item.generation_rejections
+            << ", \"phase_age_seconds\": "
+            << (item.phase_age_seconds.has_value() ? std::to_string(*item.phase_age_seconds)
+                                                   : "null")
+            << ", \"cache_trading_day_mismatch\": "
+            << (item.cache_trading_day_mismatch ? "true" : "false")
+            << ", \"last_error\": " << JsonString(item.last_error)
             << ", \"path\": " << JsonString(item.path) << "}";
         if (i + 1 < state.contracts.size()) {
             out << ',';
@@ -2889,6 +2996,38 @@ std::string RenderHtml(const DashboardState& state) {
     html << "</div><div class=\"section-note\">Active instruments: <code>"
          << HtmlEscape(active_instruments) << "</code></div></section>\n";
 
+    html << "<section class=\"panel span-12\"><div class=\"panel-head\"><div><h2>"
+            "Dominant Contract State</h2><div class=\"caption\">Structured flat-only switch "
+            "phase, broker drain and no-signal warmup progress.</div></div></div>";
+    html << "<div class=\"scroll\"><table><thead><tr><th>Product</th><th>Current</th>"
+            "<th>Candidate</th><th>Phase</th><th>Generation</th><th>Coverage</th>"
+            "<th>Broker Pos/Frozen</th><th>Active Open/Close</th><th>Warmup</th>"
+            "<th>Generation Rejects</th><th>Phase Age</th><th>Last Error</th></tr></thead><tbody>";
+    if (state.contracts.empty()) {
+        html << "<tr><td colspan=\"12\">No dominant-contract status files found</td></tr>";
+    } else {
+        for (const auto& contract : state.contracts) {
+            const std::string coverage = std::to_string(contract.baseline_count) + "/" +
+                                         std::to_string(contract.eligible_count);
+            const std::string broker = std::to_string(contract.broker_position) + "/" +
+                                       std::to_string(contract.broker_frozen);
+            const std::string orders = std::to_string(contract.active_open_orders) + "/" +
+                                       std::to_string(contract.active_close_orders);
+            const std::string warmup = std::to_string(contract.warmup_observed_bars) + "/" +
+                                       std::to_string(contract.warmup_required_bars);
+            html << "<tr><td>" << HtmlEscape(contract.product) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(contract.instrument_id)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(contract.candidate_instrument_id)) << "</td><td>"
+                 << RenderBadge(contract.phase, contract.healthy) << "</td><td>"
+                 << contract.generation << "</td><td>" << HtmlEscape(coverage) << "</td><td>"
+                 << HtmlEscape(broker) << "</td><td>" << HtmlEscape(orders) << "</td><td>"
+                 << HtmlEscape(warmup) << "</td><td>" << contract.generation_rejections
+                 << "</td><td>" << HtmlEscape(AgeText(contract.phase_age_seconds)) << "</td><td>"
+                 << HtmlEscape(EmptyAsDash(contract.last_error)) << "</td></tr>";
+        }
+    }
+    html << "</tbody></table></div></section>\n";
+
     // Panel 2: Current positions — strategy net positions persisted to disk.
     html << "<section class=\"panel span-12\"><div class=\"panel-head\"><div><h2>Current "
             "Positions</h2><div class=\"caption\">Strategy net positions from "
@@ -3248,9 +3387,13 @@ DashboardState CollectState(const DashboardOptions& options) {
     }
     const bool structured_readiness_healthy =
         !state.readiness.found || state.readiness.healthy || waiting_for_window;
+    const bool dominant_contracts_healthy =
+        state.contracts.empty() ||
+        std::all_of(state.contracts.begin(), state.contracts.end(),
+                    [](const auto& contract) { return contract.healthy; });
     state.live_healthy = state.process.healthy && structured_readiness_healthy &&
                          (waiting_for_window || market_healthy) && state.signal_monitor.healthy &&
-                         state.ctp_connection.healthy &&
+                         state.ctp_connection.healthy && dominant_contracts_healthy &&
                          state.ctp_order_flow.monitor_incidents == 0 &&
                          state.ctp_order_flow.ctp_submit_rejected == 0;
     state.overall_healthy = state.live_healthy;
@@ -3292,6 +3435,30 @@ DashboardState CollectState(const DashboardOptions& options) {
     for (const auto& item : state.markets) {
         if (!item.healthy && !waiting_for_window) {
             ++state.live_warning_count;
+        }
+    }
+    for (const auto& contract : state.contracts) {
+        if (!contract.healthy) {
+            ++state.live_warning_count;
+        }
+        if (contract.phase == "pending_flat" && contract.phase_age_seconds.has_value() &&
+            *contract.phase_age_seconds > 15 * 60) {
+            state.recent_alerts.push_back("dominant_contract_pending_flat_stalled product=" +
+                                          contract.product);
+        }
+        if (contract.phase == "warming" && contract.phase_age_seconds.has_value() &&
+            *contract.phase_age_seconds > 30 * 60) {
+            state.recent_alerts.push_back("dominant_contract_warming_stalled product=" +
+                                          contract.product);
+        }
+        if (contract.cache_trading_day_mismatch) {
+            state.recent_alerts.push_back("dominant_contract_cache_trading_day_mismatch product=" +
+                                          contract.product);
+        }
+        if (contract.generation_rejections > 0) {
+            state.recent_alerts.push_back(
+                "dominant_contract_generation_rejected product=" + contract.product +
+                " count=" + std::to_string(contract.generation_rejections));
         }
     }
     if (state.ctp_order_flow.wal_rejected > 0) {

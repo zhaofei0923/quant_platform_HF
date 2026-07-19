@@ -1,0 +1,23 @@
+[Unit]
+Description=Quant HFT SimNow Signal Execution Monitor (user unit)
+After=network-online.target quant-hft-simnow-trading.service
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+[Service]
+Type=simple
+WorkingDirectory=%h/workspace/quant_platform_HF
+Environment=QUANT_HFT_ENV=simnow
+Environment=QUANT_ROOT=%h/workspace/quant_platform_HF
+EnvironmentFile=-/etc/quant/platform.conf
+ExecStart=/bin/bash -lc ': "${QUANT_ROOT:?QUANT_ROOT is required}"; exec "${QUANT_ROOT}/scripts/ops/monitor_simnow_signal_execution.sh" --heartbeat-file "${QUANT_ROOT}/runtime/trading/monitor/simnow/heartbeat.json" --core-readiness-file "${QUANT_ROOT}/runtime/trading/monitor/simnow/readiness.json"'
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=15
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

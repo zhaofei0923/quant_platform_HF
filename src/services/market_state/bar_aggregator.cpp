@@ -5,12 +5,114 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <fstream>
 #include <limits>
+#include <sstream>
 #include <unordered_map>
 
 namespace quant_hft {
 namespace {
+
+constexpr EpochNanos kNanosPerMillisecond = 1'000'000;
+constexpr EpochNanos kNanosPerSecond = 1'000'000'000;
+constexpr EpochNanos kNanosPerMinute = 60 * kNanosPerSecond;
+constexpr std::int64_t kShanghaiUtcOffsetSeconds = 8 * 60 * 60;
+
+void SetPersistenceError(std::string* error, const std::string& value) {
+    if (error != nullptr) {
+        *error = value;
+    }
+}
+
+std::string FormatPersistenceDouble(double value) {
+    std::ostringstream out;
+    out.precision(17);
+    out << value;
+    return out.str();
+}
+
+const std::string* RequirePersistenceValue(const BarAggregator::PersistenceState& state,
+                                           const std::string& key, std::string* error) {
+    const auto it = state.find(key);
+    if (it == state.end()) {
+        SetPersistenceError(error, "missing bar aggregator state key: " + key);
+        return nullptr;
+    }
+    return &it->second;
+}
+
+template <typename Integer>
+bool ParsePersistenceInteger(const BarAggregator::PersistenceState& state, const std::string& key,
+                             Integer* out, std::string* error) {
+    const std::string* value = RequirePersistenceValue(state, key, error);
+    if (value == nullptr || out == nullptr) {
+        return false;
+    }
+    try {
+        std::size_t consumed = 0;
+        const long long parsed = std::stoll(*value, &consumed);
+        if (consumed != value->size()) {
+            throw std::invalid_argument("trailing characters");
+        }
+        *out = static_cast<Integer>(parsed);
+        return true;
+    } catch (...) {
+        SetPersistenceError(error, "invalid integer bar aggregator state key: " + key);
+        return false;
+    }
+}
+
+bool ParsePersistenceUnsigned(const BarAggregator::PersistenceState& state, const std::string& key,
+                              std::uint64_t* out, std::string* error) {
+    const std::string* value = RequirePersistenceValue(state, key, error);
+    if (value == nullptr || out == nullptr) {
+        return false;
+    }
+    try {
+        std::size_t consumed = 0;
+        const unsigned long long parsed = std::stoull(*value, &consumed);
+        if (consumed != value->size()) {
+            throw std::invalid_argument("trailing characters");
+        }
+        *out = static_cast<std::uint64_t>(parsed);
+        return true;
+    } catch (...) {
+        SetPersistenceError(error, "invalid unsigned bar aggregator state key: " + key);
+        return false;
+    }
+}
+
+bool ParsePersistenceDouble(const BarAggregator::PersistenceState& state, const std::string& key,
+                            double* out, std::string* error) {
+    const std::string* value = RequirePersistenceValue(state, key, error);
+    if (value == nullptr || out == nullptr) {
+        return false;
+    }
+    try {
+        std::size_t consumed = 0;
+        const double parsed = std::stod(*value, &consumed);
+        if (consumed != value->size()) {
+            throw std::invalid_argument("trailing characters");
+        }
+        *out = parsed;
+        return true;
+    } catch (...) {
+        SetPersistenceError(error, "invalid double bar aggregator state key: " + key);
+        return false;
+    }
+}
+
+bool ParsePersistenceBool(const BarAggregator::PersistenceState& state, const std::string& key,
+                          bool* out, std::string* error) {
+    const std::string* value = RequirePersistenceValue(state, key, error);
+    if (value == nullptr || out == nullptr || (*value != "0" && *value != "1")) {
+        SetPersistenceError(error, "invalid bool bar aggregator state key: " + key);
+        return false;
+    }
+    *out = *value == "1";
+    return true;
+}
 
 bool IsFinitePositive(double value) { return std::isfinite(value) && value > 0.0; }
 
@@ -211,6 +313,48 @@ bool ParseSecondOfMinute(const std::string& update_time, int* second) {
     return *second >= 0 && *second <= 59;
 }
 
+bool ParsePhysicalTimestamp(const std::string& action_day, const std::string& update_time,
+                            std::int32_t update_millisec, EpochNanos* out) {
+    if (out == nullptr || action_day.size() != 8 || update_time.size() < 5) {
+        return false;
+    }
+    for (char ch : action_day) {
+        if (!std::isdigit(static_cast<unsigned char>(ch))) {
+            return false;
+        }
+    }
+    int hour = 0;
+    int minute = 0;
+    if (!std::isdigit(static_cast<unsigned char>(update_time[0])) ||
+        !std::isdigit(static_cast<unsigned char>(update_time[1])) || update_time[2] != ':' ||
+        !std::isdigit(static_cast<unsigned char>(update_time[3])) ||
+        !std::isdigit(static_cast<unsigned char>(update_time[4]))) {
+        return false;
+    }
+    hour = (update_time[0] - '0') * 10 + (update_time[1] - '0');
+    minute = (update_time[3] - '0') * 10 + (update_time[4] - '0');
+    int second = 0;
+    if (!ParseSecondOfMinute(update_time, &second) || hour > 23 || minute > 59) {
+        return false;
+    }
+
+    std::tm local_tm{};
+    local_tm.tm_year = std::stoi(action_day.substr(0, 4)) - 1900;
+    local_tm.tm_mon = std::stoi(action_day.substr(4, 2)) - 1;
+    local_tm.tm_mday = std::stoi(action_day.substr(6, 2));
+    local_tm.tm_hour = hour;
+    local_tm.tm_min = minute;
+    local_tm.tm_sec = second;
+    const std::time_t local_as_utc = timegm(&local_tm);
+    if (local_as_utc <= 0) {
+        return false;
+    }
+    const auto millis = std::clamp<std::int32_t>(update_millisec, 0, 999);
+    *out = (static_cast<EpochNanos>(local_as_utc) - kShanghaiUtcOffsetSeconds) * kNanosPerSecond +
+           static_cast<EpochNanos>(millis) * kNanosPerMillisecond;
+    return true;
+}
+
 int SessionOrderKey(const BarAggregator::SessionInterval& interval) {
     if (interval.start_minute > interval.end_minute || interval.start_minute >= 18 * 60) {
         return interval.start_minute - 24 * 60;
@@ -343,10 +487,15 @@ bool BarAggregator::ShouldProcessSnapshot(const MarketSnapshot& snapshot) const 
         return false;
     }
 
-    if (config_.filter_non_trading_ticks &&
-        !IsInTradingSession(ResolveExchangeId(snapshot), snapshot.instrument_id,
-                            ResolveProductCode(snapshot), snapshot.update_time)) {
-        return false;
+    if (config_.filter_non_trading_ticks) {
+        const std::string exchange_id = ResolveExchangeId(snapshot);
+        const std::string product = ResolveProductCode(snapshot);
+        if (!IsInTradingSession(exchange_id, snapshot.instrument_id, product,
+                                snapshot.update_time) &&
+            !IsExactSessionEndTime(exchange_id, snapshot.instrument_id, product,
+                                   snapshot.update_time)) {
+            return false;
+        }
     }
 
     return true;
@@ -354,6 +503,9 @@ bool BarAggregator::ShouldProcessSnapshot(const MarketSnapshot& snapshot) const 
 
 std::vector<BarSnapshot> BarAggregator::OnMarketSnapshot(const MarketSnapshot& snapshot) {
     std::vector<BarSnapshot> emitted;
+    if (!ShouldProcessSnapshot(snapshot)) {
+        return emitted;
+    }
     const auto exchange_id = ResolveExchangeId(snapshot);
     const auto trading_day = ResolveTradingDay(snapshot);
     const auto action_day = ResolveActionDay(snapshot);
@@ -363,87 +515,102 @@ std::vector<BarSnapshot> BarAggregator::OnMarketSnapshot(const MarketSnapshot& s
         IsExactSessionEndTime(exchange_id, snapshot.instrument_id, ResolveProductCode(snapshot),
                               snapshot.update_time);
 
-    if (!ShouldProcessSnapshot(snapshot)) {
-        if (!is_exact_session_end) {
-            return emitted;
-        }
-        std::lock_guard<std::mutex> lock(mutex_);
-        PruneClosedBoundaryMinutesLocked(snapshot.instrument_id, trading_day);
-        const std::string closed_boundary_key =
-            BuildClosedBoundaryMinuteKey(snapshot.instrument_id, minute_key);
-        if (!closed_boundary_key.empty() &&
-            closed_session_boundary_minutes_.find(closed_boundary_key) !=
-                closed_session_boundary_minutes_.end()) {
-            return emitted;
-        }
-        // Flush the in-progress bar (e.g. emit the "14:59" bar when 15:00:00 arrives).
-        auto bucket_it = buckets_.find(snapshot.instrument_id);
-        if (bucket_it != buckets_.end() && bucket_it->second.initialized) {
-            emitted.push_back(bucket_it->second.bar);
-            buckets_.erase(bucket_it);
-        }
-        // Start a new bar for the closing-auction tick itself (e.g. "15:00").
-        // This bar will be flushed by FlushSessionEndBars once the grace period elapses,
-        // because IsLastMinuteInInterval now recognises end_minute as a session-end minute.
-        if (!minute_key.empty()) {
-            auto& closing_bucket = buckets_[snapshot.instrument_id];
-            ResetBucketLocked(&closing_bucket, snapshot, exchange_id, trading_day, action_day,
-                              minute_key);
-        }
-        if (!closed_boundary_key.empty()) {
-            closed_session_boundary_minutes_.insert(closed_boundary_key);
-        }
+    if (minute_key.empty()) {
         return emitted;
     }
 
-    if (minute_key.empty()) {
+    const EpochNanos event_ts_ns = ResolveEventTimestamp(snapshot);
+    const EpochNanos period_start_ts_ns = ResolvePhysicalMinuteStart(snapshot);
+    if (event_ts_ns <= 0 || period_start_ts_ns <= 0) {
         return emitted;
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
     PruneClosedBoundaryMinutesLocked(snapshot.instrument_id, trading_day);
 
-    auto& bucket = buckets_[snapshot.instrument_id];
+    const std::string finalized_key =
+        BuildClosedBoundaryMinuteKey(snapshot.instrument_id, minute_key);
+    if (finalized_minute_keys_.find(finalized_key) != finalized_minute_keys_.end()) {
+        return emitted;
+    }
+
+    auto& instrument_buckets = buckets_[snapshot.instrument_id];
+    auto& bucket = instrument_buckets[period_start_ts_ns];
+    const std::uint64_t arrival_seq = next_arrival_seq_++;
     if (!bucket.initialized) {
-        ResetBucketLocked(&bucket, snapshot, exchange_id, trading_day, action_day, minute_key);
-        return emitted;
+        ResetBucketLocked(&bucket, snapshot, exchange_id, trading_day, action_day, minute_key,
+                          event_ts_ns, period_start_ts_ns, is_exact_session_end, arrival_seq);
+    } else {
+        const auto normalized_volume = std::max<std::int64_t>(0, snapshot.volume);
+        bucket.max_cumulative_volume = std::max(bucket.max_cumulative_volume, normalized_volume);
+        bucket.bar.exchange_id = exchange_id.empty() ? bucket.bar.exchange_id : exchange_id;
+        bucket.bar.trading_day = trading_day;
+        bucket.bar.action_day = action_day;
+        bucket.bar.high = std::max(bucket.bar.high, snapshot.last_price);
+        bucket.bar.low = std::min(bucket.bar.low, snapshot.last_price);
+        if (event_ts_ns < bucket.first_event_ts_ns ||
+            (event_ts_ns == bucket.first_event_ts_ns && arrival_seq < bucket.first_arrival_seq)) {
+            bucket.first_event_ts_ns = event_ts_ns;
+            bucket.first_arrival_seq = arrival_seq;
+            bucket.first_cumulative_volume = normalized_volume;
+            bucket.bar.open = snapshot.last_price;
+            bucket.bar.analysis_open = snapshot.last_price;
+        }
+        if (event_ts_ns > bucket.last_event_ts_ns ||
+            (event_ts_ns == bucket.last_event_ts_ns && arrival_seq > bucket.last_arrival_seq)) {
+            bucket.last_event_ts_ns = event_ts_ns;
+            bucket.last_arrival_seq = arrival_seq;
+            bucket.bar.close = snapshot.last_price;
+            bucket.bar.analysis_close = snapshot.last_price;
+            bucket.bar.ts_ns = event_ts_ns;
+        }
+        bucket.bar.analysis_high = bucket.bar.high;
+        bucket.bar.analysis_low = bucket.bar.low;
     }
 
-    const auto normalized_volume = std::max<std::int64_t>(0, snapshot.volume);
-    const auto volume_delta = normalized_volume >= bucket.last_cumulative_volume
-                                  ? normalized_volume - bucket.last_cumulative_volume
-                                  : 0;
-    bucket.last_cumulative_volume = normalized_volume;
-
-    if (bucket.minute_key != minute_key) {
-        emitted.push_back(bucket.bar);
-        ResetBucketLocked(&bucket, snapshot, exchange_id, trading_day, action_day, minute_key);
+    auto& max_event_ts = max_event_ts_by_instrument_[snapshot.instrument_id];
+    max_event_ts = std::max(max_event_ts, event_ts_ns);
+    const EpochNanos lateness_ns =
+        static_cast<EpochNanos>(std::max(0, config_.allowed_lateness_ms)) * kNanosPerMillisecond;
+    EpochNanos watermark_ts_ns = 0;
+    if (config_.is_backtest_mode) {
+        watermark_ts_ns = max_event_ts - lateness_ns;
+    } else if (snapshot.recv_ts_ns > 0) {
+        // Live finality follows trusted local receipt time, never a possibly corrupt/future
+        // exchange event timestamp. A timer-driven AdvanceWatermark remains the primary path.
+        watermark_ts_ns = snapshot.recv_ts_ns - lateness_ns;
+    } else {
         return emitted;
     }
-
-    bucket.bar.exchange_id = exchange_id.empty() ? bucket.bar.exchange_id : exchange_id;
-    bucket.bar.trading_day = trading_day;
-    bucket.bar.action_day = action_day;
-    bucket.bar.high = std::max(bucket.bar.high, snapshot.last_price);
-    bucket.bar.low = std::min(bucket.bar.low, snapshot.last_price);
-    bucket.bar.close = snapshot.last_price;
-    bucket.bar.analysis_high = bucket.bar.high;
-    bucket.bar.analysis_low = bucket.bar.low;
-    bucket.bar.analysis_close = bucket.bar.close;
-    bucket.bar.analysis_price_offset = 0.0;
-    bucket.bar.volume += volume_delta;
-    bucket.bar.ts_ns = ResolveTimestamp(snapshot);
+    emitted = FinalizeReadyLocked(watermark_ts_ns,
+                                  snapshot.recv_ts_ns > 0 ? snapshot.recv_ts_ns : NowEpochNanos(),
+                                  &snapshot.instrument_id);
     return emitted;
+}
+
+std::vector<BarSnapshot> BarAggregator::AdvanceWatermark(EpochNanos now_ts_ns) {
+    if (now_ts_ns <= 0) {
+        return {};
+    }
+    const EpochNanos lateness_ns =
+        static_cast<EpochNanos>(std::max(0, config_.allowed_lateness_ms)) * kNanosPerMillisecond;
+    std::lock_guard<std::mutex> lock(mutex_);
+    return FinalizeReadyLocked(now_ts_ns - lateness_ns, now_ts_ns);
 }
 
 std::vector<BarSnapshot> BarAggregator::Flush() {
     std::vector<BarSnapshot> bars;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        bars.reserve(buckets_.size());
-        for (const auto& entry : buckets_) {
-            if (entry.second.initialized) {
-                bars.push_back(entry.second.bar);
+        for (auto& [instrument_id, instrument_buckets] : buckets_) {
+            for (auto& [period_start, bucket] : instrument_buckets) {
+                (void)period_start;
+                if (bucket.initialized) {
+                    BarSnapshot bar = FinalizeBucketLocked(instrument_id, &bucket, NowEpochNanos());
+                    bar.is_complete = false;
+                    bar.strategy_eligible = false;
+                    bars.push_back(std::move(bar));
+                }
             }
         }
         buckets_.clear();
@@ -458,62 +625,353 @@ std::vector<BarSnapshot> BarAggregator::Flush() {
     return bars;
 }
 
+void BarAggregator::DiscardPending() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    buckets_.clear();
+    max_event_ts_by_instrument_.clear();
+    closed_session_boundary_minutes_.clear();
+}
+
+bool BarAggregator::SaveState(PersistenceState* out, std::string* error) const {
+    if (out == nullptr) {
+        SetPersistenceError(error, "bar aggregator state output is null");
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    out->clear();
+    (*out)["version"] = "2";
+    (*out)["next_arrival_seq"] = std::to_string(next_arrival_seq_);
+
+    std::size_t bucket_count = 0;
+    for (const auto& [instrument_id, instrument_buckets] : buckets_) {
+        (void)instrument_id;
+        bucket_count += instrument_buckets.size();
+    }
+    (*out)["buckets.count"] = std::to_string(bucket_count);
+    std::size_t bucket_index = 0;
+    for (const auto& [instrument_id, instrument_buckets] : buckets_) {
+        for (const auto& [period_start, bucket] : instrument_buckets) {
+            const std::string prefix = "buckets." + std::to_string(bucket_index++);
+            (*out)[prefix + ".instrument_id"] = instrument_id;
+            (*out)[prefix + ".period_start_key"] = std::to_string(period_start);
+            (*out)[prefix + ".initialized"] = bucket.initialized ? "1" : "0";
+            (*out)[prefix + ".minute_key"] = bucket.minute_key;
+            (*out)[prefix + ".first_cumulative_volume"] =
+                std::to_string(bucket.first_cumulative_volume);
+            (*out)[prefix + ".max_cumulative_volume"] =
+                std::to_string(bucket.max_cumulative_volume);
+            (*out)[prefix + ".first_event_ts_ns"] = std::to_string(bucket.first_event_ts_ns);
+            (*out)[prefix + ".last_event_ts_ns"] = std::to_string(bucket.last_event_ts_ns);
+            (*out)[prefix + ".first_arrival_seq"] = std::to_string(bucket.first_arrival_seq);
+            (*out)[prefix + ".last_arrival_seq"] = std::to_string(bucket.last_arrival_seq);
+            (*out)[prefix + ".period_start_ts_ns"] = std::to_string(bucket.period_start_ts_ns);
+            (*out)[prefix + ".period_end_ts_ns"] = std::to_string(bucket.period_end_ts_ns);
+
+            const std::string bar_prefix = prefix + ".bar";
+            const BarSnapshot& bar = bucket.bar;
+            (*out)[bar_prefix + ".instrument_id"] = bar.instrument_id;
+            (*out)[bar_prefix + ".exchange_id"] = bar.exchange_id;
+            (*out)[bar_prefix + ".trading_day"] = bar.trading_day;
+            (*out)[bar_prefix + ".action_day"] = bar.action_day;
+            (*out)[bar_prefix + ".minute"] = bar.minute;
+            (*out)[bar_prefix + ".open"] = FormatPersistenceDouble(bar.open);
+            (*out)[bar_prefix + ".high"] = FormatPersistenceDouble(bar.high);
+            (*out)[bar_prefix + ".low"] = FormatPersistenceDouble(bar.low);
+            (*out)[bar_prefix + ".close"] = FormatPersistenceDouble(bar.close);
+            (*out)[bar_prefix + ".analysis_open"] = FormatPersistenceDouble(bar.analysis_open);
+            (*out)[bar_prefix + ".analysis_high"] = FormatPersistenceDouble(bar.analysis_high);
+            (*out)[bar_prefix + ".analysis_low"] = FormatPersistenceDouble(bar.analysis_low);
+            (*out)[bar_prefix + ".analysis_close"] = FormatPersistenceDouble(bar.analysis_close);
+            (*out)[bar_prefix + ".analysis_price_offset"] =
+                FormatPersistenceDouble(bar.analysis_price_offset);
+            (*out)[bar_prefix + ".volume"] = std::to_string(bar.volume);
+            (*out)[bar_prefix + ".ts_ns"] = std::to_string(bar.ts_ns);
+            (*out)[bar_prefix + ".period_end_ts_ns"] = std::to_string(bar.period_end_ts_ns);
+            (*out)[bar_prefix + ".finalized_ts_ns"] = std::to_string(bar.finalized_ts_ns);
+            (*out)[bar_prefix + ".expected_source_bars"] = std::to_string(bar.expected_source_bars);
+            (*out)[bar_prefix + ".observed_source_bars"] = std::to_string(bar.observed_source_bars);
+            (*out)[bar_prefix + ".is_complete"] = bar.is_complete ? "1" : "0";
+            (*out)[bar_prefix + ".is_session_endpoint"] = bar.is_session_endpoint ? "1" : "0";
+            (*out)[bar_prefix + ".strategy_eligible"] = bar.strategy_eligible ? "1" : "0";
+            (*out)[bar_prefix + ".volume_complete"] = bar.volume_complete ? "1" : "0";
+            (*out)[bar_prefix + ".has_conflict"] = bar.has_conflict ? "1" : "0";
+            (*out)[bar_prefix + ".is_recovery_replay"] = bar.is_recovery_replay ? "1" : "0";
+        }
+    }
+
+    (*out)["volume_states.count"] = std::to_string(volume_states_.size());
+    std::size_t volume_index = 0;
+    for (const auto& [instrument_id, volume] : volume_states_) {
+        const std::string prefix = "volume_states." + std::to_string(volume_index++);
+        (*out)[prefix + ".instrument_id"] = instrument_id;
+        (*out)[prefix + ".trading_day"] = volume.trading_day;
+        (*out)[prefix + ".initialized"] = volume.initialized ? "1" : "0";
+        (*out)[prefix + ".baseline_complete"] = volume.baseline_complete ? "1" : "0";
+        (*out)[prefix + ".cumulative_volume"] = std::to_string(volume.cumulative_volume);
+    }
+
+    (*out)["max_events.count"] = std::to_string(max_event_ts_by_instrument_.size());
+    std::size_t max_event_index = 0;
+    for (const auto& [instrument_id, ts_ns] : max_event_ts_by_instrument_) {
+        const std::string prefix = "max_events." + std::to_string(max_event_index++);
+        (*out)[prefix + ".instrument_id"] = instrument_id;
+        (*out)[prefix + ".ts_ns"] = std::to_string(ts_ns);
+    }
+
+    (*out)["finalized.count"] = std::to_string(finalized_minute_keys_.size());
+    std::size_t finalized_index = 0;
+    for (const auto& key : finalized_minute_keys_) {
+        (*out)["finalized." + std::to_string(finalized_index++)] = key;
+    }
+    (*out)["closed_boundaries.count"] = std::to_string(closed_session_boundary_minutes_.size());
+    std::size_t boundary_index = 0;
+    for (const auto& key : closed_session_boundary_minutes_) {
+        (*out)["closed_boundaries." + std::to_string(boundary_index++)] = key;
+    }
+    return true;
+}
+
+bool BarAggregator::LoadState(const PersistenceState& state, std::string* error) {
+    const std::string* version = RequirePersistenceValue(state, "version", error);
+    if (version == nullptr || *version != "2") {
+        SetPersistenceError(error, "unsupported bar aggregator state version");
+        return false;
+    }
+
+    std::uint64_t loaded_next_arrival_seq = 1;
+    if (!ParsePersistenceUnsigned(state, "next_arrival_seq", &loaded_next_arrival_seq, error)) {
+        return false;
+    }
+    std::unordered_map<std::string, std::map<EpochNanos, MinuteBucket>> loaded_buckets;
+    std::int64_t bucket_count = 0;
+    if (!ParsePersistenceInteger(state, "buckets.count", &bucket_count, error) ||
+        bucket_count < 0) {
+        return false;
+    }
+    for (std::int64_t index = 0; index < bucket_count; ++index) {
+        const std::string prefix = "buckets." + std::to_string(index);
+        const std::string* instrument_id =
+            RequirePersistenceValue(state, prefix + ".instrument_id", error);
+        const std::string* minute_key =
+            RequirePersistenceValue(state, prefix + ".minute_key", error);
+        if (instrument_id == nullptr || instrument_id->empty() || minute_key == nullptr) {
+            return false;
+        }
+        EpochNanos map_period_start = 0;
+        MinuteBucket bucket;
+        if (!ParsePersistenceInteger(state, prefix + ".period_start_key", &map_period_start,
+                                     error) ||
+            !ParsePersistenceBool(state, prefix + ".initialized", &bucket.initialized, error) ||
+            !ParsePersistenceInteger(state, prefix + ".first_cumulative_volume",
+                                     &bucket.first_cumulative_volume, error) ||
+            !ParsePersistenceInteger(state, prefix + ".max_cumulative_volume",
+                                     &bucket.max_cumulative_volume, error) ||
+            !ParsePersistenceInteger(state, prefix + ".first_event_ts_ns",
+                                     &bucket.first_event_ts_ns, error) ||
+            !ParsePersistenceInteger(state, prefix + ".last_event_ts_ns", &bucket.last_event_ts_ns,
+                                     error) ||
+            !ParsePersistenceUnsigned(state, prefix + ".first_arrival_seq",
+                                      &bucket.first_arrival_seq, error) ||
+            !ParsePersistenceUnsigned(state, prefix + ".last_arrival_seq", &bucket.last_arrival_seq,
+                                      error) ||
+            !ParsePersistenceInteger(state, prefix + ".period_start_ts_ns",
+                                     &bucket.period_start_ts_ns, error) ||
+            !ParsePersistenceInteger(state, prefix + ".period_end_ts_ns", &bucket.period_end_ts_ns,
+                                     error)) {
+            return false;
+        }
+        bucket.minute_key = *minute_key;
+
+        const std::string bar_prefix = prefix + ".bar";
+        const std::string* bar_instrument =
+            RequirePersistenceValue(state, bar_prefix + ".instrument_id", error);
+        const std::string* exchange_id =
+            RequirePersistenceValue(state, bar_prefix + ".exchange_id", error);
+        const std::string* trading_day =
+            RequirePersistenceValue(state, bar_prefix + ".trading_day", error);
+        const std::string* action_day =
+            RequirePersistenceValue(state, bar_prefix + ".action_day", error);
+        const std::string* bar_minute =
+            RequirePersistenceValue(state, bar_prefix + ".minute", error);
+        if (bar_instrument == nullptr || exchange_id == nullptr || trading_day == nullptr ||
+            action_day == nullptr || bar_minute == nullptr) {
+            return false;
+        }
+        BarSnapshot& bar = bucket.bar;
+        bar.instrument_id = *bar_instrument;
+        bar.exchange_id = *exchange_id;
+        bar.trading_day = *trading_day;
+        bar.action_day = *action_day;
+        bar.minute = *bar_minute;
+        if (!ParsePersistenceDouble(state, bar_prefix + ".open", &bar.open, error) ||
+            !ParsePersistenceDouble(state, bar_prefix + ".high", &bar.high, error) ||
+            !ParsePersistenceDouble(state, bar_prefix + ".low", &bar.low, error) ||
+            !ParsePersistenceDouble(state, bar_prefix + ".close", &bar.close, error) ||
+            !ParsePersistenceDouble(state, bar_prefix + ".analysis_open", &bar.analysis_open,
+                                    error) ||
+            !ParsePersistenceDouble(state, bar_prefix + ".analysis_high", &bar.analysis_high,
+                                    error) ||
+            !ParsePersistenceDouble(state, bar_prefix + ".analysis_low", &bar.analysis_low,
+                                    error) ||
+            !ParsePersistenceDouble(state, bar_prefix + ".analysis_close", &bar.analysis_close,
+                                    error) ||
+            !ParsePersistenceDouble(state, bar_prefix + ".analysis_price_offset",
+                                    &bar.analysis_price_offset, error) ||
+            !ParsePersistenceInteger(state, bar_prefix + ".volume", &bar.volume, error) ||
+            !ParsePersistenceInteger(state, bar_prefix + ".ts_ns", &bar.ts_ns, error) ||
+            !ParsePersistenceInteger(state, bar_prefix + ".period_end_ts_ns", &bar.period_end_ts_ns,
+                                     error) ||
+            !ParsePersistenceInteger(state, bar_prefix + ".finalized_ts_ns", &bar.finalized_ts_ns,
+                                     error) ||
+            !ParsePersistenceInteger(state, bar_prefix + ".expected_source_bars",
+                                     &bar.expected_source_bars, error) ||
+            !ParsePersistenceInteger(state, bar_prefix + ".observed_source_bars",
+                                     &bar.observed_source_bars, error) ||
+            !ParsePersistenceBool(state, bar_prefix + ".is_complete", &bar.is_complete, error) ||
+            !ParsePersistenceBool(state, bar_prefix + ".is_session_endpoint",
+                                  &bar.is_session_endpoint, error) ||
+            !ParsePersistenceBool(state, bar_prefix + ".strategy_eligible", &bar.strategy_eligible,
+                                  error) ||
+            !ParsePersistenceBool(state, bar_prefix + ".volume_complete", &bar.volume_complete,
+                                  error) ||
+            !ParsePersistenceBool(state, bar_prefix + ".has_conflict", &bar.has_conflict, error) ||
+            !ParsePersistenceBool(state, bar_prefix + ".is_recovery_replay",
+                                  &bar.is_recovery_replay, error)) {
+            return false;
+        }
+        loaded_buckets[*instrument_id][map_period_start] = std::move(bucket);
+    }
+
+    std::unordered_map<std::string, InstrumentVolumeState> loaded_volume_states;
+    std::int64_t volume_count = 0;
+    if (!ParsePersistenceInteger(state, "volume_states.count", &volume_count, error) ||
+        volume_count < 0) {
+        return false;
+    }
+    for (std::int64_t index = 0; index < volume_count; ++index) {
+        const std::string prefix = "volume_states." + std::to_string(index);
+        const std::string* instrument_id =
+            RequirePersistenceValue(state, prefix + ".instrument_id", error);
+        const std::string* trading_day =
+            RequirePersistenceValue(state, prefix + ".trading_day", error);
+        if (instrument_id == nullptr || instrument_id->empty() || trading_day == nullptr) {
+            return false;
+        }
+        InstrumentVolumeState volume;
+        volume.trading_day = *trading_day;
+        if (!ParsePersistenceBool(state, prefix + ".initialized", &volume.initialized, error) ||
+            !ParsePersistenceBool(state, prefix + ".baseline_complete", &volume.baseline_complete,
+                                  error) ||
+            !ParsePersistenceInteger(state, prefix + ".cumulative_volume",
+                                     &volume.cumulative_volume, error)) {
+            return false;
+        }
+        loaded_volume_states[*instrument_id] = std::move(volume);
+    }
+
+    std::unordered_map<std::string, EpochNanos> loaded_max_events;
+    std::int64_t max_event_count = 0;
+    if (!ParsePersistenceInteger(state, "max_events.count", &max_event_count, error) ||
+        max_event_count < 0) {
+        return false;
+    }
+    for (std::int64_t index = 0; index < max_event_count; ++index) {
+        const std::string prefix = "max_events." + std::to_string(index);
+        const std::string* instrument_id =
+            RequirePersistenceValue(state, prefix + ".instrument_id", error);
+        EpochNanos ts_ns = 0;
+        if (instrument_id == nullptr || instrument_id->empty() ||
+            !ParsePersistenceInteger(state, prefix + ".ts_ns", &ts_ns, error)) {
+            return false;
+        }
+        loaded_max_events[*instrument_id] = ts_ns;
+    }
+
+    auto load_string_set = [&](const std::string& prefix, std::unordered_set<std::string>* output) {
+        std::int64_t count = 0;
+        if (!ParsePersistenceInteger(state, prefix + ".count", &count, error) || count < 0) {
+            return false;
+        }
+        for (std::int64_t index = 0; index < count; ++index) {
+            const std::string* value =
+                RequirePersistenceValue(state, prefix + "." + std::to_string(index), error);
+            if (value == nullptr) {
+                return false;
+            }
+            output->insert(*value);
+        }
+        return true;
+    };
+    std::unordered_set<std::string> loaded_finalized;
+    std::unordered_set<std::string> loaded_closed_boundaries;
+    if (!load_string_set("finalized", &loaded_finalized) ||
+        !load_string_set("closed_boundaries", &loaded_closed_boundaries)) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    buckets_ = std::move(loaded_buckets);
+    volume_states_ = std::move(loaded_volume_states);
+    max_event_ts_by_instrument_ = std::move(loaded_max_events);
+    finalized_minute_keys_ = std::move(loaded_finalized);
+    closed_session_boundary_minutes_ = std::move(loaded_closed_boundaries);
+    next_arrival_seq_ = std::max<std::uint64_t>(1, loaded_next_arrival_seq);
+    return true;
+}
+
+bool BarAggregator::IsFinalizedSnapshot(const MarketSnapshot& snapshot) const {
+    const std::string trading_day = ResolveTradingDay(snapshot);
+    const std::string minute_key = BuildMinuteKey(trading_day, snapshot.update_time);
+    const std::string finalized_key =
+        BuildClosedBoundaryMinuteKey(snapshot.instrument_id, minute_key);
+    if (finalized_key.empty()) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    return finalized_minute_keys_.find(finalized_key) != finalized_minute_keys_.end();
+}
+
 std::vector<BarSnapshot> BarAggregator::FlushFinished(
     const std::unordered_map<std::string, EpochNanos>& instrument_last_tick_ts_ns,
     EpochNanos cutoff_ts_ns) {
-    std::vector<BarSnapshot> bars;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        for (auto it = buckets_.begin(); it != buckets_.end();) {
-            if (!it->second.initialized) {
-                it = buckets_.erase(it);
-                continue;
-            }
-            const auto last_tick_it = instrument_last_tick_ts_ns.find(it->first);
-            if (last_tick_it == instrument_last_tick_ts_ns.end() ||
-                last_tick_it->second > cutoff_ts_ns) {
-                ++it;
-                continue;
-            }
-            bars.push_back(it->second.bar);
-            it = buckets_.erase(it);
-        }
-    }
-    std::sort(bars.begin(), bars.end(), [](const BarSnapshot& lhs, const BarSnapshot& rhs) {
-        if (lhs.instrument_id != rhs.instrument_id) {
-            return lhs.instrument_id < rhs.instrument_id;
-        }
-        return lhs.minute < rhs.minute;
-    });
-    return bars;
+    (void)instrument_last_tick_ts_ns;
+    return AdvanceWatermark(cutoff_ts_ns +
+                            static_cast<EpochNanos>(std::max(0, config_.allowed_lateness_ms)) *
+                                kNanosPerMillisecond);
 }
 
 std::vector<BarSnapshot> BarAggregator::FlushSessionEndBars(
     const std::unordered_map<std::string, EpochNanos>& instrument_last_tick_ts_ns,
     EpochNanos cutoff_ts_ns) {
     std::vector<BarSnapshot> bars;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        for (auto it = buckets_.begin(); it != buckets_.end();) {
-            if (!it->second.initialized) {
-                it = buckets_.erase(it);
+    std::lock_guard<std::mutex> lock(mutex_);
+    const EpochNanos lateness_ns =
+        static_cast<EpochNanos>(std::max(0, config_.allowed_lateness_ms)) * kNanosPerMillisecond;
+    const EpochNanos watermark_ts_ns = cutoff_ts_ns - lateness_ns;
+    for (const auto& [instrument_id, last_tick_ts_ns] : instrument_last_tick_ts_ns) {
+        if (last_tick_ts_ns > cutoff_ts_ns) {
+            continue;
+        }
+        auto instrument_it = buckets_.find(instrument_id);
+        if (instrument_it == buckets_.end()) {
+            continue;
+        }
+        auto& instrument_buckets = instrument_it->second;
+        for (auto bucket_it = instrument_buckets.begin(); bucket_it != instrument_buckets.end();) {
+            if (!bucket_it->second.initialized ||
+                bucket_it->second.period_end_ts_ns > watermark_ts_ns ||
+                !IsSessionEndMinuteKey(bucket_it->second.bar.exchange_id,
+                                       bucket_it->second.bar.instrument_id,
+                                       bucket_it->second.bar.minute)) {
+                ++bucket_it;
                 continue;
             }
-            const auto last_tick_it = instrument_last_tick_ts_ns.find(it->first);
-            if (last_tick_it == instrument_last_tick_ts_ns.end() ||
-                last_tick_it->second > cutoff_ts_ns ||
-                !IsSessionEndMinuteKey(it->second.bar.exchange_id, it->second.bar.instrument_id,
-                                       it->second.bar.minute)) {
-                ++it;
-                continue;
-            }
-            bars.push_back(it->second.bar);
-            const std::string closed_boundary_key =
-                BuildClosedBoundaryMinuteKey(it->second.bar.instrument_id, it->second.bar.minute);
-            if (!closed_boundary_key.empty()) {
-                closed_session_boundary_minutes_.insert(closed_boundary_key);
-            }
-            it = buckets_.erase(it);
+            bars.push_back(
+                FinalizeBucketLocked(instrument_id, &bucket_it->second, NowEpochNanos()));
+            bucket_it = instrument_buckets.erase(bucket_it);
+        }
+        if (instrument_buckets.empty()) {
+            buckets_.erase(instrument_it);
         }
     }
     std::sort(bars.begin(), bars.end(), [](const BarSnapshot& lhs, const BarSnapshot& rhs) {
@@ -531,6 +989,8 @@ void BarAggregator::ResetInstrument(const std::string& instrument_id) {
     }
     std::lock_guard<std::mutex> lock(mutex_);
     buckets_.erase(instrument_id);
+    volume_states_.erase(instrument_id);
+    max_event_ts_by_instrument_.erase(instrument_id);
     EraseClosedBoundaryMinutesLocked(instrument_id);
 }
 
@@ -750,10 +1210,7 @@ std::string BarAggregator::ResolveTradingDay(const MarketSnapshot& snapshot) {
 }
 
 std::string BarAggregator::ResolveActionDay(const MarketSnapshot& snapshot) {
-    if (!snapshot.action_day.empty()) {
-        return snapshot.action_day;
-    }
-    return snapshot.trading_day;
+    return snapshot.action_day;
 }
 
 std::string BarAggregator::BuildMinuteKey(const std::string& trading_day,
@@ -762,6 +1219,29 @@ std::string BarAggregator::BuildMinuteKey(const std::string& trading_day,
         return "";
     }
     return trading_day + " " + update_time.substr(0, 5);
+}
+
+EpochNanos BarAggregator::ResolveEventTimestamp(const MarketSnapshot& snapshot) {
+    if (snapshot.exchange_ts_ns > 0) {
+        return snapshot.exchange_ts_ns;
+    }
+    EpochNanos parsed = 0;
+    if (ParsePhysicalTimestamp(ResolveActionDay(snapshot), snapshot.update_time,
+                               snapshot.update_millisec, &parsed)) {
+        return parsed;
+    }
+    return snapshot.recv_ts_ns;
+}
+
+EpochNanos BarAggregator::ResolvePhysicalMinuteStart(const MarketSnapshot& snapshot) {
+    if (snapshot.exchange_ts_ns > 0) {
+        return (snapshot.exchange_ts_ns / kNanosPerMinute) * kNanosPerMinute;
+    }
+    EpochNanos parsed = 0;
+    if (!ParsePhysicalTimestamp(ResolveActionDay(snapshot), snapshot.update_time, 0, &parsed)) {
+        return 0;
+    }
+    return (parsed / kNanosPerMinute) * kNanosPerMinute;
 }
 
 EpochNanos BarAggregator::ResolveTimestamp(const MarketSnapshot& snapshot) const {
@@ -1099,10 +1579,20 @@ void BarAggregator::EraseClosedBoundaryMinutesLocked(const std::string& instrume
 void BarAggregator::ResetBucketLocked(MinuteBucket* bucket, const MarketSnapshot& snapshot,
                                       const std::string& exchange_id,
                                       const std::string& trading_day, const std::string& action_day,
-                                      const std::string& minute_key) {
+                                      const std::string& minute_key, EpochNanos event_ts_ns,
+                                      EpochNanos period_start_ts_ns, bool is_session_endpoint,
+                                      std::uint64_t arrival_seq) {
     bucket->initialized = true;
     bucket->minute_key = minute_key;
-    bucket->last_cumulative_volume = std::max<std::int64_t>(0, snapshot.volume);
+    bucket->first_cumulative_volume = std::max<std::int64_t>(0, snapshot.volume);
+    bucket->max_cumulative_volume = bucket->first_cumulative_volume;
+    bucket->first_event_ts_ns = event_ts_ns;
+    bucket->last_event_ts_ns = event_ts_ns;
+    bucket->first_arrival_seq = arrival_seq;
+    bucket->last_arrival_seq = arrival_seq;
+    bucket->period_start_ts_ns = period_start_ts_ns;
+    bucket->period_end_ts_ns =
+        is_session_endpoint ? period_start_ts_ns : period_start_ts_ns + kNanosPerMinute;
     bucket->bar.instrument_id = snapshot.instrument_id;
     bucket->bar.exchange_id = exchange_id;
     bucket->bar.trading_day = trading_day;
@@ -1118,7 +1608,86 @@ void BarAggregator::ResetBucketLocked(MinuteBucket* bucket, const MarketSnapshot
     bucket->bar.analysis_close = snapshot.last_price;
     bucket->bar.analysis_price_offset = 0.0;
     bucket->bar.volume = 0;
-    bucket->bar.ts_ns = ResolveTimestamp(snapshot);
+    bucket->bar.ts_ns = event_ts_ns;
+    bucket->bar.period_end_ts_ns = bucket->period_end_ts_ns;
+    bucket->bar.finalized_ts_ns = 0;
+    bucket->bar.expected_source_bars = 1;
+    bucket->bar.observed_source_bars = 1;
+    bucket->bar.is_complete = true;
+    bucket->bar.is_session_endpoint = is_session_endpoint;
+    bucket->bar.strategy_eligible = !is_session_endpoint;
+    bucket->bar.volume_complete = false;
+    bucket->bar.has_conflict = false;
+    bucket->bar.is_recovery_replay = false;
+}
+
+BarSnapshot BarAggregator::FinalizeBucketLocked(const std::string& instrument_id,
+                                                MinuteBucket* bucket, EpochNanos finalized_ts_ns) {
+    BarSnapshot bar = bucket->bar;
+    auto& volume_state = volume_states_[instrument_id];
+    if (!volume_state.initialized || volume_state.trading_day != bar.trading_day ||
+        bucket->max_cumulative_volume < volume_state.cumulative_volume) {
+        volume_state.trading_day = bar.trading_day;
+        volume_state.initialized = true;
+        volume_state.baseline_complete = false;
+        volume_state.cumulative_volume = bucket->first_cumulative_volume;
+    }
+    bar.volume_complete = volume_state.baseline_complete;
+    bar.volume =
+        std::max<std::int64_t>(0, bucket->max_cumulative_volume - volume_state.cumulative_volume);
+    volume_state.cumulative_volume =
+        std::max(volume_state.cumulative_volume, bucket->max_cumulative_volume);
+    volume_state.baseline_complete = true;
+    bar.period_end_ts_ns = bucket->period_end_ts_ns;
+    bar.finalized_ts_ns = finalized_ts_ns;
+    bar.expected_source_bars = 1;
+    bar.observed_source_bars = 1;
+    bar.is_complete = true;
+    bar.has_conflict = false;
+    bar.strategy_eligible = !bar.is_session_endpoint;
+    const std::string finalized_key = BuildClosedBoundaryMinuteKey(instrument_id, bar.minute);
+    if (!finalized_key.empty()) {
+        finalized_minute_keys_.insert(finalized_key);
+    }
+    return bar;
+}
+
+std::vector<BarSnapshot> BarAggregator::FinalizeReadyLocked(EpochNanos watermark_ts_ns,
+                                                            EpochNanos finalized_ts_ns,
+                                                            const std::string* instrument_filter) {
+    std::vector<BarSnapshot> bars;
+    for (auto instrument_it = buckets_.begin(); instrument_it != buckets_.end();) {
+        if (instrument_filter != nullptr && instrument_it->first != *instrument_filter) {
+            ++instrument_it;
+            continue;
+        }
+        auto& instrument_buckets = instrument_it->second;
+        for (auto bucket_it = instrument_buckets.begin(); bucket_it != instrument_buckets.end();) {
+            if (!bucket_it->second.initialized ||
+                bucket_it->second.period_end_ts_ns > watermark_ts_ns) {
+                ++bucket_it;
+                continue;
+            }
+            bars.push_back(
+                FinalizeBucketLocked(instrument_it->first, &bucket_it->second, finalized_ts_ns));
+            bucket_it = instrument_buckets.erase(bucket_it);
+        }
+        if (instrument_buckets.empty()) {
+            instrument_it = buckets_.erase(instrument_it);
+        } else {
+            ++instrument_it;
+        }
+    }
+    std::sort(bars.begin(), bars.end(), [](const BarSnapshot& lhs, const BarSnapshot& rhs) {
+        if (lhs.period_end_ts_ns != rhs.period_end_ts_ns) {
+            return lhs.period_end_ts_ns < rhs.period_end_ts_ns;
+        }
+        if (lhs.instrument_id != rhs.instrument_id) {
+            return lhs.instrument_id < rhs.instrument_id;
+        }
+        return lhs.minute < rhs.minute;
+    });
+    return bars;
 }
 
 }  // namespace quant_hft

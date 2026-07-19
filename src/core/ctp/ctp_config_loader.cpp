@@ -547,6 +547,14 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* confi
         }
         return false;
     }
+    SetOptionalInt(kv, "gateway_reconnect_cycle_cooldown_ms",
+                   &loaded.runtime.reconnect_cycle_cooldown_ms, &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
     SetOptionalInt(kv, "recovery_quiet_period_ms", &loaded.runtime.recovery_quiet_period_ms,
                    &load_error);
     if (!load_error.empty()) {
@@ -1472,6 +1480,67 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* confi
     if (loaded.execution.cancel_check_interval_ms <= 0) {
         if (error != nullptr) {
             *error = "cancel_check_interval_ms must be > 0";
+        }
+        return false;
+    }
+
+    if (!get_value("session_gate_enabled").empty() &&
+        !ParseBoolValue(get_value("session_gate_enabled"),
+                        &loaded.execution.session_gate_enabled)) {
+        if (error != nullptr) {
+            *error = "invalid bool value for session_gate_enabled";
+        }
+        return false;
+    }
+    SetOptionalInt(kv, "max_signal_age_ms", &loaded.execution.max_signal_age_ms, &load_error);
+    SetOptionalInt(kv, "max_market_tick_age_ms", &loaded.execution.max_market_tick_age_ms,
+                   &load_error);
+    SetOptionalInt(kv, "open_session_end_guard_ms", &loaded.execution.open_session_end_guard_ms,
+                   &load_error);
+    SetOptionalInt(kv, "recovery_query_timeout_ms", &loaded.execution.recovery_query_timeout_ms,
+                   &load_error);
+    SetOptionalInt(kv, "open_reenable_stability_ms", &loaded.execution.open_reenable_stability_ms,
+                   &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.execution.max_signal_age_ms <= 0 || loaded.execution.max_market_tick_age_ms <= 0 ||
+        loaded.execution.open_session_end_guard_ms < 0 ||
+        loaded.execution.recovery_query_timeout_ms <= 0 ||
+        loaded.execution.open_reenable_stability_ms < 0) {
+        if (error != nullptr) {
+            *error = "execution freshness/recovery configuration is invalid";
+        }
+        return false;
+    }
+
+    SetOptionalInt(kv, "market_bar_allowed_lateness_ms", &loaded.market_bar.allowed_lateness_ms,
+                   &load_error);
+    SetOptionalInt(kv, "market_bar_poll_interval_ms", &loaded.market_bar.poll_interval_ms,
+                   &load_error);
+    SetOptionalInt(kv, "market_bar_checkpoint_interval_ms",
+                   &loaded.market_bar.checkpoint_interval_ms, &load_error);
+    SetOptionalInt(kv, "market_event_delay_hard_ms", &loaded.market_bar.event_delay_hard_ms,
+                   &load_error);
+    if (!get_value("require_complete_timeframe_bar").empty() &&
+        !ParseBoolValue(get_value("require_complete_timeframe_bar"),
+                        &loaded.market_bar.require_complete_timeframe_bar)) {
+        load_error = "invalid bool value for require_complete_timeframe_bar";
+    }
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (loaded.market_bar.allowed_lateness_ms < 0 || loaded.market_bar.poll_interval_ms <= 0 ||
+        loaded.market_bar.checkpoint_interval_ms <= 0 ||
+        loaded.market_bar.event_delay_hard_ms <= 0) {
+        if (error != nullptr) {
+            *error = "market bar timing configuration is invalid";
         }
         return false;
     }

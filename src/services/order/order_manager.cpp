@@ -13,8 +13,7 @@ bool IsTradeEvent(const OrderEvent& event) {
 }
 
 bool IsCancelActionFeedback(const OrderEvent& event) {
-    return event.event_source == "OnRspOrderAction" ||
-           event.event_source == "OnErrRtnOrderAction";
+    return event.event_source == "OnRspOrderAction" || event.event_source == "OnErrRtnOrderAction";
 }
 
 }  // namespace
@@ -217,9 +216,8 @@ std::vector<Order> OrderManager::GetActiveOrders() const {
     return out;
 }
 
-std::vector<Order> OrderManager::GetActiveOrdersByAccount(
-    const std::string& account_id,
-    const std::string& instrument_id) const {
+std::vector<Order> OrderManager::GetActiveOrdersByAccount(const std::string& account_id,
+                                                          const std::string& instrument_id) const {
     if (account_id.empty()) {
         return {};
     }
@@ -244,9 +242,8 @@ std::vector<Order> OrderManager::GetActiveOrdersByAccount(
     return out;
 }
 
-std::vector<Order> OrderManager::GetActiveOrdersByStrategy(
-    const std::string& strategy_id,
-    const std::string& instrument_id) const {
+std::vector<Order> OrderManager::GetActiveOrdersByStrategy(const std::string& strategy_id,
+                                                           const std::string& instrument_id) const {
     if (strategy_id.empty()) {
         return {};
     }
@@ -271,14 +268,13 @@ std::vector<Order> OrderManager::GetActiveOrdersByStrategy(
     return out;
 }
 
-bool OrderManager::IsOrderProcessed(const std::string& order_ref,
-                                    int front_id,
+bool OrderManager::IsOrderProcessed(const std::string& order_ref, int front_id,
                                     int session_id) const {
     if (order_ref.empty()) {
         return false;
     }
-    const auto prefix = order_ref + "|" + std::to_string(front_id) + "|" +
-                        std::to_string(session_id) + "|";
+    const auto prefix =
+        order_ref + "|" + std::to_string(front_id) + "|" + std::to_string(session_id) + "|";
     std::lock_guard<std::mutex> lock(mutex_);
     for (const auto& key : processed_events_) {
         if (key.rfind(prefix, 0) == 0U) {
@@ -293,13 +289,15 @@ std::string OrderManager::BuildOrderEventKey(const OrderEvent& event) {
         return "";
     }
     return event.order_ref + "|" + std::to_string(event.front_id) + "|" +
-           std::to_string(event.session_id) + "|" +
-           std::to_string(static_cast<int>(event.status)) + "|" +
-           std::to_string(event.filled_volume) + "|" + event.event_source + "|" +
+           std::to_string(event.session_id) + "|" + std::to_string(static_cast<int>(event.status)) +
+           "|" + std::to_string(event.filled_volume) + "|" + event.event_source + "|" +
            std::to_string(event.exchange_ts_ns);
 }
 
 std::string OrderManager::BuildTradeEventKey(const OrderEvent& event) {
+    if (const std::string canonical = BuildCanonicalTradeKey(event); !canonical.empty()) {
+        return "trade|" + canonical;
+    }
     if (!event.trade_id.empty()) {
         return "trade_id|" + event.trade_id;
     }
@@ -308,8 +306,8 @@ std::string OrderManager::BuildTradeEventKey(const OrderEvent& event) {
     }
     return event.order_ref + "|" + std::to_string(event.front_id) + "|" +
            std::to_string(event.session_id) + "|trade|" + event.event_source + "|" +
-           std::to_string(event.exchange_ts_ns) + "|" + std::to_string(event.filled_volume) +
-           "|" + std::to_string(event.last_trade_volume);
+           std::to_string(event.exchange_ts_ns) + "|" + std::to_string(event.filled_volume) + "|" +
+           std::to_string(event.last_trade_volume);
 }
 
 bool OrderManager::IsEventProcessed(const std::string& event_key, std::string* error) const {
@@ -333,10 +331,8 @@ bool OrderManager::IsEventProcessed(const std::string& event_key, std::string* e
     return exists;
 }
 
-void OrderManager::MarkEventProcessed(const std::string& event_key,
-                                      const OrderEvent& event,
-                                      std::int32_t event_type,
-                                      std::string* error) {
+void OrderManager::MarkEventProcessed(const std::string& event_key, const OrderEvent& event,
+                                      std::int32_t event_type, std::string* error) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (processed_events_.insert(event_key).second) {

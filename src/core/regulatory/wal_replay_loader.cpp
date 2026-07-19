@@ -256,9 +256,15 @@ bool ParseWalLine(const std::string& line, OrderEvent* event) {
     (void)ParseStringField(line, "strategy_id", &event->strategy_id);
     (void)ParseStringField(line, "exchange_order_id", &event->exchange_order_id);
     (void)ParseStringField(line, "instrument_id", &event->instrument_id);
+    (void)ParseStringField(line, "exchange_id", &event->exchange_id);
     (void)ParseStringField(line, "trade_id", &event->trade_id);
+    (void)ParseStringField(line, "raw_trade_id", &event->raw_trade_id);
+    (void)ParseStringField(line, "trading_day", &event->trading_day);
     (void)ParseStringField(line, "event_source", &event->event_source);
     (void)ParseStringField(line, "reason", &event->reason);
+    (void)ParseStringField(line, "status_msg", &event->status_msg);
+    (void)ParseStringField(line, "order_submit_status", &event->order_submit_status);
+    (void)ParseStringField(line, "order_ref", &event->order_ref);
     (void)ParseStringField(line, "trace_id", &event->trace_id);
 
     std::int64_t ts_ns = 0;
@@ -285,6 +291,33 @@ bool ParseWalLine(const std::string& line, OrderEvent* event) {
         return false;
     }
     event->filled_volume = filled_volume;
+
+    int parsed_int = 0;
+    int raw_side = 0;
+    if (ParseIntField(line, "side", &raw_side)) {
+        (void)ParseSide(raw_side, &event->side);
+    }
+    int raw_offset = 0;
+    if (ParseIntField(line, "offset", &raw_offset)) {
+        (void)ParseOffset(raw_offset, &event->offset);
+    }
+    if (ParseIntField(line, "last_trade_volume", &parsed_int)) {
+        event->last_trade_volume = parsed_int;
+    }
+    if (ParseIntField(line, "front_id", &parsed_int)) {
+        event->front_id = parsed_int;
+    }
+    if (ParseIntField(line, "session_id", &parsed_int)) {
+        event->session_id = parsed_int;
+    }
+    if (ParseIntField(line, "query_request_id", &parsed_int)) {
+        event->query_request_id = parsed_int;
+    }
+    std::int64_t recovery_generation = 0;
+    if (ParseInt64Field(line, "recovery_generation", &recovery_generation) &&
+        recovery_generation >= 0) {
+        event->recovery_generation = static_cast<std::uint64_t>(recovery_generation);
+    }
 
     int total_volume = 0;
     if (ParseIntField(line, "total_volume", &total_volume)) {
@@ -318,6 +351,7 @@ bool ParseCtpOrderSubmitMappingLine(const std::string& line, CtpOrderSubmitMappi
     (void)ParseStringField(line, "trace_id", &mapping->trace_id);
     (void)ParseStringField(line, "instrument_id", &mapping->instrument_id);
     (void)ParseStringField(line, "exchange_id", &mapping->exchange_id);
+    (void)ParseStringField(line, "trading_day", &mapping->trading_day);
 
     std::int64_t submit_ts_ns = 0;
     if (ParseInt64Field(line, "submit_ts_ns", &submit_ts_ns)) {
@@ -345,6 +379,9 @@ bool ParseCtpOrderSubmitMappingLine(const std::string& line, CtpOrderSubmitMappi
     }
     if (ParseIntField(line, "request_id", &parsed_int)) {
         mapping->request_id = parsed_int;
+    }
+    if (ParseIntField(line, "phase", &parsed_int) && parsed_int >= 0 && parsed_int <= 2) {
+        mapping->phase = static_cast<OrderSubmitMappingPhase>(parsed_int);
     }
     return true;
 }

@@ -867,4 +867,37 @@ TEST(SimnowDashboardCli, PositionsRenderPriceLevelsFromStrategyState) {
     EXPECT_EQ(html.find("9999.00"), std::string::npos);
 }
 
+TEST(SimnowDashboardCli, StructuredReadinessOverridesLogInference) {
+    const auto root = MakeTempDir("structured_readiness");
+    const auto output_dir = root / "dashboard";
+    const auto stdout_log = root / "stdout.log";
+    const auto run_dir = root / "runs" / "simnow-structured-readiness";
+    const auto core_log = run_dir / "core_engine.log";
+
+    WriteFile(root / "runs" / "current_core_engine.pid", std::to_string(getpid()) + "\n");
+    WriteFile(root / "runs" / "current_run_dir", run_dir.string() + "\n");
+    WriteFile(root / "runs" / "current_core_engine_log", core_log.string() + "\n");
+    WriteFile(core_log,
+              "ts_ns=1 level=error app=core_engine event=ctp_td_front_disconnected\n"
+              "ts_ns=2 level=error app=core_engine event=ctp_settlement_unconfirmed\n");
+    WriteFile(root / "monitor" / "readiness.json",
+              "{\"schema_version\":2,\"heartbeat_ts_ns\":1784419200000000000,"
+              "\"mode\":\"Ready\",\"generation\":7,\"recovery_complete\":true,"
+              "\"trader_ready\":true,\"gateway_healthy\":true,"
+              "\"settlement_confirmed\":true,\"pending_exit_count\":1,"
+              "\"unresolved_mapping_count\":0}\n");
+    WriteFile(root / "wal" / "events.wal", "");
+
+    const int rc = RunCommandCapture(DashboardCommand(root, output_dir), stdout_log);
+
+    EXPECT_EQ(rc, 0) << ReadFile(stdout_log);
+    const std::string json = ReadFile(output_dir / "dashboard_state.json");
+    EXPECT_NE(json.find("\"readiness\""), std::string::npos) << json;
+    EXPECT_NE(json.find("\"mode\": \"Ready\""), std::string::npos) << json;
+    EXPECT_NE(json.find("\"generation\": 7"), std::string::npos) << json;
+    EXPECT_NE(json.find("\"pending_exit_count\": 1"), std::string::npos) << json;
+    EXPECT_NE(json.find("\"status\": \"connected\""), std::string::npos) << json;
+    EXPECT_NE(json.find("\"settlement_status\": \"confirmed\""), std::string::npos) << json;
+}
+
 }  // namespace

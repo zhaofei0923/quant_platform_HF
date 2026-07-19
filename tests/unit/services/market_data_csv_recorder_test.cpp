@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -26,6 +27,10 @@ std::size_t CountOccurrences(const std::string& text, const std::string& needle)
         pos += needle.size();
     }
     return count;
+}
+
+std::size_t CountColumns(const std::string& row) {
+    return static_cast<std::size_t>(std::count(row.begin(), row.end(), ',')) + 1;
 }
 
 TEST(MarketDataCsvRecorderTest, WritesTickAndBarCsvFiles) {
@@ -58,6 +63,7 @@ TEST(MarketDataCsvRecorderTest, WritesTickAndBarCsvFiles) {
     tick.open_interest = 200;
     tick.exchange_ts_ns = 111;
     tick.recv_ts_ns = 222;
+    tick.average_price_norm_valid = true;
     ASSERT_TRUE(recorder.AppendTick(tick, &error)) << error;
 
     BarSnapshot bar;
@@ -76,6 +82,15 @@ TEST(MarketDataCsvRecorderTest, WritesTickAndBarCsvFiles) {
     bar.analysis_close = bar.close;
     bar.volume = 8;
     bar.ts_ns = 333;
+    bar.period_end_ts_ns = 444;
+    bar.finalized_ts_ns = 555;
+    bar.expected_source_bars = 5;
+    bar.observed_source_bars = 4;
+    bar.is_complete = false;
+    bar.strategy_eligible = false;
+    bar.volume_complete = false;
+    bar.has_conflict = true;
+    bar.is_recovery_replay = true;
     ASSERT_TRUE(recorder.AppendBar(bar, &error)) << error;
     ASSERT_TRUE(recorder.Close(&error)) << error;
 
@@ -86,9 +101,21 @@ TEST(MarketDataCsvRecorderTest, WritesTickAndBarCsvFiles) {
     const auto bar_text = ReadTextFile(root / "trading_day=20260429" / "bars_1m.csv");
     EXPECT_NE(tick_text.find("instrument_id,exchange_id,trading_day"), std::string::npos);
     EXPECT_NE(tick_text.find("SHFE.ag2406,SHFE,20260429,20260429,09:30:01"), std::string::npos);
+    EXPECT_NE(tick_text.find("recv_ts_ns,average_price_norm_valid"), std::string::npos);
+    EXPECT_NE(tick_text.find(",111,222,1\n"), std::string::npos);
     EXPECT_NE(bar_text.find("instrument_id,exchange_id,trading_day"), std::string::npos);
+    EXPECT_NE(bar_text.find("period_end_ts_ns,finalized_ts_ns,expected_source_bars"),
+              std::string::npos);
+    EXPECT_NE(bar_text.find(",333,444,555,5,4,0,0,0,0,1,1\n"), std::string::npos);
     EXPECT_NE(bar_text.find("SHFE.ag2406,SHFE,20260429,20260429,20260429 09:30"),
               std::string::npos);
+    const auto tick_header_end = tick_text.find('\n');
+    const auto tick_row_end = tick_text.find('\n', tick_header_end + 1);
+    ASSERT_NE(tick_header_end, std::string::npos);
+    ASSERT_NE(tick_row_end, std::string::npos);
+    EXPECT_EQ(
+        CountColumns(tick_text.substr(0, tick_header_end)),
+        CountColumns(tick_text.substr(tick_header_end + 1, tick_row_end - tick_header_end - 1)));
 
     std::filesystem::remove_all(root);
 }

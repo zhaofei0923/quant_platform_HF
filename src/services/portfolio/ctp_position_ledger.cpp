@@ -19,6 +19,12 @@ bool IsCancelActionFeedback(const OrderEvent& event) {
     return event.event_source == "OnRspOrderAction" || event.event_source == "OnErrRtnOrderAction";
 }
 
+bool IsKnownPositionDirection(const std::string& raw) {
+    const auto normalized = LowerAscii(raw);
+    return normalized == "2" || normalized == "3" || normalized == "long" ||
+           normalized == "short" || normalized == "l" || normalized == "s";
+}
+
 std::string DirectionToText(PositionDirection direction) {
     return direction == PositionDirection::kLong ? "long" : "short";
 }
@@ -75,6 +81,64 @@ bool CtpPositionLedger::ApplyInvestorPositionSnapshot(const InvestorPositionSnap
 
     std::lock_guard<std::mutex> lock(mutex_);
     positions_[key] = bucket;
+    if (error != nullptr) {
+        error->clear();
+    }
+    return true;
+}
+
+bool CtpPositionLedger::ReplaceInvestorPositionSnapshotBatch(
+    const std::string& account_id, const std::vector<InvestorPositionSnapshot>& snapshots,
+    std::string* error) {
+    if (account_id.empty()) {
+        if (error != nullptr) {
+            *error = "account_id is required for broker position replacement";
+        }
+        return false;
+    }
+
+    std::unordered_map<PositionKey, PositionBucket, PositionKeyHasher> replacement;
+    replacement.reserve(snapshots.size());
+    for (const auto& snapshot : snapshots) {
+        if (snapshot.account_id != account_id || snapshot.instrument_id.empty() ||
+            !IsKnownPositionDirection(snapshot.posi_direction)) {
+            if (error != nullptr) {
+                *error = "broker position batch contains an invalid or foreign-account snapshot";
+            }
+            return false;
+        }
+
+        const auto direction = ParsePositionDirection(snapshot.posi_direction);
+        const auto position_date = NormalizePositionDate(snapshot.position_date);
+        const auto key = MakeKey(snapshot.account_id, snapshot.instrument_id, snapshot.exchange_id,
+                                 snapshot.hedge_flag, direction, position_date);
+        PositionBucket bucket;
+        bucket.position = ClampNonNegative(snapshot.position);
+        const auto preferred_frozen =
+            direction == PositionDirection::kLong ? snapshot.long_frozen : snapshot.short_frozen;
+        const auto fallback_frozen = std::max(snapshot.long_frozen, snapshot.short_frozen);
+        bucket.frozen =
+            std::min(bucket.position,
+                     ClampNonNegative(preferred_frozen > 0 ? preferred_frozen : fallback_frozen));
+        bucket.last_update_ts_ns = snapshot.ts_ns;
+
+        if (!replacement.emplace(key, bucket).second) {
+            if (error != nullptr) {
+                *error = "broker position batch contains a duplicate normalized position key";
+            }
+            return false;
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto it = positions_.begin(); it != positions_.end();) {
+        if (it->first.account_id == account_id) {
+            it = positions_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    positions_.insert(replacement.begin(), replacement.end());
     if (error != nullptr) {
         error->clear();
     }

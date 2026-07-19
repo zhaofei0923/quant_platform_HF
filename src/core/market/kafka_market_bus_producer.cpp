@@ -1,9 +1,9 @@
-#include "quant_hft/core/market_bus_producer.h"
-
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <utility>
+
+#include "quant_hft/core/market_bus_producer.h"
 
 namespace quant_hft {
 namespace {
@@ -38,10 +38,8 @@ std::string EscapeJson(std::string value) {
 
 std::string SanitizeFileComponent(std::string value) {
     for (char& ch : value) {
-        if (!(ch == '-' || ch == '_' || ch == '.' ||
-              (ch >= '0' && ch <= '9') ||
-              (ch >= 'a' && ch <= 'z') ||
-              (ch >= 'A' && ch <= 'Z'))) {
+        if (!(ch == '-' || ch == '_' || ch == '.' || (ch >= '0' && ch <= '9') ||
+              (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z'))) {
             ch = '_';
         }
     }
@@ -53,8 +51,7 @@ std::string SanitizeFileComponent(std::string value) {
 
 }  // namespace
 
-MarketBusProducer::MarketBusProducer(std::string bootstrap_servers,
-                                     std::string topic,
+MarketBusProducer::MarketBusProducer(std::string bootstrap_servers, std::string topic,
                                      std::string spool_dir)
     : bootstrap_servers_(std::move(bootstrap_servers)),
       topic_(std::move(topic)),
@@ -95,6 +92,8 @@ MarketBusProducer::PublishResult MarketBusProducer::PublishTick(const MarketSnap
     payload << "\"bid_volume_1\":" << snapshot.bid_volume_1 << ",";
     payload << "\"ask_volume_1\":" << snapshot.ask_volume_1 << ",";
     payload << "\"volume\":" << snapshot.volume << ",";
+    payload << "\"average_price_norm_valid\":"
+            << (snapshot.average_price_norm_valid ? "true" : "false") << ",";
     payload << "\"exchange_ts_ns\":" << snapshot.exchange_ts_ns << ",";
     payload << "\"recv_ts_ns\":" << snapshot.recv_ts_ns << ",";
     payload << "\"published_ts_ns\":" << NowEpochNanos();

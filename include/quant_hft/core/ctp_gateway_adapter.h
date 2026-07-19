@@ -22,13 +22,20 @@ struct CtpUserSessionInfo {
     std::string login_time;
     std::string last_login_time;
     std::string reserve_info;
+    std::string trading_day;
+    std::string max_order_ref;
+    int front_id{0};
+    int session_id{0};
 };
 
 // Phase-1 adapter skeleton for CTP v6.7.11.
 class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
    public:
     using ConnectionStateCallback = std::function<void(bool healthy)>;
+    using ConnectionListenerToken = std::uint64_t;
     using OrderSubmitMappingCallback = std::function<void(const CtpOrderSubmitMapping&)>;
+    using OrderSubmitPrepareCallback =
+        std::function<bool(const CtpOrderSubmitMapping&, std::string* error)>;
     using LoginResponseCallback =
         std::function<void(int request_id, int error_code, const std::string& error_msg)>;
     using QueryCompleteCallback =
@@ -64,6 +71,7 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
     bool CancelOrder(const std::string& client_order_id, const std::string& trace_id) override;
     void RegisterOrderEventCallback(OrderEventCallback callback) override;
     virtual void RegisterOrderSubmitMappingCallback(OrderSubmitMappingCallback callback);
+    virtual void RegisterOrderSubmitPrepareCallback(OrderSubmitPrepareCallback callback);
 
     // v6.7.11 query entry (ReqQryUserSession) through scheduler.
     virtual bool EnqueueUserSessionQuery(int request_id);
@@ -85,6 +93,8 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
     virtual bool RequestSettlementInfoConfirm(int request_id);
 
     virtual void RegisterConnectionStateCallback(ConnectionStateCallback callback);
+    virtual ConnectionListenerToken AddConnectionStateListener(ConnectionStateCallback callback);
+    virtual void RemoveConnectionStateListener(ConnectionListenerToken token);
     virtual void RegisterLoginResponseCallback(LoginResponseCallback callback);
     virtual void RegisterQueryCompleteCallback(QueryCompleteCallback callback);
     virtual void RegisterSettlementConfirmCallback(SettlementConfirmCallback callback);
@@ -111,7 +121,13 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
     void UpdateOffsetApplySrc(char apply_src);
     char GetOffsetApplySrc() const;
     std::string GetLastConnectDiagnostic() const;
+    std::uint64_t GetSessionGeneration() const;
+    std::uint64_t GetDuplicateTradesSuppressed() const;
     static void NormalizeMarketSnapshot(MarketSnapshot* snapshot);
+    static EpochNanos ParseMarketExchangeTimestamp(const std::string& action_day,
+                                                   const std::string& update_time,
+                                                   std::int32_t update_millisec);
+    void UpdateInstrumentMetadata(const std::vector<InstrumentMetaSnapshot>& snapshots);
 
    private:
     friend class CtpMdSpi;
@@ -128,6 +144,8 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
         int session_id{0};
         std::int32_t total_volume{0};
         std::int32_t cumulative_filled_volume{0};
+        std::string trading_day;
+        bool terminal{false};
     };
 
     struct RealApiState;
@@ -151,15 +169,20 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
 
     bool connected_{false};
     bool healthy_{false};
+    bool desired_connected_{false};
     CtpRuntimeConfig runtime_config_;
 
     mutable std::mutex mutex_;
     std::unordered_set<std::string> subscriptions_;
     std::unordered_map<std::string, OrderMeta> client_order_meta_;
     std::unordered_map<std::string, std::string> order_ref_to_client_id_;
+    std::unordered_set<std::string> seen_trade_keys_;
+    std::uint64_t duplicate_trades_suppressed_{0};
+    std::uint64_t session_generation_{0};
     MarketDataCallback market_data_callback_;
     OrderEventCallback order_event_callback_;
     OrderSubmitMappingCallback order_submit_mapping_callback_;
+    OrderSubmitPrepareCallback order_submit_prepare_callback_;
 
     QueryScheduler query_scheduler_;
     CtpUserSessionInfo user_session_;
@@ -179,6 +202,9 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
     InstrumentCommissionRateSnapshotCallback instrument_commission_rate_snapshot_callback_;
     InstrumentOrderCommRateSnapshotCallback instrument_order_comm_rate_snapshot_callback_;
     ConnectionStateCallback connection_state_callback_;
+    std::unordered_map<ConnectionListenerToken, ConnectionStateCallback>
+        connection_state_listeners_;
+    ConnectionListenerToken next_connection_listener_token_{1};
     LoginResponseCallback login_response_callback_;
     QueryCompleteCallback query_complete_callback_;
     SettlementConfirmCallback settlement_confirm_callback_;

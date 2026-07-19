@@ -23,9 +23,12 @@ SignalIntent MakeSignal(std::int32_t volume, const std::string& trace_id = "trac
 MarketSnapshot MakeMarket(double bid, double ask) {
     MarketSnapshot snapshot;
     snapshot.instrument_id = "SHFE.ag2406";
+    snapshot.exchange_id = "SHFE";
+    snapshot.trading_day = "20260701";
     snapshot.bid_price_1 = bid;
     snapshot.ask_price_1 = ask;
     snapshot.volume = 100;
+    snapshot.recv_ts_ns = 987654321;
     return snapshot;
 }
 
@@ -58,6 +61,10 @@ TEST(ExecutionPlannerTest, MarketableLimitUsesAskForBuyAndBidForSell) {
     ASSERT_EQ(buy_plan.size(), 1U);
     EXPECT_DOUBLE_EQ(buy_plan[0].intent.price, 4501.0);
     EXPECT_EQ(buy_plan[0].intent.offset, OffsetFlag::kClose);
+    EXPECT_EQ(buy_plan[0].intent.exchange_id, "SHFE");
+    EXPECT_EQ(buy_plan[0].intent.trading_day, "20260701");
+    EXPECT_EQ(buy_plan[0].intent.signal_ts_ns, buy.ts_ns);
+    EXPECT_EQ(buy_plan[0].intent.market_recv_ts_ns, 987654321);
 
     SignalIntent sell = MakeSignal(5, "trace-sell");
     sell.side = Side::kSell;

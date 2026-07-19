@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -27,6 +28,9 @@ class CTPMdAdapter {
 
     explicit CTPMdAdapter(std::size_t query_qps_limit = 10, std::size_t dispatcher_workers = 1,
                           std::size_t callback_queue_size = 5000);
+    explicit CTPMdAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
+                          std::size_t dispatcher_workers = 1,
+                          std::size_t callback_queue_size = 5000);
     ~CTPMdAdapter();
 
     CTPMdAdapter(const CTPMdAdapter&) = delete;
@@ -39,11 +43,16 @@ class CTPMdAdapter {
     bool IsReady() const;
     MdSessionState SessionState() const;
     void RegisterTickCallback(TickCallback callback);
+    void UpdateInstrumentMetadata(const std::vector<InstrumentMetaSnapshot>& snapshots);
     std::string GetLastConnectDiagnostic() const;
 
    private:
+    void InitializeGatewayCallbacks();
+
     mutable std::mutex mutex_;
-    CtpGatewayAdapter gateway_;
+    std::shared_ptr<CtpGatewayAdapter> gateway_;
+    bool owns_gateway_{true};
+    CtpGatewayAdapter::ConnectionListenerToken connection_listener_token_{0};
     EventDispatcher dispatcher_;
     CallbackDispatcher callback_dispatcher_;
     TickCallback user_tick_callback_;

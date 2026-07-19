@@ -95,12 +95,20 @@ TEST(CtpGatewayAdapterTest, PlaceOrderEmitsSubmitMappingBeforeOrderCallback) {
 
     std::atomic<int> sequence{0};
     CtpOrderSubmitMapping observed_mapping;
+    adapter.RegisterOrderSubmitPrepareCallback(
+        [&](const CtpOrderSubmitMapping& mapping, std::string*) {
+            EXPECT_EQ(sequence.fetch_add(1), 0);
+            EXPECT_EQ(mapping.phase, OrderSubmitMappingPhase::kPrepared);
+            // The durability hook must be safe to re-enter read-only gateway APIs.
+            EXPECT_GT(adapter.GetSessionGeneration(), 0U);
+            return true;
+        });
     adapter.RegisterOrderSubmitMappingCallback([&](const CtpOrderSubmitMapping& mapping) {
-        EXPECT_EQ(sequence.fetch_add(1), 0);
+        EXPECT_EQ(sequence.fetch_add(1), 1);
         observed_mapping = mapping;
     });
     adapter.RegisterOrderEventCallback([&](const OrderEvent& event) {
-        EXPECT_EQ(sequence.fetch_add(1), 1);
+        EXPECT_EQ(sequence.fetch_add(1), 2);
         EXPECT_EQ(event.client_order_id, "ord-map-1");
     });
 
@@ -116,12 +124,84 @@ TEST(CtpGatewayAdapterTest, PlaceOrderEmitsSubmitMappingBeforeOrderCallback) {
     intent.trace_id = "trace-map";
 
     ASSERT_TRUE(adapter.PlaceOrder(intent));
-    EXPECT_EQ(sequence.load(), 2);
+    EXPECT_EQ(sequence.load(), 3);
     EXPECT_EQ(observed_mapping.client_order_id, "ord-map-1");
     EXPECT_EQ(observed_mapping.order_ref, "ord-map-1");
     EXPECT_EQ(observed_mapping.trace_id, "trace-map");
     EXPECT_EQ(observed_mapping.strategy_id, "strat-map");
     EXPECT_EQ(observed_mapping.instrument_id, "SHFE.ag2406");
+    EXPECT_EQ(observed_mapping.phase, OrderSubmitMappingPhase::kSubmitted);
+}
+
+TEST(CtpGatewayAdapterTest, DurablePrepareFailureProducesNoSubmissionOrOrderCallback) {
+    CtpGatewayAdapter adapter(10);
+    MarketDataConnectConfig cfg;
+    cfg.market_front_address = "tcp://sim-md";
+    cfg.trader_front_address = "tcp://sim-td";
+    cfg.broker_id = "9999";
+    cfg.user_id = "test_user";
+    cfg.investor_id = "test_investor";
+    cfg.password = "test_password";
+    ASSERT_TRUE(adapter.Connect(cfg));
+
+    std::atomic<int> prepare_calls{0};
+    std::atomic<int> submitted_mapping_calls{0};
+    std::atomic<int> order_callbacks{0};
+    adapter.RegisterOrderSubmitPrepareCallback(
+        [&](const CtpOrderSubmitMapping& mapping, std::string* error) {
+            ++prepare_calls;
+            EXPECT_EQ(mapping.phase, OrderSubmitMappingPhase::kPrepared);
+            if (error != nullptr) {
+                *error = "simulated WAL flush failure";
+            }
+            return false;
+        });
+    adapter.RegisterOrderSubmitMappingCallback(
+        [&](const CtpOrderSubmitMapping&) { ++submitted_mapping_calls; });
+    adapter.RegisterOrderEventCallback([&](const OrderEvent&) { ++order_callbacks; });
+
+    OrderIntent intent;
+    intent.account_id = "a1";
+    intent.client_order_id = "ord-wal-fail";
+    intent.strategy_id = "strat";
+    intent.instrument_id = "SHFE.ag2406";
+    intent.volume = 1;
+    intent.price = 4010.0;
+    intent.trading_day = "20260719";
+
+    EXPECT_FALSE(adapter.PlaceOrder(intent));
+    EXPECT_EQ(prepare_calls.load(), 1);
+    EXPECT_EQ(submitted_mapping_calls.load(), 0);
+    EXPECT_EQ(order_callbacks.load(), 0);
+    EXPECT_FALSE(adapter.CancelOrder(intent.client_order_id, "cancel-after-prepare-failure"));
+}
+
+TEST(CtpGatewayAdapterTest, ConnectionStateListenersAreIndependentAndRemovable) {
+    CtpGatewayAdapter adapter(10);
+    std::atomic<int> first{0};
+    std::atomic<int> second{0};
+    const auto first_token = adapter.AddConnectionStateListener([&](bool) { first.fetch_add(1); });
+    const auto second_token =
+        adapter.AddConnectionStateListener([&](bool) { second.fetch_add(1); });
+
+    MarketDataConnectConfig cfg;
+    cfg.market_front_address = "tcp://sim-md";
+    cfg.trader_front_address = "tcp://sim-td";
+    cfg.broker_id = "9999";
+    cfg.user_id = "test_user";
+    cfg.investor_id = "test_investor";
+    cfg.password = "test_password";
+    ASSERT_TRUE(adapter.Connect(cfg));
+    EXPECT_GE(first.load(), 1);
+    EXPECT_GE(second.load(), 1);
+
+    adapter.RemoveConnectionStateListener(first_token);
+    const int first_before_disconnect = first.load();
+    const int second_before_disconnect = second.load();
+    adapter.Disconnect();
+    EXPECT_EQ(first.load(), first_before_disconnect);
+    EXPECT_EQ(second.load(), second_before_disconnect + 1);
+    adapter.RemoveConnectionStateListener(second_token);
 }
 
 TEST(CtpGatewayAdapterTest, QueryAndOffsetApplySrc) {
@@ -380,11 +460,22 @@ TEST(CtpGatewayAdapterTest, NormalizeMarketSnapshotKeepsValidValues) {
 
     EXPECT_EQ(snapshot.exchange_id, "SHFE");
     EXPECT_EQ(snapshot.trading_day, "20260211");
-    EXPECT_EQ(snapshot.action_day, "20260211");
+    EXPECT_TRUE(snapshot.action_day.empty());
+    EXPECT_EQ(snapshot.exchange_ts_ns, 0);
     EXPECT_EQ(snapshot.update_millisec, 500);
     EXPECT_DOUBLE_EQ(snapshot.settlement_price, 4890.5);
     EXPECT_TRUE(snapshot.is_valid_settlement);
-    EXPECT_DOUBLE_EQ(snapshot.average_price_norm, 4888.0);
+    EXPECT_DOUBLE_EQ(snapshot.average_price_norm, 0.0);
+    EXPECT_FALSE(snapshot.average_price_norm_valid);
+}
+
+TEST(CtpGatewayAdapterTest, ParsesExchangeTimestampAsAsiaShanghaiWithMilliseconds) {
+    const auto actual =
+        CtpGatewayAdapter::ParseMarketExchangeTimestamp("20260701", "09:31:05", 500);
+    // 2026-07-01 09:31:05.500 Asia/Shanghai == 2026-07-01 01:31:05.500 UTC.
+    EXPECT_EQ(actual, 1782869465500000000LL);
+    EXPECT_EQ(CtpGatewayAdapter::ParseMarketExchangeTimestamp("", "09:31:05", 500), 0);
+    EXPECT_EQ(CtpGatewayAdapter::ParseMarketExchangeTimestamp("20260701", "25:31:05", 500), 0);
 }
 
 }  // namespace quant_hft

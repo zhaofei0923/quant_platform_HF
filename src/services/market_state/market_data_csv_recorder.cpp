@@ -85,13 +85,15 @@ void WriteTickHeader(std::ostream& out) {
     out << "instrument_id,exchange_id,trading_day,action_day,update_time,update_millisec,"
            "last_price,bid_price_1,ask_price_1,bid_volume_1,ask_volume_1,volume,"
            "open_interest,settlement_price,average_price_raw,average_price_norm,"
-           "is_valid_settlement,exchange_ts_ns,recv_ts_ns\n";
+           "is_valid_settlement,exchange_ts_ns,recv_ts_ns,average_price_norm_valid\n";
 }
 
 void WriteBarHeader(std::ostream& out) {
     out << "instrument_id,exchange_id,trading_day,action_day,minute,open,high,low,close,"
            "analysis_open,analysis_high,analysis_low,analysis_close,analysis_price_offset,"
-           "volume,ts_ns\n";
+           "volume,ts_ns,period_end_ts_ns,finalized_ts_ns,expected_source_bars,"
+           "observed_source_bars,is_complete,is_session_endpoint,strategy_eligible,"
+           "volume_complete,has_conflict,is_recovery_replay\n";
 }
 
 std::string TimeframeBarFilename(std::int32_t timeframe_minutes) {
@@ -142,7 +144,7 @@ void WriteTickRow(std::ostream& out, const MarketSnapshot& snapshot) {
         << FormatNumber(snapshot.average_price_raw) << ','
         << FormatNumber(snapshot.average_price_norm) << ','
         << (snapshot.is_valid_settlement ? 1 : 0) << ',' << snapshot.exchange_ts_ns << ','
-        << snapshot.recv_ts_ns << '\n';
+        << snapshot.recv_ts_ns << ',' << (snapshot.average_price_norm_valid ? 1 : 0) << '\n';
 }
 
 void WriteBarRow(std::ostream& out, const BarSnapshot& bar) {
@@ -152,7 +154,12 @@ void WriteBarRow(std::ostream& out, const BarSnapshot& bar) {
         << ',' << FormatNumber(bar.low) << ',' << FormatNumber(bar.close) << ','
         << FormatNumber(bar.analysis_open) << ',' << FormatNumber(bar.analysis_high) << ','
         << FormatNumber(bar.analysis_low) << ',' << FormatNumber(bar.analysis_close) << ','
-        << FormatNumber(bar.analysis_price_offset) << ',' << bar.volume << ',' << bar.ts_ns << '\n';
+        << FormatNumber(bar.analysis_price_offset) << ',' << bar.volume << ',' << bar.ts_ns << ','
+        << bar.period_end_ts_ns << ',' << bar.finalized_ts_ns << ',' << bar.expected_source_bars
+        << ',' << bar.observed_source_bars << ',' << (bar.is_complete ? 1 : 0) << ','
+        << (bar.is_session_endpoint ? 1 : 0) << ',' << (bar.strategy_eligible ? 1 : 0) << ','
+        << (bar.volume_complete ? 1 : 0) << ',' << (bar.has_conflict ? 1 : 0) << ','
+        << (bar.is_recovery_replay ? 1 : 0) << '\n';
 }
 
 }  // namespace

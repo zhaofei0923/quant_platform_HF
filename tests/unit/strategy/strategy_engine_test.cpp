@@ -320,6 +320,39 @@ TEST(StrategyEngineTest, DispatchesStateAndOrderEventsToAllStrategies) {
     EXPECT_EQ(stats.unmatched_order_events, 0U);
 }
 
+TEST(StrategyEngineTest, DrainBarrierWaitsForCallbackCompletion) {
+    Probe probe;
+    g_probe = &probe;
+    ResetThrowingBehavior();
+    g_state_delay_ms.store(100);
+
+    std::string error;
+    const auto factory_name = UniqueFactoryName();
+    ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
+        factory_name, []() { return std::make_unique<RecordingStrategy>(); }, &error))
+        << error;
+
+    StrategyEngineConfig cfg;
+    cfg.queue_capacity = 64;
+    cfg.timer_interval_ns = 1'000'000'000;
+    StrategyEngine engine(cfg, nullptr);
+    StrategyContext context;
+    ASSERT_TRUE(engine.Start({"alpha"}, factory_name, context, &error)) << error;
+
+    StateSnapshot7D state;
+    state.instrument_id = "DCE.c2609";
+    state.ts_ns = 42;
+    engine.EnqueueState(state);
+    EXPECT_FALSE(engine.WaitUntilDrained(10));
+    EXPECT_TRUE(engine.WaitUntilDrained(500));
+
+    engine.Stop();
+    g_state_delay_ms.store(0);
+    g_probe = nullptr;
+    std::lock_guard<std::mutex> lock(probe.mutex);
+    EXPECT_EQ(probe.observed_state_ts, std::vector<EpochNanos>{42});
+}
+
 TEST(StrategyEngineTest, DispatchesMarketTicksToAllStrategies) {
     Probe probe;
     g_probe = &probe;

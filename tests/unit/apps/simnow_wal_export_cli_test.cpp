@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -31,8 +32,8 @@ void WriteFile(const std::filesystem::path& path, const std::string& content) {
 }
 
 std::filesystem::path MakeTempDir(const std::string& suffix) {
-    const auto base = std::filesystem::temp_directory_path() /
-                      ("quant_hft_simnow_wal_export_cli_test_" + suffix);
+    const auto base =
+        std::filesystem::temp_directory_path() / ("quant_hft_simnow_wal_export_cli_test_" + suffix);
     std::filesystem::remove_all(base);
     std::filesystem::create_directories(base);
     return base;
@@ -146,8 +147,7 @@ TEST(SimnowWalExportCli, CountsUnpricedFillsWhenInstrumentMissing) {
     const auto stdout_log = root / "stdout.log";
 
     // Instrument "xx9999" is not in the fee config.
-    WriteFile(root / "events.wal",
-              TradeFillLine(1, "xx9999", "SHFE", 0, 0, 1, 100.0, "T1") + "\n");
+    WriteFile(root / "events.wal", TradeFillLine(1, "xx9999", "SHFE", 0, 0, 1, 100.0, "T1") + "\n");
 
     const auto fee_config = root / "fee.json";
     WriteFile(fee_config, kFeeConfig);
@@ -158,4 +158,49 @@ TEST(SimnowWalExportCli, CountsUnpricedFillsWhenInstrumentMissing) {
     const std::string json = ReadFile(root / "summary.json");
     EXPECT_NE(json.find("\"total_commission\": 0"), std::string::npos) << json;
     EXPECT_NE(json.find("\"unpriced_fills\": 1"), std::string::npos) << json;
+}
+
+TEST(SimnowWalExportCli, DeduplicatesCanonicalTradeBeforePricingAndExport) {
+    const auto root = MakeTempDir("canonical_dedup");
+    const auto stdout_log = root / "stdout.log";
+
+    std::ostringstream wal;
+    wal << TradeFillLine(1, "rb2405", "SHFE", 0, 0, 2, 4000.0, "T1") << '\n'
+        << TradeFillLine(2, "rb2405", "SHFE", 0, 0, 2, 4000.0, "T1") << '\n';
+    WriteFile(root / "events.wal", wal.str());
+    const auto fee_config = root / "fee.json";
+    WriteFile(fee_config, kFeeConfig);
+
+    const int rc = RunCommandCapture(ExportCommand(root, fee_config), stdout_log);
+    ASSERT_EQ(rc, 0) << ReadFile(stdout_log);
+
+    const std::string summary = ReadFile(root / "summary.json");
+    EXPECT_NE(summary.find("\"raw_trade_fill_records\": 2"), std::string::npos) << summary;
+    EXPECT_NE(summary.find("\"trade_fills\": 1"), std::string::npos) << summary;
+    EXPECT_NE(summary.find("\"duplicate_trade_fills\": 1"), std::string::npos) << summary;
+    EXPECT_NE(summary.find("\"total_commission\": 8"), std::string::npos) << summary;
+
+    const std::string csv = ReadFile(root / "exports" / "20260710" / "trade_fills.csv");
+    EXPECT_EQ(std::count(csv.begin(), csv.end(), '\n'), 2) << csv;
+}
+
+TEST(SimnowWalExportCli, MissingTradeIdIsUnresolvedAndStrictReconcileFailsWhenDbNotQueried) {
+    const auto root = MakeTempDir("unresolved_strict");
+    const auto stdout_log = root / "stdout.log";
+    WriteFile(root / "events.wal", TradeFillLine(1, "rb2405", "SHFE", 0, 0, 1, 4000.0, "") + "\n");
+    const auto fee_config = root / "fee.json";
+    WriteFile(fee_config, kFeeConfig);
+
+    const int rc =
+        RunCommandCapture(ExportCommand(root, fee_config) + " --strict-reconcile 1", stdout_log);
+    ASSERT_NE(rc, 0) << ReadFile(stdout_log);
+
+    const std::string summary = ReadFile(root / "summary.json");
+    EXPECT_NE(summary.find("\"trade_fills\": 0"), std::string::npos) << summary;
+    EXPECT_NE(summary.find("\"unresolved_trade_fills\": 1"), std::string::npos) << summary;
+
+    const std::string reconcile = ReadFile(root / "reconcile.json");
+    EXPECT_NE(reconcile.find("\"status\": \"incomplete\""), std::string::npos) << reconcile;
+    EXPECT_NE(reconcile.find("\"complete\": false"), std::string::npos) << reconcile;
+    EXPECT_NE(reconcile.find("\"db_queried\": false"), std::string::npos) << reconcile;
 }

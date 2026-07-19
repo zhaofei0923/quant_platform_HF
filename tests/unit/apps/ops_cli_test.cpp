@@ -560,13 +560,13 @@ TEST(OpsCli, FactorEvalCliIncludesDetectorConfigInOutputJson) {
                                         "\" --source rb --resume true";
     ASSERT_EQ(RunCommandCapture(convert_command, convert_log), 0);
 
-    const std::string command = "\"" + BinaryPath("factor_eval_cli").string() +
-                                "\" --factor_id factor-test --template trend"
-                                " --dataset_root \"" + dataset_root.string() +
-                                "\" --engine_mode parquet --detector_config \"" +
-                                detector_yaml.string() + "\" --max_ticks 100 --output_jsonl \"" +
-                                output_jsonl.string() + "\" --output_json \"" +
-                                output_json.string() + "\"";
+    const std::string command =
+        "\"" + BinaryPath("factor_eval_cli").string() +
+        "\" --factor_id factor-test --template trend"
+        " --dataset_root \"" +
+        dataset_root.string() + "\" --engine_mode parquet --detector_config \"" +
+        detector_yaml.string() + "\" --max_ticks 100 --output_jsonl \"" + output_jsonl.string() +
+        "\" --output_json \"" + output_json.string() + "\"";
     const int rc = RunCommandCapture(command, stdout_log);
     EXPECT_EQ(rc, 0);
 
@@ -583,6 +583,19 @@ TEST(OpsCli, FactorEvalCliIncludesDetectorConfigInOutputJson) {
     EXPECT_NE(tracker_payload.find("\"market_state_detector\":{\"adx_period\":7"),
               std::string::npos);
     EXPECT_NE(tracker_payload.find("\"atr_period\":5"), std::string::npos);
+}
+
+TEST(OpsCli, MarketDataRepairRefusesToOverwriteInputEvidence) {
+    const auto dir = MakeTempDir("market_data_repair_no_overwrite");
+    const auto output_log = dir / "repair_stdout.log";
+    const std::string command = "\"" + BinaryPath("market_data_repair_cli").string() +
+                                "\" --input-root \"" + dir.string() + "\" --output-root \"" +
+                                dir.string() + "\"";
+
+    const int rc = RunCommandCapture(command, output_log);
+
+    EXPECT_NE(rc, 0);
+    EXPECT_NE(ReadFile(output_log).find("refusing to overwrite output root"), std::string::npos);
 }
 
 }  // namespace

@@ -22,6 +22,7 @@ message MarketSnapshot {
   double average_price_norm = 17;
   bool is_valid_settlement = 18;
   int64 open_interest = 19;
+  bool average_price_norm_valid = 20;
 }
 
 message StateDimension {
@@ -175,6 +176,7 @@ message SignalIntent {
   int64 ts_ns = 7;
   string trace_id = 8;
   uint32 signal_type = 9;
+  int64 generated_ts_ns = 10;
 }
 
 message OrderIntent {
@@ -192,6 +194,10 @@ message OrderIntent {
   string hedge_flag = 12;
   string time_condition = 13;
   string volume_condition = 14;
+  string exchange_id = 15;
+  string trading_day = 16;
+  int64 signal_ts_ns = 17;
+  int64 market_recv_ts_ns = 18;
 }
 
 message RiskDecision {
@@ -242,6 +248,10 @@ message OrderEvent {
   string event_source = 27;
   int64 exchange_ts_ns = 28;
   int64 recv_ts_ns = 29;
+  string trading_day = 34;
+  string raw_trade_id = 35;
+  int32 query_request_id = 36;
+  uint64 recovery_generation = 37;
 }
 
 message PositionSnapshot {

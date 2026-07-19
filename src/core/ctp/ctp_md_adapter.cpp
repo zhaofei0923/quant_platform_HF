@@ -9,11 +9,32 @@ namespace quant_hft {
 
 CTPMdAdapter::CTPMdAdapter(std::size_t query_qps_limit, std::size_t dispatcher_workers,
                            std::size_t callback_queue_size)
-    : gateway_(query_qps_limit),
+    : gateway_(std::make_shared<CtpGatewayAdapter>(query_qps_limit)),
       dispatcher_(dispatcher_workers),
       callback_dispatcher_(callback_queue_size) {
+    InitializeGatewayCallbacks();
+}
+
+CTPMdAdapter::CTPMdAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
+                           std::size_t dispatcher_workers, std::size_t callback_queue_size)
+    : gateway_(std::move(gateway)),
+      owns_gateway_(false),
+      dispatcher_(dispatcher_workers),
+      callback_dispatcher_(callback_queue_size) {
+    if (gateway_ == nullptr) {
+        gateway_ = std::make_shared<CtpGatewayAdapter>();
+        owns_gateway_ = true;
+    }
+    InitializeGatewayCallbacks();
+}
+
+void CTPMdAdapter::InitializeGatewayCallbacks() {
     callback_dispatcher_.Start();
-    gateway_.RegisterMarketDataCallback([this](const MarketSnapshot& snapshot) {
+    connection_listener_token_ = gateway_->AddConnectionStateListener([this](bool healthy) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        state_ = healthy ? MdSessionState::kReady : MdSessionState::kDisconnected;
+    });
+    gateway_->RegisterMarketDataCallback([this](const MarketSnapshot& snapshot) {
         MarketSnapshot copied = snapshot;
         if (!dispatcher_.Post(
                 [this, copied]() {
@@ -47,13 +68,16 @@ CTPMdAdapter::CTPMdAdapter(std::size_t query_qps_limit, std::size_t dispatcher_w
 
 CTPMdAdapter::~CTPMdAdapter() {
     Disconnect();
+    if (gateway_ != nullptr) {
+        gateway_->RemoveConnectionStateListener(connection_listener_token_);
+    }
     callback_dispatcher_.Stop();
 }
 
 bool CTPMdAdapter::Connect(const MarketDataConnectConfig& config) {
     Disconnect();
     dispatcher_.Start();
-    if (!gateway_.Connect(config)) {
+    if (!gateway_->IsHealthy() && !gateway_->Connect(config)) {
         std::lock_guard<std::mutex> lock(mutex_);
         state_ = MdSessionState::kDisconnected;
         dispatcher_.Stop();
@@ -67,7 +91,9 @@ bool CTPMdAdapter::Connect(const MarketDataConnectConfig& config) {
 }
 
 void CTPMdAdapter::Disconnect() {
-    gateway_.Disconnect();
+    if (owns_gateway_ && gateway_ != nullptr) {
+        gateway_->Disconnect();
+    }
     dispatcher_.Stop();
     std::lock_guard<std::mutex> lock(mutex_);
     state_ = MdSessionState::kDisconnected;
@@ -80,7 +106,7 @@ bool CTPMdAdapter::Subscribe(const std::vector<std::string>& instrument_ids) {
             return false;
         }
     }
-    return gateway_.Subscribe(instrument_ids);
+    return gateway_->Subscribe(instrument_ids);
 }
 
 bool CTPMdAdapter::Unsubscribe(const std::vector<std::string>& instrument_ids) {
@@ -90,7 +116,7 @@ bool CTPMdAdapter::Unsubscribe(const std::vector<std::string>& instrument_ids) {
             return false;
         }
     }
-    return gateway_.Unsubscribe(instrument_ids);
+    return gateway_->Unsubscribe(instrument_ids);
 }
 
 bool CTPMdAdapter::IsReady() const {
@@ -109,7 +135,11 @@ void CTPMdAdapter::RegisterTickCallback(TickCallback callback) {
 }
 
 std::string CTPMdAdapter::GetLastConnectDiagnostic() const {
-    return gateway_.GetLastConnectDiagnostic();
+    return gateway_->GetLastConnectDiagnostic();
+}
+
+void CTPMdAdapter::UpdateInstrumentMetadata(const std::vector<InstrumentMetaSnapshot>& snapshots) {
+    gateway_->UpdateInstrumentMetadata(snapshots);
 }
 
 }  // namespace quant_hft

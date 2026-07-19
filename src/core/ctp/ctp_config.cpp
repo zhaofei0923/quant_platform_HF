@@ -149,11 +149,13 @@ bool CtpConfigValidator::Validate(const CtpRuntimeConfig& config, std::string* e
         return false;
     }
     if (config.environment == CtpEnvironment::kSimNow) {
-        const bool trading_hours_front = IsSimNowTradingHoursFrontPair(config.md_front, config.td_front);
+        const bool trading_hours_front =
+            IsSimNowTradingHoursFrontPair(config.md_front, config.td_front);
         if (trading_hours_front && !config.is_production_mode) {
             if (error != nullptr) {
                 *error =
-                    "SimNow trading-hours fronts require is_production_mode=true (CTP v6.7.11 production secret key)";
+                    "SimNow trading-hours fronts require is_production_mode=true (CTP v6.7.11 "
+                    "production secret key)";
             }
             return false;
         }
@@ -200,7 +202,14 @@ bool CtpConfigValidator::Validate(const CtpRuntimeConfig& config, std::string* e
         config.reconnect_initial_backoff_ms > config.reconnect_max_backoff_ms) {
         if (error != nullptr) {
             *error =
-                "reconnect backoff must be > 0 and reconnect_initial_backoff_ms <= reconnect_max_backoff_ms";
+                "reconnect backoff must be > 0 and reconnect_initial_backoff_ms <= "
+                "reconnect_max_backoff_ms";
+        }
+        return false;
+    }
+    if (config.reconnect_cycle_cooldown_ms <= 0) {
+        if (error != nullptr) {
+            *error = "reconnect_cycle_cooldown_ms must be > 0";
         }
         return false;
     }

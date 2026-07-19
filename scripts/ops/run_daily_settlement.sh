@@ -16,6 +16,7 @@ RUN_READINESS_GATES=0
 BENCHMARK_RESULT_JSON="${BENCHMARK_RESULT_JSON:-}"
 BENCHMARK_RUNS="${BENCHMARK_RUNS:-20}"
 EXECUTE=0
+STRICT_ORDER_TRADE_BACKFILL="${SETTLEMENT_STRICT_ORDER_TRADE_BACKFILL:-1}"
 
 usage() {
   cat <<USAGE
@@ -31,6 +32,8 @@ Options:
   --benchmark-result-json <path>  Benchmark report output path (default: ${BENCHMARK_RESULT_JSON})
   --benchmark-runs <int>          Benchmark runs (default: ${BENCHMARK_RUNS})
   --execute                       Execute for real (default: dry-run)
+  --strict-order-trade-backfill  Require broker order/trade backfill (default)
+  --allow-incomplete-backfill    Compatibility escape hatch; do not use for live settlement
   -h, --help                      Show this help
 USAGE
 }
@@ -46,6 +49,8 @@ while [[ $# -gt 0 ]]; do
     --benchmark-result-json) BENCHMARK_RESULT_JSON="${2:-}"; shift 2 ;;
     --benchmark-runs) BENCHMARK_RUNS="${2:-}"; shift 2 ;;
     --execute) EXECUTE=1; shift ;;
+    --strict-order-trade-backfill) STRICT_ORDER_TRADE_BACKFILL=1; shift ;;
+    --allow-incomplete-backfill) STRICT_ORDER_TRADE_BACKFILL=0; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "error: unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -63,31 +68,51 @@ BENCHMARK_RESULT_JSON="${BENCHMARK_RESULT_JSON:-${EOD_DIR}/daily_settlement_benc
 
 mkdir -p "$(dirname "${EVIDENCE_JSON}")"
 mkdir -p "$(dirname "${DIFF_JSON}")"
+[[ "${STRICT_ORDER_TRADE_BACKFILL}" == "0" || "${STRICT_ORDER_TRADE_BACKFILL}" == "1" ]] || {
+  echo "error: SETTLEMENT_STRICT_ORDER_TRADE_BACKFILL must be 0 or 1" >&2
+  exit 2
+}
 
 if [[ ${EXECUTE} -eq 1 ]]; then
-  "${SETTLEMENT_BIN}" \
-    --config "${CTP_CONFIG_PATH}" \
-    --trading-day "${TRADING_DAY}" \
-    --evidence-path "${EVIDENCE_JSON}" \
+  rm -f -- "${EVIDENCE_JSON}"
+  settlement_cmd=(
+    "${SETTLEMENT_BIN}"
+    --config "${CTP_CONFIG_PATH}"
+    --trading-day "${TRADING_DAY}"
+    --evidence-path "${EVIDENCE_JSON}"
     --diff-report-path "${DIFF_JSON}"
-  if [[ ! -s "${EVIDENCE_JSON}" ]]; then
-    cat > "${EVIDENCE_JSON}" <<EOF
-{"trading_day":"${TRADING_DAY}","status":"ok","mode":"execute"}
-EOF
+  )
+  if [[ "${STRICT_ORDER_TRADE_BACKFILL}" == "1" ]]; then
+    settlement_cmd+=(--strict-order-trade-backfill)
   fi
-  if [[ ! -s "${DIFF_JSON}" ]]; then
-    cat > "${DIFF_JSON}" <<EOF
-{"trading_day":"${TRADING_DAY}","diff_count":0}
-EOF
-  fi
+  "${settlement_cmd[@]}"
+
+  [[ -s "${EVIDENCE_JSON}" ]] || {
+    echo "error: daily settlement binary did not publish evidence: ${EVIDENCE_JSON}" >&2
+    exit 1
+  }
+  grep -Eq '"evidence_complete"[[:space:]]*:[[:space:]]*true' "${EVIDENCE_JSON}" || {
+    echo "error: daily settlement evidence is incomplete: ${EVIDENCE_JSON}" >&2
+    exit 1
+  }
+  grep -Eq '"valid_success"[[:space:]]*:[[:space:]]*true' "${EVIDENCE_JSON}" || {
+    echo "error: daily settlement evidence is not a validated success: ${EVIDENCE_JSON}" >&2
+    exit 1
+  }
+  grep -Eq '"status"[[:space:]]*:[[:space:]]*"COMPLETED"' "${EVIDENCE_JSON}" || {
+    echo "error: daily settlement evidence status is not COMPLETED: ${EVIDENCE_JSON}" >&2
+    exit 1
+  }
+  [[ -s "${DIFF_JSON}" ]] || {
+    echo "error: daily settlement binary did not publish reconcile diff: ${DIFF_JSON}" >&2
+    exit 1
+  }
 else
-  cat > "${EVIDENCE_JSON}" <<EOF
-{"trading_day":"${TRADING_DAY}","status":"simulated_ok","mode":"dry_run"}
-EOF
-  cat > "${DIFF_JSON}" <<EOF
-{"trading_day":"${TRADING_DAY}","diff_count":0,"mode":"dry_run"}
-EOF
-  echo "[dry-run] ${SETTLEMENT_BIN} --config ${CTP_CONFIG_PATH} --trading-day ${TRADING_DAY} --evidence-path ${EVIDENCE_JSON} --diff-report-path ${DIFF_JSON}"
+  strict_arg=""
+  if [[ "${STRICT_ORDER_TRADE_BACKFILL}" == "1" ]]; then
+    strict_arg=" --strict-order-trade-backfill"
+  fi
+  echo "[dry-run] ${SETTLEMENT_BIN} --config ${CTP_CONFIG_PATH} --trading-day ${TRADING_DAY} --evidence-path ${EVIDENCE_JSON} --diff-report-path ${DIFF_JSON}${strict_arg}"
 fi
 
 if [[ ${RUN_READINESS_GATES} -eq 1 ]]; then

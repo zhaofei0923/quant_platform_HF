@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS quant_hft.market_snapshots_kafka (
     settlement_price Float64,
     average_price_raw Float64,
     average_price_norm Float64,
+    average_price_norm_valid Bool,
     is_valid_settlement Bool,
     exchange_ts_ns Int64,
     recv_ts_ns Int64
@@ -46,6 +47,7 @@ CREATE TABLE IF NOT EXISTS quant_hft.market_snapshots_fact (
     settlement_price Float64,
     average_price_raw Float64,
     average_price_norm Float64,
+    average_price_norm_valid Bool,
     is_valid_settlement Bool,
     exchange_ts_ns Int64,
     recv_ts_ns Int64,
@@ -75,6 +77,7 @@ SELECT
     settlement_price,
     average_price_raw,
     average_price_norm,
+    average_price_norm_valid,
     is_valid_settlement,
     exchange_ts_ns,
     recv_ts_ns

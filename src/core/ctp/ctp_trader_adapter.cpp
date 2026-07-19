@@ -78,7 +78,9 @@ CTPTraderAdapter::CTPTraderAdapter(std::size_t query_qps_limit, std::size_t disp
                                    std::size_t callback_queue_size,
                                    std::int64_t callback_critical_wait_ms)
     : CTPTraderAdapter(std::make_shared<CtpGatewayAdapter>(query_qps_limit), dispatcher_workers,
-                       callback_queue_size, callback_critical_wait_ms) {}
+                       callback_queue_size, callback_critical_wait_ms) {
+    owns_gateway_ = true;
+}
 
 CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
                                    std::size_t dispatcher_workers, std::size_t callback_queue_size,
@@ -90,6 +92,7 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
         gateway_ = std::make_shared<CtpGatewayAdapter>(10);
     }
     callback_dispatcher_.Start();
+    StartLoginTimeoutWorker();
 
     gateway_->RegisterOrderEventCallback([this](const OrderEvent& event) {
         OrderEvent copied = event;
@@ -139,6 +142,15 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
             callback(mapping);
         }
     });
+    gateway_->RegisterOrderSubmitPrepareCallback(
+        [this](const CtpOrderSubmitMapping& mapping, std::string* error) {
+            OrderSubmitPrepareCallback callback;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                callback = user_order_submit_prepare_callback_;
+            }
+            return callback == nullptr || callback(mapping, error);
+        });
 
     gateway_->RegisterTradingAccountSnapshotCallback(
         [this](const TradingAccountSnapshot& snapshot) {
@@ -301,7 +313,7 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
             }
         });
 
-    gateway_->RegisterConnectionStateCallback([this](bool healthy) {
+    connection_listener_token_ = gateway_->AddConnectionStateListener([this](bool healthy) {
         CtpConnectedGauge()->Set(healthy ? 1.0 : 0.0);
         if (!healthy) {
             bool should_reconnect = false;
@@ -369,10 +381,20 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
 
     gateway_->RegisterQueryCompleteCallback(
         [this](int request_id, const std::string&, bool success) {
-            if (success) {
-                ResolvePromise(request_id);
-            } else {
-                RejectPromise(request_id, "query failed");
+            if (!dispatcher_.WaitUntilDrained(5'000)) {
+                RejectPromise(request_id, "query callback drain timeout");
+                return;
+            }
+            if (!callback_dispatcher_.Post(
+                    [this, request_id, success]() {
+                        if (success) {
+                            ResolvePromise(request_id);
+                        } else {
+                            RejectPromise(request_id, "query failed");
+                        }
+                    },
+                    true)) {
+                RejectPromise(request_id, "query callback barrier enqueue failed");
             }
         });
 
@@ -400,7 +422,7 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
 CTPTraderAdapter::~CTPTraderAdapter() {
     Disconnect();
     UnregisterGatewayCallbacks();
-    JoinLoginTimeoutThreads();
+    StopLoginTimeoutWorker();
     callback_dispatcher_.Stop();
 }
 
@@ -424,7 +446,7 @@ bool CTPTraderAdapter::Connect(const MarketDataConnectConfig& config) {
     }
 
     dispatcher_.Start();
-    if (!gateway_->Connect(config)) {
+    if (!gateway_->IsHealthy() && !gateway_->Connect(config)) {
         std::lock_guard<std::mutex> lock(mutex_);
         state_ = TraderSessionState::kDisconnected;
         dispatcher_.Stop();
@@ -459,7 +481,9 @@ void CTPTraderAdapter::Disconnect() {
         state_ = TraderSessionState::kDisconnected;
         SetReconnectStageLocked("disconnected");
     }
-    gateway_->Disconnect();
+    if (owns_gateway_) {
+        gateway_->Disconnect();
+    }
     CtpConnectedGauge()->Set(0.0);
     dispatcher_.Stop();
     RejectAllPromises("adapter disconnected");
@@ -626,43 +650,50 @@ std::future<std::pair<int, std::string>> CTPTraderAdapter::LoginAsync(const std:
         login_promises_[request_id] = promise;
     }
 
+    // Install the deadline before invoking CTP: a simulated transport and, in practice, a very
+    // fast callback can complete synchronously from RequestUserLogin.
+    {
+        std::lock_guard<std::mutex> lock(login_timeout_mutex_);
+        login_deadlines_[request_id] = LoginDeadline{
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(std::max(1, timeout_ms)),
+            lifecycle_generation_.load(std::memory_order_acquire)};
+    }
+    login_timeout_cv_.notify_one();
+
     if (!gateway_->RequestUserLogin(request_id, broker_id, user_id, password)) {
         ResolveLoginPromise(request_id, -2, "ReqUserLogin failed");
         return future;
-    }
-
-    const auto generation = lifecycle_generation_.load(std::memory_order_acquire);
-    std::thread timeout_thread([this, request_id, timeout_ms, generation]() {
-        std::this_thread::sleep_for(std::chrono::milliseconds(std::max(1, timeout_ms)));
-        if (!IsGenerationCurrent(generation)) {
-            return;
-        }
-        std::shared_ptr<std::promise<std::pair<int, std::string>>> timed_out;
-        {
-            std::lock_guard<std::mutex> lock(promise_map_mutex_);
-            const auto it = login_promises_.find(request_id);
-            if (it == login_promises_.end()) {
-                return;
-            }
-            timed_out = it->second;
-            login_promises_.erase(it);
-        }
-        if (timed_out) {
-            try {
-                timed_out->set_value({-1, "Login timeout"});
-            } catch (...) {
-            }
-        }
-    });
-    {
-        std::lock_guard<std::mutex> lock(login_timeout_threads_mutex_);
-        login_timeout_threads_.push_back(std::move(timeout_thread));
     }
 
     return future;
 }
 
 bool CTPTraderAdapter::RecoverOrdersAndTrades(int timeout_ms) {
+    return RecoverOrdersAndTradesReport(timeout_ms).ok();
+}
+
+CtpRecoveryReport CTPTraderAdapter::RecoverOrdersAndTradesReport(int timeout_ms) {
+    CtpRecoveryReport report;
+    report.generation = gateway_->GetSessionGeneration();
+    report.trading_day = gateway_->GetLastUserSession().trading_day;
+    const auto duplicate_count_before = gateway_->GetDuplicateTradesSuppressed();
+    const auto started = std::chrono::steady_clock::now();
+    const auto finish = [this, &report, started, duplicate_count_before]() {
+        report.elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now() - started)
+                                .count();
+        const auto duplicate_count_after = gateway_->GetDuplicateTradesSuppressed();
+        report.duplicate_trades_suppressed =
+            duplicate_count_after >= duplicate_count_before
+                ? static_cast<std::size_t>(duplicate_count_after - duplicate_count_before)
+                : 0;
+        if (report.error.empty() && gateway_->GetSessionGeneration() != report.generation) {
+            report.error_stage = "generation_changed";
+            report.error = "CTP session generation changed during recovery";
+            report.callbacks_drained = false;
+        }
+        return report;
+    };
     const auto timeout = std::chrono::milliseconds(std::max(1, timeout_ms));
 
     const int order_request_id = AllocateRequestId();
@@ -670,17 +701,24 @@ bool CTPTraderAdapter::RecoverOrdersAndTrades(int timeout_ms) {
     StorePromise(order_request_id, order_promise);
     if (!EnqueueOrderQuery(order_request_id)) {
         RejectPromise(order_request_id, "ReqQryOrder failed to submit");
-        return false;
+        report.error_stage = "order_query_submit";
+        report.error = "ReqQryOrder failed to submit";
+        return finish();
     }
     auto order_future = order_promise->get_future();
     if (order_future.wait_for(timeout) != std::future_status::ready) {
         RejectPromise(order_request_id, "ReqQryOrder timeout");
-        return false;
+        report.error_stage = "order_query_wait";
+        report.error = "ReqQryOrder timeout";
+        return finish();
     }
     try {
         order_future.get();
-    } catch (...) {
-        return false;
+        report.order_query_complete = true;
+    } catch (const std::exception& ex) {
+        report.error_stage = "order_query_result";
+        report.error = ex.what();
+        return finish();
     }
 
     const int trade_request_id = AllocateRequestId();
@@ -688,20 +726,27 @@ bool CTPTraderAdapter::RecoverOrdersAndTrades(int timeout_ms) {
     StorePromise(trade_request_id, trade_promise);
     if (!EnqueueTradeQuery(trade_request_id)) {
         RejectPromise(trade_request_id, "ReqQryTrade failed to submit");
-        return false;
+        report.error_stage = "trade_query_submit";
+        report.error = "ReqQryTrade failed to submit";
+        return finish();
     }
     auto trade_future = trade_promise->get_future();
     if (trade_future.wait_for(timeout) != std::future_status::ready) {
         RejectPromise(trade_request_id, "ReqQryTrade timeout");
-        return false;
+        report.error_stage = "trade_query_wait";
+        report.error = "ReqQryTrade timeout";
+        return finish();
     }
     try {
         trade_future.get();
-    } catch (...) {
-        return false;
+        report.trade_query_complete = true;
+    } catch (const std::exception& ex) {
+        report.error_stage = "trade_query_result";
+        report.error = ex.what();
+        return finish();
     }
-
-    return true;
+    report.callbacks_drained = true;
+    return finish();
 }
 
 bool CTPTraderAdapter::EnqueueUserSessionQuery(int request_id) {
@@ -856,6 +901,11 @@ void CTPTraderAdapter::RegisterOrderSubmitMappingCallback(OrderSubmitMappingCall
     user_order_submit_mapping_callback_ = std::move(callback);
 }
 
+void CTPTraderAdapter::RegisterOrderSubmitPrepareCallback(OrderSubmitPrepareCallback callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    user_order_submit_prepare_callback_ = std::move(callback);
+}
+
 void CTPTraderAdapter::RegisterTradingAccountSnapshotCallback(
     TradingAccountSnapshotCallback callback) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -1007,6 +1057,10 @@ void CTPTraderAdapter::RejectSettlementPromise(int request_id, const std::string
 
 void CTPTraderAdapter::ResolveLoginPromise(int request_id, int error_code,
                                            const std::string& error_msg) {
+    {
+        std::lock_guard<std::mutex> lock(login_timeout_mutex_);
+        login_deadlines_.erase(request_id);
+    }
     std::shared_ptr<std::promise<std::pair<int, std::string>>> promise;
     {
         std::lock_guard<std::mutex> lock(promise_map_mutex_);
@@ -1034,6 +1088,11 @@ void CTPTraderAdapter::RejectAllPromises(const std::string& error_msg) {
         settlement_promises.swap(settlement_promises_);
         login_promises.swap(login_promises_);
     }
+    {
+        std::lock_guard<std::mutex> lock(login_timeout_mutex_);
+        login_deadlines_.clear();
+    }
+    login_timeout_cv_.notify_all();
 
     const auto exception = std::make_exception_ptr(
         std::runtime_error(error_msg.empty() ? "adapter stopped" : error_msg));
@@ -1175,28 +1234,13 @@ void CTPTraderAdapter::OnReconnectTimer(std::uint64_t generation) {
         cfg = last_connect_config_;
     }
 
-    SetReconnectStage("login_started");
-    EmitStructuredLog(nullptr, "ctp_trader_adapter", "info", "ctp_trader_reconnect_login_started",
-                      {{"attempt", std::to_string(attempt_number)}});
-    auto login_future = LoginAsync(cfg.broker_id, cfg.user_id, cfg.password, 5000);
-    if (login_future.wait_for(std::chrono::seconds(6)) != std::future_status::ready) {
-        SetReconnectStage("login_timeout");
-        EmitStructuredLog(nullptr, "ctp_trader_adapter", "warn",
-                          "ctp_trader_reconnect_login_timeout",
-                          {{"attempt", std::to_string(attempt_number)}});
-        ScheduleReconnect();
-        return;
-    }
-    const auto login_result = login_future.get();
-    if (!IsGenerationCurrent(generation) || login_result.first != 0) {
-        SetReconnectStage("login_failed");
-        EmitStructuredLog(nullptr, "ctp_trader_adapter", "warn",
-                          "ctp_trader_reconnect_login_failed",
-                          {{"attempt", std::to_string(attempt_number)},
-                           {"error_code", std::to_string(login_result.first)},
-                           {"error", login_result.second}});
-        ScheduleReconnect();
-        return;
+    // Gateway health already means both physical channels have authenticated and logged in.
+    // Reissuing ReqUserLogin here races the gateway-owned lifecycle and was a primary source of
+    // repeated Login timeout incidents.
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        state_ = TraderSessionState::kLoggedIn;
+        SetReconnectStageLocked("gateway_login_confirmed");
     }
 
     SetReconnectStage("settlement_started");
@@ -1310,16 +1354,80 @@ void CTPTraderAdapter::ReconnectWorkerLoop() {
     }
 }
 
-void CTPTraderAdapter::JoinLoginTimeoutThreads() {
-    std::vector<std::thread> threads;
-    {
-        std::lock_guard<std::mutex> lock(login_timeout_threads_mutex_);
-        threads.swap(login_timeout_threads_);
+void CTPTraderAdapter::JoinLoginTimeoutThreads() { StopLoginTimeoutWorker(); }
+
+void CTPTraderAdapter::StartLoginTimeoutWorker() {
+    std::lock_guard<std::mutex> lock(login_timeout_mutex_);
+    if (login_timeout_thread_.joinable()) {
+        return;
     }
-    for (auto& thread : threads) {
-        if (thread.joinable()) {
-            thread.join();
+    login_timeout_stop_ = false;
+    login_timeout_thread_ = std::thread(&CTPTraderAdapter::LoginTimeoutWorkerLoop, this);
+}
+
+void CTPTraderAdapter::StopLoginTimeoutWorker() {
+    std::thread worker;
+    {
+        std::lock_guard<std::mutex> lock(login_timeout_mutex_);
+        login_timeout_stop_ = true;
+        login_deadlines_.clear();
+        worker = std::move(login_timeout_thread_);
+    }
+    login_timeout_cv_.notify_all();
+    if (worker.joinable()) {
+        worker.join();
+    }
+}
+
+void CTPTraderAdapter::LoginTimeoutWorkerLoop() {
+    std::unique_lock<std::mutex> lock(login_timeout_mutex_);
+    while (!login_timeout_stop_) {
+        if (login_deadlines_.empty()) {
+            login_timeout_cv_.wait(
+                lock, [this]() { return login_timeout_stop_ || !login_deadlines_.empty(); });
+            continue;
         }
+        auto next = std::min_element(login_deadlines_.begin(), login_deadlines_.end(),
+                                     [](const auto& lhs, const auto& rhs) {
+                                         return lhs.second.deadline < rhs.second.deadline;
+                                     });
+        const auto deadline = next->second.deadline;
+        if (login_timeout_cv_.wait_until(lock, deadline) != std::cv_status::timeout) {
+            continue;
+        }
+
+        const auto now = std::chrono::steady_clock::now();
+        std::vector<std::pair<int, std::uint64_t>> expired;
+        for (auto it = login_deadlines_.begin(); it != login_deadlines_.end();) {
+            if (it->second.deadline <= now) {
+                expired.emplace_back(it->first, it->second.generation);
+                it = login_deadlines_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        lock.unlock();
+        for (const auto& [request_id, generation] : expired) {
+            if (!IsGenerationCurrent(generation)) {
+                continue;
+            }
+            std::shared_ptr<std::promise<std::pair<int, std::string>>> timed_out;
+            {
+                std::lock_guard<std::mutex> promise_lock(promise_map_mutex_);
+                const auto it = login_promises_.find(request_id);
+                if (it != login_promises_.end()) {
+                    timed_out = it->second;
+                    login_promises_.erase(it);
+                }
+            }
+            if (timed_out) {
+                try {
+                    timed_out->set_value({-1, "Login timeout"});
+                } catch (...) {
+                }
+            }
+        }
+        lock.lock();
     }
 }
 
@@ -1333,6 +1441,7 @@ void CTPTraderAdapter::UnregisterGatewayCallbacks() {
     }
     gateway_->RegisterOrderEventCallback(nullptr);
     gateway_->RegisterOrderSubmitMappingCallback(nullptr);
+    gateway_->RegisterOrderSubmitPrepareCallback(nullptr);
     gateway_->RegisterTradingAccountSnapshotCallback(nullptr);
     gateway_->RegisterInvestorPositionSnapshotCallback(nullptr);
     gateway_->RegisterInstrumentMetaSnapshotCallback(nullptr);
@@ -1340,7 +1449,7 @@ void CTPTraderAdapter::UnregisterGatewayCallbacks() {
     gateway_->RegisterInstrumentMarginRateSnapshotCallback(nullptr);
     gateway_->RegisterInstrumentCommissionRateSnapshotCallback(nullptr);
     gateway_->RegisterInstrumentOrderCommRateSnapshotCallback(nullptr);
-    gateway_->RegisterConnectionStateCallback(nullptr);
+    gateway_->RemoveConnectionStateListener(connection_listener_token_);
     gateway_->RegisterLoginResponseCallback(nullptr);
     gateway_->RegisterQueryCompleteCallback(nullptr);
     gateway_->RegisterSettlementConfirmCallback(nullptr);

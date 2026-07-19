@@ -25,8 +25,8 @@ TRADING_DAYS_FILE="${SIMNOW_TRADING_DAYS_FILE:-}"
 EOD_TIME="${SIMNOW_EOD_TIME:-15:25}"
 EOD_EXECUTE="${SIMNOW_EOD_EXECUTE:-1}"
 EOD_PROJECT_DB="${SIMNOW_EOD_PROJECT_DB:-0}"
-EOD_QUERY_DB="${SIMNOW_EOD_QUERY_DB:-${EOD_PROJECT_DB}}"
-STRICT_RECONCILE="${SIMNOW_STRICT_RECONCILE:-0}"
+EOD_QUERY_DB="${SIMNOW_EOD_QUERY_DB:-1}"
+STRICT_RECONCILE="${SIMNOW_STRICT_RECONCILE:-1}"
 CONVERT_MARKET_PARQUET="${SIMNOW_EOD_CONVERT_MARKET_PARQUET:-0}"
 CHECK_INTERVAL_SECONDS="${SIMNOW_CHECK_INTERVAL_SECONDS:-30}"
 RESTART_DELAY_SECONDS="${SIMNOW_RESTART_DELAY_SECONDS:-15}"
@@ -47,7 +47,11 @@ HEALTH_INTERVAL_MS="${SIMNOW_HEALTH_INTERVAL_MS:-1000}"
 INSTRUMENT_TIMEOUT_SECONDS="${SIMNOW_INSTRUMENT_TIMEOUT_SECONDS:-45}"
 ALLOW_UNCONFIRMED_SETTLEMENT="${SIMNOW_ALLOW_UNCONFIRMED_SETTLEMENT:-0}"
 SIGNAL_MONITOR_ENABLED="${SIMNOW_SIGNAL_EXECUTION_MONITOR:-0}"
+SIGNAL_MONITOR_EXTERNAL="${SIMNOW_SIGNAL_MONITOR_EXTERNAL:-0}"
 SIGNAL_MONITOR_POLL_SECONDS="${SIMNOW_SIGNAL_MONITOR_POLL_SECONDS:-5}"
+SIGNAL_MONITOR_ROOT="${SIMNOW_SIGNAL_MONITOR_ROOT:-${QUANT_ROOT}/runtime/trading/monitor/simnow}"
+SIGNAL_MONITOR_HEARTBEAT_FILE="${SIMNOW_SIGNAL_MONITOR_HEARTBEAT_FILE:-${SIGNAL_MONITOR_ROOT}/heartbeat.json}"
+SIGNAL_MONITOR_HEARTBEAT_STALE_SECONDS="${SIMNOW_SIGNAL_MONITOR_HEARTBEAT_STALE_SECONDS:-30}"
 RUN_ID_PREFIX="${SIMNOW_RUN_ID_PREFIX:-simnow-auto}"
 RUN_ONCE=0
 DRY_RUN=0
@@ -104,6 +108,8 @@ Alert hooks are inherited from start_simnow_trading.sh:
 Optional signal execution watcher:
   SIMNOW_SIGNAL_EXECUTION_MONITOR=1 starts monitor_simnow_signal_execution.sh
   alongside the supervisor and records incidents under runtime/trading/monitor/simnow.
+  SIMNOW_SIGNAL_MONITOR_EXTERNAL=1 expects the independent systemd monitor unit
+  and makes the supervisor verify its heartbeat instead of spawning a child.
 USAGE
 }
 
@@ -579,7 +585,8 @@ start_signal_execution_monitor() {
   local monitor_pid_file="${RUN_ROOT}/signal_execution_monitor.pid"
   local monitor_log="${RUN_ROOT}/signal_execution_monitor.log"
 
-  [[ "${SIGNAL_MONITOR_ENABLED}" == "1" ]] || return 0
+  [[ "${SIGNAL_MONITOR_ENABLED}" == "1" || "${SIGNAL_MONITOR_EXTERNAL}" == "1" ]] || return 0
+  [[ "${SIGNAL_MONITOR_EXTERNAL}" != "1" ]] || return 0
   if [[ ! -x "${SIGNAL_MONITOR_SCRIPT}" ]]; then
     send_alert_once "signal_monitor_missing" "warning" \
       "signal execution monitor script is not executable: ${SIGNAL_MONITOR_SCRIPT}"
@@ -601,9 +608,35 @@ start_signal_execution_monitor() {
         --run-root "${RUN_ROOT}" \
         --market-data-dir "${MARKET_DATA_DIR}" \
         --wal-file "${WAL_FILE}" \
+        --monitor-root "${SIGNAL_MONITOR_ROOT}" \
+        --heartbeat-file "${SIGNAL_MONITOR_HEARTBEAT_FILE}" \
         --poll-seconds "${SIGNAL_MONITOR_POLL_SECONDS}"
   ) > "${monitor_log}" 2>&1 &
   printf '%s\n' "$!" > "${monitor_pid_file}"
+}
+
+check_signal_monitor_heartbeat() {
+  local session_start_epoch="$1"
+  local now_epoch
+  local heartbeat_age
+
+  [[ "${SIGNAL_MONITOR_ENABLED}" == "1" || "${SIGNAL_MONITOR_EXTERNAL}" == "1" ]] || return 0
+  now_epoch="$(date +%s)"
+  if (( now_epoch - session_start_epoch < HEALTH_GRACE_SECONDS )); then
+    return 0
+  fi
+  if [[ ! -s "${SIGNAL_MONITOR_HEARTBEAT_FILE}" ]]; then
+    send_alert_once "signal_monitor_heartbeat_missing" "critical" \
+      "signal execution monitor heartbeat is missing: ${SIGNAL_MONITOR_HEARTBEAT_FILE}"
+    return 1
+  fi
+  heartbeat_age="$(newest_file_age_seconds "$(dirname "${SIGNAL_MONITOR_HEARTBEAT_FILE}")" \
+    "$(basename "${SIGNAL_MONITOR_HEARTBEAT_FILE}")")"
+  if (( heartbeat_age < 0 || heartbeat_age > SIGNAL_MONITOR_HEARTBEAT_STALE_SECONDS )); then
+    send_alert_once "signal_monitor_heartbeat_stale" "critical" \
+      "signal execution monitor heartbeat is stale for ${heartbeat_age}s; threshold=${SIGNAL_MONITOR_HEARTBEAT_STALE_SECONDS}s"
+    return 1
+  fi
 }
 
 count_market_rows_by_trading_day() {
@@ -893,7 +926,11 @@ PROBE_TIMEOUT_SECONDS="${SIMNOW_PROBE_TIMEOUT_SECONDS:-${PROBE_TIMEOUT_SECONDS}}
 INSTRUMENT_TIMEOUT_SECONDS="${SIMNOW_INSTRUMENT_TIMEOUT_SECONDS:-${INSTRUMENT_TIMEOUT_SECONDS}}"
 ALLOW_UNCONFIRMED_SETTLEMENT="${SIMNOW_ALLOW_UNCONFIRMED_SETTLEMENT:-${ALLOW_UNCONFIRMED_SETTLEMENT}}"
 SIGNAL_MONITOR_ENABLED="${SIMNOW_SIGNAL_EXECUTION_MONITOR:-${SIGNAL_MONITOR_ENABLED}}"
+SIGNAL_MONITOR_EXTERNAL="${SIMNOW_SIGNAL_MONITOR_EXTERNAL:-${SIGNAL_MONITOR_EXTERNAL}}"
 SIGNAL_MONITOR_POLL_SECONDS="${SIMNOW_SIGNAL_MONITOR_POLL_SECONDS:-${SIGNAL_MONITOR_POLL_SECONDS}}"
+SIGNAL_MONITOR_ROOT="${SIMNOW_SIGNAL_MONITOR_ROOT:-${SIGNAL_MONITOR_ROOT}}"
+SIGNAL_MONITOR_HEARTBEAT_FILE="${SIMNOW_SIGNAL_MONITOR_HEARTBEAT_FILE:-${SIGNAL_MONITOR_ROOT}/heartbeat.json}"
+SIGNAL_MONITOR_HEARTBEAT_STALE_SECONDS="${SIMNOW_SIGNAL_MONITOR_HEARTBEAT_STALE_SECONDS:-${SIGNAL_MONITOR_HEARTBEAT_STALE_SECONDS}}"
 is_bool_flag "${EOD_EXECUTE}" || die "SIMNOW_EOD_EXECUTE must be 0 or 1"
 is_bool_flag "${EOD_PROJECT_DB}" || die "SIMNOW_EOD_PROJECT_DB must be 0 or 1"
 is_bool_flag "${EOD_QUERY_DB}" || die "SIMNOW_EOD_QUERY_DB must be 0 or 1"
@@ -901,10 +938,12 @@ is_bool_flag "${STRICT_RECONCILE}" || die "SIMNOW_STRICT_RECONCILE must be 0 or 
 is_bool_flag "${CONVERT_MARKET_PARQUET}" || die "SIMNOW_EOD_CONVERT_MARKET_PARQUET must be 0 or 1"
 is_bool_flag "${ALLOW_UNCONFIRMED_SETTLEMENT}" || die "SIMNOW_ALLOW_UNCONFIRMED_SETTLEMENT must be 0 or 1"
 is_bool_flag "${SIGNAL_MONITOR_ENABLED}" || die "SIMNOW_SIGNAL_EXECUTION_MONITOR must be 0 or 1"
+is_bool_flag "${SIGNAL_MONITOR_EXTERNAL}" || die "SIMNOW_SIGNAL_MONITOR_EXTERNAL must be 0 or 1"
 is_positive_int "${PROBE_SECONDS}" || die "SIMNOW_PROBE_SECONDS must be positive"
 is_positive_int "${PROBE_TIMEOUT_SECONDS}" || die "SIMNOW_PROBE_TIMEOUT_SECONDS must be positive"
 is_positive_int "${INSTRUMENT_TIMEOUT_SECONDS}" || die "SIMNOW_INSTRUMENT_TIMEOUT_SECONDS must be positive"
 is_positive_int "${SIGNAL_MONITOR_POLL_SECONDS}" || die "SIMNOW_SIGNAL_MONITOR_POLL_SECONDS must be positive"
+is_positive_int "${SIGNAL_MONITOR_HEARTBEAT_STALE_SECONDS}" || die "SIMNOW_SIGNAL_MONITOR_HEARTBEAT_STALE_SECONDS must be positive"
 [[ -n "${RUN_ROOT}" ]] || die "SIMNOW_RUN_ROOT must not be empty"
 [[ -n "${MARKET_DATA_DIR}" ]] || die "SIMNOW_MARKET_DATA_DIR must not be empty"
 [[ -n "${WAL_FILE}" ]] || die "SIMNOW_WAL_FILE must not be empty"
@@ -972,6 +1011,7 @@ while true; do
     if pid_is_alive "${process_pid}"; then
       check_market_data_freshness "${session_start_epoch}"
       check_fill_freshness "${session_start_epoch}"
+      check_signal_monitor_heartbeat "${session_start_epoch}" || true
     else
       if [[ -n "${process_pid}" ]]; then
         send_alert_once "core_crashed" "critical" "core_engine pid=${process_pid} is no longer alive; session=${session_key}"

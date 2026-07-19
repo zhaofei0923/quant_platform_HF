@@ -11,10 +11,14 @@ WAL_FILE="${SIMNOW_WAL_FILE:-${QUANT_ROOT}/runtime/trading/wal/simnow/events.wal
 MONITOR_ROOT="${SIMNOW_SIGNAL_MONITOR_ROOT:-${QUANT_ROOT}/runtime/trading/monitor/simnow}"
 EVENT_LOG="${SIMNOW_SIGNAL_MONITOR_EVENT_LOG:-${MONITOR_ROOT}/signal_execution_watch.jsonl}"
 INCIDENT_ROOT="${SIMNOW_SIGNAL_MONITOR_INCIDENT_ROOT:-${MONITOR_ROOT}/incidents}"
+HEARTBEAT_FILE="${SIMNOW_SIGNAL_MONITOR_HEARTBEAT_FILE:-${MONITOR_ROOT}/heartbeat.json}"
+CORE_READINESS_FILE="${QUANT_HFT_READINESS_FILE:-${MONITOR_ROOT}/readiness.json}"
 CURRENT_PID_FILE="${SIMNOW_CURRENT_PID_FILE:-${RUN_ROOT}/current_core_engine.pid}"
 CURRENT_LOG_FILE="${SIMNOW_CURRENT_LOG_FILE:-${RUN_ROOT}/current_core_engine_log}"
 CURRENT_RUN_FILE="${SIMNOW_CURRENT_RUN_FILE:-${RUN_ROOT}/current_run_dir}"
+CURRENT_SESSION_FILE="${SIMNOW_CURRENT_SESSION_FILE:-${RUN_ROOT}/current_session.env}"
 POLL_SECONDS="${SIMNOW_SIGNAL_MONITOR_POLL_SECONDS:-5}"
+CORE_READINESS_STALE_SECONDS="${SIMNOW_CORE_READINESS_STALE_SECONDS:-0}"
 SIGNAL_TO_ORDER_TIMEOUT_SECONDS="${SIMNOW_SIGNAL_TO_ORDER_TIMEOUT_SECONDS:-30}"
 ORDER_TO_CTP_TIMEOUT_SECONDS="${SIMNOW_ORDER_TO_CTP_TIMEOUT_SECONDS:-30}"
 CTP_TO_CALLBACK_TIMEOUT_SECONDS="${SIMNOW_CTP_TO_CALLBACK_TIMEOUT_SECONDS:-120}"
@@ -22,6 +26,8 @@ FILL_TIMEOUT_SECONDS="${SIMNOW_SIGNAL_FILL_TIMEOUT_SECONDS:-180}"
 STATUS_INTERVAL_SECONDS="${SIMNOW_SIGNAL_MONITOR_STATUS_INTERVAL_SECONDS:-60}"
 START_AT_END="${SIMNOW_SIGNAL_MONITOR_START_AT_END:-1}"
 ONCE=0
+HEARTBEAT_SET_BY_CLI=0
+CORE_READINESS_SET_BY_CLI=0
 
 usage() {
   cat <<USAGE
@@ -37,6 +43,8 @@ Options:
   --market-data-dir <path>             Market CSV root (default: ${MARKET_DATA_DIR})
   --wal-file <path>                    WAL file path (default: ${WAL_FILE})
   --monitor-root <path>                Monitor output root (default: ${MONITOR_ROOT})
+  --heartbeat-file <path>              Atomic liveness/session heartbeat (default: ${HEARTBEAT_FILE})
+  --core-readiness-file <path>         Core structured readiness heartbeat (default: ${CORE_READINESS_FILE})
   --poll-seconds <int>                 Poll interval (default: ${POLL_SECONDS})
   --signal-to-order-timeout <int>      Signal -> order_submitted timeout (default: ${SIGNAL_TO_ORDER_TIMEOUT_SECONDS})
   --order-to-ctp-timeout <int>         order_submitted -> ctp_order_submitted timeout (default: ${ORDER_TO_CTP_TIMEOUT_SECONDS})
@@ -114,6 +122,24 @@ while [[ $# -gt 0 ]]; do
       MONITOR_ROOT="$2"
       EVENT_LOG="${MONITOR_ROOT}/signal_execution_watch.jsonl"
       INCIDENT_ROOT="${MONITOR_ROOT}/incidents"
+      if [[ ${HEARTBEAT_SET_BY_CLI} -eq 0 ]]; then
+        HEARTBEAT_FILE="${MONITOR_ROOT}/heartbeat.json"
+      fi
+      if [[ ${CORE_READINESS_SET_BY_CLI} -eq 0 && -z "${QUANT_HFT_READINESS_FILE:-}" ]]; then
+        CORE_READINESS_FILE="${MONITOR_ROOT}/readiness.json"
+      fi
+      shift 2
+      ;;
+    --heartbeat-file)
+      require_value "$1" "${2:-}"
+      HEARTBEAT_FILE="$2"
+      HEARTBEAT_SET_BY_CLI=1
+      shift 2
+      ;;
+    --core-readiness-file)
+      require_value "$1" "${2:-}"
+      CORE_READINESS_FILE="$2"
+      CORE_READINESS_SET_BY_CLI=1
       shift 2
       ;;
     --poll-seconds) require_value "$1" "${2:-}"; POLL_SECONDS="$2"; shift 2 ;;
@@ -135,6 +161,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 is_positive_int "${POLL_SECONDS}" || die "--poll-seconds must be positive"
+is_non_negative_int "${CORE_READINESS_STALE_SECONDS}" || \
+  die "SIMNOW_CORE_READINESS_STALE_SECONDS must be non-negative"
+if (( CORE_READINESS_STALE_SECONDS == 0 )); then
+  CORE_READINESS_STALE_SECONDS=$((POLL_SECONDS * 2))
+fi
 is_non_negative_int "${SIGNAL_TO_ORDER_TIMEOUT_SECONDS}" || die "--signal-to-order-timeout must be non-negative"
 is_non_negative_int "${ORDER_TO_CTP_TIMEOUT_SECONDS}" || die "--order-to-ctp-timeout must be non-negative"
 is_non_negative_int "${CTP_TO_CALLBACK_TIMEOUT_SECONDS}" || die "--ctp-to-callback-timeout must be non-negative"
@@ -142,19 +173,32 @@ is_non_negative_int "${FILL_TIMEOUT_SECONDS}" || die "--fill-timeout must be non
 is_non_negative_int "${STATUS_INTERVAL_SECONDS}" || die "--status-interval-seconds must be non-negative"
 [[ "${START_AT_END}" == "0" || "${START_AT_END}" == "1" ]] || die "start-at-end flag must be 0 or 1"
 
-mkdir -p "${MONITOR_ROOT}" "${INCIDENT_ROOT}" "$(dirname "${EVENT_LOG}")"
+CURRENT_PID_FILE="${SIMNOW_CURRENT_PID_FILE:-${RUN_ROOT}/current_core_engine.pid}"
+CURRENT_LOG_FILE="${SIMNOW_CURRENT_LOG_FILE:-${RUN_ROOT}/current_core_engine_log}"
+CURRENT_RUN_FILE="${SIMNOW_CURRENT_RUN_FILE:-${RUN_ROOT}/current_run_dir}"
+CURRENT_SESSION_FILE="${SIMNOW_CURRENT_SESSION_FILE:-${RUN_ROOT}/current_session.env}"
+
+mkdir -p "${MONITOR_ROOT}" "${INCIDENT_ROOT}" "$(dirname "${EVENT_LOG}")" \
+  "$(dirname "${HEARTBEAT_FILE}")"
 
 declare -A file_offsets
 declare -A signal_seen_epoch signal_minute signal_instrument signal_strategy signal_side signal_ts_ns
 declare -A signal_csv_file signal_status signal_reason signal_last_event signal_incident_written
 declare -A signal_order_epoch signal_ctp_epoch signal_callback_epoch signal_fill_epoch
 declare -A signal_client_order_id signal_exchange_order_id signal_order_ref signal_order_status
+declare -A signal_session_key
 declare -A client_trace
 declare -A pending_ctp_epoch pending_ctp_order_ref pending_ctp_request_id
 
 initial_scan_done=0
 last_core_state="unknown"
+core_engine_pid=""
+current_session_key="none"
 last_summary_epoch=0
+core_readiness_generation=0
+core_readiness_mode="unknown"
+core_readiness_last_processed_epoch=0
+core_readiness_state="unknown"
 
 now_iso() {
   date -Iseconds
@@ -185,6 +229,104 @@ current_engine_log() {
     return 0
   fi
   return 1
+}
+
+resolve_session_key() {
+  local run_dir=""
+  local session_state=""
+  if [[ -s "${CURRENT_RUN_FILE}" ]]; then
+    run_dir="$(head -n 1 "${CURRENT_RUN_FILE}")"
+    if [[ -n "${run_dir}" ]]; then
+      basename "${run_dir}"
+      return 0
+    fi
+  fi
+  if [[ -s "${CURRENT_SESSION_FILE}" ]]; then
+    session_state="$(head -n 1 "${CURRENT_SESSION_FILE}")"
+    if [[ -n "${session_state}" ]]; then
+      printf '%s\n' "${session_state}"
+      return 0
+    fi
+  fi
+  printf '%s\n' "none"
+}
+
+write_heartbeat() {
+  local monitor_status="${1:-running}"
+  local heartbeat_epoch
+  local tmp_file
+  local engine_log=""
+  local signal_count=0
+  local trace_id
+  local cursor_lines=0
+  local tracked_file
+
+  heartbeat_epoch="$(date +%s)"
+  engine_log="$(current_engine_log 2>/dev/null || true)"
+  for trace_id in "${!signal_seen_epoch[@]}"; do
+    signal_count=$((signal_count + 1))
+  done
+  for tracked_file in "${!file_offsets[@]}"; do
+    cursor_lines=$((cursor_lines + ${file_offsets[${tracked_file}]:-0}))
+  done
+  tmp_file="${HEARTBEAT_FILE}.tmp.${BASHPID}"
+  cat > "${tmp_file}" <<EOF
+{"schema_version":2,"heartbeat_epoch":${heartbeat_epoch},"heartbeat_ts":"$(json_escape "$(now_iso)")","monitor_pid":${BASHPID},"monitor_status":"$(json_escape "${monitor_status}")","core_state":"$(json_escape "${last_core_state}")","core_pid":"$(json_escape "${core_engine_pid}")","session_key":"$(json_escape "${current_session_key}")","signals_tracked":${signal_count},"cursor_lines":${cursor_lines},"generation":${core_readiness_generation},"readiness_mode":"$(json_escape "${core_readiness_mode}")","readiness_state":"$(json_escape "${core_readiness_state}")","readiness_last_processed_epoch":${core_readiness_last_processed_epoch},"core_readiness_file":"$(json_escape "${CORE_READINESS_FILE}")","event_log":"$(json_escape "${EVENT_LOG}")","wal_file":"$(json_escape "${WAL_FILE}")","core_log":"$(json_escape "${engine_log}")"}
+EOF
+  mv -f -- "${tmp_file}" "${HEARTBEAT_FILE}"
+}
+
+check_core_readiness() {
+  local now_epoch
+  local modified_epoch
+  local age_seconds
+  local content
+  local next_state="fresh"
+  local previous_state="${core_readiness_state}"
+
+  if [[ "${last_core_state}" != "running" ]]; then
+    core_readiness_state="core_stopped"
+    return 0
+  fi
+
+  now_epoch="$(date +%s)"
+  if [[ ! -s "${CORE_READINESS_FILE}" ]]; then
+    next_state="missing"
+  else
+    modified_epoch="$(stat -c %Y -- "${CORE_READINESS_FILE}" 2>/dev/null || printf '0')"
+    if [[ ! "${modified_epoch}" =~ ^[0-9]+$ ]]; then
+      modified_epoch=0
+    fi
+    age_seconds=$((now_epoch - modified_epoch))
+    if (( age_seconds > CORE_READINESS_STALE_SECONDS )); then
+      next_state="stale"
+    else
+      content="$(tr -d '\n\r' < "${CORE_READINESS_FILE}")"
+      core_readiness_generation="$(printf '%s\n' "${content}" | \
+        LC_ALL=C sed -nE 's/.*"generation"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' | head -n 1)"
+      core_readiness_mode="$(printf '%s\n' "${content}" | \
+        LC_ALL=C sed -nE 's/.*"mode"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' | head -n 1)"
+      [[ "${core_readiness_generation}" =~ ^[0-9]+$ ]] || core_readiness_generation=0
+      [[ -n "${core_readiness_mode}" ]] || core_readiness_mode="unknown"
+      core_readiness_last_processed_epoch="${now_epoch}"
+    fi
+  fi
+
+  core_readiness_state="${next_state}"
+  if [[ "${next_state}" == "fresh" ]]; then
+    if [[ "${previous_state}" == "missing" || "${previous_state}" == "stale" ]]; then
+      write_event "core_readiness_recovered" "" "Core readiness heartbeat recovered" \
+        "\"generation\":${core_readiness_generation},\"mode\":\"$(json_escape "${core_readiness_mode}")\""
+      send_alert "info" "SimNow core readiness heartbeat recovered: generation=${core_readiness_generation} mode=${core_readiness_mode}"
+    fi
+    return 0
+  fi
+  if [[ "${previous_state}" != "${next_state}" ]]; then
+    write_event "core_readiness_${next_state}" "" \
+      "Core readiness heartbeat is ${next_state}" \
+      "\"core_readiness_file\":\"$(json_escape "${CORE_READINESS_FILE}")\",\"stale_after_seconds\":${CORE_READINESS_STALE_SECONDS}"
+    send_alert "critical" "SimNow core readiness heartbeat is ${next_state}: file=${CORE_READINESS_FILE} threshold=${CORE_READINESS_STALE_SECONDS}s"
+  fi
 }
 
 write_event() {
@@ -240,6 +382,7 @@ ensure_signal() {
     signal_seen_epoch["${trace_id}"]="${seen_epoch:-$(date +%s)}"
     signal_status["${trace_id}"]="observed"
     signal_last_event["${trace_id}"]="observed"
+    signal_session_key["${trace_id}"]="${current_session_key}"
   fi
 }
 
@@ -742,6 +885,12 @@ check_core_engine() {
   if pid_is_alive "${pid}"; then
     state="running"
   fi
+  core_engine_pid="${pid}"
+  if [[ "${state}" == "running" ]]; then
+    current_session_key="$(resolve_session_key)"
+  else
+    current_session_key="none"
+  fi
   if [[ "${state}" != "${last_core_state}" ]]; then
     echo "[core_engine] ${state} pid=${pid:-none}"
     write_event "core_engine_${state}" "" "pid=${pid:-none}" \
@@ -757,7 +906,9 @@ check_signal_timeouts() {
   local age
   local order_age
   local ctp_age
+  [[ "${last_core_state}" == "running" ]] || return 0
   for trace_id in "${!signal_seen_epoch[@]}"; do
+    [[ "${signal_session_key[${trace_id}]:-none}" == "${current_session_key}" ]] || continue
     [[ -z "${signal_fill_epoch[${trace_id}]:-}" ]] || continue
     [[ "${signal_status[${trace_id}]:-}" != "incident" ]] || continue
     [[ "${signal_status[${trace_id}]:-}" != "rejected" ]] || continue
@@ -827,6 +978,7 @@ print_summary_if_due() {
 scan_once() {
   local now_epoch
   check_core_engine
+  check_core_readiness
   scan_kama_csv_files
   scan_core_log
   process_wal_file "${WAL_FILE}"
@@ -834,12 +986,18 @@ scan_once() {
   check_signal_timeouts "${now_epoch}"
   print_summary_if_due "${now_epoch}"
   initial_scan_done=1
+  write_heartbeat "running"
 }
 
 echo "[start] SimNow signal execution monitor"
-echo "[config] market_data_dir=${MARKET_DATA_DIR} wal_file=${WAL_FILE} run_root=${RUN_ROOT} monitor_root=${MONITOR_ROOT}"
+echo "[config] market_data_dir=${MARKET_DATA_DIR} wal_file=${WAL_FILE} run_root=${RUN_ROOT} monitor_root=${MONITOR_ROOT} core_readiness_file=${CORE_READINESS_FILE}"
 write_event "monitor_started" "" "SimNow signal execution monitor started" \
-  "\"market_data_dir\":\"$(json_escape "${MARKET_DATA_DIR}")\",\"wal_file\":\"$(json_escape "${WAL_FILE}")\",\"run_root\":\"$(json_escape "${RUN_ROOT}")\""
+  "\"market_data_dir\":\"$(json_escape "${MARKET_DATA_DIR}")\",\"wal_file\":\"$(json_escape "${WAL_FILE}")\",\"run_root\":\"$(json_escape "${RUN_ROOT}")\",\"heartbeat_file\":\"$(json_escape "${HEARTBEAT_FILE}")\",\"core_readiness_file\":\"$(json_escape "${CORE_READINESS_FILE}")\""
+
+on_monitor_exit() {
+  write_heartbeat "stopped" 2>/dev/null || true
+}
+trap on_monitor_exit EXIT
 
 if (( ONCE == 1 )); then
   scan_once

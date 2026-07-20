@@ -267,6 +267,9 @@ struct StateSnapshot7D {
     std::uint64_t market_state_bars_seen{0};
     std::string market_state_decision_reason;
     EpochNanos ts_ns{0};
+    // True only while StrategyEngine replays state to rebuild indicators. Warmup callbacks may
+    // log diagnostics, but their returned intents are never routed to execution.
+    bool is_warmup_replay{false};
 
     double effective_bar_open() const noexcept {
         return std::isfinite(analysis_bar_open) ? analysis_bar_open : bar_open;

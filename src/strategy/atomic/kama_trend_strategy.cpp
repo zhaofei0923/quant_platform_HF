@@ -700,6 +700,7 @@ std::vector<SignalIntent> KamaTrendStrategy::OnState(const StateSnapshot7D& stat
                     ctx, "info", "signal_candidate",
                     {{"strategy_id", id_},
                      {"event_type", "signal_candidate"},
+                     {"warmup_replay", state.is_warmup_replay ? "true" : "false"},
                      {"candidate_type", "open"},
                      {"event_ts_ns", std::to_string(state.ts_ns)},
                      {"trace_id", entry_signal.trace_id},

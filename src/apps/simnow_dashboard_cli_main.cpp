@@ -1532,6 +1532,26 @@ std::vector<ContractStatus> DiscoverContracts(const std::string& ctp_instrument_
     return contracts;
 }
 
+std::int64_t ContractWarmupBudgetSeconds(const ContractStatus& contract) {
+    constexpr std::int64_t kWarmupStartupAllowanceSeconds = 10 * 60;
+    constexpr std::int64_t kFiveMinuteBarSeconds = 5 * 60;
+    return std::max<std::int64_t>(
+        kWarmupStartupAllowanceSeconds,
+        contract.warmup_required_bars * kFiveMinuteBarSeconds + kWarmupStartupAllowanceSeconds);
+}
+
+bool IsExpectedContractWarmup(const ContractStatus& contract) {
+    const bool coverage_complete =
+        contract.eligible_count > 0 && contract.baseline_count == contract.eligible_count;
+    const bool progress_valid = contract.warmup_required_bars > 0 &&
+                                contract.warmup_observed_bars >= 0 &&
+                                contract.warmup_observed_bars < contract.warmup_required_bars;
+    const bool within_budget = !contract.phase_age_seconds.has_value() ||
+                               *contract.phase_age_seconds <= ContractWarmupBudgetSeconds(contract);
+    return contract.phase == "warming" && coverage_complete && progress_valid && within_budget &&
+           !contract.cache_trading_day_mismatch && contract.last_error.empty();
+}
+
 std::optional<std::string> LatestDirectoryName(const fs::path& root) {
     std::error_code ec;
     if (!fs::exists(root, ec)) {
@@ -4032,14 +4052,17 @@ DashboardState CollectState(const DashboardOptions& options) {
     }
     const bool structured_readiness_healthy =
         !state.readiness.found || state.readiness.healthy || waiting_for_window;
-    const bool dominant_contracts_healthy =
-        state.contracts.empty() ||
-        std::all_of(state.contracts.begin(), state.contracts.end(),
-                    [](const auto& contract) { return contract.healthy; });
+    const bool dominant_contracts_unhealthy =
+        std::any_of(state.contracts.begin(), state.contracts.end(), [](const auto& contract) {
+            return !contract.healthy && !IsExpectedContractWarmup(contract);
+        });
+    const bool dominant_contracts_warming =
+        std::any_of(state.contracts.begin(), state.contracts.end(),
+                    [](const auto& contract) { return IsExpectedContractWarmup(contract); });
     if (state.pipeline_health.authoritative) {
         const bool pipeline_inactive = state.pipeline_health.status == "inactive";
         const bool independent_unhealthy =
-            !pipeline_inactive && (!dominant_contracts_healthy || !structured_readiness_healthy ||
+            !pipeline_inactive && (dominant_contracts_unhealthy || !structured_readiness_healthy ||
                                    !state.ctp_connection.healthy);
         if (independent_unhealthy || state.pipeline_health.status == "unhealthy" ||
             state.pipeline_health.status == "missing" ||
@@ -4047,13 +4070,17 @@ DashboardState CollectState(const DashboardOptions& options) {
             state.live_status = "unhealthy";
         } else {
             state.live_status = state.pipeline_health.status;
+            if (!pipeline_inactive && dominant_contracts_warming &&
+                state.live_status == "healthy") {
+                state.live_status = "degraded";
+            }
         }
         state.live_healthy = state.live_status == "healthy" || state.live_status == "inactive";
     } else {
         state.live_healthy = state.process.healthy && structured_readiness_healthy &&
                              (waiting_for_window || market_healthy) &&
                              state.signal_monitor.healthy && state.ctp_connection.healthy &&
-                             dominant_contracts_healthy &&
+                             !dominant_contracts_unhealthy && !dominant_contracts_warming &&
                              state.ctp_order_flow.monitor_incidents == 0 &&
                              state.ctp_order_flow.ctp_submit_rejected == 0;
         state.live_status = state.live_healthy ? "healthy" : "unhealthy";
@@ -4120,7 +4147,7 @@ DashboardState CollectState(const DashboardOptions& options) {
                                           contract.product);
         }
         if (contract.phase == "warming" && contract.phase_age_seconds.has_value() &&
-            *contract.phase_age_seconds > 30 * 60) {
+            *contract.phase_age_seconds > ContractWarmupBudgetSeconds(contract)) {
             state.recent_alerts.push_back("dominant_contract_warming_stalled product=" +
                                           contract.product);
         }

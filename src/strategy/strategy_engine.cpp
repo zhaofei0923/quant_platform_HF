@@ -374,6 +374,7 @@ void StrategyEngine::WorkerLoop() {
 
         if (has_event) {
             if (event.type == EventType::kState) {
+                event.state.is_warmup_replay = !event.emit_intents;
                 DispatchState(event.state, event.product_id, event.contract_generation,
                               event.emit_intents);
             } else if (event.type == EventType::kMarketTick) {
@@ -394,6 +395,7 @@ void StrategyEngine::WorkerLoop() {
                     }
                 }
             } else if (event.type == EventType::kContractWarmupState) {
+                event.state.is_warmup_replay = true;
                 const bool success =
                     DispatchState(event.state, event.product_id, event.contract_generation, false);
                 if (event.contract_warmup_promise != nullptr) {
@@ -670,10 +672,12 @@ StrategyEngine::ContractSwitchReport StrategyEngine::DispatchContractSwitch(
             ordered.erase(ordered.begin(), ordered.end() - report.required_warmup_bars);
         }
         for (const auto& state : ordered) {
+            StateSnapshot7D replay_state = state;
+            replay_state.is_warmup_replay = true;
             for (auto& entry : strategies_) {
                 // Warmup deliberately suppresses every returned intent.  The state mutation is
                 // identical to live evaluation, but execution cannot observe a replay signal.
-                (void)entry.strategy->OnState(state);
+                (void)entry.strategy->OnState(replay_state);
             }
             ++report.replayed_warmup_bars;
         }

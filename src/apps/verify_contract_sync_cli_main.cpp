@@ -219,6 +219,7 @@ int main() {
               "market_regime",
               "market_state_bars_seen",
               "market_state_decision_reason",
+              "is_warmup_replay",
               "ts_ns"}},
             {"SignalIntent",
              {"strategy_id", "instrument_id", "signal_type", "side", "offset", "volume",

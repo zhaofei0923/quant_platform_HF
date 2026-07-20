@@ -13,6 +13,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -49,6 +50,7 @@
 #include "quant_hft/risk/risk_manager.h"
 #include "quant_hft/services/bar_aggregator.h"
 #include "quant_hft/services/basic_risk_engine.h"
+#include "quant_hft/services/canonical_warmup_history.h"
 #include "quant_hft/services/ctp_account_ledger.h"
 #include "quant_hft/services/ctp_close_offset_resolver.h"
 #include "quant_hft/services/ctp_position_ledger.h"
@@ -3806,6 +3808,67 @@ int main(int argc, char** argv) {
          {"error_stage", initial_recovery_report.error_stage},
          {"error", initial_recovery_report.error}});
 
+    const auto load_dominant_warmup_states =
+        [&](const std::string& product_id,
+            const std::string& instrument_id) -> std::vector<StateSnapshot7D> {
+        constexpr std::size_t kWarmupHistoryLimit = 128;
+        CanonicalWarmupHistoryOptions history_options;
+        history_options.market_data_root = file_config.market_data_recording.output_dir;
+        history_options.product_id = product_id;
+        history_options.instrument_id = instrument_id;
+        history_options.timeframe_minutes = 5;
+        history_options.limit = kWarmupHistoryLimit;
+        history_options.max_ts_ns = NowEpochNanos();
+        CanonicalWarmupHistoryResult history_result;
+        std::string history_error;
+        const bool history_loaded =
+            LoadCanonicalWarmupHistory(history_options, &history_result, &history_error);
+        if (!history_loaded) {
+            EmitStructuredLog(&config, "core_engine", "warn",
+                              "dominant_contract_warmup_history_load_failed",
+                              {{"product_id", product_id},
+                               {"instrument_id", instrument_id},
+                               {"error", history_error}});
+        }
+
+        const auto checkpoint_states =
+            market_bar_pipeline.RecentCompleteStates(instrument_id, 5, kWarmupHistoryLimit);
+        std::map<EpochNanos, StateSnapshot7D> merged;
+        if (history_loaded) {
+            for (auto& state : history_result.states) {
+                merged[state.ts_ns] = std::move(state);
+            }
+        }
+        // Checkpoint states contain the complete detector output and therefore override the CSV
+        // fallback when both represent the same canonical bar.
+        for (const auto& state : checkpoint_states) {
+            merged[state.ts_ns] = state;
+        }
+        while (merged.size() > kWarmupHistoryLimit) {
+            merged.erase(merged.begin());
+        }
+        std::vector<StateSnapshot7D> states;
+        states.reserve(merged.size());
+        for (auto& [ts_ns, state] : merged) {
+            (void)ts_ns;
+            states.push_back(std::move(state));
+        }
+        EmitStructuredLog(
+            &config, "core_engine", "info", "dominant_contract_warmup_history_loaded",
+            {{"product_id", product_id},
+             {"instrument_id", instrument_id},
+             {"checkpoint_count", std::to_string(checkpoint_states.size())},
+             {"canonical_csv_count",
+              std::to_string(history_loaded ? history_result.states.size() : 0)},
+             {"rejected_count", std::to_string(history_loaded ? history_result.rows_rejected : 0)},
+             {"conflict_count",
+              std::to_string(history_loaded ? history_result.conflicting_rows : 0)},
+             {"legacy_validated_count",
+              std::to_string(history_loaded ? history_result.legacy_rows_validated : 0)},
+             {"merged_count", std::to_string(states.size())}});
+        return states;
+    };
+
     if (dominant_contract_mode) {
         const auto& product_ids = dominant_product_ids;
         if (product_ids.empty()) {
@@ -4113,7 +4176,7 @@ int main(int argc, char** argv) {
                 const ContractSwitchContext switch_context{
                     product_id, "", status.current_instrument_id, status.generation};
                 const auto warmup =
-                    market_bar_pipeline.RecentCompleteStates(status.current_instrument_id, 5, 128);
+                    load_dominant_warmup_states(product_id, status.current_instrument_id);
                 const auto switch_report = strategy_engine->ApplyContractSwitch(
                     switch_context, warmup, file_config.dominant_contract_switch_timeout_ms);
                 if (!switch_report.success) {
@@ -4178,8 +4241,8 @@ int main(int argc, char** argv) {
                             product_id, recovery_status_path.string(), &recovery_error);
                         return 2;
                     }
-                    const auto warmup = market_bar_pipeline.RecentCompleteStates(
-                        status.current_instrument_id, 5, 128);
+                    const auto warmup =
+                        load_dominant_warmup_states(product_id, status.current_instrument_id);
                     const ContractSwitchContext switch_context{
                         product_id, status.current_instrument_id, status.current_instrument_id,
                         recovery_generation};
@@ -5066,7 +5129,7 @@ int main(int argc, char** argv) {
                     }
 
                     const auto warmup_states =
-                        market_bar_pipeline.RecentCompleteStates(candidate_instrument_id, 5, 128);
+                        load_dominant_warmup_states(product_id, candidate_instrument_id);
                     const ContractSwitchContext switch_context{
                         product_id, final_decision.previous_instrument_id, candidate_instrument_id,
                         new_generation};

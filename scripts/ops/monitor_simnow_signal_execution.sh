@@ -258,7 +258,7 @@ declare -A file_inodes file_sizes file_byte_offsets
 declare -A candidate_epoch candidate_count decision_epoch decision_count decision_disposition
 declare -A candidate_ts_ns candidate_event_ts_ns decision_ts_ns decision_event_ts_ns
 declare -A disposition_epoch disposition_count disposition_ts_ns bar_finalized_by_event_ts_ns
-declare -A bar_strategy_invalid_by_event_ts_ns
+declare -A bar_strategy_invalid_by_event_ts_ns warmup_evaluated_by_instrument_event
 declare -A signal_fill_warning_written
 declare -A previous_stage_status previous_stage_reason last_stage_alert_epoch
 declare -A product_status product_instrument product_exchange product_tick_age product_tick_delay_ms
@@ -273,6 +273,7 @@ initial_scan_done=0
 last_core_state="unknown"
 core_engine_pid=""
 current_session_key="none"
+checkpoint_session_key=""
 last_summary_epoch=0
 core_readiness_generation=0
 core_readiness_mode="unknown"
@@ -501,10 +502,9 @@ write_event() {
 kv_field() {
   local line="$1"
   local key="$2"
-  local value
-  value="$(printf '%s\n' "${line}" | LC_ALL=C sed -nE "s/.*(^| )${key}=\"([^\"]*)\".*/\2/p" | head -n 1)"
-  if [[ -n "${value}" ]]; then
-    printf '%s\n' "${value}"
+  local quoted_pattern="(^|[[:space:]])${key}=\"([^\"]*)\""
+  if [[ "${line}" =~ ${quoted_pattern} ]]; then
+    printf '%s\n' "${BASH_REMATCH[2]}"
     return 0
   fi
   printf '%s\n' "${line}" | LC_ALL=C sed -nE "s/.*(^| )${key}=([^ ]+).*/\2/p" | head -n 1
@@ -581,11 +581,14 @@ load_checkpoint() {
     echo "[warn] ignoring invalid monitor checkpoint: ${CHECKPOINT_FILE}" >&2
     return 0
   fi
-  while IFS=$'\t' read -r record_type key value1 value2 value3 value4 value5 value6 value7 \
+  while IFS=$'\x1f' read -r record_type key value1 value2 value3 value4 value5 value6 value7 \
     value8 value9 value10 value11 value12; do
     case "${record_type}" in
       schema)
         [[ "${key}" == "3" ]] || return 0
+        ;;
+      session)
+        checkpoint_session_key="${key:-none}"
         ;;
       cursor)
         [[ -n "${key}" ]] || continue
@@ -595,7 +598,7 @@ load_checkpoint() {
         file_byte_offsets["${key}"]="${value4:-0}"
         ;;
       signal)
-        [[ -n "${key}" ]] || continue
+        [[ -n "${key}" && "${key}" != '""' ]] || continue
         signal_seen_epoch["${key}"]="${value1:-0}"
         signal_status["${key}"]="${value2:-observed}"
         signal_order_epoch["${key}"]="${value3:-}"
@@ -612,7 +615,7 @@ load_checkpoint() {
         fi
         ;;
       strategy_trace)
-        [[ -n "${key}" ]] || continue
+        [[ -n "${key}" && "${key}" != '""' ]] || continue
         candidate_epoch["${key}"]="${value1:-}"
         candidate_count["${key}"]="${value2:-0}"
         candidate_ts_ns["${key}"]="${value3:-}"
@@ -631,6 +634,9 @@ load_checkpoint() {
         signal_ctp_ts_ns["${key}"]="${value1:-}"
         signal_callback_ts_ns["${key}"]="${value2:-}"
         ;;
+      warmup_eval)
+        [[ -n "${key}" ]] && warmup_evaluated_by_instrument_event["${key}"]=1
+        ;;
       counter)
         case "${key}" in
           late_ticks) pipeline_late_ticks="${value1:-0}" ;;
@@ -647,7 +653,7 @@ load_checkpoint() {
         [[ -n "${key}" ]] && recent_recovery_events+=("${key}")
         ;;
     esac
-  done < "${CHECKPOINT_FILE}"
+  done < <(tr '\t' '\037' < "${CHECKPOINT_FILE}")
 }
 
 save_checkpoint() {
@@ -657,6 +663,7 @@ save_checkpoint() {
   local stage recovery
   {
     printf 'schema\t3\n'
+    printf 'session\t%s\n' "${current_session_key}"
     for tracked_file in "${!file_offsets[@]}"; do
       printf 'cursor\t%s\t%s\t%s\t%s\t%s\n' "${tracked_file}" \
         "${file_inodes[${tracked_file}]:-}" "${file_sizes[${tracked_file}]:-0}" \
@@ -687,6 +694,9 @@ save_checkpoint() {
       printf 'execution_ts\t%s\t%s\t%s\n' "${trace_id}" \
         "${signal_ctp_ts_ns[${trace_id}]:-}" "${signal_callback_ts_ns[${trace_id}]:-}"
     done | awk -F'\t' '!seen[$2]++'
+    for trace_id in "${!warmup_evaluated_by_instrument_event[@]}"; do
+      printf 'warmup_eval\t%s\n' "${trace_id}"
+    done
     printf 'counter\tlate_ticks\t%s\n' "${pipeline_late_ticks}"
     printf 'counter\tduplicate_ticks\t%s\n' "${pipeline_duplicate_ticks}"
     printf 'counter\tgeneration_mismatch_submissions\t%s\n' \
@@ -1010,9 +1020,21 @@ process_log_line() {
   local disposition
   local log_ts_ns
   local generation
+  local warmup_replay
 
   event="$(kv_field "${line}" "event")"
   log_ts_ns="$(kv_field "${line}" "ts_ns")"
+  warmup_replay="$(kv_field "${line}" "warmup_replay")"
+  if [[ "${warmup_replay}" == "true" ]]; then
+    if [[ "${event}" == "strategy_decision" ]]; then
+      instrument_id="$(kv_field "${line}" "instrument_id")"
+      event_ts_ns="$(kv_field "${line}" "event_ts_ns")"
+      if [[ -n "${instrument_id}" && "${event_ts_ns}" =~ ^[0-9]+$ ]]; then
+        warmup_evaluated_by_instrument_event["${instrument_id}|${event_ts_ns}"]=1
+      fi
+    fi
+    return 0
+  fi
   case "${event}" in
     signal_candidate)
       trace_id="$(kv_field "${line}" "trace_id")"
@@ -1277,6 +1299,29 @@ check_core_engine() {
   fi
 }
 
+reset_strategy_trace_state_for_session() {
+  local next_session_key="$1"
+  if [[ -n "${checkpoint_session_key}" &&
+        "${checkpoint_session_key}" == "${next_session_key}" ]]; then
+    return 0
+  fi
+  candidate_epoch=()
+  candidate_count=()
+  candidate_ts_ns=()
+  candidate_event_ts_ns=()
+  decision_epoch=()
+  decision_count=()
+  decision_disposition=()
+  decision_ts_ns=()
+  decision_event_ts_ns=()
+  disposition_epoch=()
+  disposition_count=()
+  disposition_ts_ns=()
+  warmup_evaluated_by_instrument_event=()
+  pipeline_generation_mismatch_submissions=0
+  checkpoint_session_key="${next_session_key}"
+}
+
 check_signal_timeouts() {
   local now_epoch="$1"
   local trace_id
@@ -1470,6 +1515,30 @@ session_spec_for_product() {
   ' "${TRADING_SESSIONS_CONFIG}"
 }
 
+is_product_session_start_minute() {
+  local product="$1"
+  local exchange="$2"
+  local bar_minute="$3"
+  local spec day_ranges night_ranges ranges range start_text clock_text
+  local -a range_items=()
+  spec="$(session_spec_for_product "${product}" "${exchange}")"
+  [[ "${spec}" == *'|'* ]] || return 1
+  day_ranges="${spec%%|*}"
+  night_ranges="${spec#*|}"
+  clock_text="${bar_minute##* }"
+  [[ "${clock_text}" =~ ^[0-9]{2}:[0-9]{2}$ ]] || return 1
+  for ranges in "${day_ranges}" "${night_ranges}"; do
+    IFS=',' read -r -a range_items <<< "${ranges}"
+    for range in "${range_items[@]}"; do
+      start_text="${range%-*}"
+      if [[ "${clock_text}" == "${start_text}" ]]; then
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
 clock_to_minute() {
   local clock_text="$1"
   local hour minute
@@ -1621,10 +1690,11 @@ bar_file_summary() {
       last_eligible=eligible; last_conflict=conflict; last_replay=replay; last_endpoint=endpoint
       last_period_end=(schema == "v2" && h["period_end_ts_ns"]) ? $(h["period_end_ts_ns"]) : 0
       last_finalized=(schema == "v2" && h["finalized_ts_ns"]) ? $(h["finalized_ts_ns"]) : 0
+      last_ts=h["ts_ns"] ? "" $(h["ts_ns"]) : ""
     }
     END {
       recovered=(rows >= 2 && previous_complete && last_complete) ? 1 : 0
-      if (rows > 0) print schema "\t" rows+0 "\t" duplicates+0 "\t" conflicts+0 "\t" incomplete+0 "\t" invalid+0 "\t" invalid_eligible+0 "\t" source_mismatch+0 "\t" minute "\t" last_complete+0 "\t" last_eligible+0 "\t" last_conflict+0 "\t" last_replay+0 "\t" last_endpoint+0 "\t" last_period_end+0 "\t" last_finalized+0 "\t" recovered+0
+      if (rows > 0) print schema "\t" rows+0 "\t" duplicates+0 "\t" conflicts+0 "\t" incomplete+0 "\t" invalid+0 "\t" invalid_eligible+0 "\t" source_mismatch+0 "\t" minute "\t" last_complete+0 "\t" last_eligible+0 "\t" last_conflict+0 "\t" last_replay+0 "\t" last_endpoint+0 "\t" last_period_end+0 "\t" last_finalized+0 "\t" recovered+0 "\t" last_ts
     }
   ' "${file_path}"
 }
@@ -1725,8 +1795,8 @@ collect_pipeline_health() {
   local tick_instrument _tick_day _tick_action _tick_time bid ask exchange_ns recv_ns tick_age delay_ms
   local tick_reversals tick_late tick_duplicates tick_volume_regressions tick_invalid_books
   local summary_1m summary_5m strategy_summary
-  local schema_1m _rows_1m duplicates_1m conflicts_1m incomplete_1m invalid_1m invalid_eligible_1m mismatch_1m minute_1m complete_1m _eligible_1m _conflict_1m _replay_1m _endpoint_1m _period_end_1m _finalized_1m _recovered_1m
-  local schema_5m _rows_5m duplicates_5m conflicts_5m incomplete_5m invalid_5m invalid_eligible_5m mismatch_5m minute_5m complete_5m eligible_5m _conflict_5m replay_5m endpoint_5m _period_end_5m _finalized_5m recovered_5m
+  local schema_1m _rows_1m duplicates_1m conflicts_1m incomplete_1m invalid_1m invalid_eligible_1m mismatch_1m minute_1m complete_1m _eligible_1m _conflict_1m _replay_1m _endpoint_1m _period_end_1m _finalized_1m _recovered_1m _event_ts_1m
+  local schema_5m _rows_5m duplicates_5m conflicts_5m incomplete_5m invalid_5m invalid_eligible_5m mismatch_5m minute_5m complete_5m eligible_5m _conflict_5m replay_5m endpoint_5m _period_end_5m _finalized_5m recovered_5m event_ts_5m
   local strategy_minute strategy_rows strategy_candidates strategy_allowed
   local market_status bar1_status bar5_status strategy_status current_product_status next_stage_status
   local market_reason bar1_reason bar5_reason strategy_reason
@@ -1735,7 +1805,7 @@ collect_pipeline_health() {
   local execution_incidents=0 execution_rejected=0 execution_active=0 execution_filled=0
   local execution_stale_active=0
   local wal_integrity wal_duplicate_trades wal_unresolved_trades
-  local cutoff_ns event_key finalized_ns latency_ms invalid_for_strategy
+  local cutoff_ns event_key finalized_ns latency_ms invalid_for_strategy warmup_key
   local recent_duplicate_tick_total=0 recent_late_tick_total=0
 
   pipeline_warning_count=0
@@ -1856,9 +1926,9 @@ collect_pipeline_health() {
     fi
 
     summary_1m="$(bar_file_summary "${bar_1m_file}" "${instrument}" || true)"
-    IFS=$'\t' read -r schema_1m _rows_1m duplicates_1m conflicts_1m incomplete_1m invalid_1m invalid_eligible_1m mismatch_1m minute_1m complete_1m _eligible_1m _conflict_1m _replay_1m _endpoint_1m _period_end_1m _finalized_1m _recovered_1m <<< "${summary_1m}"
+    IFS=$'\t' read -r schema_1m _rows_1m duplicates_1m conflicts_1m incomplete_1m invalid_1m invalid_eligible_1m mismatch_1m minute_1m complete_1m _eligible_1m _conflict_1m _replay_1m _endpoint_1m _period_end_1m _finalized_1m _recovered_1m _event_ts_1m <<< "${summary_1m}"
     summary_5m="$(bar_file_summary "${bar_5m_file}" "${instrument}" || true)"
-    IFS=$'\t' read -r schema_5m _rows_5m duplicates_5m conflicts_5m incomplete_5m invalid_5m invalid_eligible_5m mismatch_5m minute_5m complete_5m eligible_5m _conflict_5m replay_5m endpoint_5m _period_end_5m _finalized_5m recovered_5m <<< "${summary_5m}"
+    IFS=$'\t' read -r schema_5m _rows_5m duplicates_5m conflicts_5m incomplete_5m invalid_5m invalid_eligible_5m mismatch_5m minute_5m complete_5m eligible_5m _conflict_5m replay_5m endpoint_5m _period_end_5m _finalized_5m recovered_5m event_ts_5m <<< "${summary_5m}"
     for numeric_name in duplicates_1m conflicts_1m incomplete_1m invalid_1m invalid_eligible_1m mismatch_1m duplicates_5m conflicts_5m incomplete_5m invalid_5m invalid_eligible_5m mismatch_5m; do
       [[ "${!numeric_name:-}" =~ ^[0-9]+$ ]] || printf -v "${numeric_name}" '%s' 0
     done
@@ -1901,9 +1971,13 @@ collect_pipeline_health() {
     elif (( duplicates_5m > 0 || conflicts_5m > 0 || invalid_5m > 0 || invalid_eligible_5m > 0 || mismatch_5m > 0 )); then
       bar5_status="unhealthy"; bar5_reason="bar_5m_integrity_failure"
     elif [[ "${complete_5m:-1}" != "1" && "${recovered_5m:-0}" != "1" ]]; then
-      bar5_status="unhealthy"; bar5_reason="latest_bar_5m_incomplete"
+      if is_product_session_start_minute "${product}" "${exchange}" "${minute_5m}"; then
+        bar5_status="degraded"; bar5_reason="bar_5m_startup_recovery"
+      else
+        bar5_status="unhealthy"; bar5_reason="latest_bar_5m_incomplete"
+      fi
     elif (( incomplete_5m > 0 )) && [[ "${recovered_5m:-0}" != "1" ]]; then
-      bar5_status="unhealthy"; bar5_reason="bar_5m_recovery_pending"
+      bar5_status="degraded"; bar5_reason="bar_5m_recovery_pending"
     elif [[ "${schema_5m}" == "legacy" ]]; then
       bar5_status="degraded"; bar5_reason="bar_5m_schema_legacy"
     fi
@@ -1927,7 +2001,12 @@ collect_pipeline_health() {
     elif [[ "${eligible_5m:-0}" == "1" && "${endpoint_5m:-0}" != "1" && "${replay_5m:-0}" != "1" ]]; then
       strategy_age="$(file_age_seconds "${bar_5m_file}")"
       if [[ -z "${strategy_summary}" || "${strategy_minute}" != "${minute_5m}" ]]; then
-        if (( strategy_age > STRATEGY_DECISION_TIMEOUT_SECONDS )); then
+        warmup_key="${instrument}|${event_ts_5m:-}"
+        if [[ "${event_ts_5m:-}" =~ ^[0-9]+$ &&
+              "${warmup_evaluated_by_instrument_event[${warmup_key}]:-0}" == "1" ]]; then
+          strategy_minute="${minute_5m}"
+          strategy_reason="eligible_5m_replayed_during_startup"
+        elif (( strategy_age > STRATEGY_DECISION_TIMEOUT_SECONDS )); then
           strategy_status="unhealthy"; strategy_reason="eligible_5m_missing_strategy_evaluation"
           pipeline_missing_strategy_evaluations=$((pipeline_missing_strategy_evaluations + 1))
         else
@@ -1994,7 +2073,10 @@ collect_pipeline_health() {
 
   for trace_id in "${!decision_ts_ns[@]}"; do
     event_key="${decision_event_ts_ns[${trace_id}]:-}"
-    finalized_ns="${bar_finalized_by_event_ts_ns[${event_key}]:-}"
+    finalized_ns=""
+    if [[ -n "${event_key}" ]]; then
+      finalized_ns="${bar_finalized_by_event_ts_ns[${event_key}]:-}"
+    fi
     if [[ "${decision_ts_ns[${trace_id}]:-}" =~ ^[0-9]+$ && "${finalized_ns}" =~ ^[0-9]+$ ]] &&
         (( decision_ts_ns[${trace_id}] >= cutoff_ns && decision_ts_ns[${trace_id}] >= finalized_ns )); then
       bar_to_decision_samples_ms+=("$(( (decision_ts_ns[${trace_id}] - finalized_ns) / 1000000 ))")
@@ -2023,7 +2105,11 @@ collect_pipeline_health() {
     event_key="${candidate_event_ts_ns[${trace_id}]:-}"
     if [[ "${candidate_ts_ns[${trace_id}]:-}" =~ ^[0-9]+$ ]] &&
         (( candidate_ts_ns[${trace_id}] >= cutoff_ns )); then
-      if [[ -z "${bar_finalized_by_event_ts_ns[${event_key}]:-}" ]]; then
+      if [[ -z "${event_key}" ]]; then
+        pipeline_strategy_trace_integrity_failures=$((pipeline_strategy_trace_integrity_failures + 1))
+        write_incident "${trace_id}" "candidate_without_canonical_5m_bar" \
+          "event_ts_ns=missing"
+      elif [[ -z "${bar_finalized_by_event_ts_ns[${event_key}]:-}" ]]; then
         pipeline_strategy_trace_integrity_failures=$((pipeline_strategy_trace_integrity_failures + 1))
         write_incident "${trace_id}" "candidate_without_canonical_5m_bar" \
           "event_ts_ns=${event_key}"
@@ -2076,6 +2162,7 @@ collect_pipeline_health() {
   fi
 
   for trace_id in "${!signal_seen_epoch[@]}"; do
+    [[ "${signal_session_key[${trace_id}]:-none}" == "${current_session_key}" ]] || continue
     case "${signal_status[${trace_id}]:-}" in
       incident) execution_incidents=$((execution_incidents + 1)) ;;
       rejected) execution_rejected=$((execution_rejected + 1)) ;;
@@ -2279,6 +2366,7 @@ write_pipeline_health() {
 scan_once() {
   local now_epoch
   check_core_engine
+  reset_strategy_trace_state_for_session "${current_session_key}"
   check_core_readiness
   scan_kama_csv_files
   scan_core_log

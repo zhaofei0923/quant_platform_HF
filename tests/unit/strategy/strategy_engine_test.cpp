@@ -25,6 +25,7 @@ struct Probe {
     std::vector<std::string> initialized_strategy_ids;
     std::vector<std::string> initialized_composite_paths;
     std::vector<EpochNanos> observed_state_ts;
+    std::vector<bool> observed_state_warmup;
     std::vector<std::string> observed_market_ticks;
     std::vector<std::string> observed_order_events;
     std::vector<std::string> observed_account_snapshots;
@@ -106,6 +107,7 @@ class RecordingStrategy final : public ILiveStrategy {
         if (g_probe != nullptr) {
             std::lock_guard<std::mutex> lock(g_probe->mutex);
             g_probe->observed_state_ts.push_back(state.ts_ns);
+            g_probe->observed_state_warmup.push_back(state.is_warmup_replay);
         }
 
         SignalIntent intent;
@@ -846,6 +848,9 @@ TEST(StrategyEngineTest, ContractSwitchWarmsWithoutEmittingAndStampsNextIntent) 
         ASSERT_EQ(probe.observed_state_ts.size(), 2U);
         EXPECT_EQ(probe.observed_state_ts[0], 2);
         EXPECT_EQ(probe.observed_state_ts[1], 3);
+        ASSERT_EQ(probe.observed_state_warmup.size(), 2U);
+        EXPECT_TRUE(probe.observed_state_warmup[0]);
+        EXPECT_TRUE(probe.observed_state_warmup[1]);
     }
 
     StateSnapshot7D suppressed;
@@ -862,6 +867,7 @@ TEST(StrategyEngineTest, ContractSwitchWarmsWithoutEmittingAndStampsNextIntent) 
         std::lock_guard<std::mutex> lock(probe.mutex);
         ASSERT_EQ(probe.observed_state_ts.size(), 3U);
         EXPECT_EQ(probe.observed_state_ts.back(), 4);
+        EXPECT_TRUE(probe.observed_state_warmup.back());
     }
 
     {
@@ -901,6 +907,11 @@ TEST(StrategyEngineTest, ContractSwitchWarmsWithoutEmittingAndStampsNextIntent) 
         std::lock_guard<std::mutex> lock(sink_mutex);
         EXPECT_EQ(emitted_intents.back().product_id, "c");
         EXPECT_EQ(emitted_intents.back().contract_generation, 9U);
+    }
+    {
+        std::lock_guard<std::mutex> lock(probe.mutex);
+        ASSERT_FALSE(probe.observed_state_warmup.empty());
+        EXPECT_FALSE(probe.observed_state_warmup.back());
     }
 
     engine.Stop();

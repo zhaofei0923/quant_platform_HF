@@ -474,6 +474,54 @@ TEST(SimnowSupervisorScriptTest, PipelineMonitorIgnoresCorruptCheckpointAndRewri
     EXPECT_EQ(ReadFile(root / "monitor" / "pipeline_checkpoint_v3.tsv").rfind("schema\t3", 0), 0U);
 }
 
+TEST(SimnowSupervisorScriptTest, PipelineMonitorIgnoresWarmupReplayAndEmptyTraceId) {
+    const auto root = MakeTempDir("pipeline_warmup_replay");
+    const auto first_output = root / "monitor-first.out";
+    const auto second_output = root / "monitor-second.out";
+    WriteHealthyPipelineFixture(root);
+    const auto core_log = root / "runs" / "simnow-warmup" / "core_engine.log";
+    WriteFile(root / "runs" / "current_run_dir", (root / "runs" / "simnow-warmup").string() + "\n");
+    WriteFile(root / "runs" / "current_core_engine_log", core_log.string() + "\n");
+    WriteFile(root / "monitor" / "pipeline_checkpoint_v3.tsv",
+              "schema\t3\n"
+              "session\tprevious-core-run\n"
+              "signal\told-incident\t1784510000\tincident\t\t\t\t\t\t\t\t"
+              "previous-core-run\tincident\n");
+    const auto strategy_path =
+        root / "market" / "trading_day=20260720" / "varieties" / "c" / "strategy" / "kama_5m.csv";
+    std::string strategy = ReadFile(strategy_path);
+    const auto strategy_minute = strategy.find("20260720 09:25");
+    ASSERT_NE(strategy_minute, std::string::npos);
+    strategy.replace(strategy_minute, std::string("20260720 09:25").size(), "20260720 09:20");
+    WriteFile(strategy_path, strategy);
+    WriteFile(core_log,
+              "ts_ns=1784511060000000000 level=info event=strategy_decision "
+              "warmup_replay=\"false\" event_ts_ns=\"1\" disposition=\"no_candidate\" "
+              "trace_id=\"\"\n"
+              "ts_ns=1784511061000000000 level=info event=signal_candidate "
+              "warmup_replay=\"true\" event_ts_ns=\"1\" trace_id=\"warmup-trace\"\n"
+              "ts_ns=1784511062000000000 level=info event=strategy_decision "
+              "warmup_replay=\"true\" event_ts_ns=\"1\" instrument_id=\"c2609\" "
+              "disposition=\"blocked\" trace_id=\"warmup-trace\"\n");
+    const std::string touch_command = "find '" + EscapePathForShell(root) +
+                                      "' -type f -exec touch -d '2026-07-20 09:31:05' {} + && ";
+    const std::string first_command = touch_command +
+                                      MonitorCommand(root, "2026-07-20 09:31:05", true, true) +
+                                      " > '" + EscapePathForShell(first_output) + "' 2>&1";
+
+    ASSERT_EQ(RunCommand(first_command), 0) << ReadFile(first_output);
+    const std::string checkpoint = ReadFile(root / "monitor" / "pipeline_checkpoint_v3.tsv");
+    EXPECT_EQ(checkpoint.find("strategy_trace\t\"\""), std::string::npos) << checkpoint;
+    EXPECT_EQ(checkpoint.find("warmup-trace"), std::string::npos) << checkpoint;
+
+    const std::string second_command = MonitorCommand(root, "2026-07-20 09:31:05", true, false) +
+                                       " > '" + EscapePathForShell(second_output) + "' 2>&1";
+    ASSERT_EQ(RunCommand(second_command), 0) << ReadFile(second_output);
+    const std::string health = ReadFile(root / "monitor" / "pipeline_health.json");
+    EXPECT_NE(health.find("\"overall_status\": \"healthy\""), std::string::npos) << health;
+    EXPECT_NE(health.find("eligible_5m_replayed_during_startup"), std::string::npos) << health;
+}
+
 TEST(SimnowSupervisorScriptTest, PipelineMonitorRejectsIncompleteFiveMinuteBar) {
     const auto root = MakeTempDir("pipeline_incomplete_5m");
     const auto output = root / "monitor.out";
@@ -497,6 +545,70 @@ TEST(SimnowSupervisorScriptTest, PipelineMonitorRejectsIncompleteFiveMinuteBar) 
     EXPECT_NE(health.find("\"overall_status\": \"unhealthy\""), std::string::npos) << health;
     EXPECT_NE(health.find("latest_bar_5m_incomplete"), std::string::npos) << health;
     EXPECT_NE(health.find("\"incomplete_bar_count\": 1"), std::string::npos) << health;
+}
+
+TEST(SimnowSupervisorScriptTest, PipelineMonitorDegradesExpectedSessionStartBarRecovery) {
+    const auto root = MakeTempDir("pipeline_startup_5m_recovery");
+    const auto output = root / "monitor.out";
+    WriteHealthyPipelineFixture(root);
+    const auto bar_path =
+        root / "market" / "trading_day=20260720" / "varieties" / "c" / "market" / "bars_5m.csv";
+    std::string bar = ReadFile(bar_path);
+    const std::string original_minute = "20260720 09:25";
+    const auto minute_pos = bar.find(original_minute);
+    ASSERT_NE(minute_pos, std::string::npos);
+    bar.replace(minute_pos, original_minute.size(), "20260720 09:00");
+    const std::string complete_suffix = ",5,5,1,0,1,1,0,0\n";
+    const auto suffix_pos = bar.find(complete_suffix);
+    ASSERT_NE(suffix_pos, std::string::npos);
+    bar.replace(suffix_pos, complete_suffix.size(), ",5,4,0,0,0,0,0,0\n");
+    WriteFile(bar_path, bar);
+    const std::string command = "find '" + EscapePathForShell(root) +
+                                "' -type f -exec touch -d '2026-07-20 09:31:05' {} + && " +
+                                MonitorCommand(root, "2026-07-20 09:31:05", true, true) + " > '" +
+                                EscapePathForShell(output) + "' 2>&1";
+
+    ASSERT_NE(RunCommand(command), 0) << ReadFile(output);
+    const std::string health = ReadFile(root / "monitor" / "pipeline_health.json");
+    EXPECT_NE(health.find("\"overall_status\": \"degraded\""), std::string::npos) << health;
+    EXPECT_NE(health.find("bar_5m_startup_recovery"), std::string::npos) << health;
+}
+
+TEST(SimnowSupervisorScriptTest, PipelineMonitorDegradesUntilTwoCompleteBarsRecover) {
+    const auto root = MakeTempDir("pipeline_two_bar_recovery");
+    const auto output = root / "monitor.out";
+    WriteHealthyPipelineFixture(root);
+    const auto bar_path =
+        root / "market" / "trading_day=20260720" / "varieties" / "c" / "market" / "bars_5m.csv";
+    std::string bar = ReadFile(bar_path);
+    const std::string original_minute = "20260720 09:25";
+    const auto minute_pos = bar.find(original_minute);
+    ASSERT_NE(minute_pos, std::string::npos);
+    bar.replace(minute_pos, original_minute.size(), "20260720 09:00");
+    const std::string complete_suffix = ",5,5,1,0,1,1,0,0\n";
+    const auto suffix_pos = bar.find(complete_suffix);
+    ASSERT_NE(suffix_pos, std::string::npos);
+    bar.replace(suffix_pos, complete_suffix.size(), ",5,4,0,0,0,0,0,0\n");
+    bar +=
+        "c2609,DCE,20260720,20260720,20260720 09:05,2284,2286,2283,2285,"
+        "2284,2286,2283,2285,0,10,4,5,6,5,5,1,0,1,1,0,0\n";
+    WriteFile(bar_path, bar);
+    const auto strategy_path =
+        root / "market" / "trading_day=20260720" / "varieties" / "c" / "strategy" / "kama_5m.csv";
+    std::string strategy = ReadFile(strategy_path);
+    const auto strategy_minute_pos = strategy.find(original_minute);
+    ASSERT_NE(strategy_minute_pos, std::string::npos);
+    strategy.replace(strategy_minute_pos, original_minute.size(), "20260720 09:05");
+    WriteFile(strategy_path, strategy);
+    const std::string command = "find '" + EscapePathForShell(root) +
+                                "' -type f -exec touch -d '2026-07-20 09:31:05' {} + && " +
+                                MonitorCommand(root, "2026-07-20 09:31:05", true, true) + " > '" +
+                                EscapePathForShell(output) + "' 2>&1";
+
+    ASSERT_NE(RunCommand(command), 0) << ReadFile(output);
+    const std::string health = ReadFile(root / "monitor" / "pipeline_health.json");
+    EXPECT_NE(health.find("\"overall_status\": \"degraded\""), std::string::npos) << health;
+    EXPECT_NE(health.find("bar_5m_recovery_pending"), std::string::npos) << health;
 }
 
 TEST(SimnowSupervisorScriptTest, SettlementDryRunDoesNotFabricateEvidence) {

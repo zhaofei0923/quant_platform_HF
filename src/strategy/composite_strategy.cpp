@@ -549,6 +549,7 @@ std::vector<SignalIntent> CompositeStrategy::OnState(const StateSnapshot7D& stat
         EmitCompositeLog(atomic_context_, "info", "strategy_decision",
                          {{"strategy_id", slot.strategy_id},
                           {"event_type", "strategy_decision"},
+                          {"warmup_replay", state.is_warmup_replay ? "true" : "false"},
                           {"event_ts_ns", std::to_string(state.ts_ns)},
                           {"instrument_id", state.instrument_id},
                           {"timeframe_minutes", std::to_string(state_timeframe_minutes)},

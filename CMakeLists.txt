@@ -142,6 +142,7 @@ add_library(quant_hft_core STATIC
     src/services/portfolio/position_manager.cpp
     src/services/portfolio/in_memory_portfolio_ledger.cpp
     src/services/market_state/bar_aggregator.cpp
+    src/services/market_state/canonical_warmup_history.cpp
     src/services/market_state/market_bar_pipeline.cpp
     src/services/market_state/dominant_contract_coordinator.cpp
     src/services/market_state/trading_session_calendar.cpp
@@ -449,6 +450,10 @@ if(QUANT_HFT_BUILD_TESTS)
 
     add_executable(market_bar_pipeline_test tests/unit/services/market_bar_pipeline_test.cpp)
     target_link_libraries(market_bar_pipeline_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(canonical_warmup_history_test
+        tests/unit/services/canonical_warmup_history_test.cpp)
+    target_link_libraries(canonical_warmup_history_test PRIVATE quant_hft_core GTest::gtest_main)
 
     add_executable(dominant_contract_coordinator_test
         tests/unit/services/dominant_contract_coordinator_test.cpp)

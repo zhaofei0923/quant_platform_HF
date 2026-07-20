@@ -1051,6 +1051,59 @@ TEST(SimnowDashboardCli, PipelineInactiveIsHealthyWithoutLiveCore) {
     EXPECT_NE(html.find("inactive"), std::string::npos) << html;
 }
 
+TEST(SimnowDashboardCli, ExpectedDominantWarmupDegradesActivePipelineWithoutFailingStrictExit) {
+    const auto root = MakeTempDir("pipeline_expected_warmup");
+    const auto output_dir = root / "dashboard";
+    const auto stdout_log = root / "stdout.log";
+    WriteFile(root / "runs" / "current_core_engine.pid", std::to_string(getpid()) + "\n");
+    WriteFile(root / "wal" / "events.wal", "");
+    WriteHealthyReadiness(root);
+    WritePipelineHealth(root, "healthy");
+    WriteFile(root / "ctp_instruments" / "c_dominant_contract.json",
+              "{\"schema_version\":2,\"trading_day\":\"20260720\","
+              "\"product_id\":\"c\",\"current_instrument_id\":\"c2609\","
+              "\"phase\":\"warming\",\"generation\":1,\"eligible_count\":6,"
+              "\"baseline_count\":6,\"warmup_observed_bars\":1,"
+              "\"warmup_required_bars\":30,\"last_error\":\"\"}\n");
+    WriteFile(root / "ctp_instruments" / "c_contracts.json",
+              "{\"schema_version\":2,\"broker_trading_day\":\"20260720\"}\n");
+
+    const int rc =
+        RunCommandCapture(DashboardCommand(root, output_dir) + " --strict-exit", stdout_log);
+
+    ASSERT_EQ(rc, 0) << ReadFile(stdout_log);
+    const std::string json = ReadFile(output_dir / "dashboard_state.json");
+    EXPECT_NE(json.find("\"live_status\": \"degraded\""), std::string::npos) << json;
+    EXPECT_NE(json.find("\"overall_healthy\": false"), std::string::npos) << json;
+    EXPECT_NE(json.find("\"phase\": \"warming\""), std::string::npos) << json;
+}
+
+TEST(SimnowDashboardCli, StalledDominantWarmupRemainsUnhealthy) {
+    const auto root = MakeTempDir("pipeline_stalled_warmup");
+    const auto output_dir = root / "dashboard";
+    const auto stdout_log = root / "stdout.log";
+    WriteFile(root / "runs" / "current_core_engine.pid", std::to_string(getpid()) + "\n");
+    WriteFile(root / "wal" / "events.wal", "");
+    WriteHealthyReadiness(root);
+    WritePipelineHealth(root, "healthy");
+    WriteFile(root / "ctp_instruments" / "c_dominant_contract.json",
+              "{\"schema_version\":2,\"trading_day\":\"20260720\","
+              "\"product_id\":\"c\",\"current_instrument_id\":\"c2609\","
+              "\"phase\":\"warming\",\"generation\":1,\"eligible_count\":6,"
+              "\"baseline_count\":6,\"warmup_observed_bars\":1,"
+              "\"warmup_required_bars\":30,\"phase_started_ts_ns\":1,"
+              "\"last_error\":\"\"}\n");
+    WriteFile(root / "ctp_instruments" / "c_contracts.json",
+              "{\"schema_version\":2,\"broker_trading_day\":\"20260720\"}\n");
+
+    const int rc =
+        RunCommandCapture(DashboardCommand(root, output_dir) + " --strict-exit", stdout_log);
+
+    EXPECT_NE(rc, 0) << ReadFile(stdout_log);
+    const std::string json = ReadFile(output_dir / "dashboard_state.json");
+    EXPECT_NE(json.find("\"live_status\": \"unhealthy\""), std::string::npos) << json;
+}
+
 TEST(SimnowDashboardCli, StrictExitAllowsDegradedPipeline) {
     const auto root = MakeTempDir("pipeline_degraded_strict");
     const auto output_dir = root / "dashboard";

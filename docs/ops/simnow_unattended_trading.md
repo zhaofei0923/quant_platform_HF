@@ -182,6 +182,14 @@ systemctl --user list-timers quant-hft-simnow-contract-refresh.timer
 `generation`、领先窗口、Broker 仓位/活动订单、候选覆盖和暖机进度。该文件只用于审计和
 Dashboard；重启后不会凭此恢复交易权限，仍以 Broker 订单、成交、持仓和候选行情查询为准。
 
+主力确认或换月时仍必须完成策略配置的 5 分钟 Bar 暖机。进程优先读取带完整性字段的
+MarketBarPipeline checkpoint 和 v2 Bar CSV；对升级前的旧 CSV，只有当每根 5 分钟 Bar 能由
+同一分区内连续 5 根 1 分钟 Bar 精确重算（OHLC、分析价、成交量、时间戳均一致）时才允许回放。
+缺根、重复冲突、聚合不一致、未来数据、session endpoint、recovery replay 或非策略可用 Bar
+均不能解除暖机屏障。回放期间策略不会产生可执行信号，Broker 真值恢复和 generation barrier
+保持不变。策略观测日志会标记 `warmup_replay=true`；pipeline monitor 不把这类候选计入实时
+执行链，但会保存其评估证据，用于覆盖“Bar 在策略引擎注册前完成”的单次启动边界。
+
 ## 无人值守 Supervisor
 
 先 dry-run 查看当前调度决策：
@@ -316,7 +324,9 @@ runtime/trading/monitor/simnow/pipeline_checkpoint_v3.tsv
 `pipeline_health.json` 的统一状态为 `healthy`、`degraded`、`unhealthy`、`inactive` 和
 `unknown`。休市时 `inactive` 是正常状态；交易时段内 Tick 超过 6 秒、Bar 冲突或不完整、
 策略漏评、allowed trace 漏执行处置、CTP 提交后 120 秒无回报等会按严重度升级。无候选信号
-本身不告警。脚本只读交易状态，不会提交或撤销订单。
+本身不告警。交易进程在 session 起点晚于首分钟启动时，首根不完整 5 分钟 Bar 以及随后等待
+两根完整 Bar 的恢复期显示 `degraded`；非 session 起点的不完整 Bar、重复或冲突仍显示
+`unhealthy`。脚本只读交易状态，不会提交或撤销订单。
 
 单次检查和严格退出码可用于演练或外部探针：
 
@@ -334,7 +344,9 @@ build-gcc/simnow_dashboard_cli --watch-seconds 5 \
 ```
 
 生成的 HTML 每 10 秒自动刷新；旧版监控尚未升级时仍可兼容读取，但页面会显示
-`legacy_monitoring`。
+`legacy_monitoring`。候选覆盖完整、无错误且仍在合理时间预算内的主力 `warming` 显示
+`degraded`，不再误报 `unhealthy`；超过“所需 5 分钟 Bar 数 × 5 分钟 + 10 分钟”的预算仍会
+升级为 `unhealthy`。
 
 确认 `core_engine` 是否存活：
 

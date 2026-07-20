@@ -164,6 +164,7 @@ message StateSnapshot7D {
   double analysis_price_offset = 18;
   uint64 market_state_bars_seen = 19;
   string market_state_decision_reason = 20;
+  bool is_warmup_replay = 21;
 }
 
 message SignalIntent {

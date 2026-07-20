@@ -309,10 +309,7 @@ TEST(CtpGatewayAdapterTest, QuerySnapshotsInSimulatedMode) {
     const auto positions = adapter.GetLastInvestorPositionSnapshots();
     EXPECT_TRUE(positions.empty());
     const auto metas = adapter.GetLastInstrumentMetaSnapshots();
-    EXPECT_FALSE(metas.empty());
-    EXPECT_NE(std::find_if(metas.begin(), metas.end(),
-                           [](const auto& meta) { return meta.instrument_id == "SHFE.ag2406"; }),
-              metas.end());
+    ASSERT_EQ(metas.size(), 1U);
     const auto c_meta = std::find_if(metas.begin(), metas.end(), [](const auto& meta) {
         return meta.instrument_id == "DCE.c2607";
     });
@@ -335,6 +332,43 @@ TEST(CtpGatewayAdapterTest, QuerySnapshotsInSimulatedMode) {
     EXPECT_EQ(margin_rate_callbacks.load(), 1);
     EXPECT_EQ(commission_rate_callbacks.load(), 1);
     EXPECT_EQ(order_comm_rate_callbacks.load(), 1);
+}
+
+TEST(CtpGatewayAdapterTest, ProductScopedQueriesReturnIsolatedMatchingContracts) {
+    CtpGatewayAdapter adapter(10);
+    MarketDataConnectConfig cfg;
+    cfg.market_front_address = "tcp://sim-md";
+    cfg.trader_front_address = "tcp://sim-td";
+    cfg.broker_id = "9999";
+    cfg.user_id = "sim-user";
+    cfg.investor_id = "sim-user";
+    cfg.password = "p1";
+    cfg.is_production_mode = false;
+    ASSERT_TRUE(adapter.Connect(cfg));
+    ASSERT_TRUE(adapter.Subscribe({"DCE.c2609", "DCE.c2611", "SHFE.hc2610"}));
+
+    InstrumentQueryFilter c_filter;
+    c_filter.exchange_id = "DCE";
+    c_filter.product_id = "c";
+    ASSERT_TRUE(adapter.EnqueueInstrumentQuery(31, c_filter));
+    const auto c_rows = adapter.GetLastInstrumentMetaSnapshots();
+    ASSERT_EQ(c_rows.size(), 2U);
+    EXPECT_TRUE(std::all_of(c_rows.begin(), c_rows.end(), [](const auto& row) {
+        return row.product_id == "c" && row.exchange_id == "DCE";
+    }));
+
+    InstrumentQueryFilter hc_filter;
+    hc_filter.exchange_id = "SHFE";
+    hc_filter.product_id = "hc";
+    ASSERT_TRUE(adapter.EnqueueInstrumentQuery(32, hc_filter));
+    const auto hc_rows = adapter.GetLastInstrumentMetaSnapshots();
+    ASSERT_EQ(hc_rows.size(), 1U);
+    EXPECT_EQ(hc_rows.front().instrument_id, "SHFE.hc2610");
+
+    ASSERT_TRUE(adapter.EnqueueDepthMarketDataQuery(33, "DCE.c2609"));
+    const auto depth_rows = adapter.GetLastDepthMarketSnapshots();
+    ASSERT_EQ(depth_rows.size(), 1U);
+    EXPECT_EQ(depth_rows.front().instrument_id, "DCE.c2609");
 }
 
 TEST(CtpGatewayAdapterTest, CallbackCanReenterCancelOrderWithoutLockContention) {

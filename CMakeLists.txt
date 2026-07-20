@@ -231,6 +231,10 @@ target_link_libraries(core_engine PRIVATE quant_hft_core)
 add_executable(simnow_probe src/apps/simnow_probe_main.cpp)
 target_link_libraries(simnow_probe PRIVATE quant_hft_core)
 
+add_executable(simnow_contract_universe_refresh
+    src/apps/simnow_contract_universe_refresh_main.cpp)
+target_link_libraries(simnow_contract_universe_refresh PRIVATE quant_hft_core)
+
 add_executable(simnow_flatten_positions src/apps/simnow_flatten_positions_cli_main.cpp)
 target_link_libraries(simnow_flatten_positions PRIVATE quant_hft_core)
 

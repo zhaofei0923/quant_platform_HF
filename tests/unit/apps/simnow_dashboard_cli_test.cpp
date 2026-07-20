@@ -1032,6 +1032,14 @@ TEST(SimnowDashboardCli, PipelineInactiveIsHealthyWithoutLiveCore) {
     const auto stdout_log = root / "stdout.log";
     WriteFile(root / "wal" / "events.wal", "");
     WritePipelineHealth(root, "inactive", "inactive", "outside_trading_session");
+    WriteFile(root / "ctp_instruments" / "c_dominant_contract.json",
+              "{\"schema_version\":2,\"trading_day\":\"20260720\","
+              "\"product_id\":\"c\",\"current_instrument_id\":\"c2609\","
+              "\"phase\":\"warming\",\"generation\":1,\"selection_metric\":"
+              "\"open_interest\",\"eligible_count\":6,\"baseline_count\":6,"
+              "\"warmup_observed_bars\":0,\"warmup_required_bars\":30}\n");
+    WriteFile(root / "ctp_instruments" / "c_contracts.json",
+              "{\"schema_version\":2,\"broker_trading_day\":\"20260720\"}\n");
 
     const int rc = RunCommandCapture(DashboardCommand(root, output_dir), stdout_log);
 

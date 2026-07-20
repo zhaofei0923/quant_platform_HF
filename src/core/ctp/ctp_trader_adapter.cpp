@@ -818,11 +818,17 @@ bool CTPTraderAdapter::EnqueueInstrumentQuery(int request_id) {
 }
 
 bool CTPTraderAdapter::EnqueueInstrumentQuery(int request_id, const std::string& instrument_id) {
+    InstrumentQueryFilter filter;
+    filter.instrument_id = instrument_id;
+    return EnqueueInstrumentQuery(request_id, filter);
+}
+
+bool CTPTraderAdapter::EnqueueInstrumentQuery(int request_id, const InstrumentQueryFilter& filter) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (state_ < TraderSessionState::kLoggedIn) {
         return false;
     }
-    return gateway_->EnqueueInstrumentQuery(request_id, instrument_id);
+    return gateway_->EnqueueInstrumentQuery(request_id, filter);
 }
 
 int CTPTraderAdapter::EnqueueInstrumentQuery() {
@@ -835,17 +841,32 @@ int CTPTraderAdapter::EnqueueInstrumentQuery(const std::string& instrument_id) {
     return EnqueueInstrumentQuery(request_id, instrument_id) ? request_id : -1;
 }
 
+int CTPTraderAdapter::EnqueueInstrumentQuery(const InstrumentQueryFilter& filter) {
+    const int request_id = AllocateRequestId();
+    return EnqueueInstrumentQuery(request_id, filter) ? request_id : -1;
+}
+
 bool CTPTraderAdapter::EnqueueDepthMarketDataQuery(int request_id) {
+    return EnqueueDepthMarketDataQuery(request_id, "");
+}
+
+bool CTPTraderAdapter::EnqueueDepthMarketDataQuery(int request_id,
+                                                   const std::string& instrument_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (state_ < TraderSessionState::kLoggedIn) {
         return false;
     }
-    return gateway_->EnqueueDepthMarketDataQuery(request_id);
+    return gateway_->EnqueueDepthMarketDataQuery(request_id, instrument_id);
 }
 
 int CTPTraderAdapter::EnqueueDepthMarketDataQuery() {
     const int request_id = AllocateRequestId();
     return EnqueueDepthMarketDataQuery(request_id) ? request_id : -1;
+}
+
+int CTPTraderAdapter::EnqueueDepthMarketDataQuery(const std::string& instrument_id) {
+    const int request_id = AllocateRequestId();
+    return EnqueueDepthMarketDataQuery(request_id, instrument_id) ? request_id : -1;
 }
 
 bool CTPTraderAdapter::EnqueueInstrumentMarginRateQuery(int request_id,

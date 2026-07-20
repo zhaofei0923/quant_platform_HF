@@ -94,4 +94,31 @@ TEST(QuerySchedulerTest, DeferredTaskOwnsStateUntilDrainedAfterCompletion) {
     EXPECT_TRUE(observed_state.expired());
 }
 
+TEST(QuerySchedulerTest, PendingTaskWaitsForTokenInsteadOfBeingStranded) {
+    QueryScheduler scheduler(20);
+    int executed = 0;
+    for (int index = 0; index < 20; ++index) {
+        ASSERT_TRUE(scheduler.TrySchedule(QueryScheduler::QueryTask{
+            index,
+            QueryScheduler::Priority::kNormal,
+            [&executed] { ++executed; },
+        }));
+        ASSERT_EQ(scheduler.DrainOnce(), 1U);
+        scheduler.MarkComplete();
+    }
+
+    ASSERT_TRUE(scheduler.TrySchedule(QueryScheduler::QueryTask{
+        21,
+        QueryScheduler::Priority::kNormal,
+        [&executed] { ++executed; },
+    }));
+    const auto started_at = std::chrono::steady_clock::now();
+    EXPECT_EQ(scheduler.DrainOnce(), 1U);
+    const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now() - started_at)
+                                .count();
+    EXPECT_GE(elapsed_ms, 10);
+    EXPECT_EQ(executed, 21);
+}
+
 }  // namespace quant_hft

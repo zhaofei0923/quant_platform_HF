@@ -3282,10 +3282,17 @@ bool CtpGatewayAdapter::EnqueueInvestorPositionQuery(int request_id) {
 }
 
 bool CtpGatewayAdapter::EnqueueInstrumentQuery(int request_id) {
-    return EnqueueInstrumentQuery(request_id, "");
+    return EnqueueInstrumentQuery(request_id, InstrumentQueryFilter{});
 }
 
 bool CtpGatewayAdapter::EnqueueInstrumentQuery(int request_id, const std::string& instrument_id) {
+    InstrumentQueryFilter filter;
+    filter.instrument_id = instrument_id;
+    return EnqueueInstrumentQuery(request_id, filter);
+}
+
+bool CtpGatewayAdapter::EnqueueInstrumentQuery(int request_id,
+                                               const InstrumentQueryFilter& filter) {
     auto state = std::make_shared<ScheduledQueryTaskState>();
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -3297,7 +3304,7 @@ bool CtpGatewayAdapter::EnqueueInstrumentQuery(int request_id, const std::string
     QueryScheduler::QueryTask task;
     task.request_id = request_id;
     task.priority = QueryScheduler::Priority::kNormal;
-    task.execute = [this, request_id, instrument_id, state]() {
+    task.execute = [this, request_id, filter, state]() {
         auto mark_failed = [&]() {
             state->query_ok = false;
             query_scheduler_.MarkComplete();
@@ -3309,9 +3316,9 @@ bool CtpGatewayAdapter::EnqueueInstrumentQuery(int request_id, const std::string
         {
             std::lock_guard<std::mutex> lock(mutex_);
             runtime = runtime_config_;
-            if (instrument_id.empty()) {
-                instrument_meta_snapshots_.clear();
-            }
+            // Each request owns an isolated result set. Product-scoped queries must not inherit
+            // rows returned by the preceding product request.
+            instrument_meta_snapshots_.clear();
             if (runtime_config_.enable_real_api) {
 #if QUANT_HFT_HAS_REAL_CTP
                 if (!healthy_ || !real_api_ || !real_api_->td_api) {
@@ -3326,10 +3333,27 @@ bool CtpGatewayAdapter::EnqueueInstrumentQuery(int request_id, const std::string
             }
             if (!runtime_config_.enable_real_api) {
                 std::vector<std::string> requested_instruments;
-                if (!instrument_id.empty()) {
-                    requested_instruments.push_back(instrument_id);
+                if (!filter.instrument_id.empty()) {
+                    requested_instruments.push_back(filter.instrument_id);
                 } else {
-                    requested_instruments.assign(subscriptions_.begin(), subscriptions_.end());
+                    for (const auto& subscribed : subscriptions_) {
+                        const std::string::size_type dot = subscribed.find('.');
+                        const std::string symbol =
+                            dot == std::string::npos ? subscribed : subscribed.substr(dot + 1);
+                        std::string product_id;
+                        for (const unsigned char ch : symbol) {
+                            if (std::isalpha(ch) == 0) {
+                                break;
+                            }
+                            product_id.push_back(static_cast<char>(std::tolower(ch)));
+                        }
+                        const std::string exchange_id = InferExchangeIdFromInstrument(subscribed);
+                        if ((!filter.product_id.empty() && product_id != filter.product_id) ||
+                            (!filter.exchange_id.empty() && exchange_id != filter.exchange_id)) {
+                            continue;
+                        }
+                        requested_instruments.push_back(subscribed);
+                    }
                 }
                 instrument_meta_snapshots_.reserve(instrument_meta_snapshots_.size() +
                                                    requested_instruments.size());
@@ -3337,6 +3361,16 @@ bool CtpGatewayAdapter::EnqueueInstrumentQuery(int request_id, const std::string
                     InstrumentMetaSnapshot meta;
                     meta.instrument_id = requested_instrument_id;
                     meta.exchange_id = InferExchangeIdFromInstrument(requested_instrument_id);
+                    const auto dot = requested_instrument_id.find('.');
+                    const std::string symbol = dot == std::string::npos
+                                                   ? requested_instrument_id
+                                                   : requested_instrument_id.substr(dot + 1);
+                    for (const unsigned char ch : symbol) {
+                        if (std::isalpha(ch) == 0) {
+                            break;
+                        }
+                        meta.product_id.push_back(static_cast<char>(std::tolower(ch)));
+                    }
                     meta.volume_multiple = 1;
                     meta.source = "simulated";
                     meta.ts_ns = NowEpochNanos();
@@ -3360,8 +3394,14 @@ bool CtpGatewayAdapter::EnqueueInstrumentQuery(int request_id, const std::string
         }
 #if QUANT_HFT_HAS_REAL_CTP
         CThostFtdcQryInstrumentField req{};
-        if (!instrument_id.empty()) {
-            CopyCtpField(req.InstrumentID, instrument_id);
+        if (!filter.instrument_id.empty()) {
+            CopyCtpField(req.InstrumentID, filter.instrument_id);
+        }
+        if (!filter.exchange_id.empty()) {
+            CopyCtpField(req.ExchangeID, filter.exchange_id);
+        }
+        if (!filter.product_id.empty()) {
+            CopyCtpField(req.ProductID, filter.product_id);
         }
         state->query_ok =
             ExecuteTdQueryWithRetry([&]() { return td_api->ReqQryInstrument(&req, request_id); });
@@ -3384,6 +3424,11 @@ bool CtpGatewayAdapter::EnqueueInstrumentQuery(int request_id, const std::string
 }
 
 bool CtpGatewayAdapter::EnqueueDepthMarketDataQuery(int request_id) {
+    return EnqueueDepthMarketDataQuery(request_id, "");
+}
+
+bool CtpGatewayAdapter::EnqueueDepthMarketDataQuery(int request_id,
+                                                    const std::string& instrument_id) {
     auto state = std::make_shared<ScheduledQueryTaskState>();
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -3395,7 +3440,7 @@ bool CtpGatewayAdapter::EnqueueDepthMarketDataQuery(int request_id) {
     QueryScheduler::QueryTask task;
     task.request_id = request_id;
     task.priority = QueryScheduler::Priority::kNormal;
-    task.execute = [this, request_id, state]() {
+    task.execute = [this, request_id, instrument_id, state]() {
         auto mark_failed = [&]() {
             state->query_ok = false;
             query_scheduler_.MarkComplete();
@@ -3418,6 +3463,27 @@ bool CtpGatewayAdapter::EnqueueDepthMarketDataQuery(int request_id) {
                 return;
 #endif
             } else {
+                std::vector<std::string> requested;
+                if (!instrument_id.empty()) {
+                    requested.push_back(instrument_id);
+                } else {
+                    requested.assign(subscriptions_.begin(), subscriptions_.end());
+                }
+                for (const auto& requested_instrument_id : requested) {
+                    MarketSnapshot snapshot;
+                    snapshot.instrument_id = requested_instrument_id;
+                    snapshot.exchange_id = InferExchangeIdFromInstrument(requested_instrument_id);
+                    snapshot.trading_day = "19700101";
+                    snapshot.action_day = "19700101";
+                    snapshot.update_time = "09:00:00";
+                    snapshot.last_price = 100.0;
+                    snapshot.bid_price_1 = 99.0;
+                    snapshot.ask_price_1 = 101.0;
+                    snapshot.volume = 1;
+                    snapshot.open_interest = 1;
+                    snapshot.recv_ts_ns = NowEpochNanos();
+                    depth_market_snapshots_.push_back(std::move(snapshot));
+                }
                 state->depth_market_snapshots = depth_market_snapshots_;
                 state->depth_market_callback = depth_market_snapshot_callback_;
                 return;
@@ -3425,6 +3491,9 @@ bool CtpGatewayAdapter::EnqueueDepthMarketDataQuery(int request_id) {
         }
 #if QUANT_HFT_HAS_REAL_CTP
         CThostFtdcQryDepthMarketDataField req{};
+        if (!instrument_id.empty()) {
+            CopyCtpField(req.InstrumentID, instrument_id);
+        }
         state->query_ok = ExecuteTdQueryWithRetry(
             [&]() { return td_api->ReqQryDepthMarketData(&req, request_id); });
         if (!state->query_ok) {

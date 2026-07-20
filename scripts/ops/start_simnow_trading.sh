@@ -10,6 +10,7 @@ CONFIG_PATH="${QUANT_ROOT}/configs/sim/ctp_sim_trade_candidates.yaml"
 BUILD_DIR="${BUILD_DIR:-${QUANT_ROOT}/build-gcc}"
 CORE_ENGINE_BIN="${CORE_ENGINE_BIN:-${BUILD_DIR}/core_engine}"
 SIMNOW_PROBE_BIN="${SIMNOW_PROBE_BIN:-${BUILD_DIR}/simnow_probe}"
+CONTRACT_REFRESH_BIN="${SIMNOW_CONTRACT_REFRESH_BIN:-${BUILD_DIR}/simnow_contract_universe_refresh}"
 RUN_ID="${SIMNOW_RUN_ID:-simnow-$(date +%Y%m%dT%H%M%S)}"
 RUN_ROOT="${SIMNOW_RUN_ROOT:-${QUANT_ROOT}/runtime/trading/runs/simnow}"
 WAL_FILE="${SIMNOW_WAL_FILE:-${QUANT_ROOT}/runtime/trading/wal/simnow/events.wal}"
@@ -27,6 +28,7 @@ STARTUP_GRACE_SECONDS="${SIMNOW_STARTUP_GRACE_SECONDS:-3}"
 BACKGROUND=1
 SKIP_PROBE=0
 PROBE_ONLY=0
+PREOPEN_CONNECTIVITY_ONLY=0
 DRY_RUN=0
 ALLOW_EXISTING=0
 STOP_EXISTING=0
@@ -49,6 +51,7 @@ Options:
   --build-dir <path>             Build directory (default: ${BUILD_DIR})
   --core-engine-bin <path>       core_engine binary (default: ${CORE_ENGINE_BIN})
   --simnow-probe-bin <path>      simnow_probe binary (default: ${SIMNOW_PROBE_BIN})
+  --contract-refresh-bin <path>  Product-scoped universe refresh binary (default: ${CONTRACT_REFRESH_BIN})
   --run-id <value>               Run id for logs/PID (default: ${RUN_ID})
   --run-root <path>              Run output root (default: ${RUN_ROOT})
   --wal-file <path>              WAL output path (default: ${WAL_FILE})
@@ -58,12 +61,13 @@ Options:
   --health-interval-ms <int>     simnow_probe health interval (default: ${HEALTH_INTERVAL_MS})
   --instrument-timeout-seconds <int>
                                   simnow_probe instrument query timeout (default: ${INSTRUMENT_TIMEOUT_SECONDS})
-  --force-instrument-refresh      Bypass the candidate cache in probe and core_engine
+  --force-instrument-refresh      Force one product-scoped C/HC refresh before probe/start
   --min-free-mb <int>            Required free disk space under run root (default: ${MIN_FREE_MB})
   --log-max-bytes <int>          Rotate log files above this size (default: ${LOG_MAX_BYTES})
   --log-retention-days <int>     Delete old rotated logs after N days (default: ${LOG_RETENTION_DAYS})
   --skip-probe                   Start core_engine without running simnow_probe first
   --probe-only                   Run the pre-trade probe and do not start core_engine
+  --preopen-connectivity-only    With --probe-only, defer dominant selection only outside session
   --foreground                   Run core_engine in foreground and tee logs
   --background                   Run core_engine in background (default)
   --allow-existing               Exit successfully when an existing core_engine is already alive
@@ -245,10 +249,12 @@ while [[ $# -gt 0 ]]; do
       BUILD_DIR="$2"
       CORE_ENGINE_BIN="${BUILD_DIR}/core_engine"
       SIMNOW_PROBE_BIN="${BUILD_DIR}/simnow_probe"
+      CONTRACT_REFRESH_BIN="${BUILD_DIR}/simnow_contract_universe_refresh"
       shift 2
       ;;
     --core-engine-bin|--core-bin) require_value "$1" "${2:-}"; CORE_ENGINE_BIN="$2"; shift 2 ;;
     --simnow-probe-bin|--probe-bin) require_value "$1" "${2:-}"; SIMNOW_PROBE_BIN="$2"; shift 2 ;;
+    --contract-refresh-bin) require_value "$1" "${2:-}"; CONTRACT_REFRESH_BIN="$2"; shift 2 ;;
     --run-id) require_value "$1" "${2:-}"; RUN_ID="$2"; shift 2 ;;
     --run-root) require_value "$1" "${2:-}"; RUN_ROOT="$2"; RUN_ROOT_SET_BY_CLI=1; shift 2 ;;
     --wal-file) require_value "$1" "${2:-}"; WAL_FILE="$2"; WAL_FILE_SET_BY_CLI=1; shift 2 ;;
@@ -263,6 +269,7 @@ while [[ $# -gt 0 ]]; do
     --log-retention-days) require_value "$1" "${2:-}"; LOG_RETENTION_DAYS="$2"; shift 2 ;;
     --skip-probe) SKIP_PROBE=1; shift ;;
     --probe-only) PROBE_ONLY=1; shift ;;
+    --preopen-connectivity-only) PREOPEN_CONNECTIVITY_ONLY=1; shift ;;
     --foreground) BACKGROUND=0; shift ;;
     --background) BACKGROUND=1; shift ;;
     --allow-existing) ALLOW_EXISTING=1; shift ;;
@@ -285,6 +292,12 @@ is_positive_int "${MIN_FREE_MB}" || die "--min-free-mb must be a positive intege
 is_positive_int "${LOG_MAX_BYTES}" || die "--log-max-bytes must be a positive integer"
 is_non_negative_int "${LOG_RETENTION_DAYS}" || die "--log-retention-days must be a non-negative integer"
 is_non_negative_int "${STARTUP_GRACE_SECONDS}" || die "SIMNOW_STARTUP_GRACE_SECONDS must be a non-negative integer"
+if [[ ${PREOPEN_CONNECTIVITY_ONLY} -eq 1 && ${PROBE_ONLY} -ne 1 ]]; then
+  die "--preopen-connectivity-only requires --probe-only"
+fi
+if [[ ${PREOPEN_CONNECTIVITY_ONLY} -eq 1 && ${SKIP_PROBE} -eq 1 ]]; then
+  die "--preopen-connectivity-only cannot be combined with --skip-probe"
+fi
 
 cd "${QUANT_ROOT}"
 
@@ -320,6 +333,9 @@ is_bool_flag "${ALLOW_UNCONFIRMED_SETTLEMENT}" || die "SIMNOW_ALLOW_UNCONFIRMED_
 is_bool_flag "${FORCE_INSTRUMENT_REFRESH}" || die "SIMNOW_FORCE_INSTRUMENT_REFRESH must be 0 or 1"
 [[ -n "${RUN_ROOT}" ]] || die "SIMNOW_RUN_ROOT must not be empty"
 [[ -n "${WAL_FILE}" ]] || die "SIMNOW_WAL_FILE must not be empty"
+INSTRUMENT_CACHE_ROOT="${SIMNOW_INSTRUMENT_CACHE_ROOT:-${QUANT_ROOT}/runtime/ctp_instruments}"
+CONTRACT_UNIVERSE_MANIFEST="${INSTRUMENT_CACHE_ROOT}/contract_universe_manifest.json"
+export SIMNOW_INSTRUMENT_CACHE_ROOT="${INSTRUMENT_CACHE_ROOT}"
 
 export CTP_CONFIG_PATH="${CONFIG_PATH}"
 export SIMNOW_RUN_ID="${RUN_ID}"
@@ -348,6 +364,7 @@ fi
 [[ -f "${CONFIG_PATH}" ]] || die "config file not found: ${CONFIG_PATH}"
 [[ -x "${CORE_ENGINE_BIN}" ]] || die "core_engine binary is not executable: ${CORE_ENGINE_BIN}"
 [[ -x "${SIMNOW_PROBE_BIN}" ]] || die "simnow_probe binary is not executable: ${SIMNOW_PROBE_BIN}"
+[[ -x "${CONTRACT_REFRESH_BIN}" ]] || die "contract refresh binary is not executable: ${CONTRACT_REFRESH_BIN}"
 [[ "${CTP_SIM_IS_PRODUCTION_MODE}" == "true" ]] || die "CTP_SIM_IS_PRODUCTION_MODE must be true for trading-hours SimNow fronts"
 [[ "${CTP_SIM_ENABLE_REAL_API}" == "true" ]] || die "CTP_SIM_ENABLE_REAL_API must be true to start SimNow trading"
 [[ -n "${CTP_SIM_BROKER_ID:-}" ]] || die "CTP_SIM_BROKER_ID is missing"
@@ -410,9 +427,14 @@ fi
 RUN_DIR="${RUN_ROOT}/${RUN_ID}"
 mkdir -p "${RUN_DIR}"
 PROBE_LOG="${RUN_DIR}/simnow_probe.log"
+CONTRACT_REFRESH_LOG="${RUN_DIR}/contract_universe_refresh.log"
 ENGINE_LOG="${RUN_DIR}/core_engine.log"
 PID_FILE="${RUN_DIR}/core_engine.pid"
 SUMMARY_FILE="${RUN_DIR}/run_summary.env"
+PROBE_MODE="strict"
+if [[ ${PREOPEN_CONNECTIVITY_ONLY} -eq 1 ]]; then
+  PROBE_MODE="preopen_connectivity_only"
+fi
 
 rotate_file_if_needed "${PROBE_LOG}" "${LOG_MAX_BYTES}"
 rotate_file_if_needed "${ENGINE_LOG}" "${LOG_MAX_BYTES}"
@@ -431,19 +453,26 @@ probe_seconds=${PROBE_SECONDS}
 probe_timeout_seconds=${PROBE_TIMEOUT_SECONDS}
 health_interval_ms=${HEALTH_INTERVAL_MS}
 instrument_timeout_seconds=${INSTRUMENT_TIMEOUT_SECONDS}
+probe_mode=${PROBE_MODE}
 min_free_mb=${MIN_FREE_MB}
 log_max_bytes=${LOG_MAX_BYTES}
 engine_log=${ENGINE_LOG}
 probe_log=${PROBE_LOG}
+contract_refresh_log=${CONTRACT_REFRESH_LOG}
 pid_file=${PID_FILE}
 candidate_groups=group1(30011/30001),group2(30012/30002),group3(30013/30003)
 EOF
 
 core_cmd=("${CORE_ENGINE_BIN}" --config "${CONFIG_PATH}")
-instrument_refresh_args=()
+probe_extra_args=()
+refresh_extra_args=()
 if [[ "${FORCE_INSTRUMENT_REFRESH}" == "1" ]]; then
   core_cmd+=(--force-instrument-refresh)
-  instrument_refresh_args+=(--force-instrument-refresh)
+  probe_extra_args+=(--force-instrument-refresh)
+  refresh_extra_args+=(--force)
+fi
+if [[ ${PREOPEN_CONNECTIVITY_ONLY} -eq 1 ]]; then
+  probe_extra_args+=(--preopen-connectivity-only)
 fi
 if [[ "${RUN_SECONDS}" != "0" ]]; then
   core_cmd+=(--run-seconds "${RUN_SECONDS}")
@@ -459,7 +488,12 @@ if [[ ${DRY_RUN} -eq 1 ]]; then
   echo "[dry-run] disk check: ${RUN_ROOT} free >= ${MIN_FREE_MB}MB"
   echo "[dry-run] duplicate check: no live core_engine detected"
   echo "[dry-run] wal file: ${WAL_FILE}"
-  echo "[dry-run] probe: timeout ${PROBE_TIMEOUT_SECONDS}s ${SIMNOW_PROBE_BIN} ${CONFIG_PATH} --monitor-seconds ${PROBE_SECONDS} --health-interval-ms ${HEALTH_INTERVAL_MS} --instrument-timeout-seconds ${INSTRUMENT_TIMEOUT_SECONDS} ${instrument_refresh_args[*]}"
+  if [[ "${FORCE_INSTRUMENT_REFRESH}" == "1" || ! -f "${CONTRACT_UNIVERSE_MANIFEST}" ]]; then
+    echo "[dry-run] contract refresh: required; timeout ${PROBE_TIMEOUT_SECONDS}s ${CONTRACT_REFRESH_BIN} --config ${CONFIG_PATH} --timeout-seconds ${INSTRUMENT_TIMEOUT_SECONDS} ${refresh_extra_args[*]}"
+  else
+    echo "[dry-run] contract refresh: skipped; manifest present and strict probe validates Broker trading day"
+  fi
+  echo "[dry-run] probe: timeout ${PROBE_TIMEOUT_SECONDS}s ${SIMNOW_PROBE_BIN} ${CONFIG_PATH} --monitor-seconds ${PROBE_SECONDS} --health-interval-ms ${HEALTH_INTERVAL_MS} --instrument-timeout-seconds ${INSTRUMENT_TIMEOUT_SECONDS} ${probe_extra_args[*]}"
   printf '[dry-run] core_engine:'
   printf ' %q' "${core_cmd[@]}"
   printf '\n'
@@ -467,12 +501,32 @@ if [[ ${DRY_RUN} -eq 1 ]]; then
 fi
 
 if [[ ${SKIP_PROBE} -eq 0 ]]; then
+  if [[ "${FORCE_INSTRUMENT_REFRESH}" == "1" || ! -f "${CONTRACT_UNIVERSE_MANIFEST}" ]]; then
+    echo "[step] refreshing product-scoped C/HC contract universe"
+    if ! timeout "${PROBE_TIMEOUT_SECONDS}s" "${CONTRACT_REFRESH_BIN}" \
+        --config "${CONFIG_PATH}" \
+        --timeout-seconds "${INSTRUMENT_TIMEOUT_SECONDS}" \
+        "${refresh_extra_args[@]}" \
+        > "${CONTRACT_REFRESH_LOG}" 2>&1; then
+      send_alert "critical" "product-scoped contract universe refresh failed; run_dir=${RUN_DIR}"
+      echo "error: contract universe refresh failed; redacted tail follows" >&2
+      sed -E 's/((investor_id|account_id)=")[^"]*(")/\1<redacted>\3/g' \
+        "${CONTRACT_REFRESH_LOG}" | tail -n 80 >&2
+      exit 1
+    fi
+    echo "[ok] product-scoped contract universe refreshed: ${CONTRACT_REFRESH_LOG}"
+  else
+    printf '%s\n' \
+      'level=info app=start_simnow_trading event=instrument_universe_refresh_skipped reason="manifest_present"' \
+      > "${CONTRACT_REFRESH_LOG}"
+    echo "[ok] contract manifest present; strict probe will validate Broker trading day"
+  fi
   echo "[step] running safe SimNow probe before trading"
   if ! timeout "${PROBE_TIMEOUT_SECONDS}s" "${SIMNOW_PROBE_BIN}" "${CONFIG_PATH}" \
       --monitor-seconds "${PROBE_SECONDS}" \
       --health-interval-ms "${HEALTH_INTERVAL_MS}" \
       --instrument-timeout-seconds "${INSTRUMENT_TIMEOUT_SECONDS}" \
-      "${instrument_refresh_args[@]}" \
+      "${probe_extra_args[@]}" \
       > "${PROBE_LOG}" 2>&1; then
     send_alert "critical" "simnow_probe failed before starting core_engine; run_dir=${RUN_DIR}"
     echo "error: simnow_probe failed; redacted tail follows" >&2

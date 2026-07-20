@@ -4039,8 +4039,8 @@ DashboardState CollectState(const DashboardOptions& options) {
     if (state.pipeline_health.authoritative) {
         const bool pipeline_inactive = state.pipeline_health.status == "inactive";
         const bool independent_unhealthy =
-            !dominant_contracts_healthy || (!pipeline_inactive && (!structured_readiness_healthy ||
-                                                                   !state.ctp_connection.healthy));
+            !pipeline_inactive && (!dominant_contracts_healthy || !structured_readiness_healthy ||
+                                   !state.ctp_connection.healthy);
         if (independent_unhealthy || state.pipeline_health.status == "unhealthy" ||
             state.pipeline_health.status == "missing" ||
             state.pipeline_health.status == "invalid" || state.pipeline_health.status == "stale") {

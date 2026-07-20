@@ -1438,6 +1438,7 @@ session_spec_for_product() {
   [[ -f "${TRADING_SESSIONS_CONFIG}" ]] || return 0
   awk -v wanted_product="${product}" -v wanted_exchange="${exchange}" '
     function trim(value) {
+      sub(/[[:space:]]+#.*/, "", value)
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
       gsub(/^"|"$/, "", value)
       return value
@@ -1727,7 +1728,7 @@ collect_pipeline_health() {
   local schema_1m _rows_1m duplicates_1m conflicts_1m incomplete_1m invalid_1m invalid_eligible_1m mismatch_1m minute_1m complete_1m _eligible_1m _conflict_1m _replay_1m _endpoint_1m _period_end_1m _finalized_1m _recovered_1m
   local schema_5m _rows_5m duplicates_5m conflicts_5m incomplete_5m invalid_5m invalid_eligible_5m mismatch_5m minute_5m complete_5m eligible_5m _conflict_5m replay_5m endpoint_5m _period_end_5m _finalized_5m recovered_5m
   local strategy_minute strategy_rows strategy_candidates strategy_allowed
-  local market_status bar1_status bar5_status strategy_status current_product_status
+  local market_status bar1_status bar5_status strategy_status current_product_status next_stage_status
   local market_reason bar1_reason bar5_reason strategy_reason
   local active_products=0 total_products=0 bar_age strategy_age
   local eligible_count baseline_count pending_count trace_id
@@ -1964,14 +1965,26 @@ collect_pipeline_health() {
     product_reason["${product}"]="${market_reason};${bar1_reason};${bar5_reason};${strategy_reason}"
     product_schema["${product}"]="1m:${schema_1m:-missing},5m:${schema_5m:-missing}"
 
-    stage_market_status="$(worse_status "${stage_market_status}" "${market_status}")"
-    stage_bar_1m_status="$(worse_status "${stage_bar_1m_status}" "${bar1_status}")"
-    stage_bar_5m_status="$(worse_status "${stage_bar_5m_status}" "${bar5_status}")"
-    stage_strategy_status="$(worse_status "${stage_strategy_status}" "${strategy_status}")"
-    [[ "${market_status}" == "healthy" ]] || stage_market_reason="${product}:${market_reason}"
-    [[ "${bar1_status}" == "healthy" ]] || stage_bar_1m_reason="${product}:${bar1_reason}"
-    [[ "${bar5_status}" == "healthy" ]] || stage_bar_5m_reason="${product}:${bar5_reason}"
-    [[ "${strategy_status}" == "healthy" ]] || stage_strategy_reason="${product}:${strategy_reason}"
+    next_stage_status="$(worse_status "${stage_market_status}" "${market_status}")"
+    if [[ "${next_stage_status}" != "${stage_market_status}" ]]; then
+      stage_market_status="${next_stage_status}"
+      stage_market_reason="${product}:${market_reason}"
+    fi
+    next_stage_status="$(worse_status "${stage_bar_1m_status}" "${bar1_status}")"
+    if [[ "${next_stage_status}" != "${stage_bar_1m_status}" ]]; then
+      stage_bar_1m_status="${next_stage_status}"
+      stage_bar_1m_reason="${product}:${bar1_reason}"
+    fi
+    next_stage_status="$(worse_status "${stage_bar_5m_status}" "${bar5_status}")"
+    if [[ "${next_stage_status}" != "${stage_bar_5m_status}" ]]; then
+      stage_bar_5m_status="${next_stage_status}"
+      stage_bar_5m_reason="${product}:${bar5_reason}"
+    fi
+    next_stage_status="$(worse_status "${stage_strategy_status}" "${strategy_status}")"
+    if [[ "${next_stage_status}" != "${stage_strategy_status}" ]]; then
+      stage_strategy_status="${next_stage_status}"
+      stage_strategy_reason="${product}:${strategy_reason}"
+    fi
   done
   (( recent_duplicate_tick_total <= pipeline_duplicate_ticks )) || \
     pipeline_duplicate_ticks="${recent_duplicate_tick_total}"

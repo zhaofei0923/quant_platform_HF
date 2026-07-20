@@ -36,6 +36,23 @@ TEST(TradingSessionCalendarTest, RequiresFreshTickWhenHolidayLayerUnavailable) {
     EXPECT_EQ(blocked.reason, "calendar_unknown_without_fresh_tick");
 }
 
+TEST(TradingSessionCalendarTest, DistinguishesPreopenFromMissingFreshInSessionTick) {
+    TradingSessionCalendar calendar;
+    constexpr EpochNanos kPreopenNs = 1'784'509'140'000'000'000LL;
+    constexpr EpochNanos kInSessionNs = 1'784'509'260'000'000'000LL;
+
+    const auto preopen =
+        calendar.EvaluateOrderTime("DCE", "c2609", "20260720", kPreopenNs, 0, false);
+    EXPECT_FALSE(preopen.in_session);
+    EXPECT_EQ(preopen.reason, "outside_session");
+
+    const auto missing_fresh_tick =
+        calendar.EvaluateOrderTime("DCE", "c2609", "20260720", kInSessionNs, 0, false);
+    EXPECT_TRUE(missing_fresh_tick.in_session);
+    EXPECT_FALSE(missing_fresh_tick.open_allowed);
+    EXPECT_EQ(missing_fresh_tick.reason, "fresh_session_tick_required");
+}
+
 TEST(TradingSessionCalendarTest, AppliesOpenSessionEndGuard) {
     TradingSessionCalendar calendar;
     // Use RemainingSessionMillis directly to avoid making the test depend on a wall-clock epoch.

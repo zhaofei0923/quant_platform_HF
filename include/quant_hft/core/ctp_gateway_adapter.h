@@ -28,6 +28,16 @@ struct CtpUserSessionInfo {
     int session_id{0};
 };
 
+struct InstrumentQueryFilter {
+    std::string instrument_id;
+    std::string exchange_id;
+    std::string product_id;
+
+    bool empty() const noexcept {
+        return instrument_id.empty() && exchange_id.empty() && product_id.empty();
+    }
+};
+
 // Phase-1 adapter skeleton for CTP v6.7.11.
 class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
    public:
@@ -80,7 +90,9 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
     virtual bool EnqueueInvestorPositionQuery(int request_id);
     virtual bool EnqueueInstrumentQuery(int request_id);
     virtual bool EnqueueInstrumentQuery(int request_id, const std::string& instrument_id);
+    virtual bool EnqueueInstrumentQuery(int request_id, const InstrumentQueryFilter& filter);
     virtual bool EnqueueDepthMarketDataQuery(int request_id);
+    virtual bool EnqueueDepthMarketDataQuery(int request_id, const std::string& instrument_id);
     virtual bool EnqueueInstrumentMarginRateQuery(int request_id, const std::string& instrument_id);
     virtual bool EnqueueInstrumentCommissionRateQuery(int request_id,
                                                       const std::string& instrument_id);

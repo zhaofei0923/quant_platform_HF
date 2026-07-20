@@ -86,7 +86,9 @@ ctp:
   dominant_contract_min_lead_ratio: 0.15
   dominant_contract_min_lead_windows: 3
   dominant_contract_min_hold_ms: 900000
-  dominant_contract_cache_max_age_ms: 86400000
+  # Exact broker-trading-day matching is mandatory; seven days only allows a Friday-night
+  # generation for Monday to survive the weekend without a redundant product query.
+  dominant_contract_cache_max_age_ms: 604800000
   dominant_contract_max_tick_age_ms: 6000
   dominant_contract_warmup_bars: 30
   dominant_contract_switch_timeout_ms: 30000

@@ -68,7 +68,7 @@ std::string RunSupervisorDryRun(const std::string& suffix, const std::string& fa
         EscapePathForShell(temp_root / "reports") + "' " + "--export-root '" +
         EscapePathForShell(temp_root / "exports") + "' " + "--reconcile-root '" +
         EscapePathForShell(temp_root / "reconcile") + "' " +
-        "--windows 'night=20:50-02:35,day_am=08:50-11:35,day_pm=13:20-15:20' " +
+        "--windows 'night=21:00-02:35,day_am=09:00-11:35,day_pm=13:30-15:20' " +
         "--no-eod --dry-run > '" + EscapePathForShell(output_file) + "' 2>&1";
 
     const int rc = RunCommand(command);
@@ -77,7 +77,8 @@ std::string RunSupervisorDryRun(const std::string& suffix, const std::string& fa
 }
 
 std::string MonitorCommand(const std::filesystem::path& temp_root, const std::string& fake_now,
-                           bool strict = false, bool replay_existing = false) {
+                           bool strict = false, bool replay_existing = false,
+                           const std::string& products = "c") {
     const auto sessions = std::filesystem::current_path() / "configs" / "trading_sessions.yaml";
     std::string command =
         "QUANT_ROOT='" + EscapePathForShell(temp_root) + "' SIMNOW_MONITOR_FAKE_NOW='" +
@@ -86,7 +87,8 @@ std::string MonitorCommand(const std::filesystem::path& temp_root, const std::st
         EscapePathForShell(temp_root / "market") + "' --wal-file '" +
         EscapePathForShell(temp_root / "wal" / "events.wal") + "' --monitor-root '" +
         EscapePathForShell(temp_root / "monitor") + "' --trading-sessions-config '" +
-        EscapePathForShell(sessions) + "' --products c --status-interval-seconds 0 --once";
+        EscapePathForShell(sessions) + "' --products '" + EscapeForShell(products) +
+        "' --status-interval-seconds 0 --once";
     if (strict) {
         command += " --strict-exit";
     }
@@ -201,19 +203,19 @@ TEST(SimnowSupervisorScriptTest, FridayNightMapsToNextAllowedTradingDay) {
 
     EXPECT_NE(
         output.find("[dry-run] decision=start_or_keep_alive session=night trading_day=20260518 "
-                    "range=20:50-02:35"),
+                    "range=21:00-02:35"),
         std::string::npos)
         << output;
 }
 
-TEST(SimnowSupervisorScriptTest, SaturdayEarlyMorningContinuesFridayNightSession) {
+TEST(SimnowSupervisorScriptTest, SaturdayEarlyMorningKeepsFridayMappingWithoutRestart) {
     const std::string output = RunSupervisorDryRun("saturday_early", "2026-05-16 01:01:00");
 
-    EXPECT_NE(
-        output.find("[dry-run] decision=start_or_keep_alive session=night trading_day=20260518 "
-                    "range=20:50-02:35"),
-        std::string::npos)
+    EXPECT_NE(output.find("[dry-run] decision=keep_alive_buffer_no_start session=night "
+                          "trading_day=20260518 range=21:00-02:35"),
+              std::string::npos)
         << output;
+    EXPECT_EQ(output.find("[dry-run] start:"), std::string::npos) << output;
 }
 
 TEST(SimnowSupervisorScriptTest, WeekendNightDoesNotStartANewSession) {
@@ -221,6 +223,36 @@ TEST(SimnowSupervisorScriptTest, WeekendNightDoesNotStartANewSession) {
 
     EXPECT_NE(output.find("[dry-run] decision=outside_trading_window"), std::string::npos)
         << output;
+}
+
+TEST(SimnowSupervisorScriptTest, DoesNotStartBeforeCommoditySessionOpen) {
+    EXPECT_NE(RunSupervisorDryRun("before_day_am", "2026-05-18 08:59:59")
+                  .find("[dry-run] decision=outside_trading_window"),
+              std::string::npos);
+    EXPECT_NE(RunSupervisorDryRun("before_day_pm", "2026-05-18 13:29:59")
+                  .find("[dry-run] decision=outside_trading_window"),
+              std::string::npos);
+    EXPECT_NE(RunSupervisorDryRun("before_night", "2026-05-18 20:59:59")
+                  .find("[dry-run] decision=outside_trading_window"),
+              std::string::npos);
+}
+
+TEST(SimnowSupervisorScriptTest, StartsAtCommoditySessionOpen) {
+    EXPECT_NE(RunSupervisorDryRun("day_am_open", "2026-05-18 09:00:00")
+                  .find("session=day_am trading_day=20260518 range=09:00-11:35"),
+              std::string::npos);
+    EXPECT_NE(RunSupervisorDryRun("day_pm_open", "2026-05-18 13:30:00")
+                  .find("session=day_pm trading_day=20260518 range=13:30-15:20"),
+              std::string::npos);
+    EXPECT_NE(RunSupervisorDryRun("night_open", "2026-05-18 21:00:00")
+                  .find("session=night trading_day=20260519 range=21:00-02:35"),
+              std::string::npos);
+}
+
+TEST(SimnowSupervisorScriptTest, DoesNotRestartInsidePostCloseKeepAliveBuffer) {
+    const std::string output = RunSupervisorDryRun("post_close_buffer", "2026-07-20 11:31:00");
+    EXPECT_NE(output.find("decision=keep_alive_buffer_no_start"), std::string::npos) << output;
+    EXPECT_EQ(output.find("[dry-run] start:"), std::string::npos) << output;
 }
 
 TEST(SimnowSupervisorScriptTest, SignalMonitorHeartbeatIsSessionAwareWhenCoreIsStopped) {
@@ -293,6 +325,47 @@ TEST(SimnowSupervisorScriptTest, PipelineMonitorMarksActiveSessionWithoutCoreUnh
     const std::string health = ReadFile(root / "monitor" / "pipeline_health.json");
     EXPECT_NE(health.find("\"overall_status\": \"unhealthy\""), std::string::npos) << health;
     EXPECT_NE(health.find("core_engine_stopped_in_trading_session"), std::string::npos) << health;
+}
+
+TEST(SimnowSupervisorScriptTest, PipelineMonitorParsesInlineCommentProductSessions) {
+    const auto root = MakeTempDir("pipeline_inline_comment_sessions");
+    const auto output = root / "monitor.out";
+    std::filesystem::create_directories(root / "market" / "trading_day=20260720");
+    WriteFile(root / "runtime/ctp_instruments/c_dominant_contract.json",
+              R"({"current_instrument_id":"c2609","exchange_id":"DCE"})");
+    WriteFile(root / "runtime/ctp_instruments/hc_dominant_contract.json",
+              R"({"current_instrument_id":"hc2610","exchange_id":"SHFE"})");
+    const std::string command = MonitorCommand(root, "2026-07-20 09:31:05", true, false, "c,hc") +
+                                " > '" + EscapePathForShell(output) + "' 2>&1";
+
+    EXPECT_NE(RunCommand(command), 0) << ReadFile(output);
+    const std::string health = ReadFile(root / "monitor" / "pipeline_health.json");
+    EXPECT_NE(health.find("\"product_id\":\"hc\",\"instrument_id\":\"hc2610\","
+                          "\"exchange_id\":\"SHFE\",\"status\":\"unhealthy\""),
+              std::string::npos)
+        << health;
+    EXPECT_EQ(health.find("hc:outside_trading_session"), std::string::npos) << health;
+}
+
+TEST(SimnowSupervisorScriptTest, PipelineStageReasonKeepsFirstWorstProduct) {
+    const auto root = MakeTempDir("pipeline_stage_reason_priority");
+    const auto output = root / "monitor.out";
+    std::filesystem::create_directories(root / "market" / "trading_day=20260720");
+    WriteFile(root / "runtime/ctp_instruments/c_dominant_contract.json",
+              R"({"current_instrument_id":"c2609","exchange_id":"DCE"})");
+    WriteFile(root / "runtime/ctp_instruments/si_dominant_contract.json",
+              R"({"current_instrument_id":"si2609","exchange_id":"GFEX"})");
+    const std::string command = MonitorCommand(root, "2026-07-20 21:05:00", true, false, "c,si") +
+                                " > '" + EscapePathForShell(output) + "' 2>&1";
+
+    EXPECT_NE(RunCommand(command), 0) << ReadFile(output);
+    const std::string health = ReadFile(root / "monitor" / "pipeline_health.json");
+    EXPECT_NE(health.find("\"market_data_reason\": \"c:core_engine_not_running\""),
+              std::string::npos)
+        << health;
+    EXPECT_EQ(health.find("\"market_data_reason\": \"si:outside_trading_session\""),
+              std::string::npos)
+        << health;
 }
 
 TEST(SimnowSupervisorScriptTest, PipelineMonitorAcceptsCompleteBarsAndNoCandidate) {
@@ -450,6 +523,20 @@ TEST(SimnowSupervisorScriptTest, IndependentSignalMonitorUnitRestartsAlways) {
     EXPECT_NE(unit.find("--heartbeat-file"), std::string::npos) << unit;
     EXPECT_NE(unit.find("--health-snapshot-file"), std::string::npos) << unit;
     EXPECT_NE(unit.find("pipeline_checkpoint_v3.tsv"), std::string::npos) << unit;
+}
+
+TEST(SimnowSupervisorScriptTest, ContractRefreshTimerRunsAtSafeDailyCheckpoints) {
+    const std::string service = ReadFile("infra/systemd/quant-hft-simnow-contract-refresh.service");
+    const std::string timer = ReadFile("infra/systemd/quant-hft-simnow-contract-refresh.timer");
+
+    EXPECT_NE(service.find("Type=oneshot"), std::string::npos) << service;
+    EXPECT_NE(service.find("refresh_simnow_contract_universe.sh"), std::string::npos) << service;
+    EXPECT_EQ(service.find("Conflicts=quant-hft-simnow-trading.service"), std::string::npos)
+        << service;
+    EXPECT_NE(timer.find("08:40:00 Asia/Shanghai"), std::string::npos) << timer;
+    EXPECT_NE(timer.find("11:40:00 Asia/Shanghai"), std::string::npos) << timer;
+    EXPECT_NE(timer.find("20:40:00 Asia/Shanghai"), std::string::npos) << timer;
+    EXPECT_NE(timer.find("Persistent=true"), std::string::npos) << timer;
 }
 
 }  // namespace

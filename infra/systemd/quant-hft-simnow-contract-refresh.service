@@ -1,0 +1,15 @@
+[Unit]
+Description=Quant HFT SimNow Product-Scoped Contract Universe Refresh (user unit)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/workspace/quant_platform_HF
+Environment=QUANT_HFT_ENV=simnow
+Environment=QUANT_ROOT=%h/workspace/quant_platform_HF
+EnvironmentFile=-/etc/quant/platform.conf
+ExecStart=/bin/bash -lc ': "${QUANT_ROOT:?QUANT_ROOT is required}"; exec "${QUANT_ROOT}/scripts/ops/refresh_simnow_contract_universe.sh"'
+TimeoutStartSec=300
+StandardOutput=journal
+StandardError=journal

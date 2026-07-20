@@ -1,0 +1,13 @@
+[Unit]
+Description=Refresh SimNow C/HC Contract Universe Once Per Broker Trading Day
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 08:40:00 Asia/Shanghai
+OnCalendar=Mon..Fri *-*-* 11:40:00 Asia/Shanghai
+OnCalendar=Mon..Fri *-*-* 20:40:00 Asia/Shanghai
+Persistent=true
+AccuracySec=30s
+Unit=quant-hft-simnow-contract-refresh.service
+
+[Install]
+WantedBy=timers.target

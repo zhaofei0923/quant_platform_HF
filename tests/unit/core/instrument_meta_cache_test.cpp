@@ -137,5 +137,58 @@ TEST(InstrumentMetaCacheTest, RejectsTruncatedV2Document) {
     std::filesystem::remove(path);
 }
 
+TEST(InstrumentMetaCacheTest, WritesLoadsAndValidatesUniverseManifest) {
+    const auto path = TempPath("_manifest.json");
+    InstrumentUniverseManifest manifest;
+    manifest.schema_version = 1;
+    manifest.broker_trading_day = "20260720";
+    manifest.generated_ts_ns = 2'000'000'000LL;
+    manifest.generation = 2;
+    manifest.complete = true;
+    manifest.cache_dir = "/tmp/universe/20260720.2";
+    manifest.product_ids = {"hc", "c"};
+    std::string error;
+    ASSERT_TRUE(WriteInstrumentUniverseManifestAtomically(path.string(), manifest, &error))
+        << error;
+
+    InstrumentUniverseManifest loaded;
+    ASSERT_TRUE(LoadInstrumentUniverseManifest(path.string(), &loaded, &error)) << error;
+    EXPECT_EQ(loaded.schema_version, 1);
+    EXPECT_EQ(loaded.broker_trading_day, "20260720");
+    EXPECT_EQ(loaded.generation, 2U);
+    EXPECT_EQ(loaded.product_ids, (std::vector<std::string>{"c", "hc"}));
+    std::string reason;
+    EXPECT_TRUE(IsInstrumentUniverseManifestCurrent(loaded, "20260720", {"c", "hc"},
+                                                    2'500'000'000LL, 1'000, &reason));
+    EXPECT_FALSE(IsInstrumentUniverseManifestCurrent(loaded, "20260721", {"c", "hc"},
+                                                     2'500'000'000LL, 1'000, &reason));
+    EXPECT_EQ(reason, "broker_trading_day_mismatch");
+    EXPECT_FALSE(IsInstrumentUniverseManifestCurrent(loaded, "20260720", {"c", "hc", "m"},
+                                                     2'500'000'000LL, 1'000, &reason));
+    EXPECT_EQ(reason, "required_product_missing:m");
+    std::filesystem::remove(path);
+}
+
+TEST(InstrumentMetaCacheTest, RejectsIncompleteUniverseManifest) {
+    const auto path = TempPath("_manifest_incomplete.json");
+    {
+        std::ofstream out(path);
+        out << "{\n"
+               "  \"schema_version\": 1,\n"
+               "  \"broker_trading_day\": \"20260720\",\n"
+               "  \"generated_ts_ns\": 2000000000,\n"
+               "  \"generation\": 2,\n"
+               "  \"complete\": false,\n"
+               "  \"cache_dir\": \"/tmp/universe\",\n"
+               "  \"products_csv\": \"c,hc\"\n"
+               "}\n";
+    }
+    InstrumentUniverseManifest loaded;
+    std::string error;
+    EXPECT_FALSE(LoadInstrumentUniverseManifest(path.string(), &loaded, &error));
+    EXPECT_EQ(error, "instrument universe manifest is incomplete");
+    std::filesystem::remove(path);
+}
+
 }  // namespace
 }  // namespace quant_hft

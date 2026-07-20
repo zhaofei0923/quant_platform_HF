@@ -74,9 +74,12 @@ std::vector<std::string> ResolveConfiguredProductIds(const quant_hft::CtpFileCon
     return CollectConfiguredProductIds(configured_instruments);
 }
 
-std::filesystem::path InstrumentMetaCachePath(const std::string& product_id) {
-    return std::filesystem::path("runtime/ctp_instruments") /
-           (ToLowerAscii(product_id) + "_contracts.json");
+std::filesystem::path InstrumentUniverseManifestPath() {
+    const char* configured_root = std::getenv("SIMNOW_INSTRUMENT_CACHE_ROOT");
+    const std::filesystem::path root = configured_root == nullptr || configured_root[0] == '\0'
+                                           ? std::filesystem::path("runtime/ctp_instruments")
+                                           : std::filesystem::path(configured_root);
+    return root / "contract_universe_manifest.json";
 }
 
 }  // namespace
@@ -99,6 +102,7 @@ int main(int argc, char** argv) {
     int health_interval_ms = 1000;
     int instrument_timeout_seconds = 15;
     bool force_instrument_refresh = false;
+    bool preopen_connectivity_only = false;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--monitor-seconds" && i + 1 < argc) {
@@ -115,6 +119,10 @@ int main(int argc, char** argv) {
         }
         if (arg == "--force-instrument-refresh") {
             force_instrument_refresh = true;
+            continue;
+        }
+        if (arg == "--preopen-connectivity-only") {
+            preopen_connectivity_only = true;
             continue;
         }
         if (!arg.empty() && arg.rfind("--", 0) == 0) {
@@ -364,82 +372,60 @@ int main(int argc, char** argv) {
             EmitStructuredLog(&runtime, "simnow_probe", "error", "instrument_trading_day_missing");
             return 7;
         }
+        InstrumentUniverseManifest manifest;
+        std::string manifest_error;
+        const bool manifest_loaded = LoadInstrumentUniverseManifest(
+            InstrumentUniverseManifestPath().string(), &manifest, &manifest_error);
+        const bool manifest_current =
+            manifest_loaded && IsInstrumentUniverseManifestCurrent(
+                                   manifest, broker_trading_day, product_ids, NowEpochNanos(),
+                                   file_config.dominant_contract_cache_max_age_ms, &manifest_error);
+        EmitStructuredLog(&runtime, "simnow_probe", manifest_current ? "info" : "error",
+                          manifest_current ? "instrument_universe_cache_current"
+                                           : "instrument_universe_cache_invalid",
+                          {{"trading_day", broker_trading_day},
+                           {"force_refresh", force_instrument_refresh ? "true" : "false"},
+                           {"reason", manifest_current ? "" : manifest_error}});
+        if (!manifest_current) {
+            return 7;
+        }
+
         for (const auto& product_id : product_ids) {
             InstrumentMetaCacheDocument cached;
             std::string cache_error;
             std::string cache_reason;
+            const auto cache_path = std::filesystem::path(manifest.cache_dir) /
+                                    (ToLowerAscii(product_id) + "_contracts.json");
             const bool loaded =
-                !force_instrument_refresh &&
-                LoadInstrumentMetaCacheDocument(InstrumentMetaCachePath(product_id).string(),
-                                                &cached, &cache_error);
-            const bool current =
-                loaded && IsInstrumentMetaCacheCurrent(
-                              cached, broker_trading_day, NowEpochNanos(),
-                              file_config.dominant_contract_cache_max_age_ms, &cache_reason);
+                LoadInstrumentMetaCacheDocument(cache_path.string(), &cached, &cache_error);
+            const bool current = loaded && cached.generated_ts_ns == manifest.generated_ts_ns &&
+                                 IsInstrumentMetaCacheCurrent(
+                                     cached, broker_trading_day, NowEpochNanos(),
+                                     file_config.dominant_contract_cache_max_age_ms, &cache_reason);
             EmitStructuredLog(
-                &runtime, "simnow_probe", current ? "info" : "warn",
-                current ? "instrument_meta_cache_current"
-                        : "instrument_meta_cache_refresh_required",
+                &runtime, "simnow_probe", current ? "info" : "error",
+                current ? "instrument_meta_cache_current" : "instrument_meta_cache_invalid",
                 {{"product_id", product_id},
-                 {"force_refresh", force_instrument_refresh ? "true" : "false"},
-                 {"reason", force_instrument_refresh ? "force_instrument_refresh"
-                                                     : (loaded ? cache_reason : cache_error)}});
-            if (current) {
-                md.UpdateInstrumentMetadata(cached.instruments);
-            }
-        }
-
-        {
-            std::lock_guard<std::mutex> lock(instrument_meta_mutex);
-            instrument_meta_snapshots.clear();
-            instrument_meta_ready = false;
-        }
-        const int instrument_query_request_id = trader.EnqueueInstrumentQuery();
-        if (instrument_query_request_id < 0) {
-            EmitStructuredLog(&runtime, "simnow_probe", "error", "instrument_query_submit_failed",
-                              {{"reason", "enqueue_failed"}});
-            return 7;
-        }
-        {
-            std::unique_lock<std::mutex> lock(instrument_meta_mutex);
-            if (!instrument_meta_cv.wait_for(lock, std::chrono::seconds(instrument_timeout_seconds),
-                                             [&]() { return instrument_meta_ready; })) {
-                EmitStructuredLog(
-                    &runtime, "simnow_probe", "error", "instrument_query_timeout",
-                    {{"request_id", std::to_string(instrument_query_request_id)},
-                     {"timeout_seconds", std::to_string(instrument_timeout_seconds)}});
+                 {"path", cache_path.string()},
+                 {"reason", loaded ? cache_reason : cache_error}});
+            if (!current) {
                 return 7;
             }
-            received_instrument_meta = instrument_meta_snapshots;
-        }
-
-        for (const auto& product_id : product_ids) {
-            const auto eligible = FilterEligibleFuturesContracts(received_instrument_meta,
-                                                                 product_id, broker_trading_day);
+            const auto eligible =
+                FilterEligibleFuturesContracts(cached.instruments, product_id, broker_trading_day);
             if (eligible.empty()) {
                 EmitStructuredLog(
                     &runtime, "simnow_probe", "error", "instrument_meta_filter_empty",
                     {{"product_id", product_id}, {"trading_day", broker_trading_day}});
                 return 7;
             }
-            const auto output_path = InstrumentMetaCachePath(product_id);
-            const auto product_metadata =
-                CollectProductInstrumentMetadata(received_instrument_meta, product_id);
-            std::string write_error;
-            if (!WriteInstrumentMetaCacheV2Atomically(output_path.string(), product_id,
-                                                      broker_trading_day, product_metadata,
-                                                      NowEpochNanos(), &write_error)) {
-                EmitStructuredLog(&runtime, "simnow_probe", "error", "instrument_meta_save_failed",
-                                  {{"product_id", product_id},
-                                   {"path", output_path.string()},
-                                   {"error", write_error}});
-                return 7;
-            }
-            EmitStructuredLog(&runtime, "simnow_probe", "info", "instrument_meta_saved",
+            md.UpdateInstrumentMetadata(cached.instruments);
+            received_instrument_meta.insert(received_instrument_meta.end(), eligible.begin(),
+                                            eligible.end());
+            EmitStructuredLog(&runtime, "simnow_probe", "info", "instrument_meta_cache_loaded",
                               {{"product_id", product_id},
-                               {"path", output_path.string()},
-                               {"schema_version", "2"},
-                               {"contract_count", std::to_string(product_metadata.size())},
+                               {"generation", std::to_string(manifest.generation)},
+                               {"contract_count", std::to_string(cached.instruments.size())},
                                {"eligible_count", std::to_string(eligible.size())}});
         }
     } else if (!query_single_instrument_meta(instrument, "instrument_meta_query")) {
@@ -456,6 +442,8 @@ int main(int argc, char** argv) {
             file_config.dominant_contract_require_complete_baseline;
         DominantContractCoordinator coordinator(coordinator_config);
         TradingSessionCalendar session_calendar;
+        std::size_t selected_product_count = 0;
+        std::size_t deferred_product_count = 0;
 
         std::unordered_map<std::string, std::vector<std::string>> candidate_ids_by_product;
         std::vector<std::string> all_candidate_ids;
@@ -491,31 +479,40 @@ int main(int argc, char** argv) {
         all_candidate_ids.erase(std::unique(all_candidate_ids.begin(), all_candidate_ids.end()),
                                 all_candidate_ids.end());
 
-        {
-            std::lock_guard<std::mutex> lock(depth_market_mutex);
-            depth_market_ready = false;
-            depth_market_snapshots.clear();
-        }
-        const int depth_request_id = trader.EnqueueDepthMarketDataQuery();
-        if (depth_request_id < 0) {
-            EmitStructuredLog(&runtime, "simnow_probe", "error",
-                              "dominant_contract_depth_query_submit_failed");
-            return 8;
-        }
-        {
+        for (const auto& candidate_id : all_candidate_ids) {
+            {
+                std::lock_guard<std::mutex> lock(depth_market_mutex);
+                depth_market_ready = false;
+                depth_market_snapshots.clear();
+            }
+            const int depth_request_id = trader.EnqueueDepthMarketDataQuery(candidate_id);
+            if (depth_request_id < 0) {
+                EmitStructuredLog(&runtime, "simnow_probe", "error",
+                                  "dominant_contract_depth_query_submit_failed",
+                                  {{"instrument_id", candidate_id}});
+                return 8;
+            }
             std::unique_lock<std::mutex> lock(depth_market_mutex);
             if (!depth_market_cv.wait_for(lock, std::chrono::seconds(instrument_timeout_seconds),
                                           [&]() { return depth_market_ready; })) {
                 EmitStructuredLog(&runtime, "simnow_probe", "error",
                                   "dominant_contract_depth_query_timeout",
-                                  {{"request_id", std::to_string(depth_request_id)}});
+                                  {{"instrument_id", candidate_id},
+                                   {"request_id", std::to_string(depth_request_id)}});
                 return 8;
             }
-            for (const auto& snapshot : depth_market_snapshots) {
-                const auto product = coordinator.ProductForInstrument(snapshot.instrument_id);
-                if (product.has_value()) {
-                    coordinator.UpdateBaselineSnapshot(*product, snapshot);
-                }
+            const auto snapshot_it =
+                std::find_if(depth_market_snapshots.begin(), depth_market_snapshots.end(),
+                             [&](const auto& row) { return row.instrument_id == candidate_id; });
+            if (snapshot_it == depth_market_snapshots.end()) {
+                EmitStructuredLog(&runtime, "simnow_probe", "error",
+                                  "dominant_contract_depth_query_empty",
+                                  {{"instrument_id", candidate_id}});
+                return 8;
+            }
+            const auto product = coordinator.ProductForInstrument(candidate_id);
+            if (product.has_value()) {
+                coordinator.UpdateBaselineSnapshot(*product, *snapshot_it);
             }
         }
 
@@ -576,6 +573,19 @@ int main(int argc, char** argv) {
             const auto session_decision = session_calendar.EvaluateOrderTime(
                 session_tick.exchange_id, session_tick.instrument_id, broker_trading_day, now_ns, 0,
                 fresh);
+            if (preopen_connectivity_only && !session_decision.in_session &&
+                session_decision.reason == "outside_session") {
+                const auto status = coordinator.GetStatus(product_id);
+                EmitStructuredLog(
+                    &runtime, "simnow_probe", "info", "dominant_contract_selection_deferred",
+                    {{"product_id", product_id},
+                     {"reason", session_decision.reason},
+                     {"candidate_count", std::to_string(status.eligible_count)},
+                     {"baseline_count", std::to_string(status.baseline_count)},
+                     {"live_count", std::to_string(dominant_candidate_snapshots.size())}});
+                ++deferred_product_count;
+                continue;
+            }
             const auto decision =
                 coordinator.Evaluate(product_id, now_ns, session_decision.in_session && fresh);
             if (decision.action != DominantContractAction::kSelectInitial) {
@@ -620,7 +630,14 @@ int main(int argc, char** argv) {
                                {"phase", DominantContractPhaseName(status.phase)},
                                {"generation", std::to_string(status.generation)},
                                {"path", status_path.string()}});
+            ++selected_product_count;
         }
+        EmitStructuredLog(
+            &runtime, "simnow_probe", "info", "dominant_contract_probe_summary",
+            {{"mode", preopen_connectivity_only ? "preopen_connectivity_only" : "strict"},
+             {"selected_count", std::to_string(selected_product_count)},
+             {"deferred_count", std::to_string(deferred_product_count)},
+             {"product_count", std::to_string(product_ids.size())}});
     }
 
     const auto started_at = std::chrono::steady_clock::now();

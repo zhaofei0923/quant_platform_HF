@@ -19,8 +19,8 @@ SUPERVISE_SCRIPT="${SIMNOW_SUPERVISE_SCRIPT:-${SCRIPT_DIR}/supervise_simnow_trad
 START_SCRIPT="${SIMNOW_START_SCRIPT:-${SCRIPT_DIR}/start_simnow_trading.sh}"
 STOP_SCRIPT="${SIMNOW_STOP_SCRIPT:-${SCRIPT_DIR}/stop_simnow_trading.sh}"
 MONITOR_SCRIPT="${SIMNOW_MONITOR_SCRIPT:-${SCRIPT_DIR}/monitor_simnow_trading.sh}"
-TRADING_WINDOWS="${SIMNOW_TRADING_WINDOWS:-night=20:50-02:35,day_am=08:50-11:35,day_pm=13:20-15:20}"
-EXPECTED_WINDOWS="${SIMNOW_PREFLIGHT_EXPECTED_WINDOWS:-night=20:50-02:35,day_am=08:50-11:35,day_pm=13:20-15:20}"
+TRADING_WINDOWS="${SIMNOW_TRADING_WINDOWS:-night=21:00-02:35,day_am=09:00-11:35,day_pm=13:30-15:20}"
+EXPECTED_WINDOWS="${SIMNOW_PREFLIGHT_EXPECTED_WINDOWS:-night=21:00-02:35,day_am=09:00-11:35,day_pm=13:30-15:20}"
 EXPECTED_PRODUCTS="${SIMNOW_PREFLIGHT_EXPECTED_PRODUCTS:-c,hc}"
 EOD_TIME="${SIMNOW_EOD_TIME:-15:25}"
 STRICT_RECONCILE="${SIMNOW_STRICT_RECONCILE:-0}"
@@ -322,6 +322,7 @@ run_hard_checks() {
 
   if [[ ${RUN_BUILD} -eq 1 ]]; then
     run_step build_required_targets cmake --build "${BUILD_DIR}" --target core_engine simnow_probe \
+      simnow_contract_universe_refresh \
       daily_settlement simnow_wal_export_cli ops_health_report_cli ops_alert_report_cli \
       simnow_dashboard_cli "-j$(nproc)"
   fi
@@ -406,16 +407,16 @@ run_schedule_checks() {
     --windows "${TRADING_WINDOWS}" \
     --dry-run
 
-  run_supervisor_schedule_check day_am "${TEST_DATE_DASH} 08:51:00" \
-    "decision=start_or_keep_alive" "trading_day=${TEST_DATE_COMPACT}" "range=08:50-11:35" \
+  run_supervisor_schedule_check day_am "${TEST_DATE_DASH} 09:01:00" \
+    "decision=start_or_keep_alive" "trading_day=${TEST_DATE_COMPACT}" "range=09:00-11:35" \
     "${START_SCRIPT}" "${CONFIG_PATH}"
-  run_supervisor_schedule_check day_pm "${TEST_DATE_DASH} 13:21:00" \
-    "decision=start_or_keep_alive" "trading_day=${TEST_DATE_COMPACT}" "range=13:20-15:20" \
+  run_supervisor_schedule_check day_pm "${TEST_DATE_DASH} 13:31:00" \
+    "decision=start_or_keep_alive" "trading_day=${TEST_DATE_COMPACT}" "range=13:30-15:20" \
     "${START_SCRIPT}" "${CONFIG_PATH}"
   run_supervisor_schedule_check eod "${TEST_DATE_DASH} 15:26:00" \
     "decision=outside_trading_window" "eod_due=true trading_day=${TEST_DATE_COMPACT}"
-  run_supervisor_schedule_check night "${TEST_DATE_DASH} 20:51:00" \
-    "decision=start_or_keep_alive" "trading_day=${next_trading_day}" "range=20:50-02:35" \
+  run_supervisor_schedule_check night "${TEST_DATE_DASH} 21:01:00" \
+    "decision=start_or_keep_alive" "trading_day=${next_trading_day}" "range=21:00-02:35" \
     "${START_SCRIPT}" "${CONFIG_PATH}"
 }
 
@@ -449,7 +450,8 @@ run_probe_only() {
     --run-root "${RUN_ROOT}" \
     --wal-file "${WAL_FILE}" \
     --run-id "${PROBE_RUN_ID}" \
-    --probe-only
+    --probe-only \
+    --preopen-connectivity-only
 
   require_contains "${REPORT_DIR}/probe_only.log" "[ok] probe-only completed" "probe_only"
 
@@ -459,6 +461,8 @@ run_probe_only() {
   grep -Fq 'event=probe_completed' "${probe_log}" || die "probe log does not contain probe_completed"
   grep -Fq 'event=health_status state="healthy"' "${probe_log}" ||
     die "probe log does not contain healthy status"
+  grep -Fq 'event=dominant_contract_probe_summary mode="preopen_connectivity_only"' \
+    "${probe_log}" || die "probe log does not contain preopen dominant summary"
   if grep -Eiq 'connect_failed|auth|authenticate|subscribe_failed|instrument_.*timeout|level=error' \
     "${probe_log}"; then
     die "probe log contains failure events: ${probe_log}"

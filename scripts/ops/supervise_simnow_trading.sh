@@ -20,7 +20,8 @@ WAL_FILE="${SIMNOW_WAL_FILE:-${QUANT_ROOT}/runtime/trading/wal/simnow/events.wal
 EXPORT_ROOT="${SIMNOW_EXPORT_ROOT:-${QUANT_ROOT}/runtime/trading/exports/simnow}"
 RECONCILE_ROOT="${SIMNOW_RECONCILE_ROOT:-${QUANT_ROOT}/runtime/trading/reconcile/simnow}"
 REPORT_ROOT="${SIMNOW_REPORT_ROOT:-${QUANT_ROOT}/runtime/trading/reports/simnow}"
-TRADING_WINDOWS="${SIMNOW_TRADING_WINDOWS:-night=20:55-02:35,day_am=08:55-11:35,day_pm=13:25-15:20}"
+TRADING_WINDOWS="${SIMNOW_TRADING_WINDOWS:-night=21:00-02:35,day_am=09:00-11:35,day_pm=13:30-15:20}"
+CORE_START_WINDOWS="${SIMNOW_CORE_START_WINDOWS:-night=21:00-23:00,day_am_1=09:00-10:15,day_am_2=10:30-11:30,day_pm=13:30-15:00}"
 TRADING_DAYS_FILE="${SIMNOW_TRADING_DAYS_FILE:-}"
 EOD_TIME="${SIMNOW_EOD_TIME:-15:25}"
 EOD_EXECUTE="${SIMNOW_EOD_EXECUTE:-1}"
@@ -99,7 +100,7 @@ Options:
   -h, --help                     Show this help
 
 Window spec examples:
-  night=20:55-02:35,day_am=08:55-11:35,day_pm=13:25-15:20
+  night=21:00-02:35,day_am=09:00-11:35,day_pm=13:30-15:20
   09:00-11:30,13:30-15:00
 
 Alert hooks are inherited from start_simnow_trading.sh:
@@ -393,6 +394,37 @@ current_session_info() {
       return 0
     fi
     window_index=$((window_index + 1))
+  done
+  return 1
+}
+
+is_core_start_time_allowed() {
+  local now_minutes
+  local window_specs
+  local spec
+  local range
+  local start_text
+  local end_text
+  local start_minutes
+  local end_minutes
+
+  now_minutes="$(time_to_minutes "$(now_date +%H:%M)")"
+  IFS=',' read -r -a window_specs <<< "${CORE_START_WINDOWS}"
+  for spec in "${window_specs[@]}"; do
+    spec="${spec//[[:space:]]/}"
+    [[ -n "${spec}" ]] || continue
+    range="${spec#*=}"
+    start_text="${range%-*}"
+    end_text="${range#*-}"
+    start_minutes="$(time_to_minutes "${start_text}")" || die "invalid core start window: ${range}"
+    end_minutes="$(time_to_minutes "${end_text}")" || die "invalid core start window: ${range}"
+    if (( start_minutes <= end_minutes )); then
+      if (( now_minutes >= start_minutes && now_minutes < end_minutes )); then
+        return 0
+      fi
+    elif (( now_minutes >= start_minutes || now_minutes < end_minutes )); then
+      return 0
+    fi
   done
   return 1
 }
@@ -812,6 +844,7 @@ print_dry_run_decision() {
   echo "[dry-run] env_file=${ENV_FILE}"
   echo "[dry-run] config=${CONFIG_PATH}"
   echo "[dry-run] windows=${TRADING_WINDOWS}"
+  echo "[dry-run] core_start_windows=${CORE_START_WINDOWS}"
   echo "[dry-run] eod_time=${EOD_TIME} eod_execute=${EOD_EXECUTE}"
   echo "[dry-run] run_root=${RUN_ROOT}"
   echo "[dry-run] market_data_dir=${MARKET_DATA_DIR}"
@@ -822,8 +855,12 @@ print_dry_run_decision() {
   echo "[dry-run] eod_project_db=${EOD_PROJECT_DB} eod_query_db=${EOD_QUERY_DB} strict_reconcile=${STRICT_RECONCILE} convert_market_parquet=${CONVERT_MARKET_PARQUET}"
   if session_info="$(current_session_info)"; then
     IFS='|' read -r session_label trading_day session_range <<< "${session_info}"
-    echo "[dry-run] decision=start_or_keep_alive session=${session_label} trading_day=${trading_day} range=${session_range}"
-    start_engine_for_session "${session_label}" "${trading_day}" 0
+    if is_core_start_time_allowed; then
+      echo "[dry-run] decision=start_or_keep_alive session=${session_label} trading_day=${trading_day} range=${session_range}"
+      start_engine_for_session "${session_label}" "${trading_day}" 0
+    else
+      echo "[dry-run] decision=keep_alive_buffer_no_start session=${session_label} trading_day=${trading_day} range=${session_range}"
+    fi
   else
     echo "[dry-run] decision=outside_trading_window"
     if today_eod_due; then
@@ -898,6 +935,7 @@ set +a
 if [[ ${WINDOWS_SET_BY_CLI} -eq 0 ]]; then
   TRADING_WINDOWS="${SIMNOW_TRADING_WINDOWS:-${TRADING_WINDOWS}}"
 fi
+CORE_START_WINDOWS="${SIMNOW_CORE_START_WINDOWS:-${CORE_START_WINDOWS}}"
 if [[ ${RUN_ROOT_SET_BY_CLI} -eq 0 ]]; then
   RUN_ROOT="${SIMNOW_RUN_ROOT:-${RUN_ROOT}}"
 fi
@@ -991,6 +1029,7 @@ start_signal_execution_monitor || true
 active_session_key=""
 session_start_epoch="$(date +%s)"
 restart_count=0
+start_deferred_key=""
 
 while true; do
   start_signal_execution_monitor || true
@@ -1010,6 +1049,7 @@ while true; do
 
     process_pid="$(current_pid || true)"
     if pid_is_alive "${process_pid}"; then
+      start_deferred_key=""
       check_market_data_freshness "${session_start_epoch}"
       check_fill_freshness "${session_start_epoch}"
       check_signal_monitor_heartbeat "${session_start_epoch}" || true
@@ -1017,10 +1057,16 @@ while true; do
       if [[ -n "${process_pid}" ]]; then
         send_alert_once "core_crashed" "critical" "core_engine pid=${process_pid} is no longer alive; session=${session_key}"
       fi
-      if (( restart_count >= MAX_RESTARTS_PER_WINDOW )); then
+      if ! is_core_start_time_allowed; then
+        if [[ "${start_deferred_key}" != "${session_key}" ]]; then
+          echo "[info] core start deferred outside product session; keep-alive buffer remains active session=${session_key}" | tee -a "${SUPERVISOR_LOG}"
+          start_deferred_key="${session_key}"
+        fi
+      elif (( restart_count >= MAX_RESTARTS_PER_WINDOW )); then
         send_alert_once "restart_budget_exhausted" "critical" \
           "restart budget exhausted for ${session_key}; max=${MAX_RESTARTS_PER_WINDOW}"
       else
+        start_deferred_key=""
         restart_count=$((restart_count + 1))
         start_engine_for_session "${session_label}" "${trading_day}" "${restart_count}" || true
         sleep "${RESTART_DELAY_SECONDS}"
@@ -1029,6 +1075,7 @@ while true; do
   else
     active_session_key=""
     restart_count=0
+    start_deferred_key=""
     if [[ ${NO_STOP_OUTSIDE} -eq 0 ]]; then
       stop_engine "outside_trading_window"
     fi

@@ -130,25 +130,53 @@ runtime/simnow_trading/current_core_engine_log
 
 ## 合约元数据查询
 
-主力合约模式下，启动时会读取产品级 v2 合约缓存用于加速元数据注入和订阅准备：
+主力合约模式通过独立刷新程序按 `ProductID` 查询配置品种，当前 SimNow 范围固定为
+`DCE/c` 与 `SHFE/hc`，不会发送空过滤条件的全市场 `ReqQryInstrument`。刷新结果写入不可变
+generation 目录，并以 manifest 作为原子提交点：
 
 ```text
-runtime/ctp_instruments/<product>_contracts.json
+runtime/ctp_instruments/contract_universe_manifest.json
+runtime/ctp_instruments/universe/<trading_day>.<generation>/<product>_contracts.json
+runtime/ctp_instruments/<product>_contracts.json  # 兼容只读副本
 runtime/ctp_instruments/<product>_dominant_contract.json
 ```
 
-缓存包含 `schema_version=2`、Broker 交易日、生成时间和完整合约生命周期字段。每个进程在 Broker 交易日首次登录后仍必须完成一次全量 `ReqQryInstrument`；缓存跨日、损坏、legacy 数组格式或查询未完成时，系统保持 CloseOnly/启动失败，不能据此开放开仓。legacy 文件只读识别，成功全量查询后通过临时文件、`fsync` 和 `rename` 原子发布 v2。
+每个产品缓存包含 `schema_version=2`、Broker 交易日、生成时间和完整生命周期字段。C 与 HC
+都完成查询和校验后才原子发布 manifest；任一产品失败不会发布半套 generation。进程重启只读取
+当日完整 generation，不重复查询合约池；缓存跨交易日、损坏、generation 混用或查询未完成时，
+系统保持 CloseOnly/启动失败，不能据此开放开仓。
 
-候选仅包含普通、已上市、未到期且 CTP 标记可交易的期货合约。所有候选持续订阅并写入行情/Bar 流水线；非当前合约只记录并暖机，不投递可执行策略信号。系统还会执行完整 `ReqQryDepthMarketData` barrier 建立当日持仓量基线，任一候选缺失时禁止重新选主力。
+候选仅包含普通、已上市、未到期且 CTP 标记可交易的期货合约。所有候选持续订阅并写入行情/Bar
+流水线；非当前合约只记录并暖机，不投递可执行策略信号。持仓量基线按候选合约逐个调用带
+`InstrumentID` 的 `ReqQryDepthMarketData`，不再执行空过滤的全市场深度行情查询。盘中每 60 秒
+使用订阅行情重新评估主力，不重复查询合约元数据。
 
 费率（保证金率 / 手续费率 / 报单手续费率）在会话内基本稳定，因此 `core_engine` 只在缺口时查询：启动首查、主力换月补查，以及后台轮询中仅对尚未缓存到的合约补查一次；一旦所有活跃合约的费率均已缓存，轮询不再重复查询。查询到的费率会写入本地文件 `runtime/ctp_instruments/fee_rates.json`（按合约汇总 margin/commission/order_comm，含 `account_id`、`trading_day`、`ts_ns`），供后续复盘离线读取。该文件为写入用途；下单时读取的是内存缓存，进程内始终以实时查询结果为准。
 
-首次接入新品种、交易所合约规则变更或需要明确绕过缓存时，可先运行：
+手工刷新或首次部署时运行：
 
 ```bash
-scripts/ops/start_simnow_trading.sh --probe-only --force-instrument-refresh \
-  --run-id simnow-refresh-contracts
+scripts/ops/refresh_simnow_contract_universe.sh --force
 ```
+
+正常调度由 user systemd timer 在 `08:40`、`11:40`、`20:40` 唤醒；程序登录后先比较 Broker
+交易日，同一交易日已有完整 manifest 时直接成功退出，因此正常只发生一次真实的 C/HC 查询。
+夜盘属于下一 Broker 交易日，不能只保留午间一次触发。安装 timer：
+
+```bash
+scripts/ops/install_simnow_contract_refresh_systemd_user.sh
+systemctl --user list-timers quant-hft-simnow-contract-refresh.timer
+```
+
+普通进程重启若已存在 manifest，不会重新建立刷新连接；启动脚本直接进入严格 probe，由 probe
+使用 Broker 返回的交易日校验 manifest 和两个产品缓存。manifest 缺失时启动脚本会先尝试一次
+产品级刷新；manifest 存在但跨日、损坏或 generation 不完整时严格 probe 失败关闭，等待 timer
+或运维人员执行显式刷新，不会回退到全市场查询。
+
+预开盘检查由 `run_simnow_preflight_check.sh` 使用
+`--probe-only --preopen-connectivity-only`：连接、认证、结算、账户、合约和候选行情仍会检查，
+仅当交易日历明确处于休市时延后主力选择。该参数不能用于启动 `core_engine`；交易窗口内的正式
+启动始终执行严格主力选择。
 
 `<product>_dominant_contract.json` 是 v2 原子状态快照，包含当前/候选合约、`phase`、
 `generation`、领先窗口、Broker 仓位/活动订单、候选覆盖和暖机进度。该文件只用于审计和
@@ -177,12 +205,14 @@ scripts/ops/supervise_simnow_trading.sh
 默认交易窗口来自 `.env`：
 
 ```bash
-SIMNOW_TRADING_WINDOWS=night=20:55-02:35,day_am=08:55-11:35,day_pm=13:25-15:20
+SIMNOW_TRADING_WINDOWS=night=21:00-02:35,day_am=09:00-11:35,day_pm=13:30-15:20
 ```
 
 默认行为：
 
 - 在交易窗口内自动启动 `core_engine`。
+- `SIMNOW_CORE_START_WINDOWS` 只覆盖 C/HC 的真实交易片段；`11:30-11:35`、
+  `15:00-15:20` 和 `23:00` 后的尾部缓冲可让既有核心平滑收盘，但不会新建连接或消耗重启额度。
 - 不在交易窗口内自动停止 `core_engine`。
 - 每 `SIMNOW_CHECK_INTERVAL_SECONDS` 秒检查一次进程和健康状态。
 - 进程崩溃后自动重启。
@@ -258,7 +288,9 @@ infra/systemd/quant-hft-simnow-trading.service
 scripts/ops/monitor_simnow_trading.sh --config configs/sim/ctp_sim_trade_candidates.yaml
 scripts/ops/monitor_simnow_trading.sh --config configs/sim/ctp_sim_trade_candidates.yaml --watch-seconds 30
 systemctl --user status quant-hft-simnow-trading.service
+systemctl --user status quant-hft-simnow-contract-refresh.timer
 journalctl --user -u quant-hft-simnow-trading.service -f
+journalctl --user -u quant-hft-simnow-contract-refresh.service -f
 journalctl --user -u quant-hft-simnow-signal-monitor.service -f
 tail -f runtime/simnow_trading/supervisor.log
 tail -f "$(cat runtime/simnow_trading/current_core_engine_log)"

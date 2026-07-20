@@ -119,10 +119,14 @@ class CTPTraderAdapter {
     int EnqueueInvestorPositionQuery();
     bool EnqueueInstrumentQuery(int request_id);
     bool EnqueueInstrumentQuery(int request_id, const std::string& instrument_id);
+    bool EnqueueInstrumentQuery(int request_id, const InstrumentQueryFilter& filter);
     int EnqueueInstrumentQuery();
     int EnqueueInstrumentQuery(const std::string& instrument_id);
+    int EnqueueInstrumentQuery(const InstrumentQueryFilter& filter);
     bool EnqueueDepthMarketDataQuery(int request_id);
+    bool EnqueueDepthMarketDataQuery(int request_id, const std::string& instrument_id);
     int EnqueueDepthMarketDataQuery();
+    int EnqueueDepthMarketDataQuery(const std::string& instrument_id);
     bool EnqueueInstrumentMarginRateQuery(int request_id, const std::string& instrument_id);
     int EnqueueInstrumentMarginRateQuery(const std::string& instrument_id);
     bool EnqueueInstrumentCommissionRateQuery(int request_id, const std::string& instrument_id);

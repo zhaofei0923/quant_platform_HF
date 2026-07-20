@@ -707,6 +707,14 @@ std::filesystem::path InstrumentMetaCachePath(const std::string& product_id) {
            (ToLowerAscii(product_id) + "_contracts.json");
 }
 
+std::filesystem::path InstrumentUniverseManifestPath() {
+    const char* configured_root = std::getenv("SIMNOW_INSTRUMENT_CACHE_ROOT");
+    const std::filesystem::path root = configured_root == nullptr || configured_root[0] == '\0'
+                                           ? std::filesystem::path("runtime/ctp_instruments")
+                                           : std::filesystem::path(configured_root);
+    return root / "contract_universe_manifest.json";
+}
+
 std::string ExtractJsonStringValue(const std::string& line) {
     const auto colon = line.find(':');
     if (colon == std::string::npos) {
@@ -3816,60 +3824,62 @@ int main(int argc, char** argv) {
         }
         dominant_broker_trading_day = broker_trading_day;
 
-        // Cache is acceleration/evidence only.  A complete CTP query is mandatory once per
-        // process/trading day before dominant-contract opens can be authorized.
+        // The product-scoped refresh publishes one immutable generation per broker trading day.
+        // Process restarts consume that generation and never issue an unfiltered instrument
+        // query. A missing or mixed generation fails closed before strategy startup.
+        InstrumentUniverseManifest universe_manifest;
+        std::string manifest_error;
+        const bool manifest_loaded = LoadInstrumentUniverseManifest(
+            InstrumentUniverseManifestPath().string(), &universe_manifest, &manifest_error);
+        const bool manifest_current =
+            manifest_loaded &&
+            IsInstrumentUniverseManifestCurrent(
+                universe_manifest, broker_trading_day, product_ids, NowEpochNanos(),
+                file_config.dominant_contract_cache_max_age_ms, &manifest_error);
+        EmitStructuredLog(&config, "core_engine", manifest_current ? "info" : "error",
+                          manifest_current ? "dominant_contract_universe_cache_current"
+                                           : "dominant_contract_universe_cache_invalid",
+                          {{"trading_day", broker_trading_day},
+                           {"force_refresh", force_instrument_refresh ? "true" : "false"},
+                           {"reason", manifest_current ? "" : manifest_error}});
+        if (!manifest_current) {
+            return 2;
+        }
+
+        std::vector<InstrumentMetaSnapshot> received_instrument_meta;
         for (const auto& product_id : product_ids) {
-            const std::string cache_path = InstrumentMetaCachePath(product_id).string();
+            const std::string cache_path = (std::filesystem::path(universe_manifest.cache_dir) /
+                                            (ToLowerAscii(product_id) + "_contracts.json"))
+                                               .string();
             InstrumentMetaCacheDocument cached;
             std::string cache_error;
             std::string cache_reason;
             const bool cache_loaded =
-                !force_instrument_refresh &&
                 LoadInstrumentMetaCacheDocument(cache_path, &cached, &cache_error);
             const bool cache_current =
-                cache_loaded && IsInstrumentMetaCacheCurrent(
-                                    cached, broker_trading_day, NowEpochNanos(),
-                                    file_config.dominant_contract_cache_max_age_ms, &cache_reason);
-            EmitStructuredLog(&config, "core_engine", cache_current ? "info" : "warn",
+                cache_loaded && cached.generated_ts_ns == universe_manifest.generated_ts_ns &&
+                IsInstrumentMetaCacheCurrent(cached, broker_trading_day, NowEpochNanos(),
+                                             file_config.dominant_contract_cache_max_age_ms,
+                                             &cache_reason);
+            EmitStructuredLog(&config, "core_engine", cache_current ? "info" : "error",
                               cache_current ? "dominant_contract_candidate_cache_current"
-                                            : "dominant_contract_candidate_cache_refresh_required",
+                                            : "dominant_contract_candidate_cache_invalid",
                               {{"product_id", product_id},
                                {"path", cache_path},
-                               {"force_refresh", force_instrument_refresh ? "true" : "false"},
-                               {"reason", force_instrument_refresh
-                                              ? "force_instrument_refresh"
-                                              : (cache_loaded ? cache_reason : cache_error)}});
-            if (cache_current) {
-                ctp_md->UpdateInstrumentMetadata(cached.instruments);
-            }
-        }
-
-        {
-            std::lock_guard<std::mutex> lock(instrument_meta_mutex);
-            instrument_meta_ready = false;
-            instrument_meta_snapshots.clear();
-            instrument_meta_by_id.clear();
-        }
-        const int instrument_query_request_id = next_query_request_id();
-        if (!ctp_trader->EnqueueInstrumentQuery(instrument_query_request_id)) {
-            EmitStructuredLog(&config, "core_engine", "error",
-                              "dominant_contract_instrument_query_submit_failed");
-            return 2;
-        }
-        std::vector<InstrumentMetaSnapshot> received_instrument_meta;
-        {
-            std::unique_lock<std::mutex> lock(instrument_meta_mutex);
-            constexpr int kInstrumentMetaQueryTimeoutSeconds = 120;
-            if (!instrument_meta_cv.wait_for(
-                    lock, std::chrono::seconds(kInstrumentMetaQueryTimeoutSeconds),
-                    [&]() { return instrument_meta_ready; })) {
-                EmitStructuredLog(
-                    &config, "core_engine", "error", "dominant_contract_instrument_query_timeout",
-                    {{"request_id", std::to_string(instrument_query_request_id)},
-                     {"timeout_seconds", std::to_string(kInstrumentMetaQueryTimeoutSeconds)}});
+                               {"generation", std::to_string(universe_manifest.generation)},
+                               {"reason", cache_loaded ? cache_reason : cache_error}});
+            if (!cache_current) {
                 return 2;
             }
-            received_instrument_meta = instrument_meta_snapshots;
+            ctp_md->UpdateInstrumentMetadata(cached.instruments);
+            received_instrument_meta.insert(received_instrument_meta.end(),
+                                            cached.instruments.begin(), cached.instruments.end());
+            {
+                std::lock_guard<std::mutex> lock(instrument_meta_mutex);
+                for (const auto& snapshot : cached.instruments) {
+                    instrument_meta_by_id[snapshot.instrument_id] = snapshot;
+                }
+            }
         }
 
         std::unordered_map<std::string, std::vector<std::string>> candidate_ids_by_product;
@@ -3887,21 +3897,6 @@ int main(int argc, char** argv) {
             candidate_ids.reserve(eligible.size());
             for (const auto& snapshot : eligible) {
                 candidate_ids.push_back(snapshot.instrument_id);
-            }
-            const auto product_metadata =
-                CollectProductInstrumentMetadata(received_instrument_meta, product_id);
-            const std::string cache_path = InstrumentMetaCachePath(product_id).string();
-            std::string cache_write_error;
-            if (!WriteInstrumentMetaCacheV2Atomically(cache_path, product_id, broker_trading_day,
-                                                      product_metadata, NowEpochNanos(),
-                                                      &cache_write_error)) {
-                EmitStructuredLog(&config, "core_engine", "critical",
-                                  "dominant_contract_candidate_cache_save_failed",
-                                  {{"product_id", product_id},
-                                   {"path", cache_path},
-                                   {"error", cache_write_error}});
-                trading_permission_controller.SetCloseOnly("dominant_contract_cache_write_failed");
-                return 2;
             }
             all_candidate_ids.insert(all_candidate_ids.end(), candidate_ids.begin(),
                                      candidate_ids.end());
@@ -4008,33 +4003,44 @@ int main(int argc, char** argv) {
             return 2;
         }
 
-        {
-            std::lock_guard<std::mutex> lock(depth_market_mutex);
-            depth_market_ready = false;
-            depth_market_snapshots.clear();
-        }
-        const int depth_query_request_id = next_query_request_id();
-        if (!ctp_trader->EnqueueDepthMarketDataQuery(depth_query_request_id)) {
-            EmitStructuredLog(&config, "core_engine", "error",
-                              "dominant_contract_depth_query_submit_failed");
-            return 2;
-        }
-        {
+        for (const auto& candidate_id : all_candidate_ids) {
+            {
+                std::lock_guard<std::mutex> lock(depth_market_mutex);
+                depth_market_ready = false;
+                depth_market_snapshots.clear();
+            }
+            // Allocate through CTPTraderAdapter so these requests cannot reuse IDs consumed by
+            // login/recovery queries performed inside the adapter.
+            const int depth_query_request_id =
+                ctp_trader->EnqueueDepthMarketDataQuery(candidate_id);
+            if (depth_query_request_id < 0) {
+                EmitStructuredLog(&config, "core_engine", "error",
+                                  "dominant_contract_depth_query_submit_failed",
+                                  {{"instrument_id", candidate_id}});
+                return 2;
+            }
             std::unique_lock<std::mutex> lock(depth_market_mutex);
             constexpr int kDepthQueryTimeoutSeconds = 120;
             if (!depth_market_cv.wait_for(lock, std::chrono::seconds(kDepthQueryTimeoutSeconds),
                                           [&]() { return depth_market_ready; })) {
                 EmitStructuredLog(&config, "core_engine", "error",
                                   "dominant_contract_depth_query_timeout",
-                                  {{"request_id", std::to_string(depth_query_request_id)}});
+                                  {{"instrument_id", candidate_id},
+                                   {"request_id", std::to_string(depth_query_request_id)}});
                 return 2;
             }
-            for (const auto& snapshot : depth_market_snapshots) {
-                const auto product =
-                    dominant_contract_coordinator.ProductForInstrument(snapshot.instrument_id);
-                if (product.has_value()) {
-                    dominant_contract_coordinator.UpdateBaselineSnapshot(*product, snapshot);
-                }
+            const auto snapshot_it =
+                std::find_if(depth_market_snapshots.begin(), depth_market_snapshots.end(),
+                             [&](const auto& row) { return row.instrument_id == candidate_id; });
+            if (snapshot_it == depth_market_snapshots.end()) {
+                EmitStructuredLog(&config, "core_engine", "error",
+                                  "dominant_contract_depth_query_empty",
+                                  {{"instrument_id", candidate_id}});
+                return 2;
+            }
+            const auto product = dominant_contract_coordinator.ProductForInstrument(candidate_id);
+            if (product.has_value()) {
+                dominant_contract_coordinator.UpdateBaselineSnapshot(*product, *snapshot_it);
             }
         }
 
@@ -4640,37 +4646,34 @@ int main(int argc, char** argv) {
                     }
                 }
 
-                {
-                    std::lock_guard<std::mutex> lock(instrument_meta_mutex);
-                    instrument_meta_ready = false;
-                    instrument_meta_snapshots.clear();
-                    instrument_meta_by_id.clear();
+                InstrumentUniverseManifest refreshed_manifest;
+                std::string manifest_error;
+                if (!LoadInstrumentUniverseManifest(InstrumentUniverseManifestPath().string(),
+                                                    &refreshed_manifest, &manifest_error) ||
+                    !IsInstrumentUniverseManifestCurrent(
+                        refreshed_manifest, trading_day, dominant_product_ids, NowEpochNanos(),
+                        file_config.dominant_contract_cache_max_age_ms, &manifest_error)) {
+                    return fail_daily_refresh("universe_manifest_invalid:" + manifest_error,
+                                              trading_day);
                 }
-                const int request_id = next_query_request_id();
-                if (!ctp_trader->EnqueueInstrumentQuery(request_id)) {
-                    return fail_daily_refresh("instrument_query_submit_failed", trading_day);
-                }
-                std::vector<InstrumentMetaSnapshot> received;
-                {
-                    std::unique_lock<std::mutex> lock(instrument_meta_mutex);
-                    if (!instrument_meta_cv.wait_for(
-                            lock,
-                            std::chrono::milliseconds(
-                                file_config.dominant_contract_switch_timeout_ms),
-                            [&]() {
-                                return instrument_meta_ready || dominant_recheck_loop_stop.load();
-                            }) ||
-                        !instrument_meta_ready) {
-                        return fail_daily_refresh("instrument_query_timeout", trading_day);
-                    }
-                    received = instrument_meta_snapshots;
-                }
-
                 std::unordered_map<std::string, std::vector<std::string>> refreshed_ids;
                 std::vector<std::string> all_refreshed_ids;
                 for (const auto& product_id : dominant_product_ids) {
+                    InstrumentMetaCacheDocument cached;
+                    std::string cache_error;
+                    const auto cache_path = std::filesystem::path(refreshed_manifest.cache_dir) /
+                                            (ToLowerAscii(product_id) + "_contracts.json");
+                    if (!LoadInstrumentMetaCacheDocument(cache_path.string(), &cached,
+                                                         &cache_error) ||
+                        cached.generated_ts_ns != refreshed_manifest.generated_ts_ns ||
+                        !IsInstrumentMetaCacheCurrent(
+                            cached, trading_day, NowEpochNanos(),
+                            file_config.dominant_contract_cache_max_age_ms, &cache_error)) {
+                        return fail_daily_refresh(
+                            "product_cache_invalid:" + product_id + ":" + cache_error, trading_day);
+                    }
                     const auto eligible =
-                        FilterEligibleFuturesContracts(received, product_id, trading_day);
+                        FilterEligibleFuturesContracts(cached.instruments, product_id, trading_day);
                     if (eligible.empty()) {
                         return fail_daily_refresh("eligible_contracts_empty:" + product_id,
                                                   trading_day);
@@ -4680,14 +4683,12 @@ int main(int argc, char** argv) {
                     for (const auto& snapshot : eligible) {
                         ids.push_back(snapshot.instrument_id);
                     }
-                    const auto product_metadata =
-                        CollectProductInstrumentMetadata(received, product_id);
-                    std::string cache_error;
-                    if (!WriteInstrumentMetaCacheV2Atomically(
-                            InstrumentMetaCachePath(product_id).string(), product_id, trading_day,
-                            product_metadata, NowEpochNanos(), &cache_error)) {
-                        return fail_daily_refresh(
-                            "cache_write_failed:" + product_id + ":" + cache_error, trading_day);
+                    ctp_md->UpdateInstrumentMetadata(cached.instruments);
+                    {
+                        std::lock_guard<std::mutex> lock(instrument_meta_mutex);
+                        for (const auto& snapshot : cached.instruments) {
+                            instrument_meta_by_id[snapshot.instrument_id] = snapshot;
+                        }
                     }
                     all_refreshed_ids.insert(all_refreshed_ids.end(), ids.begin(), ids.end());
                     refreshed_ids.emplace(product_id, std::move(ids));
@@ -4715,17 +4716,18 @@ int main(int argc, char** argv) {
                                                   all_refreshed_ids.end());
                 }
 
-                {
-                    std::lock_guard<std::mutex> lock(depth_market_mutex);
-                    depth_market_ready = false;
-                    depth_market_snapshots.clear();
-                }
-                const int depth_request_id = next_query_request_id();
-                if (!ctp_trader->EnqueueDepthMarketDataQuery(depth_request_id)) {
-                    return fail_daily_refresh("depth_query_submit_failed", trading_day);
-                }
-                std::vector<MarketSnapshot> depth_snapshots;
-                {
+                for (const auto& candidate_id : all_refreshed_ids) {
+                    {
+                        std::lock_guard<std::mutex> lock(depth_market_mutex);
+                        depth_market_ready = false;
+                        depth_market_snapshots.clear();
+                    }
+                    const int depth_request_id =
+                        ctp_trader->EnqueueDepthMarketDataQuery(candidate_id);
+                    if (depth_request_id < 0) {
+                        return fail_daily_refresh("depth_query_submit_failed:" + candidate_id,
+                                                  trading_day);
+                    }
                     std::unique_lock<std::mutex> lock(depth_market_mutex);
                     if (!depth_market_cv.wait_for(
                             lock,
@@ -4735,15 +4737,20 @@ int main(int argc, char** argv) {
                                 return depth_market_ready || dominant_recheck_loop_stop.load();
                             }) ||
                         !depth_market_ready) {
-                        return fail_daily_refresh("depth_query_timeout", trading_day);
+                        return fail_daily_refresh("depth_query_timeout:" + candidate_id,
+                                                  trading_day);
                     }
-                    depth_snapshots = depth_market_snapshots;
-                }
-                for (const auto& snapshot : depth_snapshots) {
+                    const auto snapshot_it = std::find_if(
+                        depth_market_snapshots.begin(), depth_market_snapshots.end(),
+                        [&](const auto& row) { return row.instrument_id == candidate_id; });
+                    if (snapshot_it == depth_market_snapshots.end()) {
+                        return fail_daily_refresh("depth_query_empty:" + candidate_id, trading_day);
+                    }
                     const auto product =
-                        dominant_contract_coordinator.ProductForInstrument(snapshot.instrument_id);
+                        dominant_contract_coordinator.ProductForInstrument(candidate_id);
                     if (product.has_value()) {
-                        dominant_contract_coordinator.UpdateBaselineSnapshot(*product, snapshot);
+                        dominant_contract_coordinator.UpdateBaselineSnapshot(*product,
+                                                                             *snapshot_it);
                     }
                 }
 

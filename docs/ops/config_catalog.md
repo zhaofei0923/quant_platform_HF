@@ -255,6 +255,9 @@
 - Purpose: SimNow 默认多品种候选参数联调配置，当前运行 `c/hc` 两个独立 Composite 实例。
 - Consumer: `core_engine` / `simnow_compare_cli`。
 - 字段说明: 见“CTP 通用字段字典”；重点字段为 `strategy_composite_config_map.<strategy_id>`、`product_ids` 与行情按品种分区开关。
+- 合约池刷新: `product_ids=c,hc` 分别映射为 `DCE/c`、`SHFE/hc` 的 CTP ProductID 查询；
+  每个 Broker 交易日发布一次完整 generation，`dominant_contract_cache_max_age_ms` 的七天
+  上限仅用于允许交易日完全匹配的周末缓存，不能放宽 trading-day 校验。
 
 ## `configs/sim/ctp_trading_hours.yaml`
 

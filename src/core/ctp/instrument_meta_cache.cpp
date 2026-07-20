@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <set>
 #include <sstream>
 #include <unordered_set>
 
@@ -99,6 +100,46 @@ std::string ExtractScalar(const std::string& line) {
         value.pop_back();
     }
     return value;
+}
+
+std::vector<std::string> SplitCsv(const std::string& value) {
+    std::vector<std::string> values;
+    std::size_t begin = 0;
+    while (begin <= value.size()) {
+        const auto end = value.find(',', begin);
+        std::string item =
+            value.substr(begin, end == std::string::npos ? std::string::npos : end - begin);
+        item.erase(item.begin(), std::find_if(item.begin(), item.end(), [](unsigned char ch) {
+                       return std::isspace(ch) == 0;
+                   }));
+        item.erase(std::find_if(item.rbegin(), item.rend(),
+                                [](unsigned char ch) { return std::isspace(ch) == 0; })
+                       .base(),
+                   item.end());
+        if (!item.empty()) {
+            values.push_back(Lowercase(item));
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        begin = end + 1;
+    }
+    std::sort(values.begin(), values.end());
+    values.erase(std::unique(values.begin(), values.end()), values.end());
+    return values;
+}
+
+std::string JoinCsv(std::vector<std::string> values) {
+    std::sort(values.begin(), values.end());
+    values.erase(std::unique(values.begin(), values.end()), values.end());
+    std::ostringstream out;
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        if (index > 0) {
+            out << ',';
+        }
+        out << Lowercase(values[index]);
+    }
+    return out.str();
 }
 
 bool IsValidDate(const std::string& value) {
@@ -404,6 +445,160 @@ bool IsInstrumentMetaCacheCurrent(const InstrumentMetaCacheDocument& document,
     if (document.instruments.empty()) {
         SetError(reason, "cache_empty");
         return false;
+    }
+    return true;
+}
+
+bool LoadInstrumentUniverseManifest(const std::string& path, InstrumentUniverseManifest* manifest,
+                                    std::string* error) {
+    if (manifest == nullptr) {
+        SetError(error, "instrument universe manifest output is null");
+        return false;
+    }
+    *manifest = {};
+    std::ifstream input(path, std::ios::in | std::ios::binary);
+    if (!input.is_open()) {
+        SetError(error, "instrument universe manifest not found: " + path);
+        return false;
+    }
+    bool saw_close = false;
+    std::string line;
+    while (std::getline(input, line)) {
+        const auto first_non_space = line.find_first_not_of(" \t\r\n");
+        if (first_non_space != std::string::npos && line.substr(first_non_space) == "}") {
+            saw_close = true;
+        }
+        try {
+            if (line.find("\"schema_version\"") != std::string::npos) {
+                manifest->schema_version = std::stoi(ExtractScalar(line));
+            } else if (line.find("\"broker_trading_day\"") != std::string::npos) {
+                manifest->broker_trading_day = ExtractString(line);
+            } else if (line.find("\"generated_ts_ns\"") != std::string::npos) {
+                manifest->generated_ts_ns = std::stoll(ExtractScalar(line));
+            } else if (line.find("\"generation\"") != std::string::npos) {
+                manifest->generation = std::stoull(ExtractScalar(line));
+            } else if (line.find("\"complete\"") != std::string::npos) {
+                manifest->complete = ExtractScalar(line) == "true";
+            } else if (line.find("\"cache_dir\"") != std::string::npos) {
+                manifest->cache_dir = ExtractString(line);
+            } else if (line.find("\"products_csv\"") != std::string::npos) {
+                manifest->product_ids = SplitCsv(ExtractString(line));
+            }
+        } catch (...) {
+            SetError(error, "instrument universe manifest contains an invalid scalar");
+            return false;
+        }
+    }
+    if (!input.eof() || !saw_close) {
+        SetError(error, "instrument universe manifest is truncated");
+        return false;
+    }
+    if (manifest->schema_version != 1 || !IsValidDate(manifest->broker_trading_day) ||
+        manifest->generated_ts_ns <= 0 || manifest->generation == 0 || !manifest->complete ||
+        manifest->cache_dir.empty() || manifest->product_ids.empty()) {
+        SetError(error, "instrument universe manifest is incomplete");
+        return false;
+    }
+    return true;
+}
+
+bool WriteInstrumentUniverseManifestAtomically(const std::string& path,
+                                               const InstrumentUniverseManifest& manifest,
+                                               std::string* error) {
+    if (path.empty() || manifest.schema_version != 1 || !IsValidDate(manifest.broker_trading_day) ||
+        manifest.generated_ts_ns <= 0 || manifest.generation == 0 || !manifest.complete ||
+        manifest.cache_dir.empty() || manifest.product_ids.empty()) {
+        SetError(error, "invalid instrument universe manifest arguments");
+        return false;
+    }
+    std::ostringstream payload;
+    payload << "{\n"
+            << "  \"schema_version\": 1,\n"
+            << "  \"broker_trading_day\": \"" << JsonEscape(manifest.broker_trading_day) << "\",\n"
+            << "  \"generated_ts_ns\": " << manifest.generated_ts_ns << ",\n"
+            << "  \"generation\": " << manifest.generation << ",\n"
+            << "  \"complete\": true,\n"
+            << "  \"cache_dir\": \"" << JsonEscape(manifest.cache_dir) << "\",\n"
+            << "  \"products_csv\": \"" << JsonEscape(JoinCsv(manifest.product_ids)) << "\"\n"
+            << "}\n";
+
+    const std::filesystem::path output(path);
+    std::error_code ec;
+    if (!output.parent_path().empty()) {
+        std::filesystem::create_directories(output.parent_path(), ec);
+        if (ec) {
+            SetError(error,
+                     "failed to create instrument universe manifest directory: " + ec.message());
+            return false;
+        }
+    }
+    const std::filesystem::path temporary =
+        output.string() + ".tmp." + std::to_string(manifest.generated_ts_ns);
+    {
+        std::ofstream stream(temporary, std::ios::out | std::ios::trunc | std::ios::binary);
+        if (!stream.is_open()) {
+            SetError(error, "failed to open instrument universe manifest temp file");
+            return false;
+        }
+        stream << payload.str();
+        stream.flush();
+        if (!stream.good()) {
+            stream.close();
+            std::filesystem::remove(temporary, ec);
+            SetError(error, "failed to flush instrument universe manifest temp file");
+            return false;
+        }
+    }
+#if !defined(_WIN32)
+    if (!FsyncPath(temporary, false, error)) {
+        std::filesystem::remove(temporary, ec);
+        return false;
+    }
+#endif
+    std::filesystem::rename(temporary, output, ec);
+    if (ec) {
+        std::filesystem::remove(temporary, ec);
+        SetError(error, "failed to publish instrument universe manifest: " + ec.message());
+        return false;
+    }
+#if !defined(_WIN32)
+    const auto parent =
+        output.parent_path().empty() ? std::filesystem::path(".") : output.parent_path();
+    if (!FsyncPath(parent, true, error)) {
+        return false;
+    }
+#endif
+    return true;
+}
+
+bool IsInstrumentUniverseManifestCurrent(const InstrumentUniverseManifest& manifest,
+                                         const std::string& broker_trading_day,
+                                         const std::vector<std::string>& required_product_ids,
+                                         EpochNanos now_ns, std::int64_t max_age_ms,
+                                         std::string* reason) {
+    if (manifest.schema_version != 1 || !manifest.complete) {
+        SetError(reason, "manifest_incomplete");
+        return false;
+    }
+    if (!IsValidDate(broker_trading_day) || manifest.broker_trading_day != broker_trading_day) {
+        SetError(reason, "broker_trading_day_mismatch");
+        return false;
+    }
+    if (manifest.generated_ts_ns <= 0 || now_ns < manifest.generated_ts_ns ||
+        now_ns - manifest.generated_ts_ns >
+            std::max<std::int64_t>(1, max_age_ms) * kNanosPerMillisecond) {
+        SetError(reason, "manifest_age_exceeded");
+        return false;
+    }
+    std::set<std::string> available;
+    for (const auto& product_id : manifest.product_ids) {
+        available.insert(Lowercase(product_id));
+    }
+    for (const auto& required : required_product_ids) {
+        if (available.count(Lowercase(required)) == 0U) {
+            SetError(reason, "required_product_missing:" + Lowercase(required));
+            return false;
+        }
     }
     return true;
 }

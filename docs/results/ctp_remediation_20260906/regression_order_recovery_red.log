@@ -1,0 +1,23 @@
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+Note: Google Test filter = *DurableMarkerDoesNotSkipProcessLocalRecovery*
+[==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from OrderManagerTest
+[ RUN      ] OrderManagerTest.DurableMarkerDoesNotSkipProcessLocalRecovery
+/home/kevin/quant_platform_HF/tests/unit/services/order_manager_test.cpp:177: Failure
+Expected equality of these values:
+  restarted.GetOrder("recovered")->status
+    Which is: 4-byte object <00-00 00-00>
+  OrderStatus::kAccepted
+    Which is: 4-byte object <01-00 00-00>
+
+[  FAILED  ] OrderManagerTest.DurableMarkerDoesNotSkipProcessLocalRecovery (0 ms)
+[----------] 1 test from OrderManagerTest (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test suite ran. (0 ms total)
+[  PASSED  ] 0 tests.
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] OrderManagerTest.DurableMarkerDoesNotSkipProcessLocalRecovery
+
+ 1 FAILED TEST

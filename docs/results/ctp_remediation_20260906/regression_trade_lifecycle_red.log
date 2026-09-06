@@ -1,0 +1,123 @@
+Internal ctest changing into directory: /tmp/quant-hft-trading-build
+Test project /tmp/quant-hft-trading-build
+    Start  52: TradingDomainStoreClientAdapterTest.OrderLifecycleUpdatesOneAccountScopedRow
+1/3 Test  #52: TradingDomainStoreClientAdapterTest.OrderLifecycleUpdatesOneAccountScopedRow ...***Failed    0.00 sec
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+Note: Google Test filter = TradingDomainStoreClientAdapterTest.OrderLifecycleUpdatesOneAccountScopedRow
+[==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from TradingDomainStoreClientAdapterTest
+[ RUN      ] TradingDomainStoreClientAdapterTest.OrderLifecycleUpdatesOneAccountScopedRow
+/home/kevin/quant_platform_HF/tests/unit/core/trading_domain_store_client_adapter_test.cpp:525: Failure
+Expected equality of these values:
+  rows.front().at("volume_canceled")
+    Which is: "3"
+  "0"
+
+/home/kevin/quant_platform_HF/tests/unit/core/trading_domain_store_client_adapter_test.cpp:534: Failure
+Expected equality of these values:
+  rows.front().at("volume_traded")
+    Which is: "0"
+  "1"
+
+/home/kevin/quant_platform_HF/tests/unit/core/trading_domain_store_client_adapter_test.cpp:535: Failure
+Expected equality of these values:
+  rows.front().at("volume_canceled")
+    Which is: "3"
+  "2"
+
+/home/kevin/quant_platform_HF/tests/unit/core/trading_domain_store_client_adapter_test.cpp:536: Failure
+Expected equality of these values:
+  rows.front().at("order_status")
+    Which is: "0"
+  std::to_string(static_cast<int>(OrderStatus::kCanceled))
+    Which is: "4"
+
+/home/kevin/quant_platform_HF/tests/unit/core/trading_domain_store_client_adapter_test.cpp:539: Failure
+Expected equality of these values:
+  sql->QueryAllRows("trading_core.orders", &error).size()
+    Which is: 1
+  2U
+    Which is: 2
+
+[  FAILED  ] TradingDomainStoreClientAdapterTest.OrderLifecycleUpdatesOneAccountScopedRow (0 ms)
+[----------] 1 test from TradingDomainStoreClientAdapterTest (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test suite ran. (0 ms total)
+[  PASSED  ] 0 tests.
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] TradingDomainStoreClientAdapterTest.OrderLifecycleUpdatesOneAccountScopedRow
+
+ 1 FAILED TEST
+
+    Start 135: OrderManagerTest.PersistenceFailureDoesNotMarkEventAndRetryWritesState
+2/3 Test #135: OrderManagerTest.PersistenceFailureDoesNotMarkEventAndRetryWritesState .........***Failed    0.00 sec
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+Note: Google Test filter = OrderManagerTest.PersistenceFailureDoesNotMarkEventAndRetryWritesState
+[==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from OrderManagerTest
+[ RUN      ] OrderManagerTest.PersistenceFailureDoesNotMarkEventAndRetryWritesState
+/home/kevin/quant_platform_HF/tests/unit/services/order_manager_test.cpp:155: Failure
+Value of: manager.OnOrderEvent(accepted, &result, &error)
+  Actual: true
+Expected: false
+
+/home/kevin/quant_platform_HF/tests/unit/services/order_manager_test.cpp:156: Failure
+Value of: store->processed.empty()
+  Actual: false
+Expected: true
+
+/home/kevin/quant_platform_HF/tests/unit/services/order_manager_test.cpp:160: Failure
+Expected equality of these values:
+  store->orders.back().status
+    Which is: 4-byte object <00-00 00-00>
+  OrderStatus::kAccepted
+    Which is: 4-byte object <01-00 00-00>
+
+[  FAILED  ] OrderManagerTest.PersistenceFailureDoesNotMarkEventAndRetryWritesState (0 ms)
+[----------] 1 test from OrderManagerTest (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test suite ran. (0 ms total)
+[  PASSED  ] 0 tests.
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] OrderManagerTest.PersistenceFailureDoesNotMarkEventAndRetryWritesState
+
+ 1 FAILED TEST
+
+    Start 136: OrderManagerTest.DurableMarkerDoesNotSkipProcessLocalRecovery
+3/3 Test #136: OrderManagerTest.DurableMarkerDoesNotSkipProcessLocalRecovery ..................***Failed    0.00 sec
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+Note: Google Test filter = OrderManagerTest.DurableMarkerDoesNotSkipProcessLocalRecovery
+[==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from OrderManagerTest
+[ RUN      ] OrderManagerTest.DurableMarkerDoesNotSkipProcessLocalRecovery
+/home/kevin/quant_platform_HF/tests/unit/services/order_manager_test.cpp:172: Failure
+Value of: restarted.GetOrder("recovered").has_value()
+  Actual: false
+Expected: true
+
+[  FAILED  ] OrderManagerTest.DurableMarkerDoesNotSkipProcessLocalRecovery (0 ms)
+[----------] 1 test from OrderManagerTest (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test suite ran. (0 ms total)
+[  PASSED  ] 0 tests.
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] OrderManagerTest.DurableMarkerDoesNotSkipProcessLocalRecovery
+
+ 1 FAILED TEST
+
+
+0% tests passed, 3 tests failed out of 3
+
+Total Test time (real) =   0.02 sec
+
+The following tests FAILED:
+	 52 - TradingDomainStoreClientAdapterTest.OrderLifecycleUpdatesOneAccountScopedRow (Failed)
+	135 - OrderManagerTest.PersistenceFailureDoesNotMarkEventAndRetryWritesState (Failed)
+	136 - OrderManagerTest.DurableMarkerDoesNotSkipProcessLocalRecovery (Failed)
+Errors while running CTest

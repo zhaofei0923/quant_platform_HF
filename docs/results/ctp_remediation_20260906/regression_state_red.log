@@ -1,0 +1,48 @@
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+Note: Google Test filter = *FailedReplace*:*SyncFailure*
+[==========] Running 3 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 3 tests from StatePersistenceTest
+[ RUN      ] StatePersistenceTest.FailedReplacePreservesExistingDestination
+/home/kevin/quant_platform_HF/tests/unit/strategy/state_persistence_test.cpp:96: Failure
+Value of: persistence.SaveStrategyState("acct", "alpha", {{"version", "2"}}, &error)
+  Actual: true
+Expected: false
+
+/home/kevin/quant_platform_HF/tests/unit/strategy/state_persistence_test.cpp:97: Failure
+Value of: std::filesystem::is_directory(destination)
+  Actual: false
+Expected: true
+
+[  FAILED  ] StatePersistenceTest.FailedReplacePreservesExistingDestination (1 ms)
+[ RUN      ] StatePersistenceTest.FileSyncFailureKeepsPreviousSnapshotAndAllowsRetry
+/home/kevin/quant_platform_HF/tests/unit/strategy/state_persistence_test.cpp:111: Failure
+Value of: saved
+  Actual: true
+Expected: false
+
+/home/kevin/quant_platform_HF/tests/unit/strategy/state_persistence_test.cpp:114: Failure
+Expected equality of these values:
+  loaded.at("version")
+    Which is: "2"
+  "1"
+
+[  FAILED  ] StatePersistenceTest.FileSyncFailureKeepsPreviousSnapshotAndAllowsRetry (1 ms)
+[ RUN      ] StatePersistenceTest.DirectorySyncFailureDoesNotReportDurableSuccess
+/home/kevin/quant_platform_HF/tests/unit/strategy/state_persistence_test.cpp:129: Failure
+Value of: saved
+  Actual: true
+Expected: false
+
+[  FAILED  ] StatePersistenceTest.DirectorySyncFailureDoesNotReportDurableSuccess (0 ms)
+[----------] 3 tests from StatePersistenceTest (4 ms total)
+
+[----------] Global test environment tear-down
+[==========] 3 tests from 1 test suite ran. (4 ms total)
+[  PASSED  ] 0 tests.
+[  FAILED  ] 3 tests, listed below:
+[  FAILED  ] StatePersistenceTest.FailedReplacePreservesExistingDestination
+[  FAILED  ] StatePersistenceTest.FileSyncFailureKeepsPreviousSnapshotAndAllowsRetry
+[  FAILED  ] StatePersistenceTest.DirectorySyncFailureDoesNotReportDurableSuccess
+
+ 3 FAILED TESTS

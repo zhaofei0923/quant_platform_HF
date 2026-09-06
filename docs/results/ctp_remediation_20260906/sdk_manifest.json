@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "sdk_directory": "ctp_api/v6.7.11_20250617_api_traderapi_se_linux64",
+  "source_windows_directory": "D:\\v6.7.11_20250714_traderapi\\v6.7.11_20250714_traderapi\\v6.7.11_20250617_api_traderapi_linux64\\v6.7.11_20250617_api\\v6.7.11_20250617_api_traderapi_se_linux64",
+  "architecture": "ELF 64-bit x86-64",
+  "runtime_version": [
+    "trader=v6.7.11_20250617 16:22:00.10369",
+    "md=v6.7.11_20250617 16:22:00.10369"
+  ],
+  "sdk_files": [
+    {
+      "name": "ThostFtdcMdApi.h",
+      "bytes": 5842,
+      "sha256": "26b0550108248489b489bc0fc2b641e075bf1dcba78aea7be6e6d8e6dbc7f734"
+    },
+    {
+      "name": "ThostFtdcTraderApi.h",
+      "bytes": 49486,
+      "sha256": "e9f22062255fc64c54cb90dd8301728fd9d8a7e157f977ed8fbff699b264f7e8"
+    },
+    {
+      "name": "ThostFtdcUserApiDataType.h",
+      "bytes": 269956,
+      "sha256": "85c3de55e4da21bde844e1d66946653f17803529db7ef507faf5efc2f5aeb357"
+    },
+    {
+      "name": "ThostFtdcUserApiStruct.h",
+      "bytes": 329034,
+      "sha256": "6060d6ac7c3e846b4cfbced41dcdfc0722f71088fed6ec254b313ea5bfaaf914"
+    },
+    {
+      "name": "error.dtd",
+      "bytes": 184,
+      "sha256": "dd55164c51f78d5e75144bdfeb82732ff10adb9ef9d7b9acb1acfe660c40b93f"
+    },
+    {
+      "name": "error.xml",
+      "bytes": 24783,
+      "sha256": "67bcaa14a357bcf40eb3ac87a72d551c250a1d7fed624da5dca8425a37a1a1a3"
+    },
+    {
+      "name": "thostmduserapi_se.so",
+      "bytes": 5019965,
+      "sha256": "9c6d321f3d880e1c91ec225cc46950f8aa1502f43fc9f41d1d92f10ee04d190a"
+    },
+    {
+      "name": "thosttraderapi_se.so",
+      "bytes": 5677063,
+      "sha256": "ad4da95953ea5d0f4ed28ac746462ddba1f3434d0df1727919ae0d97591b4085"
+    }
+  ],
+  "guide_source": "D:\\20200922_documents",
+  "guides": [
+    {
+      "name": "CTP Client Development Guide.pdf",
+      "bytes": 1921144,
+      "sha256": "1acc54cb7fe7110e5174ddda1b34d41fa7d9f017443c224e7e15cc01653a38cd"
+    },
+    {
+      "name": "CTP客户端开发指南 V3.5-中文.pdf",
+      "bytes": 1941713,
+      "sha256": "f8f4180f41be26d5ee24ca776b3f9a2368da26655cfb83ff3d1f9468097fd05d"
+    }
+  ],
+  "network_login_performed": false,
+  "proprietary_files_git_tracked": false
+}

@@ -1,0 +1,695 @@
+[  0%] Building CXX object _deps/googletest-build/googletest/CMakeFiles/gtest.dir/src/gtest-all.cc.o
+[  0%] Building CXX object CMakeFiles/quant_hft_core.dir/src/backtest/broker.cpp.o
+[  0%] Building CXX object CMakeFiles/quant_hft_core.dir/src/backtest/engine.cpp.o
+[  0%] Building CXX object CMakeFiles/quant_hft_core.dir/src/backtest/backtest_data_feed.cpp.o
+[  1%] Building CXX object CMakeFiles/quant_hft_core.dir/src/backtest/performance.cpp.o
+[  1%] Building CXX object CMakeFiles/quant_hft_core.dir/src/apps/backtest_result_export.cpp.o
+[  1%] Building CXX object CMakeFiles/quant_hft_core.dir/src/backtest/backtest_metrics.cpp.o
+[  1%] Building CXX object CMakeFiles/quant_hft_core.dir/src/backtest/live_data_feed.cpp.o
+[  2%] Building CXX object CMakeFiles/quant_hft_core.dir/src/optim/parameter_space.cpp.o
+[  2%] Building CXX object CMakeFiles/quant_hft_core.dir/src/optim/grid_search.cpp.o
+[  2%] Building CXX object CMakeFiles/quant_hft_core.dir/src/optim/random_search.cpp.o
+[  2%] Building CXX object CMakeFiles/quant_hft_core.dir/src/optim/task_scheduler.cpp.o
+[  3%] Building CXX object CMakeFiles/quant_hft_core.dir/src/optim/result_analyzer.cpp.o
+In file included from /tmp/quant-hft-baseline-src/src/apps/backtest_result_export.cpp:12:
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h: In function ‘bool quant_hft::apps::LoadParquetTicks(const quant_hft::apps::BacktestCliSpec&, std::vector<quant_hft::apps::ReplayTick>*, quant_hft::apps::ReplayReport*, std::string*)’:
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3352:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3352 |                     .ts_ns = streams[index][0].ts_ns,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3353:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3353 |                     .instrument_id = streams[index][0].instrument_id,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3354:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3354 |                     .stream_index = index,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3355:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3355 |                     .row_index = 0,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3375:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3375 |                     .ts_ns = next_tick.ts_ns,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3376:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3376 |                     .instrument_id = next_tick.instrument_id,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3377:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3377 |                     .stream_index = node.stream_index,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3378:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3378 |                     .row_index = next_row,
+      |                     ^
+[  3%] Building CXX object CMakeFiles/quant_hft_core.dir/src/optim/temp_config_generator.cpp.o
+[  3%] Building CXX object CMakeFiles/quant_hft_core.dir/src/rolling/rolling_config.cpp.o
+[  4%] Building CXX object CMakeFiles/quant_hft_core.dir/src/rolling/metric_extractor.cpp.o
+[  4%] Building CXX object CMakeFiles/quant_hft_core.dir/src/rolling/window_generator.cpp.o
+[  4%] Building CXX object CMakeFiles/quant_hft_core.dir/src/rolling/rolling_runner.cpp.o
+[  4%] Building CXX object CMakeFiles/quant_hft_core.dir/src/rolling/oos_top10_validation.cpp.o
+[  4%] Building CXX object CMakeFiles/quant_hft_core.dir/src/rolling/rolling_report_writer.cpp.o
+[  5%] Building CXX object CMakeFiles/quant_hft_core.dir/src/indicators/adx.cpp.o
+In file included from /tmp/quant-hft-baseline-src/include/quant_hft/rolling/metric_extractor.h:5,
+                 from /tmp/quant-hft-baseline-src/src/rolling/metric_extractor.cpp:1:
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h: In function ‘bool quant_hft::apps::LoadParquetTicks(const quant_hft::apps::BacktestCliSpec&, std::vector<quant_hft::apps::ReplayTick>*, quant_hft::apps::ReplayReport*, std::string*)’:
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3352:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3352 |                     .ts_ns = streams[index][0].ts_ns,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3353:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3353 |                     .instrument_id = streams[index][0].instrument_id,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3354:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3354 |                     .stream_index = index,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3355:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3355 |                     .row_index = 0,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3375:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3375 |                     .ts_ns = next_tick.ts_ns,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3376:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3376 |                     .instrument_id = next_tick.instrument_id,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3377:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3377 |                     .stream_index = node.stream_index,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3378:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3378 |                     .row_index = next_row,
+      |                     ^
+[  5%] Building CXX object CMakeFiles/quant_hft_core.dir/src/indicators/atr.cpp.o
+In file included from /tmp/quant-hft-baseline-src/include/quant_hft/rolling/rolling_runner.h:8,
+                 from /tmp/quant-hft-baseline-src/src/rolling/rolling_runner.cpp:1:
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h: In function ‘bool quant_hft::apps::LoadParquetTicks(const quant_hft::apps::BacktestCliSpec&, std::vector<quant_hft::apps::ReplayTick>*, quant_hft::apps::ReplayReport*, std::string*)’:
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3352:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3352 |                     .ts_ns = streams[index][0].ts_ns,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3353:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3353 |                     .instrument_id = streams[index][0].instrument_id,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3354:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3354 |                     .stream_index = index,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3355:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3355 |                     .row_index = 0,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3375:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3375 |                     .ts_ns = next_tick.ts_ns,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3376:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3376 |                     .instrument_id = next_tick.instrument_id,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3377:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3377 |                     .stream_index = node.stream_index,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3378:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3378 |                     .row_index = next_row,
+      |                     ^
+In file included from /tmp/quant-hft-baseline-src/include/quant_hft/rolling/oos_top10_validation.h:8,
+                 from /tmp/quant-hft-baseline-src/src/rolling/oos_top10_validation.cpp:1:
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h: In function ‘bool quant_hft::apps::LoadParquetTicks(const quant_hft::apps::BacktestCliSpec&, std::vector<quant_hft::apps::ReplayTick>*, quant_hft::apps::ReplayReport*, std::string*)’:
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3352:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3352 |                     .ts_ns = streams[index][0].ts_ns,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3353:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3353 |                     .instrument_id = streams[index][0].instrument_id,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3354:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3354 |                     .stream_index = index,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3355:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3355 |                     .row_index = 0,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3375:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3375 |                     .ts_ns = next_tick.ts_ns,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3376:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3376 |                     .instrument_id = next_tick.instrument_id,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3377:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3377 |                     .stream_index = node.stream_index,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3378:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3378 |                     .row_index = next_row,
+      |                     ^
+[  5%] Building CXX object CMakeFiles/quant_hft_core.dir/src/indicators/ema.cpp.o
+[  5%] Building CXX object CMakeFiles/quant_hft_core.dir/src/indicators/kama.cpp.o
+In file included from /tmp/quant-hft-baseline-src/include/quant_hft/rolling/rolling_runner.h:8,
+                 from /tmp/quant-hft-baseline-src/include/quant_hft/rolling/rolling_report_writer.h:5,
+                 from /tmp/quant-hft-baseline-src/src/rolling/rolling_report_writer.cpp:1:
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h: In function ‘bool quant_hft::apps::LoadParquetTicks(const quant_hft::apps::BacktestCliSpec&, std::vector<quant_hft::apps::ReplayTick>*, quant_hft::apps::ReplayReport*, std::string*)’:
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3352:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3352 |                     .ts_ns = streams[index][0].ts_ns,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3353:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3353 |                     .instrument_id = streams[index][0].instrument_id,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3354:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3354 |                     .stream_index = index,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3355:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3355 |                     .row_index = 0,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3375:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3375 |                     .ts_ns = next_tick.ts_ns,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3376:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3376 |                     .instrument_id = next_tick.instrument_id,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3377:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3377 |                     .stream_index = node.stream_index,
+      |                     ^
+/tmp/quant-hft-baseline-src/include/quant_hft/apps/backtest_replay_support.h:3378:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3378 |                     .row_index = next_row,
+      |                     ^
+[  6%] Building CXX object CMakeFiles/quant_hft_core.dir/src/indicators/sma.cpp.o
+[  6%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/base_strategy.cpp.o
+[  7%] Linking CXX static library ../../../lib/libgtest.a
+[  7%] Built target gtest
+[  7%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/strategy_registry.cpp.o
+[  7%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/strategy_engine.cpp.o
+[  8%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/demo_live_strategy.cpp.o
+[  8%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/atomic_factory.cpp.o
+[  8%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/signal_merger.cpp.o
+[  8%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/state_persistence.cpp.o
+[  8%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/composite_config_loader.cpp.o
+[  9%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/strategy_main_config_loader.cpp.o
+[  9%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/composite_strategy.cpp.o
+[  9%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/atomic/kama_trend_strategy.cpp.o
+[  9%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/atomic/trend_strategy.cpp.o
+[ 10%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/atomic/time_filter.cpp.o
+[ 10%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/atomic/max_position_risk_control.cpp.o
+[ 10%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/atomic/register_builtin_atomic_strategies.cpp.o
+[ 10%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/backtest/indicator_trace_csv_writer.cpp.o
+[ 11%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/backtest/indicator_trace_parquet_writer.cpp.o
+[ 11%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/backtest/contract_expiry_calendar.cpp.o
+[ 11%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/backtest/product_fee_config_loader.cpp.o
+[ 11%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/backtest/sub_strategy_indicator_trace_csv_writer.cpp.o
+/tmp/quant-hft-baseline-src/src/core/backtest/indicator_trace_parquet_writer.cpp:28:13: warning: ‘std::string quant_hft::{anonymous}::FormatDateTimeFromEpochNs(quant_hft::EpochNanos)’ defined but not used [-Wunused-function]
+   28 | std::string FormatDateTimeFromEpochNs(EpochNanos ts_ns) {
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~
+[ 12%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/backtest/sub_strategy_indicator_trace_parquet_writer.cpp.o
+[ 12%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/backtest/parquet_data_feed.cpp.o
+[ 12%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/common/callback_dispatcher.cpp.o
+[ 12%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/common/event_dispatcher.cpp.o
+/tmp/quant-hft-baseline-src/src/core/backtest/sub_strategy_indicator_trace_parquet_writer.cpp:48:13: warning: ‘std::string quant_hft::{anonymous}::MarketRegimeToLabel(quant_hft::MarketRegime)’ defined but not used [-Wunused-function]
+   48 | std::string MarketRegimeToLabel(MarketRegime regime) {
+      |             ^~~~~~~~~~~~~~~~~~~
+/tmp/quant-hft-baseline-src/src/core/backtest/sub_strategy_indicator_trace_parquet_writer.cpp:28:13: warning: ‘std::string quant_hft::{anonymous}::FormatDateTimeFromEpochNs(quant_hft::EpochNanos)’ defined but not used [-Wunused-function]
+   28 | std::string FormatDateTimeFromEpochNs(EpochNanos ts_ns) {
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~
+[ 13%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/common/flow_controller.cpp.o
+[ 13%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/common/circuit_breaker.cpp.o
+[ 13%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/common/fixed_decimal.cpp.o
+[ 13%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/ctp/ctp_config.cpp.o
+[ 14%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/ctp/ctp_config_loader.cpp.o
+[ 14%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/ctp/instrument_meta_cache.cpp.o
+[ 14%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/ctp/ctp_trader_adapter.cpp.o
+[ 14%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/ctp/ctp_md_adapter.cpp.o
+[ 15%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/ctp/ctp_gateway_adapter.cpp.o
+[ 15%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/ctp/query_scheduler.cpp.o
+[ 15%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/regulatory/local_wal_regulatory_sink.cpp.o
+[ 15%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/regulatory/wal_replay_loader.cpp.o
+[ 16%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/redis_hash_client.cpp.o
+[ 16%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/redis_realtime_store.cpp.o
+[ 16%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/redis_realtime_store_client_adapter.cpp.o
+[ 16%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/libpq_timescale_sql_client.cpp.o
+[ 17%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/storage_client_pool.cpp.o
+[ 17%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/storage_client_factory.cpp.o
+[ 17%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/storage_connection_config.cpp.o
+[ 17%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/tcp_redis_hash_client.cpp.o
+[ 18%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/settlement_store_client_adapter.cpp.o
+[ 18%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/trading_domain_store_client_adapter.cpp.o
+[ 18%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/trading_ledger_store_client_adapter.cpp.o
+[ 18%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/timescale_buffered_event_store.cpp.o
+[ 19%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/timescale_event_store.cpp.o
+[ 19%] Building CXX object _deps/googletest-build/googletest/CMakeFiles/gtest_main.dir/src/gtest_main.cc.o
+[ 19%] Building CXX object _deps/googletest-build/googlemock/CMakeFiles/gmock.dir/src/gmock-all.cc.o
+[ 19%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/timescale_event_store_client_adapter.cpp.o
+[ 19%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/timescale_sql_client.cpp.o
+[ 19%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/market/kafka_market_bus_producer.cpp.o
+[ 20%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/perf/object_pool.cpp.o
+[ 20%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/perf/event_object_pool.cpp.o
+[ 20%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/monitoring/metric_registry.cpp.o
+[ 20%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/monitoring/exporter.cpp.o
+[ 20%] Linking CXX static library ../../../lib/libgtest_main.a
+[ 21%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/risk/basic_risk_engine.cpp.o
+[ 21%] Built target gtest_main
+[ 21%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/risk/risk_policy_engine.cpp.o
+[ 21%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/risk/self_trade_risk_engine.cpp.o
+[ 21%] Building CXX object CMakeFiles/quant_hft_core.dir/src/risk/risk_rule_executor.cpp.o
+[ 22%] Building CXX object CMakeFiles/quant_hft_core.dir/src/risk/risk_rule_registry.cpp.o
+[ 22%] Building CXX object CMakeFiles/quant_hft_core.dir/src/risk/risk_manager.cpp.o
+[ 22%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/order/execution_planner.cpp.o
+[ 22%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/order/execution_engine.cpp.o
+[ 23%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/order/order_manager.cpp.o
+[ 23%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/order/execution_router.cpp.o
+[ 23%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/order/in_memory_order_gateway.cpp.o
+[ 23%] Linking CXX static library ../../../lib/libgmock.a
+[ 23%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/order/order_state_machine.cpp.o
+[ 23%] Built target gmock
+[ 23%] Building CXX object CMakeFiles/simnow_dashboard_cli_test.dir/tests/unit/apps/simnow_dashboard_cli_test.cpp.o
+[ 24%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/order/pending_exit_store.cpp.o
+[ 24%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/order/timeout_cancel_tracker.cpp.o
+[ 24%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/order/trading_permission_controller.cpp.o
+[ 24%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/settlement/settlement_price_provider.cpp.o
+[ 25%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/settlement/settlement_query_client.cpp.o
+[ 25%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/settlement/daily_settlement_service.cpp.o
+[ 25%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/portfolio/ctp_account_ledger.cpp.o
+[ 25%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/portfolio/ctp_close_offset_resolver.cpp.o
+[ 26%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/portfolio/ctp_position_ledger.cpp.o
+[ 26%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/portfolio/position_manager.cpp.o
+[ 26%] Linking CXX executable simnow_dashboard_cli_test
+[ 26%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/portfolio/in_memory_portfolio_ledger.cpp.o
+[ 26%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/market_state/bar_aggregator.cpp.o
+[ 27%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/market_state/market_bar_pipeline.cpp.o
+[ 27%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/market_state/dominant_contract_coordinator.cpp.o
+[ 27%] Built target simnow_dashboard_cli_test
+[ 27%] Building CXX object CMakeFiles/quality_gate_scripts_test.dir/tests/unit/build/quality_gate_scripts_test.cpp.o
+[ 27%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/market_state/trading_session_calendar.cpp.o
+[ 27%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/market_state/market_data_csv_recorder.cpp.o
+[ 28%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/market_state/market_state_detector.cpp.o
+[ 28%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/market_state/rule_market_state_engine.cpp.o
+[ 28%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/market_state/timeframe_state_fanout.cpp.o
+[ 29%] Linking CXX executable quality_gate_scripts_test
+[ 29%] Building CXX object CMakeFiles/consistency_gate_script_test.dir/tests/unit/build/consistency_gate_script_test.cpp.o
+[ 29%] Building CXX object CMakeFiles/simnow_supervisor_script_test.dir/tests/unit/build/simnow_supervisor_script_test.cpp.o
+[ 29%] Building CXX object CMakeFiles/simnow_preflight_script_test.dir/tests/unit/build/simnow_preflight_script_test.cpp.o
+[ 29%] Built target quality_gate_scripts_test
+[ 29%] Building CXX object CMakeFiles/preprod_rehearsal_gate_script_test.dir/tests/unit/build/preprod_rehearsal_gate_script_test.cpp.o
+[ 29%] Building CXX object CMakeFiles/run_backtest_from_config_script_test.dir/tests/unit/build/run_backtest_from_config_script_test.cpp.o
+[ 29%] Building CXX object CMakeFiles/run_backtest_with_validation_script_test.dir/tests/unit/build/run_backtest_with_validation_script_test.cpp.o
+[ 29%] Linking CXX executable consistency_gate_script_test
+[ 29%] Building CXX object CMakeFiles/run_rolling_backtest_script_test.dir/tests/unit/build/run_rolling_backtest_script_test.cpp.o
+[ 29%] Linking CXX static library libquant_hft_core.a
+[ 29%] Linking CXX executable simnow_supervisor_script_test
+[ 30%] Linking CXX executable preprod_rehearsal_gate_script_test
+[ 30%] Linking CXX executable simnow_preflight_script_test
+[ 30%] Built target consistency_gate_script_test
+[ 31%] Building CXX object _deps/googletest-build/googlemock/CMakeFiles/gmock_main.dir/src/gmock_main.cc.o
+[ 31%] Built target simnow_preflight_script_test
+[ 31%] Built target preprod_rehearsal_gate_script_test
+[ 31%] Built target simnow_supervisor_script_test
+[ 31%] Built target quant_hft_core
+[ 31%] Building CXX object CMakeFiles/core_engine.dir/src/apps/core_engine_main.cpp.o
+[ 31%] Building CXX object CMakeFiles/simnow_flatten_positions.dir/src/apps/simnow_flatten_positions_cli_main.cpp.o
+[ 31%] Building CXX object CMakeFiles/wal_replay_tool.dir/src/apps/wal_replay_main.cpp.o
+[ 31%] Building CXX object CMakeFiles/simnow_probe.dir/src/apps/simnow_probe_main.cpp.o
+[ 31%] Linking CXX executable run_backtest_with_validation_script_test
+[ 32%] Linking CXX executable run_rolling_backtest_script_test
+[ 32%] Built target run_backtest_with_validation_script_test
+[ 32%] Building CXX object CMakeFiles/hotpath_benchmark.dir/src/apps/hotpath_benchmark_main.cpp.o
+[ 32%] Linking CXX executable wal_replay_tool
+[ 32%] Built target run_rolling_backtest_script_test
+[ 32%] Building CXX object CMakeFiles/hotpath_hybrid.dir/src/apps/hotpath_hybrid_main.cpp.o
+[ 32%] Linking CXX static library ../../../lib/libgmock_main.a
+[ 32%] Built target gmock_main
+[ 32%] Building CXX object CMakeFiles/daily_settlement.dir/src/apps/daily_settlement_main.cpp.o
+[ 33%] Linking CXX executable hotpath_benchmark
+[ 33%] Built target wal_replay_tool
+[ 34%] Building CXX object CMakeFiles/backtest_cli.dir/src/apps/backtest_cli_main.cpp.o
+[ 34%] Linking CXX executable hotpath_hybrid
+[ 34%] Built target hotpath_benchmark
+[ 34%] Building CXX object CMakeFiles/parameter_optim_cli.dir/src/apps/parameter_optim_cli_main.cpp.o
+[ 35%] Linking CXX executable simnow_flatten_positions
+[ 35%] Linking CXX executable run_backtest_from_config_script_test
+[ 36%] Linking CXX executable simnow_probe
+[ 36%] Built target hotpath_hybrid
+[ 36%] Building CXX object CMakeFiles/rolling_backtest_cli.dir/src/apps/rolling_backtest_cli_main.cpp.o
+[ 36%] Built target simnow_probe
+[ 36%] Building CXX object CMakeFiles/oos_top10_validation_cli.dir/src/apps/oos_top10_validation_cli_main.cpp.o
+[ 36%] Built target run_backtest_from_config_script_test
+[ 36%] Building CXX object CMakeFiles/backtest_consistency_cli.dir/src/apps/backtest_consistency_cli_main.cpp.o
+[ 36%] Built target simnow_flatten_positions
+[ 37%] Building CXX object CMakeFiles/factor_eval_cli.dir/src/apps/factor_eval_cli_main.cpp.o
+[ 37%] Linking CXX executable daily_settlement
+[ 38%] Linking CXX executable parameter_optim_cli
+[ 38%] Built target daily_settlement
+[ 38%] Building CXX object CMakeFiles/backtest_benchmark_cli.dir/src/apps/backtest_benchmark_cli_main.cpp.o
+[ 38%] Built target parameter_optim_cli
+[ 39%] Building CXX object CMakeFiles/csv_parquet_compare_cli.dir/src/apps/csv_parquet_compare_cli_main.cpp.o
+[ 40%] Linking CXX executable rolling_backtest_cli
+[ 40%] Linking CXX executable oos_top10_validation_cli
+[ 40%] Built target rolling_backtest_cli
+[ 40%] Building CXX object CMakeFiles/csv_to_parquet_cli.dir/src/apps/csv_to_parquet_cli_main.cpp.o
+[ 40%] Built target oos_top10_validation_cli
+[ 40%] Building CXX object CMakeFiles/simnow_compare_cli.dir/src/apps/simnow_compare_cli_main.cpp.o
+[ 40%] Linking CXX executable backtest_cli
+[ 40%] Built target backtest_cli
+[ 40%] Building CXX object CMakeFiles/simnow_wal_export_cli.dir/src/apps/simnow_wal_export_cli_main.cpp.o
+[ 40%] Linking CXX executable factor_eval_cli
+[ 40%] Linking CXX executable backtest_consistency_cli
+[ 40%] Linking CXX executable csv_to_parquet_cli
+[ 40%] Built target csv_to_parquet_cli
+[ 40%] Building CXX object CMakeFiles/market_data_repair_cli.dir/src/apps/market_data_repair_cli_main.cpp.o
+[ 40%] Built target factor_eval_cli
+[ 40%] Building CXX object CMakeFiles/simnow_dashboard_cli.dir/src/apps/simnow_dashboard_cli_main.cpp.o
+[ 41%] Linking CXX executable simnow_wal_export_cli
+[ 41%] Linking CXX executable core_engine
+[ 41%] Linking CXX executable backtest_benchmark_cli
+[ 41%] Linking CXX executable csv_parquet_compare_cli
+[ 41%] Built target backtest_consistency_cli
+[ 41%] Building CXX object CMakeFiles/simnow_weekly_stress_cli.dir/src/apps/simnow_weekly_stress_cli_main.cpp.o
+[ 41%] Built target simnow_wal_export_cli
+[ 41%] Building CXX object CMakeFiles/reconnect_evidence_cli.dir/src/apps/reconnect_evidence_cli_main.cpp.o
+[ 41%] Built target backtest_benchmark_cli
+[ 41%] Building CXX object CMakeFiles/ops_health_report_cli.dir/src/apps/ops_health_report_cli_main.cpp.o
+[ 41%] Built target csv_parquet_compare_cli
+[ 41%] Building CXX object CMakeFiles/ops_alert_report_cli.dir/src/apps/ops_alert_report_cli_main.cpp.o
+[ 41%] Built target core_engine
+[ 42%] Building CXX object CMakeFiles/ctp_cutover_orchestrator_cli.dir/src/apps/ctp_cutover_orchestrator_cli_main.cpp.o
+[ 42%] Linking CXX executable reconnect_evidence_cli
+[ 42%] Linking CXX executable ops_health_report_cli
+[ 42%] Linking CXX executable ops_alert_report_cli
+[ 42%] Built target reconnect_evidence_cli
+[ 42%] Building CXX object CMakeFiles/verify_contract_sync_cli.dir/src/apps/verify_contract_sync_cli_main.cpp.o
+[ 43%] Linking CXX executable market_data_repair_cli
+[ 43%] Built target ops_health_report_cli
+[ 43%] Building CXX object CMakeFiles/verify_develop_requirements_cli.dir/src/apps/verify_develop_requirements_cli_main.cpp.o
+[ 43%] Built target ops_alert_report_cli
+[ 44%] Building CXX object CMakeFiles/query_scheduler_test.dir/tests/unit/core/query_scheduler_test.cpp.o
+[ 44%] Linking CXX executable ctp_cutover_orchestrator_cli
+[ 44%] Linking CXX executable simnow_compare_cli
+[ 44%] Built target ctp_cutover_orchestrator_cli
+[ 44%] Building CXX object CMakeFiles/ctp_config_test.dir/tests/unit/core/ctp_config_test.cpp.o
+[ 44%] Built target market_data_repair_cli
+[ 45%] Building CXX object CMakeFiles/ctp_config_loader_test.dir/tests/unit/core/ctp_config_loader_test.cpp.o
+[ 46%] Linking CXX executable simnow_dashboard_cli
+[ 46%] Built target simnow_compare_cli
+[ 46%] Building CXX object CMakeFiles/instrument_meta_cache_test.dir/tests/unit/core/instrument_meta_cache_test.cpp.o
+[ 46%] Linking CXX executable query_scheduler_test
+[ 46%] Built target simnow_dashboard_cli
+[ 46%] Linking CXX executable verify_develop_requirements_cli
+[ 46%] Building CXX object CMakeFiles/ctp_gateway_adapter_test.dir/tests/unit/core/ctp_gateway_adapter_test.cpp.o
+[ 46%] Built target query_scheduler_test
+[ 47%] Building CXX object CMakeFiles/ctp_trader_adapter_test.dir/tests/unit/core/ctp_trader_adapter_test.cpp.o
+[ 47%] Built target verify_develop_requirements_cli
+[ 48%] Building CXX object CMakeFiles/ctp_md_adapter_test.dir/tests/unit/core/ctp_md_adapter_test.cpp.o
+[ 48%] Linking CXX executable ctp_config_test
+[ 49%] Linking CXX executable verify_contract_sync_cli
+[ 49%] Linking CXX executable instrument_meta_cache_test
+[ 49%] Built target ctp_config_test
+[ 49%] Building CXX object CMakeFiles/wal_replay_loader_test.dir/tests/unit/core/wal_replay_loader_test.cpp.o
+[ 49%] Built target verify_contract_sync_cli
+[ 49%] Building CXX object CMakeFiles/redis_realtime_store_test.dir/tests/unit/core/redis_realtime_store_test.cpp.o
+[ 49%] Built target instrument_meta_cache_test
+[ 49%] Building CXX object CMakeFiles/timescale_event_store_test.dir/tests/unit/core/timescale_event_store_test.cpp.o
+[ 49%] Linking CXX executable ctp_md_adapter_test
+[ 49%] Linking CXX executable redis_realtime_store_test
+[ 49%] Linking CXX executable ctp_gateway_adapter_test
+[ 50%] Linking CXX executable simnow_weekly_stress_cli
+[ 50%] Linking CXX executable timescale_event_store_test
+[ 50%] Built target ctp_md_adapter_test
+[ 51%] Building CXX object CMakeFiles/redis_realtime_store_client_adapter_test.dir/tests/unit/core/redis_realtime_store_client_adapter_test.cpp.o
+[ 51%] Built target redis_realtime_store_test
+[ 51%] Building CXX object CMakeFiles/timescale_event_store_client_adapter_test.dir/tests/unit/core/timescale_event_store_client_adapter_test.cpp.o
+[ 51%] Built target ctp_gateway_adapter_test
+[ 52%] Linking CXX executable wal_replay_loader_test
+[ 52%] Building CXX object CMakeFiles/storage_client_pool_test.dir/tests/unit/core/storage_client_pool_test.cpp.o
+[ 52%] Linking CXX executable ctp_trader_adapter_test
+[ 52%] Linking CXX executable ctp_config_loader_test
+[ 52%] Built target timescale_event_store_test
+[ 52%] Built target simnow_weekly_stress_cli
+[ 52%] Building CXX object CMakeFiles/storage_client_factory_test.dir/tests/unit/core/storage_client_factory_test.cpp.o
+[ 52%] Building CXX object CMakeFiles/timescale_buffered_event_store_test.dir/tests/unit/core/timescale_buffered_event_store_test.cpp.o
+[ 52%] Built target wal_replay_loader_test
+[ 52%] Building CXX object CMakeFiles/tcp_redis_hash_client_test.dir/tests/unit/core/tcp_redis_hash_client_test.cpp.o
+[ 52%] Built target ctp_trader_adapter_test
+[ 52%] Building CXX object CMakeFiles/libpq_timescale_sql_client_test.dir/tests/unit/core/libpq_timescale_sql_client_test.cpp.o
+[ 52%] Built target ctp_config_loader_test
+[ 52%] Building CXX object CMakeFiles/trading_ledger_store_client_adapter_test.dir/tests/unit/core/trading_ledger_store_client_adapter_test.cpp.o
+[ 52%] Linking CXX executable redis_realtime_store_client_adapter_test
+[ 52%] Linking CXX executable timescale_buffered_event_store_test
+[ 53%] Linking CXX executable timescale_event_store_client_adapter_test
+[ 53%] Linking CXX executable storage_client_factory_test
+[ 54%] Linking CXX executable storage_client_pool_test
+[ 54%] Linking CXX executable libpq_timescale_sql_client_test
+[ 54%] Built target redis_realtime_store_client_adapter_test
+[ 54%] Built target timescale_buffered_event_store_test
+[ 54%] Built target timescale_event_store_client_adapter_test
+[ 54%] Building CXX object CMakeFiles/trading_domain_store_client_adapter_test.dir/tests/unit/core/trading_domain_store_client_adapter_test.cpp.o
+[ 55%] Building CXX object CMakeFiles/event_object_pool_test.dir/tests/unit/core/event_object_pool_test.cpp.o
+[ 55%] Linking CXX executable tcp_redis_hash_client_test
+[ 55%] Building CXX object CMakeFiles/object_pool_test.dir/tests/unit/core/object_pool_test.cpp.o
+[ 55%] Built target storage_client_factory_test
+[ 55%] Building CXX object CMakeFiles/market_bus_producer_test.dir/tests/unit/core/market_bus_producer_test.cpp.o
+[ 55%] Built target storage_client_pool_test
+[ 55%] Building CXX object CMakeFiles/event_dispatcher_test.dir/tests/unit/core/event_dispatcher_test.cpp.o
+[ 55%] Linking CXX executable trading_ledger_store_client_adapter_test
+[ 55%] Built target libpq_timescale_sql_client_test
+[ 56%] Building CXX object CMakeFiles/callback_dispatcher_test.dir/tests/unit/core/callback_dispatcher_test.cpp.o
+[ 56%] Built target tcp_redis_hash_client_test
+[ 57%] Building CXX object CMakeFiles/flow_controller_test.dir/tests/unit/core/flow_controller_test.cpp.o
+[ 58%] Linking CXX executable object_pool_test
+[ 58%] Built target trading_ledger_store_client_adapter_test
+[ 58%] Linking CXX executable event_object_pool_test
+[ 58%] Building CXX object CMakeFiles/circuit_breaker_test.dir/tests/unit/core/circuit_breaker_test.cpp.o
+[ 59%] Linking CXX executable trading_domain_store_client_adapter_test
+[ 60%] Linking CXX executable market_bus_producer_test
+[ 60%] Built target object_pool_test
+[ 60%] Built target event_object_pool_test
+[ 60%] Building CXX object CMakeFiles/fixed_decimal_test.dir/tests/unit/core/fixed_decimal_test.cpp.o
+[ 61%] Building CXX object CMakeFiles/basic_risk_engine_test.dir/tests/unit/services/basic_risk_engine_test.cpp.o
+[ 61%] Linking CXX executable event_dispatcher_test
+[ 61%] Linking CXX executable flow_controller_test
+[ 61%] Built target trading_domain_store_client_adapter_test
+[ 62%] Building CXX object CMakeFiles/risk_policy_engine_test.dir/tests/unit/services/risk_policy_engine_test.cpp.o
+[ 62%] Built target market_bus_producer_test
+[ 62%] Building CXX object CMakeFiles/in_memory_portfolio_ledger_test.dir/tests/unit/services/in_memory_portfolio_ledger_test.cpp.o
+[ 62%] Linking CXX executable callback_dispatcher_test
+[ 62%] Built target event_dispatcher_test
+[ 62%] Linking CXX executable circuit_breaker_test
+[ 62%] Building CXX object CMakeFiles/ctp_position_ledger_test.dir/tests/unit/services/ctp_position_ledger_test.cpp.o
+[ 62%] Built target flow_controller_test
+[ 62%] Building CXX object CMakeFiles/ctp_close_offset_resolver_test.dir/tests/unit/services/ctp_close_offset_resolver_test.cpp.o
+[ 62%] Linking CXX executable fixed_decimal_test
+[ 62%] Built target callback_dispatcher_test
+[ 63%] Building CXX object CMakeFiles/ctp_account_ledger_test.dir/tests/unit/services/ctp_account_ledger_test.cpp.o
+[ 63%] Built target circuit_breaker_test
+[ 63%] Building CXX object CMakeFiles/pending_exit_store_test.dir/tests/unit/services/pending_exit_store_test.cpp.o
+[ 63%] Linking CXX executable basic_risk_engine_test
+[ 63%] Built target fixed_decimal_test
+[ 63%] Linking CXX executable risk_policy_engine_test
+[ 63%] Building CXX object CMakeFiles/trading_permission_controller_test.dir/tests/unit/services/trading_permission_controller_test.cpp.o
+[ 64%] Linking CXX executable in_memory_portfolio_ledger_test
+[ 64%] Built target basic_risk_engine_test
+[ 64%] Building CXX object CMakeFiles/self_trade_risk_engine_test.dir/tests/unit/services/self_trade_risk_engine_test.cpp.o
+[ 64%] Linking CXX executable ctp_position_ledger_test
+[ 64%] Built target risk_policy_engine_test
+[ 64%] Building CXX object CMakeFiles/risk_rule_executor_test.dir/tests/unit/risk/risk_rule_executor_test.cpp.o
+[ 64%] Linking CXX executable ctp_account_ledger_test
+[ 64%] Built target in_memory_portfolio_ledger_test
+[ 65%] Building CXX object CMakeFiles/rate_limiter_test.dir/tests/unit/risk/rate_limiter_test.cpp.o
+[ 65%] Linking CXX executable ctp_close_offset_resolver_test
+[ 65%] Built target ctp_position_ledger_test
+[ 65%] Building CXX object CMakeFiles/risk_manager_test.dir/tests/unit/risk/risk_manager_test.cpp.o
+[ 65%] Linking CXX executable pending_exit_store_test
+[ 65%] Built target ctp_account_ledger_test
+[ 66%] Building CXX object CMakeFiles/bar_aggregator_test.dir/tests/unit/services/bar_aggregator_test.cpp.o
+[ 67%] Linking CXX executable trading_permission_controller_test
+[ 67%] Linking CXX executable self_trade_risk_engine_test
+[ 67%] Built target ctp_close_offset_resolver_test
+[ 67%] Building CXX object CMakeFiles/market_bar_pipeline_test.dir/tests/unit/services/market_bar_pipeline_test.cpp.o
+[ 67%] Linking CXX executable rate_limiter_test
+[ 67%] Built target pending_exit_store_test
+[ 68%] Building CXX object CMakeFiles/dominant_contract_coordinator_test.dir/tests/unit/services/dominant_contract_coordinator_test.cpp.o
+[ 68%] Linking CXX executable risk_rule_executor_test
+[ 68%] Built target trading_permission_controller_test
+[ 68%] Building CXX object CMakeFiles/trading_session_calendar_test.dir/tests/unit/services/trading_session_calendar_test.cpp.o
+[ 68%] Built target self_trade_risk_engine_test
+[ 68%] Building CXX object CMakeFiles/market_data_csv_recorder_test.dir/tests/unit/services/market_data_csv_recorder_test.cpp.o
+[ 68%] Built target rate_limiter_test
+[ 68%] Building CXX object CMakeFiles/timeframe_state_fanout_test.dir/tests/unit/services/timeframe_state_fanout_test.cpp.o
+[ 68%] Built target risk_rule_executor_test
+[ 68%] Building CXX object CMakeFiles/order_state_machine_test.dir/tests/unit/services/order_state_machine_test.cpp.o
+[ 68%] Linking CXX executable risk_manager_test
+[ 68%] Linking CXX executable bar_aggregator_test
+[ 68%] Linking CXX executable trading_session_calendar_test
+[ 68%] Built target risk_manager_test
+[ 68%] Building CXX object CMakeFiles/timeout_cancel_tracker_test.dir/tests/unit/services/timeout_cancel_tracker_test.cpp.o
+[ 68%] Linking CXX executable dominant_contract_coordinator_test
+[ 68%] Linking CXX executable order_state_machine_test
+[ 68%] Built target bar_aggregator_test
+[ 68%] Linking CXX executable market_bar_pipeline_test
+[ 69%] Building CXX object CMakeFiles/execution_planner_test.dir/tests/unit/services/execution_planner_test.cpp.o
+[ 69%] Built target trading_session_calendar_test
+[ 69%] Building CXX object CMakeFiles/execution_router_test.dir/tests/unit/services/execution_router_test.cpp.o
+[ 69%] Linking CXX executable timeframe_state_fanout_test
+[ 69%] Built target dominant_contract_coordinator_test
+[ 69%] Building CXX object CMakeFiles/execution_engine_test.dir/tests/unit/services/execution_engine_test.cpp.o
+[ 69%] Linking CXX executable market_data_csv_recorder_test
+[ 69%] Built target order_state_machine_test
+[ 69%] Building CXX object CMakeFiles/order_manager_test.dir/tests/unit/services/order_manager_test.cpp.o
+[ 69%] Built target market_bar_pipeline_test
+[ 69%] Building CXX object CMakeFiles/position_manager_test.dir/tests/unit/services/position_manager_test.cpp.o
+[ 70%] Linking CXX executable timeout_cancel_tracker_test
+[ 70%] Built target timeframe_state_fanout_test
+[ 70%] Built target market_data_csv_recorder_test
+[ 70%] Building CXX object CMakeFiles/settlement_query_client_test.dir/tests/unit/services/settlement_query_client_test.cpp.o
+[ 70%] Building CXX object CMakeFiles/settlement_price_provider_test.dir/tests/unit/services/settlement_price_provider_test.cpp.o
+[ 70%] Built target timeout_cancel_tracker_test
+[ 71%] Building CXX object CMakeFiles/daily_settlement_service_test.dir/tests/unit/services/daily_settlement_service_test.cpp.o
+[ 71%] Linking CXX executable execution_router_test
+[ 71%] Linking CXX executable execution_planner_test
+[ 71%] Linking CXX executable position_manager_test
+[ 72%] Linking CXX executable order_manager_test
+[ 73%] Linking CXX executable settlement_price_provider_test
+[ 73%] Built target execution_router_test
+[ 73%] Building CXX object CMakeFiles/rule_market_state_engine_test.dir/tests/unit/services/rule_market_state_engine_test.cpp.o
+[ 73%] Built target execution_planner_test
+[ 73%] Building CXX object CMakeFiles/market_state_detector_test.dir/tests/unit/services/market_state_detector_test.cpp.o
+[ 73%] Built target position_manager_test
+[ 73%] Built target order_manager_test
+[ 73%] Building CXX object CMakeFiles/metric_registry_test.dir/tests/unit/monitoring/metric_registry_test.cpp.o
+[ 73%] Building CXX object CMakeFiles/parquet_data_feed_test.dir/tests/unit/backtest/parquet_data_feed_test.cpp.o
+[ 73%] Built target settlement_price_provider_test
+[ 73%] Building CXX object CMakeFiles/indicator_trace_parquet_writer_test.dir/tests/unit/backtest/indicator_trace_parquet_writer_test.cpp.o
+[ 73%] Linking CXX executable settlement_query_client_test
+[ 74%] Linking CXX executable rule_market_state_engine_test
+[ 74%] Linking CXX executable market_state_detector_test
+[ 74%] Linking CXX executable metric_registry_test
+[ 74%] Built target settlement_query_client_test
+[ 74%] Linking CXX executable execution_engine_test
+[ 74%] Building CXX object CMakeFiles/indicator_trace_csv_writer_test.dir/tests/unit/backtest/indicator_trace_csv_writer_test.cpp.o
+[ 75%] Linking CXX executable parquet_data_feed_test
+[ 75%] Built target market_state_detector_test
+[ 75%] Built target rule_market_state_engine_test
+[ 75%] Building CXX object CMakeFiles/sub_strategy_indicator_trace_parquet_writer_test.dir/tests/unit/backtest/sub_strategy_indicator_trace_parquet_writer_test.cpp.o
+[ 75%] Building CXX object CMakeFiles/sub_strategy_indicator_trace_csv_writer_test.dir/tests/unit/backtest/sub_strategy_indicator_trace_csv_writer_test.cpp.o
+[ 76%] Linking CXX executable indicator_trace_parquet_writer_test
+[ 76%] Built target metric_registry_test
+[ 76%] Building CXX object CMakeFiles/product_fee_config_loader_test.dir/tests/unit/backtest/product_fee_config_loader_test.cpp.o
+[ 76%] Built target execution_engine_test
+[ 77%] Building CXX object CMakeFiles/contract_expiry_calendar_test.dir/tests/unit/backtest/contract_expiry_calendar_test.cpp.o
+[ 77%] Built target parquet_data_feed_test
+[ 78%] Building CXX object CMakeFiles/backtest_data_feed_test.dir/tests/unit/backtest/backtest_data_feed_test.cpp.o
+[ 78%] Built target indicator_trace_parquet_writer_test
+[ 78%] Building CXX object CMakeFiles/live_data_feed_test.dir/tests/unit/backtest/live_data_feed_test.cpp.o
+[ 78%] Linking CXX executable indicator_trace_csv_writer_test
+[ 78%] Linking CXX executable sub_strategy_indicator_trace_parquet_writer_test
+[ 79%] Linking CXX executable sub_strategy_indicator_trace_csv_writer_test
+[ 79%] Linking CXX executable daily_settlement_service_test
+[ 79%] Built target indicator_trace_csv_writer_test
+[ 79%] Linking CXX executable product_fee_config_loader_test
+[ 79%] Building CXX object CMakeFiles/broker_test.dir/tests/unit/backtest/broker_test.cpp.o
+[ 79%] Linking CXX executable contract_expiry_calendar_test
+[ 79%] Built target sub_strategy_indicator_trace_csv_writer_test
+[ 79%] Built target sub_strategy_indicator_trace_parquet_writer_test
+[ 80%] Building CXX object CMakeFiles/engine_test.dir/tests/unit/backtest/engine_test.cpp.o
+[ 80%] Building CXX object CMakeFiles/performance_test.dir/tests/unit/backtest/performance_test.cpp.o
+[ 81%] Linking CXX executable live_data_feed_test
+[ 81%] Linking CXX executable backtest_data_feed_test
+[ 81%] Built target product_fee_config_loader_test
+[ 81%] Built target contract_expiry_calendar_test
+[ 81%] Building CXX object CMakeFiles/backtest_metrics_test.dir/tests/unit/apps/backtest_metrics_test.cpp.o
+[ 81%] Building CXX object CMakeFiles/backtest_result_export_test.dir/tests/unit/apps/backtest_result_export_test.cpp.o
+[ 81%] Built target daily_settlement_service_test
+[ 81%] Built target live_data_feed_test
+[ 81%] Building CXX object CMakeFiles/base_strategy_test.dir/tests/unit/strategy/base_strategy_test.cpp.o
+[ 81%] Building CXX object CMakeFiles/atomic_strategy_interface_test.dir/tests/unit/strategy/atomic_strategy_interface_test.cpp.o
+[ 81%] Built target backtest_data_feed_test
+[ 81%] Building CXX object CMakeFiles/atomic_factory_test.dir/tests/unit/strategy/atomic_factory_test.cpp.o
+[ 82%] Linking CXX executable performance_test
+[ 82%] Linking CXX executable broker_test
+[ 82%] Linking CXX executable base_strategy_test
+[ 82%] Linking CXX executable engine_test
+[ 82%] Built target performance_test
+[ 82%] Building CXX object CMakeFiles/strategy_registry_test.dir/tests/unit/strategy/strategy_registry_test.cpp.o
+[ 82%] Linking CXX executable atomic_strategy_interface_test
+[ 82%] Built target broker_test
+[ 82%] Building CXX object CMakeFiles/strategy_engine_test.dir/tests/unit/strategy/strategy_engine_test.cpp.o
+[ 82%] Linking CXX executable backtest_metrics_test
+[ 82%] Built target base_strategy_test
+[ 82%] Building CXX object CMakeFiles/signal_merger_test.dir/tests/unit/strategy/signal_merger_test.cpp.o
+[ 82%] Linking CXX executable atomic_factory_test
+[ 82%] Built target engine_test
+[ 82%] Building CXX object CMakeFiles/state_persistence_test.dir/tests/unit/strategy/state_persistence_test.cpp.o
+[ 82%] Built target atomic_strategy_interface_test
+[ 82%] Building CXX object CMakeFiles/demo_live_strategy_test.dir/tests/unit/strategy/demo_live_strategy_test.cpp.o
+[ 82%] Built target backtest_metrics_test
+[ 82%] Building CXX object CMakeFiles/composite_config_loader_test.dir/tests/unit/strategy/composite_config_loader_test.cpp.o
+[ 82%] Built target atomic_factory_test
+[ 82%] Building CXX object CMakeFiles/strategy_main_config_loader_test.dir/tests/unit/strategy/strategy_main_config_loader_test.cpp.o
+[ 82%] Linking CXX executable strategy_registry_test
+[ 83%] Linking CXX executable signal_merger_test
+[ 83%] Built target strategy_registry_test
+[ 84%] Linking CXX executable state_persistence_test
+[ 84%] Linking CXX executable demo_live_strategy_test
+[ 85%] Building CXX object CMakeFiles/composite_strategy_test.dir/tests/unit/strategy/composite_strategy_test.cpp.o
+[ 85%] Built target signal_merger_test
+[ 86%] Building CXX object CMakeFiles/atomic_strategies_test.dir/tests/unit/strategy/atomic_strategies_test.cpp.o
+[ 86%] Built target demo_live_strategy_test
+[ 86%] Building CXX object CMakeFiles/sma_test.dir/tests/unit/indicators/sma_test.cpp.o
+[ 86%] Built target state_persistence_test
+[ 86%] Building CXX object CMakeFiles/ema_test.dir/tests/unit/indicators/ema_test.cpp.o
+[ 86%] Linking CXX executable composite_config_loader_test
+[ 87%] Linking CXX executable strategy_main_config_loader_test
+[ 87%] Linking CXX executable backtest_result_export_test
+[ 87%] Built target composite_config_loader_test
+[ 88%] Building CXX object CMakeFiles/atr_test.dir/tests/unit/indicators/atr_test.cpp.o
+[ 88%] Built target strategy_main_config_loader_test
+[ 88%] Building CXX object CMakeFiles/kama_test.dir/tests/unit/indicators/kama_test.cpp.o
+[ 88%] Linking CXX executable ema_test
+[ 88%] Linking CXX executable sma_test
+[ 88%] Linking CXX executable strategy_engine_test
+[ 88%] Built target backtest_result_export_test
+[ 88%] Building CXX object CMakeFiles/adx_test.dir/tests/unit/indicators/adx_test.cpp.o
+[ 88%] Built target ema_test
+[ 88%] Built target sma_test
+[ 89%] Building CXX object CMakeFiles/backtest_replay_support_test.dir/tests/unit/apps/backtest_replay_support_test.cpp.o
+[ 90%] Building CXX object CMakeFiles/cli_support_test.dir/tests/unit/apps/cli_support_test.cpp.o
+[ 90%] Linking CXX executable atr_test
+[ 90%] Linking CXX executable atomic_strategies_test
+[ 90%] Built target strategy_engine_test
+[ 90%] Building CXX object CMakeFiles/rolling_config_test.dir/tests/unit/apps/rolling_config_test.cpp.o
+[ 91%] Linking CXX executable kama_test
+[ 91%] Linking CXX executable adx_test
+[ 91%] Built target atr_test
+[ 91%] Building CXX object CMakeFiles/window_generator_test.dir/tests/unit/apps/window_generator_test.cpp.o
+[ 91%] Built target atomic_strategies_test
+[ 91%] Building CXX object CMakeFiles/metric_extractor_test.dir/tests/unit/apps/metric_extractor_test.cpp.o
+[ 91%] Built target kama_test
+[ 91%] Building CXX object CMakeFiles/rolling_runner_fixed_test.dir/tests/unit/apps/rolling_runner_fixed_test.cpp.o
+[ 91%] Linking CXX executable cli_support_test
+[ 91%] Built target adx_test
+[ 91%] Building CXX object CMakeFiles/rolling_runner_optimize_test.dir/tests/unit/apps/rolling_runner_optimize_test.cpp.o
+[ 91%] Linking CXX executable rolling_config_test
+[ 91%] Linking CXX executable composite_strategy_test
+[ 91%] Built target cli_support_test
+[ 91%] Building CXX object CMakeFiles/oos_top10_validation_test.dir/tests/unit/apps/oos_top10_validation_test.cpp.o
+[ 92%] Linking CXX executable window_generator_test
+[ 92%] Built target rolling_config_test
+[ 92%] Building CXX object CMakeFiles/run_backtest_spec_parallel_smoke_test.dir/tests/unit/apps/run_backtest_spec_parallel_smoke_test.cpp.o
+[ 92%] Built target composite_strategy_test
+[ 92%] Building CXX object CMakeFiles/parameter_space_test.dir/tests/unit/optim/parameter_space_test.cpp.o
+[ 92%] Built target window_generator_test
+[ 92%] Building CXX object CMakeFiles/grid_search_test.dir/tests/unit/optim/grid_search_test.cpp.o
+[ 93%] Linking CXX executable metric_extractor_test
+[ 93%] Linking CXX executable parameter_space_test
+[ 93%] Linking CXX executable grid_search_test
+[ 93%] Built target metric_extractor_test
+[ 93%] Building CXX object CMakeFiles/random_search_test.dir/tests/unit/optim/random_search_test.cpp.o
+[ 93%] Built target parameter_space_test
+[ 93%] Building CXX object CMakeFiles/task_scheduler_test.dir/tests/unit/optim/task_scheduler_test.cpp.o
+[ 93%] Built target grid_search_test
+[ 94%] Building CXX object CMakeFiles/result_analyzer_test.dir/tests/unit/optim/result_analyzer_test.cpp.o
+[ 94%] Linking CXX executable rolling_runner_optimize_test
+[ 95%] Linking CXX executable rolling_runner_fixed_test
+[ 95%] Built target rolling_runner_optimize_test
+[ 95%] Building CXX object CMakeFiles/temp_config_generator_test.dir/tests/unit/optim/temp_config_generator_test.cpp.o
+[ 96%] Linking CXX executable oos_top10_validation_test
+[ 96%] Built target rolling_runner_fixed_test
+[ 96%] Building CXX object CMakeFiles/ops_cli_test.dir/tests/unit/apps/ops_cli_test.cpp.o
+[ 97%] Linking CXX executable task_scheduler_test
+[ 97%] Linking CXX executable random_search_test
+[ 97%] Built target task_scheduler_test
+[ 97%] Building CXX object CMakeFiles/simnow_wal_export_cli_test.dir/tests/unit/apps/simnow_wal_export_cli_test.cpp.o
+[ 97%] Built target random_search_test
+[ 97%] Built target oos_top10_validation_test
+[ 97%] Linking CXX executable result_analyzer_test
+[ 98%] Linking CXX executable ops_cli_test
+[ 98%] Built target result_analyzer_test
+[ 98%] Linking CXX executable simnow_wal_export_cli_test
+[ 98%] Built target ops_cli_test
+[ 98%] Built target simnow_wal_export_cli_test
+[ 99%] Linking CXX executable temp_config_generator_test
+[100%] Linking CXX executable run_backtest_spec_parallel_smoke_test
+[100%] Linking CXX executable backtest_replay_support_test
+[100%] Built target temp_config_generator_test
+[100%] Built target run_backtest_spec_parallel_smoke_test
+[100%] Built target backtest_replay_support_test

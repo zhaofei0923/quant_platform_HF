@@ -18,6 +18,8 @@ class TrailingStopLoss : public IStopLossStrategy, public IAtomicIndicatorTraceP
     void Init(const AtomicParams& params) override;
     std::string GetId() const override;
     void Reset() override;
+    bool ResetForMarketGap() override;
+    std::int32_t RequiredMarketWarmupBars() const override { return atr_period_ + 1; }
     std::vector<SignalIntent> OnState(const StateSnapshot7D& state,
                                       const AtomicStrategyContext& ctx) override;
     std::optional<AtomicIndicatorSnapshot> IndicatorSnapshot() const override;

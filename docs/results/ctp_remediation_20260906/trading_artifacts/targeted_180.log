@@ -1,0 +1,366 @@
+Internal ctest changing into directory: /tmp/quant-hft-trading-build
+Test project /tmp/quant-hft-trading-build
+        Start  13: CtpGatewayAdapterTest.FailedQueryBatchDoesNotExposePartialOrMixedCache
+  1/180 Test  #13: CtpGatewayAdapterTest.FailedQueryBatchDoesNotExposePartialOrMixedCache ................................................   Passed    0.00 sec
+        Start  14: CtpGatewayAdapterTest.EmptyFilteredBatchRemovesOnlyItsScopeAndRejectsOldGeneration
+  2/180 Test  #14: CtpGatewayAdapterTest.EmptyFilteredBatchRemovesOnlyItsScopeAndRejectsOldGeneration ....................................   Passed    0.00 sec
+        Start  15: CtpGatewayAdapterTest.ConnectSubscribeAndOrderFlow
+  3/180 Test  #15: CtpGatewayAdapterTest.ConnectSubscribeAndOrderFlow ....................................................................   Passed    0.00 sec
+        Start  16: CtpGatewayAdapterTest.PlaceOrderEmitsSubmitMappingBeforeOrderCallback
+  4/180 Test  #16: CtpGatewayAdapterTest.PlaceOrderEmitsSubmitMappingBeforeOrderCallback .................................................   Passed    0.00 sec
+        Start  17: CtpGatewayAdapterTest.DurablePrepareFailureProducesNoSubmissionOrOrderCallback
+  5/180 Test  #17: CtpGatewayAdapterTest.DurablePrepareFailureProducesNoSubmissionOrOrderCallback ........................................   Passed    0.00 sec
+        Start  18: CtpGatewayAdapterTest.ConnectionStateListenersAreIndependentAndRemovable
+  6/180 Test  #18: CtpGatewayAdapterTest.ConnectionStateListenersAreIndependentAndRemovable ..............................................   Passed    0.00 sec
+        Start  19: CtpGatewayAdapterTest.QueryAndOffsetApplySrc
+  7/180 Test  #19: CtpGatewayAdapterTest.QueryAndOffsetApplySrc ..........................................................................   Passed    0.00 sec
+        Start  20: CtpGatewayAdapterTest.QuerySnapshotsInSimulatedMode
+  8/180 Test  #20: CtpGatewayAdapterTest.QuerySnapshotsInSimulatedMode ...................................................................   Passed    0.00 sec
+        Start  21: CtpGatewayAdapterTest.CallbackCanReenterCancelOrderWithoutLockContention
+  9/180 Test  #21: CtpGatewayAdapterTest.CallbackCanReenterCancelOrderWithoutLockContention ..............................................   Passed    0.00 sec
+        Start  22: CtpGatewayAdapterTest.ConnectFailureExposesDiagnostic
+ 10/180 Test  #22: CtpGatewayAdapterTest.ConnectFailureExposesDiagnostic .................................................................   Passed    0.00 sec
+        Start  23: CtpGatewayAdapterTest.SuccessfulConnectClearsDiagnostic
+ 11/180 Test  #23: CtpGatewayAdapterTest.SuccessfulConnectClearsDiagnostic ...............................................................   Passed    0.00 sec
+        Start  24: CtpGatewayAdapterTest.NormalizeMarketSnapshotCleansInvalidValuesAndFallbacks
+ 12/180 Test  #24: CtpGatewayAdapterTest.NormalizeMarketSnapshotCleansInvalidValuesAndFallbacks ..........................................   Passed    0.00 sec
+        Start  25: CtpGatewayAdapterTest.NormalizeMarketSnapshotKeepsValidValues
+ 13/180 Test  #25: CtpGatewayAdapterTest.NormalizeMarketSnapshotKeepsValidValues .........................................................   Passed    0.00 sec
+        Start  26: CtpGatewayAdapterTest.ParsesExchangeTimestampAsAsiaShanghaiWithMilliseconds
+ 14/180 Test  #26: CtpGatewayAdapterTest.ParsesExchangeTimestampAsAsiaShanghaiWithMilliseconds ...........................................   Passed    0.00 sec
+        Start  27: CtpGatewayAdapterTest.AccountIdentityUsesInvestorAcrossSimulatedSnapshotsAndMappings
+ 15/180 Test  #27: CtpGatewayAdapterTest.AccountIdentityUsesInvestorAcrossSimulatedSnapshotsAndMappings ..................................   Passed    0.00 sec
+        Start  28: CtpGatewayAdapterTest.RealConnectionRejectsAnUnconfirmedInvestorBeforeSdkAccess
+ 16/180 Test  #28: CtpGatewayAdapterTest.RealConnectionRejectsAnUnconfirmedInvestorBeforeSdkAccess .......................................   Passed    0.00 sec
+        Start  29: CtpGatewayAdapterTest.RawInvestorIdentityHasPriorityAndUnknownIdentityStaysUnknown
+ 17/180 Test  #29: CtpGatewayAdapterTest.RawInvestorIdentityHasPriorityAndUnknownIdentityStaysUnknown ....................................   Passed    0.00 sec
+        Start  30: CtpGatewayAdapterTest.SimulatedTradingDayIsExplicitAndCopiedIntoPositionQueryMetadata
+ 18/180 Test  #30: CtpGatewayAdapterTest.SimulatedTradingDayIsExplicitAndCopiedIntoPositionQueryMetadata .................................   Passed    0.00 sec
+        Start  32: CTPTraderAdapterTest.DisconnectTriggersReconnectScheduling
+ 19/180 Test  #32: CTPTraderAdapterTest.DisconnectTriggersReconnectScheduling ............................................................   Passed    0.55 sec
+        Start  33: CTPTraderAdapterTest.ReadinessSnapshotReflectsDisconnectedRecoveryState
+ 20/180 Test  #33: CTPTraderAdapterTest.ReadinessSnapshotReflectsDisconnectedRecoveryState ...............................................   Passed    0.00 sec
+        Start  34: CTPTraderAdapterTest.ReconnectPerformsLoginAndConfirmSettlement
+ 21/180 Test  #34: CTPTraderAdapterTest.ReconnectPerformsLoginAndConfirmSettlement .......................................................   Passed    0.52 sec
+        Start  35: CTPTraderAdapterTest.ReconnectAttemptLimitUsesConnectConfig
+ 22/180 Test  #35: CTPTraderAdapterTest.ReconnectAttemptLimitUsesConnectConfig ...........................................................   Passed    0.01 sec
+        Start  36: CTPTraderAdapterTest.GatewayHealthyAfterExhaustionRestoresReadyState
+ 23/180 Test  #36: CTPTraderAdapterTest.GatewayHealthyAfterExhaustionRestoresReadyState ..................................................   Passed    0.03 sec
+        Start  37: CTPTraderAdapterTest.GatewayOwnedLoginIsNotRepeatedDuringRecoveryCycles
+ 24/180 Test  #37: CTPTraderAdapterTest.GatewayOwnedLoginIsNotRepeatedDuringRecoveryCycles ...............................................   Passed    0.01 sec
+        Start  38: CTPTraderAdapterTest.DisconnectCancelsPendingReconnectTimer
+ 25/180 Test  #38: CTPTraderAdapterTest.DisconnectCancelsPendingReconnectTimer ...........................................................   Passed    1.41 sec
+        Start  39: CTPTraderAdapterTest.RecoverOrdersAndTradesQueriesCtp
+ 26/180 Test  #39: CTPTraderAdapterTest.RecoverOrdersAndTradesQueriesCtp .................................................................   Passed    0.00 sec
+        Start  40: CTPTraderAdapterTest.DisconnectRejectsPendingLoginPromise
+ 27/180 Test  #40: CTPTraderAdapterTest.DisconnectRejectsPendingLoginPromise .............................................................   Passed    0.00 sec
+        Start  41: CTPTraderAdapterTest.LoginAsyncReturnsFutureAndResolvesOnSuccess
+ 28/180 Test  #41: CTPTraderAdapterTest.LoginAsyncReturnsFutureAndResolvesOnSuccess ......................................................   Passed    0.00 sec
+        Start  42: CTPTraderAdapterTest.LoginAsyncTimesOut
+ 29/180 Test  #42: CTPTraderAdapterTest.LoginAsyncTimesOut ...............................................................................   Passed    0.09 sec
+        Start  43: CTPTraderAdapterTest.PlaceOrderWithRefReturnsNonEmptyString
+ 30/180 Test  #43: CTPTraderAdapterTest.PlaceOrderWithRefReturnsNonEmptyString ...........................................................   Passed    0.00 sec
+        Start  44: CTPTraderAdapterTest.FinalDeliveryStopJoinsCallbackBeforeCapturedStateCanDie
+ 31/180 Test  #44: CTPTraderAdapterTest.FinalDeliveryStopJoinsCallbackBeforeCapturedStateCanDie ..........................................   Passed    0.03 sec
+        Start  45: CTPTraderAdapterTest.CriticalDispatchTimeoutTriggersCircuitBreakerCallback
+ 32/180 Test  #45: CTPTraderAdapterTest.CriticalDispatchTimeoutTriggersCircuitBreakerCallback ............................................   Passed    0.13 sec
+        Start  67: TradingDomainStoreClientAdapterTest.EveryApplyWriteFailureRollsBackAndCanBeReplayed
+ 33/180 Test  #67: TradingDomainStoreClientAdapterTest.EveryApplyWriteFailureRollsBackAndCanBeReplayed ...................................   Passed    0.00 sec
+        Start  68: TradingDomainStoreClientAdapterTest.ConcurrentSameAccountFillsDoNotLoseUpdates
+ 34/180 Test  #68: TradingDomainStoreClientAdapterTest.ConcurrentSameAccountFillsDoNotLoseUpdates ........................................   Passed    0.01 sec
+        Start  69: TradingDomainStoreClientAdapterTest.OutboxConsumersAcknowledgeIndependently
+ 35/180 Test  #69: TradingDomainStoreClientAdapterTest.OutboxConsumersAcknowledgeIndependently ...........................................   Passed    0.00 sec
+        Start  70: TradingDomainStoreClientAdapterTest.RuntimeEnvironmentBindingCannotBeReusedAcrossBrokersOrEnvironments
+ 36/180 Test  #70: TradingDomainStoreClientAdapterTest.RuntimeEnvironmentBindingCannotBeReusedAcrossBrokersOrEnvironments ................   Passed    0.00 sec
+        Start  71: TradingDomainStoreClientAdapterTest.AtomicApplyDeduplicatesAndQuarantinesPayloadConflict
+ 37/180 Test  #71: TradingDomainStoreClientAdapterTest.AtomicApplyDeduplicatesAndQuarantinesPayloadConflict ..............................   Passed    0.00 sec
+        Start  72: TradingDomainStoreClientAdapterTest.ReceiptGapsAdvanceOnlyWhenEveryRecordIsApplied
+ 38/180 Test  #72: TradingDomainStoreClientAdapterTest.ReceiptGapsAdvanceOnlyWhenEveryRecordIsApplied ....................................   Passed    0.00 sec
+        Start  73: TradingDomainStoreClientAdapterTest.ReceiptCannotBeReboundToAnotherTradeOrChecksum
+ 39/180 Test  #73: TradingDomainStoreClientAdapterTest.ReceiptCannotBeReboundToAnotherTradeOrChecksum ....................................   Passed    0.00 sec
+        Start  74: TradingDomainStoreClientAdapterTest.DirectionAndTradingDayArePartOfIdentity
+ 40/180 Test  #74: TradingDomainStoreClientAdapterTest.DirectionAndTradingDayArePartOfIdentity ...........................................   Passed    0.00 sec
+        Start  75: TradingDomainStoreClientAdapterTest.ExactCloseAllocationKeepsSidesAndHedgeBucketsSeparate
+ 41/180 Test  #75: TradingDomainStoreClientAdapterTest.ExactCloseAllocationKeepsSidesAndHedgeBucketsSeparate .............................   Passed    0.00 sec
+        Start  76: TradingDomainStoreClientAdapterTest.CloseCannotConsumeAnotherHedgeBook
+ 42/180 Test  #76: TradingDomainStoreClientAdapterTest.CloseCannotConsumeAnotherHedgeBook ................................................   Passed    0.00 sec
+        Start  77: TradingDomainStoreClientAdapterTest.RuntimeAccountRejectsRawBackfillAndUnattributedTrade
+ 43/180 Test  #77: TradingDomainStoreClientAdapterTest.RuntimeAccountRejectsRawBackfillAndUnattributedTrade ..............................   Passed    0.00 sec
+        Start  78: TradingDomainStoreClientAdapterTest.BrokerBaselineCoversHistoryWithoutAddingAgain
+ 44/180 Test  #78: TradingDomainStoreClientAdapterTest.BrokerBaselineCoversHistoryWithoutAddingAgain .....................................   Passed    0.00 sec
+        Start  79: TradingDomainStoreClientAdapterTest.LiveGenericCloseRequiresRuleAndUsesItsExactAllocation
+ 45/180 Test  #79: TradingDomainStoreClientAdapterTest.LiveGenericCloseRequiresRuleAndUsesItsExactAllocation .............................   Passed    0.00 sec
+        Start  80: TradingDomainStoreClientAdapterTest.VerifiedOpeningPriceValuationPersistsComputedProfitWithoutBlockingUnvaluedFacts
+ 46/180 Test  #80: TradingDomainStoreClientAdapterTest.VerifiedOpeningPriceValuationPersistsComputedProfitWithoutBlockingUnvaluedFacts ...   Passed    0.00 sec
+        Start  81: TradingDomainStoreClientAdapterTest.InMemoryTransactionRollsBackOnFalseAndException
+ 47/180 Test  #81: TradingDomainStoreClientAdapterTest.InMemoryTransactionRollsBackOnFalseAndException ...................................   Passed    0.00 sec
+        Start  82: TradingDomainStoreClientAdapterTest.TradingDayAdvanceIsAtomicIdempotentAndEmitsPositionOutbox
+ 48/180 Test  #82: TradingDomainStoreClientAdapterTest.TradingDayAdvanceIsAtomicIdempotentAndEmitsPositionOutbox .........................   Passed    0.00 sec
+        Start  83: TradingDomainStoreClientAdapterTest.WritesDomainRowsToConfiguredSchema
+ 49/180 Test  #83: TradingDomainStoreClientAdapterTest.WritesDomainRowsToConfiguredSchema ................................................   Passed    0.00 sec
+        Start  84: TradingDomainStoreClientAdapterTest.OrderLifecycleUpdatesOneAccountScopedRow
+ 50/180 Test  #84: TradingDomainStoreClientAdapterTest.OrderLifecycleUpdatesOneAccountScopedRow ..........................................   Passed    0.00 sec
+        Start  85: TradingDomainStoreClientAdapterTest.RejectsMissingRequiredFields
+ 51/180 Test  #85: TradingDomainStoreClientAdapterTest.RejectsMissingRequiredFields ......................................................   Passed    0.00 sec
+        Start  86: TradingDomainStoreClientAdapterTest.PersistsTimestampWithUtcOffsetSuffix
+ 52/180 Test  #86: TradingDomainStoreClientAdapterTest.PersistsTimestampWithUtcOffsetSuffix ..............................................   Passed    0.00 sec
+        Start  87: TradingDomainStoreClientAdapterTest.SkipsDuplicateOrderAndTradeByBusinessKeys
+ 53/180 Test  #87: TradingDomainStoreClientAdapterTest.SkipsDuplicateOrderAndTradeByBusinessKeys .........................................   Passed    0.00 sec
+        Start 127: RiskManagerTest.CommittedTradeStatisticsRestoreAndDeduplicateByDay
+ 54/180 Test #127: RiskManagerTest.CommittedTradeStatisticsRestoreAndDeduplicateByDay ....................................................   Passed    0.00 sec
+        Start 128: RiskManagerTest.CheckOrderMaxVolumeExceededRejects
+ 55/180 Test #128: RiskManagerTest.CheckOrderMaxVolumeExceededRejects ....................................................................   Passed    0.00 sec
+        Start 129: RiskManagerTest.CheckOrderSelfTradePreventionCrossPriceRejects
+ 56/180 Test #129: RiskManagerTest.CheckOrderSelfTradePreventionCrossPriceRejects ........................................................   Passed    0.00 sec
+        Start 130: RiskManagerTest.SelfTradePreventionCoversEveryOpenCloseCombination
+ 57/180 Test #130: RiskManagerTest.SelfTradePreventionCoversEveryOpenCloseCombination ....................................................   Passed    0.00 sec
+        Start 131: RiskManagerTest.CheckOrderSelfTradePreventionRejectsAcrossStrategiesInSameAccount
+ 58/180 Test #131: RiskManagerTest.CheckOrderSelfTradePreventionRejectsAcrossStrategiesInSameAccount .....................................   Passed    0.00 sec
+        Start 132: RiskManagerTest.CheckOrderOrderRateExceededRejects
+ 59/180 Test #132: RiskManagerTest.CheckOrderOrderRateExceededRejects ....................................................................   Passed    0.00 sec
+        Start 133: RiskManagerTest.CheckOrderSimSubaccountCapitalExceededRejects
+ 60/180 Test #133: RiskManagerTest.CheckOrderSimSubaccountCapitalExceededRejects .........................................................   Passed    0.00 sec
+        Start 134: RiskManagerTest.CheckOrderSimSubaccountUsesContextContractMultiplier
+ 61/180 Test #134: RiskManagerTest.CheckOrderSimSubaccountUsesContextContractMultiplier ..................................................   Passed    0.00 sec
+        Start 135: RiskManagerTest.CheckCancelCancelRateExceededRejects
+ 62/180 Test #135: RiskManagerTest.CheckCancelCancelRateExceededRejects ..................................................................   Passed    0.00 sec
+        Start 136: RiskManagerTest.CheckCancelDailyCancelCountExceededRejects
+ 63/180 Test #136: RiskManagerTest.CheckCancelDailyCancelCountExceededRejects ............................................................   Passed    0.00 sec
+        Start 137: RiskManagerTest.RiskRuleLoadFromYamlSuccess
+ 64/180 Test #137: RiskManagerTest.RiskRuleLoadFromYamlSuccess ...........................................................................   Passed    0.00 sec
+        Start 138: RiskManagerTest.RiskManagerReloadRulesDynamicUpdate
+ 65/180 Test #138: RiskManagerTest.RiskManagerReloadRulesDynamicUpdate ...................................................................   Passed    0.00 sec
+        Start 139: RiskManagerTest.InitializeStopsExistingDynamicReloadThread
+ 66/180 Test #139: RiskManagerTest.InitializeStopsExistingDynamicReloadThread ............................................................   Passed    0.00 sec
+        Start 140: RiskManagerTest.VirtualClockRefillsTheSameRateLimiterWithoutWallClockSleep
+ 67/180 Test #140: RiskManagerTest.VirtualClockRefillsTheSameRateLimiterWithoutWallClockSleep ............................................   Passed    0.00 sec
+        Start 141: RiskManagerTest.DestructionInterruptsLongReloadInterval
+ 68/180 Test #141: RiskManagerTest.DestructionInterruptsLongReloadInterval ...............................................................   Passed    0.02 sec
+        Start 152: ExecutionEngineTest.PlaceOrderAsyncReturnsOrderRef
+ 69/180 Test #152: ExecutionEngineTest.PlaceOrderAsyncReturnsOrderRef ....................................................................   Passed    0.00 sec
+        Start 153: ExecutionEngineTest.UnknownSubmissionKeepsReservationWhileDefiniteFailureReleasesIt
+ 70/180 Test #153: ExecutionEngineTest.UnknownSubmissionKeepsReservationWhileDefiniteFailureReleasesIt ...................................   Passed    0.00 sec
+        Start 154: ExecutionEngineTest.ConcurrentCrossingOrdersAreSerializedThroughRiskAndRegistration
+ 71/180 Test #154: ExecutionEngineTest.ConcurrentCrossingOrdersAreSerializedThroughRiskAndRegistration ...................................   Passed    0.00 sec
+        Start 155: ExecutionEngineTest.ActiveOrderLimitIncludesUnknownAndSerializesConcurrentAdmission
+ 72/180 Test #155: ExecutionEngineTest.ActiveOrderLimitIncludesUnknownAndSerializesConcurrentAdmission ...................................   Passed    0.00 sec
+        Start 156: ExecutionEngineTest.TerminalOrderReportDoesNotDiscardUnbookedTrade
+ 73/180 Test #156: ExecutionEngineTest.TerminalOrderReportDoesNotDiscardUnbookedTrade ....................................................   Passed    0.00 sec
+        Start 157: ExecutionEngineTest.OrderPersistenceFailureHoldsReceiptButDoesNotDiscardRealFill
+ 74/180 Test #157: ExecutionEngineTest.OrderPersistenceFailureHoldsReceiptButDoesNotDiscardRealFill ......................................   Passed    0.00 sec
+        Start 158: ExecutionEngineTest.PlaceOrderRiskRejectReturnsFailedResult
+ 75/180 Test #158: ExecutionEngineTest.PlaceOrderRiskRejectReturnsFailedResult ...........................................................   Passed    0.00 sec
+        Start 159: ExecutionEngineTest.PlaceOrderRiskContextUsesResolvedContractMultiplier
+ 76/180 Test #159: ExecutionEngineTest.PlaceOrderRiskContextUsesResolvedContractMultiplier ...............................................   Passed    0.00 sec
+        Start 160: ExecutionEngineTest.CircuitBreakerOpenBlocksNewOrder
+ 77/180 Test #160: ExecutionEngineTest.CircuitBreakerOpenBlocksNewOrder ..................................................................   Passed    0.00 sec
+        Start 161: ExecutionEngineTest.OrderStateTransitionValidSequence
+ 78/180 Test #161: ExecutionEngineTest.OrderStateTransitionValidSequence .................................................................   Passed    0.00 sec
+        Start 162: ExecutionEngineTest.OrderStateTransitionInvalidSequenceRejected
+ 79/180 Test #162: ExecutionEngineTest.OrderStateTransitionInvalidSequenceRejected .......................................................   Passed    0.00 sec
+        Start 163: ExecutionEngineTest.CancelActionRejectDoesNotBlockLateTradeFill
+ 80/180 Test #163: ExecutionEngineTest.CancelActionRejectDoesNotBlockLateTradeFill .......................................................   Passed    0.00 sec
+        Start 164: ExecutionEngineTest.DuplicateOrderEventIgnored
+ 81/180 Test #164: ExecutionEngineTest.DuplicateOrderEventIgnored ........................................................................   Passed    0.00 sec
+        Start 165: ExecutionEngineTest.CancelOrderAsyncSuccessReturnsTrue
+ 82/180 Test #165: ExecutionEngineTest.CancelOrderAsyncSuccessReturnsTrue ................................................................   Passed    0.06 sec
+        Start 166: ExecutionEngineTest.CancelOrderAsyncRetryOnFailureEventuallyReturnsFalse
+ 83/180 Test #166: ExecutionEngineTest.CancelOrderAsyncRetryOnFailureEventuallyReturnsFalse ..............................................   Passed    0.00 sec
+        Start 167: ExecutionEngineTest.PositionUpdateAfterTradeRedisAndPgConsistent
+ 84/180 Test #167: ExecutionEngineTest.PositionUpdateAfterTradeRedisAndPgConsistent ......................................................   Passed    0.00 sec
+        Start 168: ExecutionEngineTest.QueryTradingAccountAsyncReturnsSnapshot
+ 85/180 Test #168: ExecutionEngineTest.QueryTradingAccountAsyncReturnsSnapshot ...........................................................   Passed    0.00 sec
+        Start 169: ExecutionEngineTest.EmptyPositionQueryCompletesAfterDispatcherCallback
+ 86/180 Test #169: ExecutionEngineTest.EmptyPositionQueryCompletesAfterDispatcherCallback ................................................   Passed    0.01 sec
+        Start 170: OrderManagerTest.ValidStateTransitionAndPersistence
+ 87/180 Test #170: OrderManagerTest.ValidStateTransitionAndPersistence ...................................................................   Passed    0.00 sec
+        Start 171: OrderManagerTest.PersistenceFailureDoesNotMarkEventAndRetryWritesState
+ 88/180 Test #171: OrderManagerTest.PersistenceFailureDoesNotMarkEventAndRetryWritesState ................................................   Passed    0.00 sec
+        Start 172: OrderManagerTest.DurableMarkerDoesNotSkipProcessLocalRecovery
+ 89/180 Test #172: OrderManagerTest.DurableMarkerDoesNotSkipProcessLocalRecovery .........................................................   Passed    0.00 sec
+        Start 173: OrderManagerTest.DuplicateEventIgnoredByIdempotency
+ 90/180 Test #173: OrderManagerTest.DuplicateEventIgnoredByIdempotency ...................................................................   Passed    0.00 sec
+        Start 174: OrderManagerTest.InvalidTransitionRejected
+ 91/180 Test #174: OrderManagerTest.InvalidTransitionRejected ............................................................................   Passed    0.00 sec
+        Start 175: OrderManagerTest.TradeEventIdempotentByTradeId
+ 92/180 Test #175: OrderManagerTest.TradeEventIdempotentByTradeId ........................................................................   Passed    0.00 sec
+        Start 176: OrderManagerTest.TradeEventUsesLastTradeVolumeWhenCumulativeFilledVolumeAdvances
+ 93/180 Test #176: OrderManagerTest.TradeEventUsesLastTradeVolumeWhenCumulativeFilledVolumeAdvances ......................................   Passed    0.00 sec
+        Start 177: OrderManagerTest.CancelActionRejectedDoesNotMakeOrderTerminal
+ 94/180 Test #177: OrderManagerTest.CancelActionRejectedDoesNotMakeOrderTerminal .........................................................   Passed    0.00 sec
+        Start 178: OrderManagerTest.GetActiveOrdersByStrategyFiltersCorrectly
+ 95/180 Test #178: OrderManagerTest.GetActiveOrdersByStrategyFiltersCorrectly ............................................................   Passed    0.00 sec
+        Start 179: OrderManagerTest.ReplaysDurableLocalRejectionWithoutBrokerOrderRef
+ 96/180 Test #179: OrderManagerTest.ReplaysDurableLocalRejectionWithoutBrokerOrderRef ....................................................   Passed    0.00 sec
+        Start 180: OrderManagerTest.GetActiveOrdersByAccountSpansStrategies
+ 97/180 Test #180: OrderManagerTest.GetActiveOrdersByAccountSpansStrategies ..............................................................   Passed    0.00 sec
+        Start 209: StrategyEngineTest.DispatchesStateAndOrderEventsToAllStrategies
+ 98/180 Test #209: StrategyEngineTest.DispatchesStateAndOrderEventsToAllStrategies .......................................................   Passed    0.01 sec
+        Start 210: StrategyEngineTest.DrainBarrierWaitsForCallbackCompletion
+ 99/180 Test #210: StrategyEngineTest.DrainBarrierWaitsForCallbackCompletion .............................................................   Passed    0.11 sec
+        Start 211: StrategyEngineTest.DispatchesMarketTicksToAllStrategies
+100/180 Test #211: StrategyEngineTest.DispatchesMarketTicksToAllStrategies ...............................................................   Passed    0.01 sec
+        Start 212: StrategyEngineTest.StartsLaunchSpecsWithPerStrategyMetadata
+101/180 Test #212: StrategyEngineTest.StartsLaunchSpecsWithPerStrategyMetadata ...........................................................   Passed    0.00 sec
+        Start 213: StrategyEngineTest.RoutesOrderEventByStrategyId
+102/180 Test #213: StrategyEngineTest.RoutesOrderEventByStrategyId .......................................................................   Passed    0.01 sec
+        Start 214: StrategyEngineTest.CountsUnmatchedOrderEvents
+103/180 Test #214: StrategyEngineTest.CountsUnmatchedOrderEvents .........................................................................   Passed    0.01 sec
+        Start 215: StrategyEngineTest.IsolatesStrategyExceptionsInOrderDispatch
+104/180 Test #215: StrategyEngineTest.IsolatesStrategyExceptionsInOrderDispatch ..........................................................   Passed    0.01 sec
+        Start 216: StrategyEngineTest.TriggersTimerCallbacks
+105/180 Test #216: StrategyEngineTest.TriggersTimerCallbacks .............................................................................   Passed    0.01 sec
+        Start 217: StrategyEngineTest.DispatchesAccountSnapshotsToAllStrategies
+106/180 Test #217: StrategyEngineTest.DispatchesAccountSnapshotsToAllStrategies ..........................................................   Passed    0.01 sec
+        Start 218: StrategyEngineTest.CollectAllMetricsReturnsCachedMetrics
+107/180 Test #218: StrategyEngineTest.CollectAllMetricsReturnsCachedMetrics ..............................................................   Passed    0.01 sec
+        Start 219: StrategyEngineTest.LoadsAndSnapshotsStateWithPersistenceHook
+108/180 Test #219: StrategyEngineTest.LoadsAndSnapshotsStateWithPersistenceHook ..........................................................   Passed    0.01 sec
+        Start 220: StrategyEngineTest.RejectsAdmissionExplicitlyWithoutDroppingAcceptedEvents
+109/180 Test #220: StrategyEngineTest.RejectsAdmissionExplicitlyWithoutDroppingAcceptedEvents ............................................   Passed    0.08 sec
+        Start 221: StrategyEngineTest.ContractSwitchWarmsWithoutEmittingAndStampsNextIntent
+110/180 Test #221: StrategyEngineTest.ContractSwitchWarmsWithoutEmittingAndStampsNextIntent ..............................................   Passed    0.01 sec
+        Start 222: StrategyEngineTest.RetainsFilledOrderAndReportsReliableAdmissionOverflow
+111/180 Test #222: StrategyEngineTest.RetainsFilledOrderAndReportsReliableAdmissionOverflow ..............................................   Passed    0.00 sec
+        Start 223: StrategyEngineTest.DeadlineMarkerPreservesFifoAndHealthRemainsReadableWhileWorkerBlocked
+112/180 Test #223: StrategyEngineTest.DeadlineMarkerPreservesFifoAndHealthRemainsReadableWhileWorkerBlocked ..............................   Passed    0.01 sec
+        Start 224: StrategyEngineTest.StopCompletesQueuedControlPromiseBeforeBlockedWorkerFinishes
+113/180 Test #224: StrategyEngineTest.StopCompletesQueuedControlPromiseBeforeBlockedWorkerFinishes .......................................   Passed    0.01 sec
+        Start 225: StrategyEngineTest.CommittedDeliveryAcknowledgesOnlyAfterSuccessfulSnapshot
+114/180 Test #225: StrategyEngineTest.CommittedDeliveryAcknowledgesOnlyAfterSuccessfulSnapshot ...........................................   Passed    0.00 sec
+        Start 226: StrategyEngineTest.MarketGapRecoveryRequiresCompleteWarmupAndPersistsBeforeSuccess
+115/180 Test #226: StrategyEngineTest.MarketGapRecoveryRequiresCompleteWarmupAndPersistsBeforeSuccess ....................................   Passed    0.00 sec
+        Start 227: StrategyEngineTest.MarketGapEvidenceRejectsPartialBarsAndStaleGenerationAcknowledgement
+116/180 Test #227: StrategyEngineTest.MarketGapEvidenceRejectsPartialBarsAndStaleGenerationAcknowledgement ...............................   Passed    0.00 sec
+        Start 229: StatePersistenceTest.SavesAndLoadsStrategyState
+117/180 Test #229: StatePersistenceTest.SavesAndLoadsStrategyState .......................................................................   Passed    0.00 sec
+        Start 230: StatePersistenceTest.ExpiresWhenTtlElapsed
+118/180 Test #230: StatePersistenceTest.ExpiresWhenTtlElapsed ............................................................................   Passed    2.01 sec
+        Start 231: StatePersistenceTest.FileBackendSavesAndLoadsStrategyState
+119/180 Test #231: StatePersistenceTest.FileBackendSavesAndLoadsStrategyState ............................................................   Passed    0.01 sec
+        Start 232: StatePersistenceTest.FailedReplacePreservesExistingDestination
+120/180 Test #232: StatePersistenceTest.FailedReplacePreservesExistingDestination ........................................................   Passed    0.01 sec
+        Start 233: StatePersistenceTest.FileSyncFailureKeepsPreviousSnapshotAndAllowsRetry
+121/180 Test #233: StatePersistenceTest.FileSyncFailureKeepsPreviousSnapshotAndAllowsRetry ...............................................   Passed    0.01 sec
+        Start 234: StatePersistenceTest.DirectorySyncFailureDoesNotReportDurableSuccess
+122/180 Test #234: StatePersistenceTest.DirectorySyncFailureDoesNotReportDurableSuccess ..................................................   Passed    0.01 sec
+        Start 238: CompositeStrategyTest.DispatchesOnlyEnabledSubStrategies
+123/180 Test #238: CompositeStrategyTest.DispatchesOnlyEnabledSubStrategies ..............................................................   Passed    0.00 sec
+        Start 239: CompositeStrategyTest.FiltersStateAndOrderEventsByProductId
+124/180 Test #239: CompositeStrategyTest.FiltersStateAndOrderEventsByProductId ...........................................................   Passed    0.00 sec
+        Start 240: CompositeStrategyTest.PendingOpenGateBlocksSameProductUntilTerminalEvent
+125/180 Test #240: CompositeStrategyTest.PendingOpenGateBlocksSameProductUntilTerminalEvent ..............................................   Passed    0.00 sec
+        Start 241: CompositeStrategyTest.PendingOpenGateIsProductScoped
+126/180 Test #241: CompositeStrategyTest.PendingOpenGateIsProductScoped ..................................................................   Passed    0.00 sec
+        Start 242: CompositeStrategyTest.ExistingProductPositionBlocksDifferentContractOpen
+127/180 Test #242: CompositeStrategyTest.ExistingProductPositionBlocksDifferentContractOpen ..............................................   Passed    0.00 sec
+        Start 243: CompositeStrategyTest.ReconcileNetPositionsFlattensStaleBelief
+128/180 Test #243: CompositeStrategyTest.ReconcileNetPositionsFlattensStaleBelief ........................................................   Passed    0.00 sec
+        Start 244: CompositeStrategyTest.ReconcileIgnoresAndClearsNonMatchingProductPositions
+129/180 Test #244: CompositeStrategyTest.ReconcileIgnoresAndClearsNonMatchingProductPositions ............................................   Passed    0.00 sec
+        Start 245: CompositeStrategyTest.ReconcileNetPositionsNoopWhenBeliefMatchesAuthoritative
+130/180 Test #245: CompositeStrategyTest.ReconcileNetPositionsNoopWhenBeliefMatchesAuthoritative .........................................   Passed    0.00 sec
+        Start 246: CompositeStrategyTest.ReconcileBackfillsAvgOpenForAdoptedPosition
+131/180 Test #246: CompositeStrategyTest.ReconcileBackfillsAvgOpenForAdoptedPosition .....................................................   Passed    0.00 sec
+        Start 247: CompositeStrategyTest.ReconcileBackfillsMissingOwnerForMatchingSingleStrategyPosition
+132/180 Test #247: CompositeStrategyTest.ReconcileBackfillsMissingOwnerForMatchingSingleStrategyPosition .................................   Passed    0.00 sec
+        Start 248: CompositeStrategyTest.BacktestTickBackfillsMissingOwnerForSingleStrategyPosition
+133/180 Test #248: CompositeStrategyTest.BacktestTickBackfillsMissingOwnerForSingleStrategyPosition ......................................   Passed    0.00 sec
+        Start 249: CompositeStrategyTest.BacktestTickKeepsMissingOwnerAmbiguousWithMultipleStrategies
+134/180 Test #249: CompositeStrategyTest.BacktestTickKeepsMissingOwnerAmbiguousWithMultipleStrategies ....................................   Passed    0.00 sec
+        Start 250: CompositeStrategyTest.ReconcileDoesNotOverwriteExistingAvgOpen
+135/180 Test #250: CompositeStrategyTest.ReconcileDoesNotOverwriteExistingAvgOpen ........................................................   Passed    0.00 sec
+        Start 251: CompositeStrategyTest.DispatchesSubStrategiesByTimeframeMinutes
+136/180 Test #251: CompositeStrategyTest.DispatchesSubStrategiesByTimeframeMinutes .......................................................   Passed    0.00 sec
+        Start 252: CompositeStrategyTest.MarketRegimeFilterAppliesOnlyToOpenSignals
+137/180 Test #252: CompositeStrategyTest.MarketRegimeFilterAppliesOnlyToOpenSignals ......................................................   Passed    0.00 sec
+        Start 253: CompositeStrategyTest.EmitsSameCycleCloseAndReverseOpenForOwnedPosition
+138/180 Test #253: CompositeStrategyTest.EmitsSameCycleCloseAndReverseOpenForOwnedPosition ...............................................   Passed    0.00 sec
+        Start 254: CompositeStrategyTest.ReverseOpenCanBeDisabledPerSubStrategy
+139/180 Test #254: CompositeStrategyTest.ReverseOpenCanBeDisabledPerSubStrategy ..........................................................   Passed    0.00 sec
+        Start 255: CompositeStrategyTest.RepeatedReverseCloseTraceUsesUniqueExchangeOrderIdForPositionSync
+140/180 Test #255: CompositeStrategyTest.RepeatedReverseCloseTraceUsesUniqueExchangeOrderIdForPositionSync ...............................   Passed    0.00 sec
+        Start 256: CompositeStrategyTest.ReverseOpenDoesNotBypassHigherPriorityCloseSignals
+141/180 Test #256: CompositeStrategyTest.ReverseOpenDoesNotBypassHigherPriorityCloseSignals ..............................................   Passed    0.00 sec
+        Start 257: CompositeStrategyTest.BuiltinTrendStrategyReverseOpenHonorsAllowReverseSetting
+142/180 Test #257: CompositeStrategyTest.BuiltinTrendStrategyReverseOpenHonorsAllowReverseSetting ........................................   Passed    0.00 sec
+        Start 258: CompositeStrategyTest.TickAwareSubStrategySignalsExitThroughCompositeBacktestTick
+143/180 Test #258: CompositeStrategyTest.TickAwareSubStrategySignalsExitThroughCompositeBacktestTick .....................................   Passed    0.00 sec
+        Start 259: CompositeStrategyTest.TickAwareSubStrategySignalsExitThroughCompositeMarketTick
+144/180 Test #259: CompositeStrategyTest.TickAwareSubStrategySignalsExitThroughCompositeMarketTick .......................................   Passed    0.00 sec
+        Start 260: CompositeStrategyTest.MergesByPriorityThenVolumeThenTimestampThenTraceId
+145/180 Test #260: CompositeStrategyTest.MergesByPriorityThenVolumeThenTimestampThenTraceId ..............................................   Passed    0.00 sec
+        Start 261: CompositeStrategyTest.RejectsNonBacktestRunType
+146/180 Test #261: CompositeStrategyTest.RejectsNonBacktestRunType .......................................................................   Passed    0.00 sec
+        Start 262: CompositeStrategyTest.AllowsNonBacktestRunTypeWhenEnabled
+147/180 Test #262: CompositeStrategyTest.AllowsNonBacktestRunTypeWhenEnabled .............................................................   Passed    0.00 sec
+        Start 263: CompositeStrategyTest.AppliesRunModeOverridesBeforeAtomicInit
+148/180 Test #263: CompositeStrategyTest.AppliesRunModeOverridesBeforeAtomicInit .........................................................   Passed    0.00 sec
+        Start 264: CompositeStrategyTest.TimeFilterStrategiesCanBlockOpenSignals
+149/180 Test #264: CompositeStrategyTest.TimeFilterStrategiesCanBlockOpenSignals .........................................................   Passed    0.00 sec
+        Start 265: CompositeStrategyTest.SubStrategyForbidOpenWindowsBlockOnlyMatchingStrategy
+150/180 Test #265: CompositeStrategyTest.SubStrategyForbidOpenWindowsBlockOnlyMatchingStrategy ...........................................   Passed    0.00 sec
+        Start 266: CompositeStrategyTest.ForceCloseWindowsAlsoBlockOpeningSignals
+151/180 Test #266: CompositeStrategyTest.ForceCloseWindowsAlsoBlockOpeningSignals ........................................................   Passed    0.00 sec
+        Start 267: CompositeStrategyTest.ForbidOpenWindowsBlockOpenButAllowCloseSignals
+152/180 Test #267: CompositeStrategyTest.ForbidOpenWindowsBlockOpenButAllowCloseSignals ..................................................   Passed    0.00 sec
+        Start 268: CompositeStrategyTest.SimForbidOpenWindowsUseMultiMinuteSignalDecisionTime
+153/180 Test #268: CompositeStrategyTest.SimForbidOpenWindowsUseMultiMinuteSignalDecisionTime ............................................   Passed    0.00 sec
+        Start 269: CompositeStrategyTest.TimeFilterUsesMultiMinuteSignalDecisionTime
+154/180 Test #269: CompositeStrategyTest.TimeFilterUsesMultiMinuteSignalDecisionTime .....................................................   Passed    0.00 sec
+        Start 270: CompositeStrategyTest.DailyMaxLossGuardBlocksOnlySameDayOpenSignals
+155/180 Test #270: CompositeStrategyTest.DailyMaxLossGuardBlocksOnlySameDayOpenSignals ...................................................   Passed    0.00 sec
+        Start 271: CompositeStrategyTest.DailyMaxLossGuardUsesDynamicRiskBudgetFromAccountEquity
+156/180 Test #271: CompositeStrategyTest.DailyMaxLossGuardUsesDynamicRiskBudgetFromAccountEquity .........................................   Passed    0.00 sec
+        Start 272: CompositeStrategyTest.ConsecutiveLossGuardPausesOpenSignalsUntilNextDay
+157/180 Test #272: CompositeStrategyTest.ConsecutiveLossGuardPausesOpenSignalsUntilNextDay ...............................................   Passed    0.00 sec
+        Start 273: CompositeStrategyTest.RejectsInvalidSubStrategyTimeWindows
+158/180 Test #273: CompositeStrategyTest.RejectsInvalidSubStrategyTimeWindows ............................................................   Passed    0.00 sec
+        Start 274: CompositeStrategyTest.BacktestForbidOpenWindowsUsePseudoLocalAsiaShanghaiTime
+159/180 Test #274: CompositeStrategyTest.BacktestForbidOpenWindowsUsePseudoLocalAsiaShanghaiTime .........................................   Passed    0.00 sec
+        Start 275: CompositeStrategyTest.BacktestForbidOpenWindowsMapPseudoLocalTimeIntoUtcWindow
+160/180 Test #275: CompositeStrategyTest.BacktestForbidOpenWindowsMapPseudoLocalTimeIntoUtcWindow ........................................   Passed    0.00 sec
+        Start 276: CompositeStrategyTest.BacktestForceCloseWindowsRespectCrossNightAsiaShanghaiWindow
+161/180 Test #276: CompositeStrategyTest.BacktestForceCloseWindowsRespectCrossNightAsiaShanghaiWindow ....................................   Passed    0.00 sec
+        Start 277: CompositeStrategyTest.TimeFilterAppliesOnlyToMatchingTimeframe
+162/180 Test #277: CompositeStrategyTest.TimeFilterAppliesOnlyToMatchingTimeframe ........................................................   Passed    0.00 sec
+        Start 278: CompositeStrategyTest.SaveAndLoadStateRestoresPositionGate
+163/180 Test #278: CompositeStrategyTest.SaveAndLoadStateRestoresPositionGate ............................................................   Passed    0.00 sec
+        Start 279: CompositeStrategyTest.SaveStateEmitsPerInstrumentRiskPriceLevels
+164/180 Test #279: CompositeStrategyTest.SaveStateEmitsPerInstrumentRiskPriceLevels ......................................................   Passed    0.00 sec
+        Start 280: CompositeStrategyTest.SaveStateOmitsRiskPriceLevelsWhenFlat
+165/180 Test #280: CompositeStrategyTest.SaveStateOmitsRiskPriceLevelsWhenFlat ...........................................................   Passed    0.00 sec
+        Start 281: CompositeStrategyTest.PropagatesBacktestSnapshotIntoAtomicContext
+166/180 Test #281: CompositeStrategyTest.PropagatesBacktestSnapshotIntoAtomicContext .....................................................   Passed    0.00 sec
+        Start 282: CompositeStrategyTest.CollectAtomicIndicatorTraceContainsStopAndTakePrices
+167/180 Test #282: CompositeStrategyTest.CollectAtomicIndicatorTraceContainsStopAndTakePrices ............................................   Passed    0.00 sec
+        Start 283: CompositeStrategyTest.CommittedPositionSurvivesTerminalFirstDuplicateAndRestart
+168/180 Test #283: CompositeStrategyTest.CommittedPositionSurvivesTerminalFirstDuplicateAndRestart .......................................   Passed    0.00 sec
+        Start 284: AtomicStrategiesTest.KamaTrendStrategyEmitsOpenWithRiskSizingAndSnapshot
+169/180 Test #284: AtomicStrategiesTest.KamaTrendStrategyEmitsOpenWithRiskSizingAndSnapshot ..............................................   Passed    0.00 sec
+        Start 285: AtomicStrategiesTest.KamaTrendStrategyFallsBackToDefaultVolumeWhenMultiplierMissing
+170/180 Test #285: AtomicStrategiesTest.KamaTrendStrategyFallsBackToDefaultVolumeWhenMultiplierMissing ...................................   Passed    0.00 sec
+        Start 286: AtomicStrategiesTest.KamaTrendStrategyStateRestoreContinuesIndicators
+171/180 Test #286: AtomicStrategiesTest.KamaTrendStrategyStateRestoreContinuesIndicators .................................................   Passed    0.00 sec
+        Start 287: AtomicStrategiesTest.KamaTrendStrategyUsesMinimumVolumeWhenRiskBudgetTooSmall
+172/180 Test #287: AtomicStrategiesTest.KamaTrendStrategyUsesMinimumVolumeWhenRiskBudgetTooSmall .........................................   Passed    0.00 sec
+        Start 288: AtomicStrategiesTest.KamaTrendStrategyProductionParamsRequireKamaSideAndMinimumVolume
+173/180 Test #288: AtomicStrategiesTest.KamaTrendStrategyProductionParamsRequireKamaSideAndMinimumVolume .................................   Passed    0.00 sec
+        Start 289: AtomicStrategiesTest.KamaTrendStrategyTrailingStopRefreshesAndTriggersOnTick
+174/180 Test #289: AtomicStrategiesTest.KamaTrendStrategyTrailingStopRefreshesAndTriggersOnTick ..........................................   Passed    0.00 sec
+        Start 290: AtomicStrategiesTest.KamaTrendStrategyExposesInitialAndTrailingRiskPrices
+175/180 Test #290: AtomicStrategiesTest.KamaTrendStrategyExposesInitialAndTrailingRiskPrices .............................................   Passed    0.00 sec
+        Start 291: AtomicStrategiesTest.MarketGapResetPreservesHeldKamaRiskLevels
+176/180 Test #291: AtomicStrategiesTest.MarketGapResetPreservesHeldKamaRiskLevels ........................................................   Passed    0.00 sec
+        Start 292: AtomicStrategiesTest.TrendStrategyEmitsOpenAndTakeProfitSignalsOnTick
+177/180 Test #292: AtomicStrategiesTest.TrendStrategyEmitsOpenAndTakeProfitSignalsOnTick .................................................   Passed    0.00 sec
+        Start 293: AtomicStrategiesTest.KamaTrendStrategyEmitsReverseOpenWhenTrendFlipsWhileHoldingPosition
+178/180 Test #293: AtomicStrategiesTest.KamaTrendStrategyEmitsReverseOpenWhenTrendFlipsWhileHoldingPosition ..............................   Passed    0.00 sec
+        Start 294: AtomicStrategiesTest.TrendStrategyEmitsReverseOpenWhenTrendFlipsWhileHoldingPosition
+179/180 Test #294: AtomicStrategiesTest.TrendStrategyEmitsReverseOpenWhenTrendFlipsWhileHoldingPosition ..................................   Passed    0.00 sec
+        Start 295: AtomicStrategiesTest.TrendStrategyUsesAnalysisBarForSignalButKeepsRawLimitPrice
+180/180 Test #295: AtomicStrategiesTest.TrendStrategyUsesAnalysisBarForSignalButKeepsRawLimitPrice .......................................   Passed    0.00 sec
+
+100% tests passed, 0 tests failed out of 180
+
+Total Test time (real) =   5.67 sec

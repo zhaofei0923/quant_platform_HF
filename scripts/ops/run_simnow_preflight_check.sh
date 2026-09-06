@@ -340,17 +340,30 @@ run_hard_checks() {
 }
 
 find_live_simnow_processes() {
-  local process_pid
-  local args
-  while read -r process_pid args; do
-    [[ -n "${process_pid:-}" ]] || continue
+  local process_dir process_pid executable argument
+  local -a command_args
+  for process_dir in /proc/[0-9]*; do
+    process_pid="${process_dir##*/}"
     [[ "${process_pid}" == "$$" || "${process_pid}" == "${BASHPID}" ]] && continue
-    [[ "${args:-}" == *"run_simnow_preflight_check.sh"* ]] && continue
-    if [[ "${args:-}" == *"supervise_simnow_trading.sh"* || "${args:-}" == *"/core_engine"* ||
-          "${args:-}" == *"simnow_probe"* ]]; then
-      printf '%s %s\n' "${process_pid}" "${args}"
+    [[ -r "${process_dir}/cmdline" ]] || continue
+    command_args=()
+    mapfile -d '' -t command_args < "${process_dir}/cmdline" 2>/dev/null || continue
+    [[ ${#command_args[@]} -gt 0 ]] || continue
+    executable="${command_args[0]##*/}"
+    if [[ "${executable}" == core_engine || "${executable}" == simnow_probe ]]; then
+      printf '%s %s\n' "${process_pid}" "${command_args[0]}"
+    elif [[ "${executable}" == bash || "${executable}" == sh ]]; then
+      # Match an actual script argument, never compiler flags or a shell -c body.
+      for argument in "${command_args[@]:1}"; do
+        [[ "${argument}" == -c || "${argument}" == -*c* ]] && break
+        [[ "${argument}" == -* ]] && continue
+        if [[ "${argument##*/}" == supervise_simnow_trading.sh ]]; then
+          printf '%s %s\n' "${process_pid}" "${argument}"
+        fi
+        break
+      done
     fi
-  done < <(ps -eo pid=,args=)
+  done
 }
 
 check_no_existing_processes() {

@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <exception>
+#include <map>
 #include <utility>
 
 #include "quant_hft/core/structured_log.h"
@@ -28,6 +29,7 @@ StrategyEngine::StrategyEngine(StrategyEngineConfig config, IntentSink intent_si
     if (config_.queue_capacity == 0) {
         config_.queue_capacity = 1;
     }
+    config_.reliable_queue_capacity = std::max<std::size_t>(1, config_.reliable_queue_capacity);
     if (config_.timer_interval_ns <= 0) {
         config_.timer_interval_ns = kDefaultTimerIntervalNs;
     }
@@ -159,9 +161,15 @@ bool StrategyEngine::Start(const std::vector<StrategyLaunchSpec>& launch_specs,
         running_ = true;
         stop_requested_ = false;
         dispatching_ = false;
+        overloaded_ = false;
+        timer_pending_ = false;
+        ordinary_pending_ = 0;
+        admitted_pending_ = 0;
+        last_worker_progress_ = std::chrono::steady_clock::now();
     }
 
     worker_thread_ = std::thread(&StrategyEngine::WorkerLoop, this);
+    timer_thread_ = std::thread(&StrategyEngine::TimerLoop, this);
     return true;
 }
 
@@ -172,8 +180,11 @@ void StrategyEngine::Stop() {
             return;
         }
         stop_requested_ = true;
+        for (auto& event : queue_) CompleteCanceledControl(event, "strategy engine stopped");
     }
     cv_.notify_all();
+
+    if (timer_thread_.joinable()) timer_thread_.join();
 
     if (worker_thread_.joinable()) {
         worker_thread_.join();
@@ -202,44 +213,48 @@ void StrategyEngine::Stop() {
     }
 }
 
-void StrategyEngine::EnqueueState(const StateSnapshot7D& state, const std::string& product_id,
-                                  std::uint64_t contract_generation, bool emit_intents) {
+StrategyEnqueueResult StrategyEngine::EnqueueState(const StateSnapshot7D& state,
+                                                   const std::string& product_id,
+                                                   std::uint64_t contract_generation,
+                                                   bool emit_intents) {
     EngineEvent event;
     event.type = EventType::kState;
     event.state = state;
     event.product_id = product_id;
     event.contract_generation = contract_generation;
     event.emit_intents = emit_intents;
-    EnqueueEvent(std::move(event));
+    return EnqueueEvent(std::move(event));
 }
 
-void StrategyEngine::EnqueueMarketTick(const MarketSnapshot& snapshot,
-                                       const std::string& product_id,
-                                       std::uint64_t contract_generation, bool emit_intents) {
+StrategyEnqueueResult StrategyEngine::EnqueueMarketTick(const MarketSnapshot& snapshot,
+                                                        const std::string& product_id,
+                                                        std::uint64_t contract_generation,
+                                                        bool emit_intents) {
     EngineEvent event;
     event.type = EventType::kMarketTick;
     event.market_tick = snapshot;
     event.product_id = product_id;
     event.contract_generation = contract_generation;
     event.emit_intents = emit_intents;
-    EnqueueEvent(std::move(event));
+    return EnqueueEvent(std::move(event));
 }
 
-void StrategyEngine::EnqueueOrderEvent(const OrderEvent& event) {
+StrategyEnqueueResult StrategyEngine::EnqueueOrderEvent(const OrderEvent& event) {
     EngineEvent engine_event;
     engine_event.type = EventType::kOrderEvent;
     engine_event.order_event = event;
-    EnqueueEvent(std::move(engine_event));
+    return EnqueueEvent(std::move(engine_event));
 }
 
-void StrategyEngine::EnqueueAccountSnapshot(const TradingAccountSnapshot& snapshot) {
+StrategyEnqueueResult StrategyEngine::EnqueueAccountSnapshot(
+    const TradingAccountSnapshot& snapshot) {
     EngineEvent event;
     event.type = EventType::kAccountSnapshot;
     event.account_snapshot = snapshot;
-    EnqueueEvent(std::move(event));
+    return EnqueueEvent(std::move(event));
 }
 
-void StrategyEngine::EnqueueReconcilePositions(
+StrategyEnqueueResult StrategyEngine::EnqueueReconcilePositions(
     const std::string& account_id,
     const std::unordered_map<std::string, std::int32_t>& authoritative_net,
     const std::unordered_map<std::string, double>& authoritative_avg_open) {
@@ -248,7 +263,7 @@ void StrategyEngine::EnqueueReconcilePositions(
     event.reconcile_account_id = account_id;
     event.reconcile_net = authoritative_net;
     event.reconcile_avg_open = authoritative_avg_open;
-    EnqueueEvent(std::move(event));
+    return EnqueueEvent(std::move(event));
 }
 
 std::vector<StrategyMetric> StrategyEngine::CollectAllMetrics() const {
@@ -258,8 +273,11 @@ std::vector<StrategyMetric> StrategyEngine::CollectAllMetrics() const {
 
 bool StrategyEngine::WaitUntilDrained(std::int64_t timeout_ms) {
     std::unique_lock<std::mutex> lock(mutex_);
-    return cv_.wait_for(lock, std::chrono::milliseconds(std::max<std::int64_t>(0, timeout_ms)),
-                        [&]() { return queue_.empty() && !dispatching_; });
+    const auto target = stats_.last_enqueued_sequence;
+    const bool completed = cv_.wait_for(
+        lock, std::chrono::milliseconds(std::max<std::int64_t>(0, timeout_ms)),
+        [&]() { return stop_requested_ || !running_ || stats_.last_processed_sequence >= target; });
+    return completed && !stop_requested_ && stats_.last_processed_sequence >= target;
 }
 
 StrategyEngine::ContractSwitchReport StrategyEngine::ApplyContractSwitch(
@@ -274,24 +292,21 @@ StrategyEngine::ContractSwitchReport StrategyEngine::ApplyContractSwitch(
     }
     auto promise = std::make_shared<std::promise<ContractSwitchReport>>();
     auto future = promise->get_future();
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!running_ || stop_requested_) {
-            failed.error = "strategy engine is not running";
-            return failed;
-        }
-        EngineEvent event;
-        event.type = EventType::kContractSwitch;
-        event.contract_switch = context;
-        event.warmup_states = warmup_states;
-        event.contract_switch_promise = promise;
-        queue_.push_back(std::move(event));
-        ++stats_.enqueued_events;
+    auto canceled = std::make_shared<std::atomic<bool>>(false);
+    EngineEvent event;
+    event.type = EventType::kContractSwitch;
+    event.contract_switch = context;
+    event.warmup_states = warmup_states;
+    event.contract_switch_promise = promise;
+    event.canceled = canceled;
+    if (!EnqueueEvent(std::move(event))) {
+        failed.error = "strategy contract switch admission failed";
+        return failed;
     }
-    cv_.notify_one();
     const auto wait = std::chrono::milliseconds(std::max<std::int64_t>(0, timeout_ms));
     if (future.wait_for(wait) != std::future_status::ready) {
-        failed.error = "strategy contract switch barrier timeout";
+        canceled->store(true);
+        failed.error = "strategy contract switch barrier timeout; reconcile outcome before trading";
         return failed;
     }
     return future.get();
@@ -306,25 +321,22 @@ bool StrategyEngine::ApplyContractWarmupState(const StateSnapshot7D& state,
     }
     auto promise = std::make_shared<std::promise<bool>>();
     auto future = promise->get_future();
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!running_ || stop_requested_) {
-            return false;
-        }
-        EngineEvent event;
-        event.type = EventType::kContractWarmupState;
-        event.state = state;
-        event.product_id = product_id;
-        event.contract_generation = contract_generation;
-        event.emit_intents = false;
-        event.contract_warmup_promise = promise;
-        // Contract control events are never dropped by the ordinary bounded-queue policy.
-        queue_.push_back(std::move(event));
-        ++stats_.enqueued_events;
-    }
-    cv_.notify_one();
+    auto canceled = std::make_shared<std::atomic<bool>>(false);
+    EngineEvent event;
+    event.type = EventType::kContractWarmupState;
+    event.state = state;
+    event.product_id = product_id;
+    event.contract_generation = contract_generation;
+    event.emit_intents = false;
+    event.contract_warmup_promise = promise;
+    event.canceled = canceled;
+    if (!EnqueueEvent(std::move(event))) return false;
     const auto wait = std::chrono::milliseconds(std::max<std::int64_t>(0, timeout_ms));
-    return future.wait_for(wait) == std::future_status::ready && future.get();
+    if (future.wait_for(wait) != std::future_status::ready) {
+        canceled->store(true);
+        return false;
+    }
+    return future.get();
 }
 
 StrategyEngine::Stats StrategyEngine::GetStats() const {
@@ -332,17 +344,198 @@ StrategyEngine::Stats StrategyEngine::GetStats() const {
     return stats_;
 }
 
-void StrategyEngine::EnqueueEvent(EngineEvent event) {
+StrategyEngine::Health StrategyEngine::GetHealth() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto now = std::chrono::steady_clock::now();
+    auto age = [&](const auto& since) -> std::uint64_t {
+        return since.time_since_epoch().count() == 0 || since > now
+                   ? 0
+                   : std::chrono::duration_cast<std::chrono::nanoseconds>(now - since).count();
+    };
+    Health health;
+    health.running = running_ && !stop_requested_;
+    health.overloaded = overloaded_;
+    health.callback_in_progress = dispatching_;
+    health.queue_depth = queue_.size();
+    health.worker_progress_age_ns = age(last_worker_progress_);
+    if (!queue_.empty()) health.oldest_event_age_ns = age(queue_.front().enqueued_at);
+    if (timer_pending_) health.pending_timer_lateness_ns = age(pending_timer_deadline_);
+    return health;
+}
+
+StrategyEngine::MarketGapRecoveryReport StrategyEngine::ApplyMarketGapRecovery(
+    const MarketGapContext& context, const std::vector<StateSnapshot7D>& states,
+    std::int64_t timeout_ms) {
+    MarketGapRecoveryReport failed;
+    failed.generation = context.generation;
+    if (context.instrument_id.empty() || context.generation == 0) {
+        failed.error = "invalid market gap context";
+        return failed;
+    }
+    auto promise = std::make_shared<std::promise<MarketGapRecoveryReport>>();
+    auto future = promise->get_future();
+    auto canceled = std::make_shared<std::atomic<bool>>(false);
+    EngineEvent event;
+    event.type = EventType::kMarketGapRecovery;
+    event.market_gap = context;
+    event.warmup_states = states;
+    event.market_gap_promise = promise;
+    event.canceled = canceled;
+    if (!EnqueueEvent(std::move(event))) {
+        failed.error = "market gap recovery admission failed";
+        return failed;
+    }
+    if (future.wait_for(std::chrono::milliseconds(std::max<std::int64_t>(0, timeout_ms))) !=
+        std::future_status::ready) {
+        canceled->store(true);
+        failed.error = "market gap recovery barrier timeout";
+        return failed;
+    }
+    return future.get();
+}
+
+StrategyEngine::MarketGapRecoveryReport StrategyEngine::DispatchMarketGapRecovery(
+    const MarketGapContext& context, const std::vector<StateSnapshot7D>& states) {
+    MarketGapRecoveryReport report;
+    report.generation = context.generation;
+    try {
+        for (const auto& entry : strategies_)
+            for (const auto& required :
+                 entry.strategy->RequiredMarketWarmupBars(context.instrument_id))
+                report.required_bars[required.first] =
+                    std::max(report.required_bars[required.first], required.second);
+        std::map<std::pair<EpochNanos, std::int32_t>, StateSnapshot7D> ordered;
+        for (const auto& state : states) {
+            if (state.instrument_id != context.instrument_id || !state.has_bar ||
+                state.ts_ns <= 0 || state.timeframe_minutes <= 0 ||
+                !std::isfinite(state.bar_close) || state.bar_close <= 0) {
+                report.error = "invalid complete warmup state";
+                return report;
+            }
+            ordered.emplace(std::make_pair(state.ts_ns, state.timeframe_minutes), state);
+        }
+        MarketWarmupRequirements observed;
+        for (const auto& item : ordered) ++observed[item.second.timeframe_minutes];
+        for (const auto& required : report.required_bars) {
+            if (observed[required.first] < required.second) {
+                report.error = "insufficient complete bars for market gap recovery";
+                return report;
+            }
+        }
+        for (auto& entry : strategies_) {
+            if (!entry.strategy->ResetForMarketGap(context, &report.error)) return report;
+        }
+        for (const auto& item : ordered)
+            for (auto& entry : strategies_) entry.strategy->WarmupMarketState(item.second);
+        // A successful control receipt covers the rebuilt strategy snapshot as well.
+        for (const auto& entry : strategies_) {
+            StrategyState state;
+            if (!entry.strategy->SaveState(&state, &report.error) ||
+                (config_.state_persistence &&
+                 !config_.state_persistence->SaveStrategyState(entry.account_id, entry.strategy_id,
+                                                               state, &report.error)))
+                return report;
+        }
+        report.success = true;
+    } catch (const std::exception& ex) {
+        report.error = ex.what();
+    } catch (...) {
+        report.error = "unknown market gap recovery failure";
+    }
+    return report;
+}
+
+bool StrategyEngine::AcknowledgeRecovery() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!running_ || stop_requested_ || admitted_pending_ != 0 || dispatching_) return false;
+    overloaded_ = false;
+    return true;
+}
+
+void StrategyEngine::CompleteCanceledControl(EngineEvent& event, const std::string& reason) {
+    if (event.canceled) event.canceled->store(true);
+    try {
+        if (event.contract_switch_promise) {
+            ContractSwitchReport report;
+            report.generation = event.contract_switch.generation;
+            report.error = reason;
+            event.contract_switch_promise->set_value(std::move(report));
+            event.contract_switch_promise.reset();
+        }
+        if (event.contract_warmup_promise) {
+            event.contract_warmup_promise->set_value(false);
+            event.contract_warmup_promise.reset();
+        }
+        if (event.market_gap_promise) {
+            MarketGapRecoveryReport report;
+            report.generation = event.market_gap.generation;
+            report.error = reason;
+            event.market_gap_promise->set_value(std::move(report));
+            event.market_gap_promise.reset();
+        }
+    } catch (const std::future_error&) {
+        // A timeout/stop may already have completed the waiting control operation.
+    }
+}
+
+StrategyEnqueueResult StrategyEngine::EnqueueEvent(EngineEvent event) {
+    StrategyEnqueueResult result;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (queue_.size() >= config_.queue_capacity) {
-            queue_.pop_front();
-            ++stats_.dropped_oldest_events;
+        if (!running_ || stop_requested_) return result;
+        const bool ordinary =
+            event.type == EventType::kState || event.type == EventType::kMarketTick;
+        if ((ordinary && ordinary_pending_ >= config_.queue_capacity) ||
+            admitted_pending_ >= config_.queue_capacity + config_.reliable_queue_capacity) {
+            ++stats_.rejected_events;
+            if (!ordinary) ++stats_.rejected_reliable_events;
+            overloaded_ = true;
+            result.status = StrategyEnqueueStatus::kQueueFull;
+        } else {
+            event.sequence = ++stats_.last_enqueued_sequence;
+            event.enqueued_at = std::chrono::steady_clock::now();
+            result = {StrategyEnqueueStatus::kAccepted, event.sequence};
+            queue_.push_back(std::move(event));
+            ++stats_.enqueued_events;
+            ++admitted_pending_;
+            if (ordinary) ++ordinary_pending_;
         }
-        queue_.push_back(std::move(event));
-        ++stats_.enqueued_events;
     }
-    cv_.notify_one();
+    if (!result && config_.enqueue_failure_sink) {
+        try {
+            config_.enqueue_failure_sink(result.status);
+        } catch (...) {
+            EmitStrategyExceptionLog("strategy_admission_failure_callback", "enqueue", "",
+                                     "callback failed");
+        }
+    }
+    cv_.notify_all();
+    return result;
+}
+
+void StrategyEngine::TimerLoop() {
+    const auto interval = std::chrono::nanoseconds(config_.timer_interval_ns);
+    auto deadline = std::chrono::steady_clock::now() + interval;
+    std::unique_lock<std::mutex> lock(mutex_);
+    while (!stop_requested_) {
+        if (cv_.wait_until(lock, deadline, [&] { return stop_requested_; })) break;
+        const auto now = std::chrono::steady_clock::now();
+        if (!timer_pending_) {
+            EngineEvent event;
+            event.type = EventType::kTimer;
+            event.sequence = ++stats_.last_enqueued_sequence;
+            event.enqueued_at = now;
+            event.timer_deadline = deadline;
+            pending_timer_deadline_ = deadline;
+            timer_pending_ = true;
+            // One bounded deadline marker has its own reserved slot. It does not
+            // jump ahead of any already-accepted event and cannot be evicted.
+            queue_.push_back(std::move(event));
+            ++stats_.enqueued_events;
+            cv_.notify_all();
+        }
+        deadline += interval * ((now - deadline) / interval + 1);
+    }
 }
 
 void StrategyEngine::WorkerLoop() {
@@ -352,12 +545,7 @@ void StrategyEngine::WorkerLoop() {
 
         {
             std::unique_lock<std::mutex> lock(mutex_);
-            if (queue_.empty()) {
-                const auto wait_interval =
-                    std::chrono::nanoseconds(std::max<EpochNanos>(1, config_.timer_interval_ns));
-                cv_.wait_for(lock, wait_interval,
-                             [&]() { return stop_requested_ || !queue_.empty(); });
-            }
+            cv_.wait(lock, [&]() { return stop_requested_ || !queue_.empty(); });
 
             if (stop_requested_ && queue_.empty()) {
                 break;
@@ -366,6 +554,10 @@ void StrategyEngine::WorkerLoop() {
             if (!queue_.empty()) {
                 event = std::move(queue_.front());
                 queue_.pop_front();
+                if (event.type != EventType::kTimer) --admitted_pending_;
+                if (event.type == EventType::kState || event.type == EventType::kMarketTick) {
+                    --ordinary_pending_;
+                }
                 ++stats_.processed_events;
                 dispatching_ = true;
                 has_event = true;
@@ -373,7 +565,19 @@ void StrategyEngine::WorkerLoop() {
         }
 
         if (has_event) {
-            if (event.type == EventType::kState) {
+            if (event.canceled && event.canceled->load()) {
+                CompleteCanceledControl(event, "strategy control operation canceled");
+            } else if (event.type == EventType::kTimer) {
+                const auto lateness = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                          std::chrono::steady_clock::now() - event.timer_deadline)
+                                          .count();
+                DispatchTimer(NowEpochNanos());
+                std::lock_guard<std::mutex> lock(mutex_);
+                timer_pending_ = false;
+                ++stats_.timer_callbacks;
+                stats_.max_timer_lateness_ns = std::max<std::uint64_t>(
+                    stats_.max_timer_lateness_ns, std::max<std::int64_t>(0, lateness));
+            } else if (event.type == EventType::kState) {
                 DispatchState(event.state, event.product_id, event.contract_generation,
                               event.emit_intents);
             } else if (event.type == EventType::kMarketTick) {
@@ -393,6 +597,14 @@ void StrategyEngine::WorkerLoop() {
                     } catch (...) {
                     }
                 }
+            } else if (event.type == EventType::kMarketGapRecovery) {
+                auto report = DispatchMarketGapRecovery(event.market_gap, event.warmup_states);
+                if (event.market_gap_promise) {
+                    try {
+                        event.market_gap_promise->set_value(std::move(report));
+                    } catch (const std::future_error&) {
+                    }
+                }
             } else if (event.type == EventType::kContractWarmupState) {
                 const bool success =
                     DispatchState(event.state, event.product_id, event.contract_generation, false);
@@ -408,21 +620,12 @@ void StrategyEngine::WorkerLoop() {
             {
                 std::lock_guard<std::mutex> lock(mutex_);
                 dispatching_ = false;
+                stats_.last_processed_sequence = event.sequence;
+                last_worker_progress_ = std::chrono::steady_clock::now();
             }
             cv_.notify_all();
             continue;
         }
-
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            dispatching_ = true;
-        }
-        DispatchTimer(NowEpochNanos());
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            dispatching_ = false;
-        }
-        cv_.notify_all();
     }
 }
 
@@ -516,50 +719,77 @@ void StrategyEngine::DispatchMarketTick(const MarketSnapshot& snapshot,
 }
 
 void StrategyEngine::DispatchOrderEvent(const OrderEvent& event) {
-    if (event.strategy_id.empty()) {
+    std::vector<StrategyEntry*> recipients;
+    for (auto& entry : strategies_) {
+        const auto* composite = dynamic_cast<const CompositeStrategy*>(entry.strategy.get());
+        if ((event.account_id.empty() || entry.account_id == event.account_id) &&
+            (event.strategy_id.empty() || entry.strategy_id == event.strategy_id ||
+             (composite != nullptr && composite->OwnsOrderEvent(event)))) {
+            recipients.push_back(&entry);
+        }
+    }
+    const bool committed = event.committed_position.has_value();
+    if (recipients.empty() || (committed && recipients.size() != 1)) {
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            ++stats_.broadcast_order_events;
+            ++stats_.unmatched_order_events;
+            if (committed) overloaded_ = true;
         }
-        for (auto& entry : strategies_) {
+        if (committed && config_.committed_event_failure_sink) {
             try {
-                entry.strategy->OnOrderEvent(event);
-            } catch (const std::exception& ex) {
-                EmitStrategyExceptionLog("strategy_callback_exception", "order_event_broadcast",
-                                         entry.strategy_id, ex.what());
-                std::lock_guard<std::mutex> lock(mutex_);
-                ++stats_.strategy_callback_exceptions;
+                config_.committed_event_failure_sink(event);
             } catch (...) {
-                EmitStrategyExceptionLog("strategy_callback_exception", "order_event_broadcast",
-                                         entry.strategy_id, "unknown exception");
-                std::lock_guard<std::mutex> lock(mutex_);
-                ++stats_.strategy_callback_exceptions;
             }
         }
         return;
     }
-
-    auto it = std::find_if(strategies_.begin(), strategies_.end(), [&](const StrategyEntry& entry) {
-        return entry.strategy_id == event.strategy_id;
-    });
-    if (it == strategies_.end()) {
+    if (event.strategy_id.empty()) {
         std::lock_guard<std::mutex> lock(mutex_);
-        ++stats_.unmatched_order_events;
-        return;
+        ++stats_.broadcast_order_events;
     }
-
-    try {
-        it->strategy->OnOrderEvent(event);
-    } catch (const std::exception& ex) {
-        EmitStrategyExceptionLog("strategy_callback_exception", "order_event", it->strategy_id,
-                                 ex.what());
-        std::lock_guard<std::mutex> lock(mutex_);
-        ++stats_.strategy_callback_exceptions;
-    } catch (...) {
-        EmitStrategyExceptionLog("strategy_callback_exception", "order_event", it->strategy_id,
-                                 "unknown exception");
-        std::lock_guard<std::mutex> lock(mutex_);
-        ++stats_.strategy_callback_exceptions;
+    bool success = true;
+    for (auto* entry : recipients) {
+        try {
+            entry->strategy->OnOrderEvent(event);
+            if (committed && config_.state_persistence != nullptr) {
+                StrategyState state;
+                std::string error;
+                if (!entry->strategy->SaveState(&state, &error) ||
+                    !config_.state_persistence->SaveStrategyState(
+                        entry->account_id, entry->strategy_id, state, &error)) {
+                    throw std::runtime_error("committed strategy snapshot failed: " + error);
+                }
+            }
+        } catch (const std::exception& ex) {
+            success = false;
+            EmitStrategyExceptionLog("strategy_callback_exception", "order_event",
+                                     entry->strategy_id, ex.what());
+            std::lock_guard<std::mutex> lock(mutex_);
+            ++stats_.strategy_callback_exceptions;
+        } catch (...) {
+            success = false;
+            std::lock_guard<std::mutex> lock(mutex_);
+            ++stats_.strategy_callback_exceptions;
+        }
+    }
+    if (committed && success && config_.committed_event_sink) {
+        try {
+            success = config_.committed_event_sink(event);
+        } catch (...) {
+            success = false;
+        }
+    }
+    if (committed && !success) {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            overloaded_ = true;
+        }
+        if (config_.committed_event_failure_sink) {
+            try {
+                config_.committed_event_failure_sink(event);
+            } catch (...) {
+            }
+        }
     }
 }
 
@@ -797,6 +1027,10 @@ void StrategyEngine::EmitIntents(const std::string& strategy_id, std::vector<Sig
         return;
     }
     for (auto& intent : intents) {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (overloaded_ || stop_requested_) return;
+        }
         if (intent.strategy_id.empty()) {
             intent.strategy_id = strategy_id;
         }

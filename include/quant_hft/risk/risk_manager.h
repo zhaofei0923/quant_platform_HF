@@ -103,6 +103,8 @@ struct RiskManagerConfig {
     std::string rule_file_path{"configs/risk_rules.yaml"};
     bool enable_dynamic_reload{true};
     int reload_interval_seconds{60};
+    // Empty uses the live steady clock; replay injects its monotonic virtual clock.
+    std::function<std::chrono::steady_clock::time_point()> monotonic_now;
 };
 
 struct RiskTradeStatistics {

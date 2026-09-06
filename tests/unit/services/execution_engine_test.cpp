@@ -202,6 +202,204 @@ TEST(ExecutionEngineTest, PlaceOrderAsyncReturnsOrderRef) {
     EXPECT_FALSE(result.client_order_id.empty());
 }
 
+class SubmissionGateway final : public IExecutionGateway {
+   public:
+    SubmissionOutcome outcome{SubmissionOutcome::kUnknown};
+    SubmissionResult SubmitOrder(const OrderIntent& intent) override {
+        return {outcome, intent.client_order_id, "injected submission result"};
+    }
+    bool CancelOrder(const std::string&, const std::string&) override { return false; }
+    std::string GetDefaultAccountId() const override { return "acc1"; }
+    TradingAccountSnapshot GetLastTradingAccountSnapshot() const override { return {}; }
+    std::vector<InvestorPositionSnapshot> GetLastInvestorPositionSnapshots() const override {
+        return {};
+    }
+    std::uint64_t GetInvestorPositionSnapshotGeneration() const noexcept override { return 0; }
+    int EnqueueTradingAccountQuery() override { return 0; }
+    int EnqueueInvestorPositionQuery() override { return 0; }
+    bool EnqueueInstrumentQuery(int) override { return false; }
+    bool EnqueueBrokerTradingParamsQuery(int) override { return false; }
+};
+
+TEST(ExecutionEngineTest, UnknownSubmissionKeepsReservationWhileDefiniteFailureReleasesIt) {
+    for (auto outcome : {SubmissionOutcome::kUnknown, SubmissionOutcome::kNotSubmitted}) {
+        auto gateway = std::make_shared<SubmissionGateway>();
+        gateway->outcome = outcome;
+        auto orders = std::make_shared<OrderManager>();
+        auto flow = std::make_shared<FlowController>();
+        FlowRule rule;
+        rule.account_id = "acc1";
+        rule.type = OperationType::kOrderInsert;
+        rule.rate_per_second = 100;
+        rule.capacity = 10;
+        flow->AddRule(rule);
+        ExecutionEngine engine(gateway, flow, BuildBreakerManager(), orders);
+        const auto result = engine.PlaceOrderAsync(BuildOrder("unknown")).get();
+        EXPECT_FALSE(result.success);
+        EXPECT_EQ(result.submission_outcome, outcome);
+        EXPECT_EQ(orders->GetActiveOrders().size(),
+                  outcome == SubmissionOutcome::kUnknown ? 1U : 0U);
+    }
+}
+
+TEST(ExecutionEngineTest, ConcurrentCrossingOrdersAreSerializedThroughRiskAndRegistration) {
+    auto gateway = std::make_shared<SubmissionGateway>();
+    gateway->outcome = SubmissionOutcome::kSubmitted;
+    auto orders = std::make_shared<OrderManager>();
+    auto flow = std::make_shared<FlowController>();
+    FlowRule rule;
+    rule.account_id = "acc1";
+    rule.type = OperationType::kOrderInsert;
+    rule.rate_per_second = 100;
+    rule.capacity = 10;
+    flow->AddRule(rule);
+    auto risk = CreateRiskManager(orders, nullptr);
+    RiskManagerConfig config;
+    config.enable_dynamic_reload = false;
+    config.rule_file_path.clear();
+    ASSERT_TRUE(risk->Initialize(config));
+    ExecutionEngine engine(gateway, flow, BuildBreakerManager(), orders);
+    engine.SetRiskManager(risk);
+    auto buy = BuildOrder("buy");
+    auto sell = BuildOrder("sell");
+    sell.side = Side::kSell;
+    auto first = engine.PlaceOrderAsync(buy);
+    auto second = engine.PlaceOrderAsync(sell);
+    EXPECT_NE(first.get().success, second.get().success);
+    EXPECT_EQ(orders->GetActiveOrders().size(), 1U);
+}
+
+TEST(ExecutionEngineTest, ActiveOrderLimitIncludesUnknownAndSerializesConcurrentAdmission) {
+    for (const auto outcome : {SubmissionOutcome::kSubmitted, SubmissionOutcome::kUnknown}) {
+        auto gateway = std::make_shared<SubmissionGateway>();
+        gateway->outcome = outcome;
+        auto orders = std::make_shared<OrderManager>();
+        auto flow = std::make_shared<FlowController>();
+        FlowRule rule;
+        rule.account_id = "acc1";
+        rule.type = OperationType::kOrderInsert;
+        rule.rate_per_second = 100;
+        rule.capacity = 10;
+        flow->AddRule(rule);
+        ExecutionEngine engine(gateway, flow, BuildBreakerManager(), orders);
+        engine.SetMaxActiveOrders(1);
+        auto first = engine.PlaceOrderAsync(BuildOrder("first"));
+        auto second = engine.PlaceOrderAsync(BuildOrder("second"));
+        const auto a = first.get();
+        const auto b = second.get();
+        EXPECT_NE(a.submission_outcome, b.submission_outcome);
+        EXPECT_EQ(orders->GetActiveOrders().size(), 1U);
+        EXPECT_EQ((a.submission_outcome == SubmissionOutcome::kNotSubmitted ? a : b).message,
+                  "risk reject: max active orders");
+    }
+}
+
+TEST(ExecutionEngineTest, TerminalOrderReportDoesNotDiscardUnbookedTrade) {
+    for (const auto terminal : {OrderStatus::kFilled, OrderStatus::kCanceled}) {
+        auto sql = std::make_shared<InMemoryTimescaleSqlClient>();
+        auto store = std::make_shared<TradingDomainStoreClientAdapter>(sql, StorageRetryPolicy{});
+        auto orders = std::make_shared<OrderManager>(store);
+        auto redis = std::make_shared<InMemoryRedisHashClient>();
+        auto positions = std::make_shared<PositionManager>(store, redis);
+        ExecutionEngine engine(nullptr, nullptr, nullptr, orders, positions, store);
+        auto intent = BuildOrder("late-fill");
+        intent.volume = 10;
+        orders->CreateOrder(intent);
+        OrderEvent event;
+        event.account_id = intent.account_id;
+        event.strategy_id = intent.strategy_id;
+        event.client_order_id = intent.client_order_id;
+        event.order_ref = "100";
+        event.instrument_id = intent.instrument_id;
+        event.exchange_id = "SHFE";
+        event.trading_day = "20260907";
+        event.total_volume = 10;
+        event.status = terminal;
+        event.filled_volume = terminal == OrderStatus::kFilled ? 10 : 3;
+        event.event_source = "OnRtnOrder";
+        engine.HandleOrderEvent(event);
+        event.status = OrderStatus::kPartiallyFilled;
+        event.filled_volume = 3;
+        event.last_trade_volume = 3;
+        event.avg_fill_price = 3999.0;
+        event.raw_trade_id = "late-1";
+        event.trade_id = "SHFE|BUY|late-1";
+        event.event_source = "OnRtnTrade";
+        engine.HandleOrderEvent(event);
+        std::string error;
+        const auto trades = sql->QueryAllRows("trading_core.trades", &error);
+        ASSERT_EQ(trades.size(), 1U) << error;
+        EXPECT_EQ(trades.front().at("volume"), "3");
+        const auto current = positions->GetCurrentPositions(intent.account_id);
+        ASSERT_EQ(current.size(), 1U);
+        EXPECT_EQ(current.front().long_qty, 3);
+        engine.HandleOrderEvent(event);
+        EXPECT_EQ(positions->GetCurrentPositions(intent.account_id).front().long_qty, 3);
+    }
+}
+
+TEST(ExecutionEngineTest, OrderPersistenceFailureHoldsReceiptButDoesNotDiscardRealFill) {
+    class OrderWriteFailureSql final : public InMemoryTimescaleSqlClient {
+       public:
+        bool fail_orders{true};
+        bool UpsertRow(const std::string& table,
+                       const std::unordered_map<std::string, std::string>& row,
+                       const std::vector<std::string>& keys,
+                       const std::vector<std::string>& updates, std::string* error) override {
+            if (fail_orders && table == "trading_core.orders") {
+                if (error != nullptr) *error = "injected order write failure";
+                return false;
+            }
+            return InMemoryTimescaleSqlClient::UpsertRow(table, row, keys, updates, error);
+        }
+    };
+    auto sql = std::make_shared<OrderWriteFailureSql>();
+    auto store = std::make_shared<TradingDomainStoreClientAdapter>(sql, StorageRetryPolicy{});
+    auto orders = std::make_shared<OrderManager>(store);
+    ExecutionEngine engine(nullptr, nullptr, nullptr, orders, nullptr, store);
+    OrderEvent event;
+    event.account_id = "acc1";
+    event.broker_id = "broker";
+    event.strategy_id = "strat1";
+    event.client_order_id = "failed-order";
+    event.order_ref = "failed-order";
+    event.instrument_id = "rb";
+    event.exchange_id = "SHFE";
+    event.trading_day = "20260907";
+    event.status = OrderStatus::kAccepted;
+    event.event_source = "OnRtnOrder";
+    event.total_volume = 2;
+    WalReceipt receipt;
+    receipt.durable = true;
+    receipt.stream_id = "order-write-failure";
+    receipt.checksum = 1;
+    auto result = engine.HandleOrderEventWithReceipt(event, receipt);
+    EXPECT_EQ(result.status, TradeApplyStatus::kFailed);
+    EXPECT_FALSE(result.error.empty());
+    EXPECT_TRUE(sql->QueryAllRows("trading_core.domain_receipts", nullptr).empty());
+    sql->fail_orders = false;
+    result = engine.HandleOrderEventWithReceipt(event, receipt);
+    EXPECT_EQ(result.status, TradeApplyStatus::kDuplicate);
+    EXPECT_TRUE(result.error.empty());
+    sql->fail_orders = true;
+    event.event_source = "OnRtnTrade";
+    event.raw_trade_id = event.trade_id = "real-fill";
+    event.filled_volume = event.last_trade_volume = 1;
+    event.avg_fill_price = 4000;
+    event.status = OrderStatus::kPartiallyFilled;
+    receipt.sequence = 1;
+    receipt.checksum = 2;
+    result = engine.HandleOrderEventWithReceipt(event, receipt);
+    EXPECT_EQ(result.status, TradeApplyStatus::kApplied);
+    EXPECT_FALSE(result.error.empty());
+    EXPECT_EQ(sql->QueryAllRows("trading_core.trades", nullptr).size(), 1U);
+    sql->fail_orders = false;
+    result = engine.HandleOrderEventWithReceipt(event, receipt);
+    EXPECT_EQ(result.status, TradeApplyStatus::kDuplicate);
+    EXPECT_TRUE(result.error.empty());
+    EXPECT_EQ(sql->QueryAllRows("trading_core.trades", nullptr).size(), 1U);
+}
+
 TEST(ExecutionEngineTest, PlaceOrderRiskRejectReturnsFailedResult) {
     auto bundle = BuildEngineBundle();
     bundle.engine->SetRiskManager(std::make_shared<RejectAllRiskManager>());

@@ -14,6 +14,8 @@ class MaxPositionRiskControl : public IRiskControlStrategy {
     void Init(const AtomicParams& params) override;
     std::string GetId() const override;
     void Reset() override;
+    bool ResetForMarketGap() override { return true; }
+    std::int32_t RequiredMarketWarmupBars() const override { return 0; }
     std::vector<SignalIntent> OnState(const StateSnapshot7D& state,
                                       const AtomicStrategyContext& ctx) override;
 

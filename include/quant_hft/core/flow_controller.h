@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -36,17 +37,19 @@ struct FlowResult {
 };
 
 class TokenBucket {
-public:
+   public:
     TokenBucket();
-    TokenBucket(double rate_per_second, int capacity);
+    using Clock = std::function<std::chrono::steady_clock::time_point()>;
+    TokenBucket(double rate_per_second, int capacity, Clock clock = {});
 
     bool TryAcquire();
     bool Acquire(int timeout_ms);
     void SetRate(double rate_per_second);
 
-private:
+   private:
     void RefillLocked(std::chrono::steady_clock::time_point now);
 
+    Clock clock_;
     mutable std::mutex mutex_;
     double rate_per_second_{1.0};
     int capacity_{1};
@@ -55,22 +58,21 @@ private:
 };
 
 class FlowController {
-public:
+   public:
     FlowController() = default;
 
     void AddRule(const FlowRule& rule);
     FlowResult Check(const Operation& operation);
     FlowResult Acquire(const Operation& operation, int timeout_ms);
 
-private:
+   private:
     struct Key {
         std::string account_id;
         OperationType type{OperationType::kOrderInsert};
         std::string instrument_id;
 
         bool operator==(const Key& other) const {
-            return account_id == other.account_id &&
-                   type == other.type &&
+            return account_id == other.account_id && type == other.type &&
                    instrument_id == other.instrument_id;
         }
     };

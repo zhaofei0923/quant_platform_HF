@@ -151,8 +151,10 @@ bool InMemoryRedisHashClient::IsExpiredLocked(const std::string& key) const {
 }
 
 std::int64_t InMemoryRedisHashClient::NowEpochSeconds() {
+    // This value is an internal relative TTL clock, never an external timestamp.
+    // Wall-clock corrections must not revive an expired cache entry.
     const auto now =
-        std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::system_clock::now());
+        std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::steady_clock::now());
     return now.time_since_epoch().count();
 }
 

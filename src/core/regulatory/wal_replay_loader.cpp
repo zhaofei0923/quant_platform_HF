@@ -1,8 +1,19 @@
 #include "quant_hft/core/wal_replay_loader.h"
 
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include <cctype>
+#include <cerrno>
+#include <cmath>
+#include <cstring>
 #include <fstream>
+#include <limits>
+#include <sstream>
 #include <string>
+
+#include "quant_hft/core/wal_format.h"
 
 namespace quant_hft {
 
@@ -99,6 +110,26 @@ std::string UnescapeJsonString(const std::string& raw) {
             case 't':
                 out.push_back('\t');
                 break;
+            case 'u': {
+                // The writer escapes control bytes as \u00XX and emits other UTF-8 verbatim.
+                if (i + 4 < raw.size() && raw[i + 1] == '0' && raw[i + 2] == '0') {
+                    const auto hex = [](char digit) -> int {
+                        if (digit >= '0' && digit <= '9') return digit - '0';
+                        if (digit >= 'a' && digit <= 'f') return digit - 'a' + 10;
+                        if (digit >= 'A' && digit <= 'F') return digit - 'A' + 10;
+                        return -1;
+                    };
+                    const int high = hex(raw[i + 3]);
+                    const int low = hex(raw[i + 4]);
+                    if (high >= 0 && low >= 0) {
+                        out.push_back(static_cast<char>((high << 4) | low));
+                        i += 4;
+                        break;
+                    }
+                }
+                out.append("\\u");
+                break;
+            }
             default:
                 out.push_back(next);
                 break;
@@ -130,6 +161,9 @@ bool ParseIntField(const std::string& line, const std::string& key, int* value) 
     if (!ParseInt64Field(line, key, &parsed)) {
         return false;
     }
+    if (parsed < std::numeric_limits<int>::min() || parsed > std::numeric_limits<int>::max()) {
+        return false;
+    }
     *value = static_cast<int>(parsed);
     return true;
 }
@@ -142,7 +176,7 @@ bool ParseDoubleField(const std::string& line, const std::string& key, double* v
     try {
         std::size_t consumed = 0;
         const auto parsed = std::stod(raw, &consumed);
-        if (consumed != raw.size()) {
+        if (consumed != raw.size() || !std::isfinite(parsed)) {
             return false;
         }
         *value = parsed;
@@ -232,14 +266,9 @@ bool IsReplayableWalKind(const std::string& line, bool* replayable) {
     return true;
 }
 
-bool IsCtpOrderSubmitMapping(const std::string& line) {
-    std::string kind;
-    return ParseStringField(line, "kind", &kind) && kind == "ctp_order_submit_mapping";
-}
-
-bool ParseWalLine(const std::string& line, OrderEvent* event) {
+bool ParseWalLine(const std::string& line, OrderEvent* event, bool include_trade_fill = false) {
     bool replayable = false;
-    if (!IsReplayableWalKind(line, &replayable) || !replayable) {
+    if (!IsReplayableWalKind(line, &replayable) || (!replayable && !include_trade_fill)) {
         return false;
     }
 
@@ -253,6 +282,7 @@ bool ParseWalLine(const std::string& line, OrderEvent* event) {
     }
 
     (void)ParseStringField(line, "account_id", &event->account_id);
+    (void)ParseStringField(line, "broker_id", &event->broker_id);
     (void)ParseStringField(line, "strategy_id", &event->strategy_id);
     (void)ParseStringField(line, "exchange_order_id", &event->exchange_order_id);
     (void)ParseStringField(line, "instrument_id", &event->instrument_id);
@@ -295,11 +325,11 @@ bool ParseWalLine(const std::string& line, OrderEvent* event) {
     int parsed_int = 0;
     int raw_side = 0;
     if (ParseIntField(line, "side", &raw_side)) {
-        (void)ParseSide(raw_side, &event->side);
+        if (!ParseSide(raw_side, &event->side)) return false;
     }
     int raw_offset = 0;
     if (ParseIntField(line, "offset", &raw_offset)) {
-        (void)ParseOffset(raw_offset, &event->offset);
+        if (!ParseOffset(raw_offset, &event->offset)) return false;
     }
     if (ParseIntField(line, "last_trade_volume", &parsed_int)) {
         event->last_trade_volume = parsed_int;
@@ -330,6 +360,7 @@ bool ParseWalLine(const std::string& line, OrderEvent* event) {
     if (ParseDoubleField(line, "avg_fill_price", &avg_fill_price)) {
         event->avg_fill_price = avg_fill_price;
     } else {
+        if (line.find("\"avg_fill_price\":") != std::string::npos) return false;
         event->avg_fill_price = 0.0;
     }
 
@@ -388,68 +419,128 @@ bool ParseCtpOrderSubmitMappingLine(const std::string& line, CtpOrderSubmitMappi
 
 }  // namespace
 
-WalReplayStats WalReplayLoader::Replay(const std::string& wal_path,
-                                       OrderStateMachine* order_state_machine,
-                                       IPortfolioLedger* portfolio_ledger,
-                                       CtpOrderMappingStore* order_mapping_store) const {
-    WalReplayStats stats;
-
-    std::ifstream stream(wal_path);
-    if (!stream.is_open()) {
-        return stats;
+WalValidatedReadResult WalReplayLoader::VisitValidated(
+    const std::string& wal_path, const std::function<bool(const WalReplayRecord&)>& visitor,
+    std::size_t max_bytes) const {
+    WalValidatedReadResult result;
+    if (!visitor) {
+        result.error = "WAL visitor missing";
+        return result;
     }
-
+    const int fd = ::open(wal_path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        result.validation.missing = errno == ENOENT;
+        result.error = "cannot open WAL snapshot: " + std::string(std::strerror(errno));
+        return result;
+    }
+    struct FdGuard {
+        int fd;
+        ~FdGuard() { ::close(fd); }
+    } guard{fd};
+    struct stat stat_before {};
+    if (::fstat(fd, &stat_before) != 0 || !S_ISREG(stat_before.st_mode) ||
+        stat_before.st_size < 0 || static_cast<std::uintmax_t>(stat_before.st_size) > max_bytes) {
+        result.error = "WAL snapshot is not a regular file or exceeds recovery size limit";
+        return result;
+    }
+    std::string bytes(static_cast<std::size_t>(stat_before.st_size), '\0');
+    std::size_t offset = 0;
+    while (offset < bytes.size()) {
+        const auto count = ::read(fd, bytes.data() + offset, bytes.size() - offset);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) {
+            result.error = "WAL changed or read failed while capturing recovery snapshot";
+            return result;
+        }
+        offset += static_cast<std::size_t>(count);
+    }
+    struct stat stat_after {};
+    if (::fstat(fd, &stat_after) != 0 || stat_after.st_size != stat_before.st_size ||
+        stat_after.st_mtim.tv_sec != stat_before.st_mtim.tv_sec ||
+        stat_after.st_mtim.tv_nsec != stat_before.st_mtim.tv_nsec) {
+        result.error = "WAL changed while capturing recovery snapshot";
+        return result;
+    }
+    {
+        std::istringstream input(bytes);
+        result.validation = ValidateWalStream(input);
+    }
+    if (!result.validation.valid) {
+        result.error = result.validation.error;
+        return result;
+    }
+    const auto parse_record = [](const std::string& line, WalReplayRecord* record) {
+        if (!ParseStringField(line, "kind", &record->kind)) return false;
+        (void)ParseStringField(line, "event_type", &record->event_type);
+        std::uint64_t version = 0;
+        (void)WalUnsignedField(line, "schema_version", &version);
+        record->receipt.schema_version = static_cast<std::uint32_t>(version);
+        (void)WalUnsignedField(line, "seq", &record->receipt.sequence);
+        if (version == 4) {
+            (void)ParseStringField(line, "stream_id", &record->receipt.stream_id);
+            (void)WalUnsignedField(line, "stream_first_sequence", &record->receipt.first_sequence);
+            const auto checksum_pos = line.rfind(",\"checksum\":\"");
+            record->receipt.checksum = WalChecksum(line.substr(0, checksum_pos) + "}");
+            record->receipt.durable = true;  // Issued only after the validated snapshot is synced.
+        } else {
+            record->receipt.error = "legacy WAL has no durable stream receipt";
+        }
+        if (record->kind == "order" || record->kind == "trade") {
+            record->event.emplace();
+            return ParseWalLine(line, &*record->event, true);
+        }
+        if (record->kind == "ctp_order_submit_mapping") {
+            record->mapping.emplace();
+            return ParseCtpOrderSubmitMappingLine(line, &*record->mapping);
+        }
+        return true;
+    };
+    {
+        std::istringstream preflight(bytes);
+        std::string line;
+        while (std::getline(preflight, line)) {
+            line = Trim(line);
+            if (line.empty()) continue;
+            WalReplayRecord record;
+            if (!parse_record(line, &record)) {
+                result.validation.valid = false;
+                result.error = "WAL semantic validation failed before visiting any record";
+                return result;
+            }
+        }
+    }
+    if (::fsync(fd) != 0) {
+        result.error = "WAL recovery sync failed: " + std::string(std::strerror(errno));
+        return result;
+    }
+    auto parent = std::filesystem::absolute(wal_path).parent_path();
+    while (!parent.empty()) {
+        const int directory = ::open(parent.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        const bool synced = directory >= 0 && ::fsync(directory) == 0;
+        if (directory >= 0) ::close(directory);
+        if (!synced) {
+            result.error = "WAL recovery directory sync failed";
+            return result;
+        }
+        const auto next = parent.parent_path();
+        if (next == parent) break;
+        parent = next;
+    }
+    std::istringstream input(bytes);
     std::string line;
-    while (std::getline(stream, line)) {
-        if (Trim(line).empty()) {
-            continue;
+    while (std::getline(input, line)) {
+        line = Trim(line);
+        if (line.empty()) continue;
+        WalReplayRecord record;
+        (void)parse_record(line, &record);  // The immutable snapshot passed semantic preflight.
+        if (!visitor(record)) {
+            result.error = "WAL visitor stopped before completion";
+            return result;
         }
-
-        ++stats.lines_total;
-        if (IsCtpOrderSubmitMapping(line)) {
-            CtpOrderSubmitMapping mapping;
-            if (!ParseCtpOrderSubmitMappingLine(line, &mapping)) {
-                ++stats.parse_errors;
-                continue;
-            }
-            if (order_mapping_store != nullptr) {
-                order_mapping_store->Upsert(mapping);
-            }
-            ++stats.submit_mappings_loaded;
-            ++stats.ignored_lines;
-            continue;
-        }
-
-        bool replayable = false;
-        if (!IsReplayableWalKind(line, &replayable)) {
-            ++stats.parse_errors;
-            continue;
-        }
-        if (!replayable) {
-            ++stats.ignored_lines;
-            continue;
-        }
-
-        OrderEvent event;
-        if (!ParseWalLine(line, &event)) {
-            ++stats.parse_errors;
-            continue;
-        }
-        ++stats.events_loaded;
-
-        bool apply_to_ledger = true;
-        if (order_state_machine != nullptr && !order_state_machine->RecoverFromOrderEvent(event)) {
-            ++stats.state_rejected;
-            apply_to_ledger = false;
-        }
-
-        if (apply_to_ledger && portfolio_ledger != nullptr) {
-            portfolio_ledger->OnOrderEvent(event);
-            ++stats.ledger_applied;
-        }
+        ++result.records_visited;
     }
-
-    return stats;
+    result.completed = true;
+    return result;
 }
 
 }  // namespace quant_hft

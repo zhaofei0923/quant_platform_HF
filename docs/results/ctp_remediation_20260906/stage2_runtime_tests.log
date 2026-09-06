@@ -1,0 +1,725 @@
+binary=ctp_gateway_adapter_test
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 19 tests from 2 test suites.
+[----------] Global test environment set-up.
+[----------] 18 tests from CtpGatewayAdapterTest
+[ RUN      ] CtpGatewayAdapterTest.FailedQueryBatchDoesNotExposePartialOrMixedCache
+[       OK ] CtpGatewayAdapterTest.FailedQueryBatchDoesNotExposePartialOrMixedCache (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.EmptyFilteredBatchRemovesOnlyItsScopeAndRejectsOldGeneration
+[       OK ] CtpGatewayAdapterTest.EmptyFilteredBatchRemovesOnlyItsScopeAndRejectsOldGeneration (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.ConnectSubscribeAndOrderFlow
+[       OK ] CtpGatewayAdapterTest.ConnectSubscribeAndOrderFlow (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.PlaceOrderEmitsSubmitMappingBeforeOrderCallback
+[       OK ] CtpGatewayAdapterTest.PlaceOrderEmitsSubmitMappingBeforeOrderCallback (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.DurablePrepareFailureProducesNoSubmissionOrOrderCallback
+[       OK ] CtpGatewayAdapterTest.DurablePrepareFailureProducesNoSubmissionOrOrderCallback (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.ConnectionStateListenersAreIndependentAndRemovable
+[       OK ] CtpGatewayAdapterTest.ConnectionStateListenersAreIndependentAndRemovable (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.QueryAndOffsetApplySrc
+[       OK ] CtpGatewayAdapterTest.QueryAndOffsetApplySrc (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.QuerySnapshotsInSimulatedMode
+[       OK ] CtpGatewayAdapterTest.QuerySnapshotsInSimulatedMode (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.CallbackCanReenterCancelOrderWithoutLockContention
+[       OK ] CtpGatewayAdapterTest.CallbackCanReenterCancelOrderWithoutLockContention (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.ConnectFailureExposesDiagnostic
+[       OK ] CtpGatewayAdapterTest.ConnectFailureExposesDiagnostic (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.SuccessfulConnectClearsDiagnostic
+[       OK ] CtpGatewayAdapterTest.SuccessfulConnectClearsDiagnostic (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.NormalizeMarketSnapshotCleansInvalidValuesAndFallbacks
+[       OK ] CtpGatewayAdapterTest.NormalizeMarketSnapshotCleansInvalidValuesAndFallbacks (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.NormalizeMarketSnapshotKeepsValidValues
+[       OK ] CtpGatewayAdapterTest.NormalizeMarketSnapshotKeepsValidValues (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.ParsesExchangeTimestampAsAsiaShanghaiWithMilliseconds
+[       OK ] CtpGatewayAdapterTest.ParsesExchangeTimestampAsAsiaShanghaiWithMilliseconds (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.AccountIdentityUsesInvestorAcrossSimulatedSnapshotsAndMappings
+[       OK ] CtpGatewayAdapterTest.AccountIdentityUsesInvestorAcrossSimulatedSnapshotsAndMappings (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.RealConnectionRejectsAnUnconfirmedInvestorBeforeSdkAccess
+[       OK ] CtpGatewayAdapterTest.RealConnectionRejectsAnUnconfirmedInvestorBeforeSdkAccess (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.RawInvestorIdentityHasPriorityAndUnknownIdentityStaysUnknown
+[       OK ] CtpGatewayAdapterTest.RawInvestorIdentityHasPriorityAndUnknownIdentityStaysUnknown (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.SimulatedTradingDayIsExplicitAndCopiedIntoPositionQueryMetadata
+[       OK ] CtpGatewayAdapterTest.SimulatedTradingDayIsExplicitAndCopiedIntoPositionQueryMetadata (0 ms)
+[----------] 18 tests from CtpGatewayAdapterTest (1 ms total)
+
+[----------] 1 test from CtpTextTest
+[ RUN      ] CtpTextTest.DecodesGbkErrorMessageAndKnownPlaceholder
+[       OK ] CtpTextTest.DecodesGbkErrorMessageAndKnownPlaceholder (0 ms)
+[----------] 1 test from CtpTextTest (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 19 tests from 2 test suites ran. (1 ms total)
+[  PASSED  ] 19 tests.
+binary=ctp_trader_adapter_test
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 14 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 14 tests from CTPTraderAdapterTest
+[ RUN      ] CTPTraderAdapterTest.DisconnectTriggersReconnectScheduling
+ts_ns=1788666027310528382 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="ready" will_reconnect="true"
+ts_ns=1788666027310642193 level=info app=ctp_trader_adapter event=ctp_trader_reconnect_scheduled attempt="1" max_attempts="8" delay_ms="500" generation="3"
+ts_ns=1788666027811310851 level=info app=ctp_trader_adapter event=ctp_trader_reconnect_ready attempt="1"
+[       OK ] CTPTraderAdapterTest.DisconnectTriggersReconnectScheduling (508 ms)
+[ RUN      ] CTPTraderAdapterTest.ReadinessSnapshotReflectsDisconnectedRecoveryState
+ts_ns=1788666027819599973 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="ready" will_reconnect="true"
+ts_ns=1788666027819745195 level=info app=ctp_trader_adapter event=ctp_trader_reconnect_scheduled attempt="1" max_attempts="8" delay_ms="500" generation="3"
+[       OK ] CTPTraderAdapterTest.ReadinessSnapshotReflectsDisconnectedRecoveryState (1 ms)
+[ RUN      ] CTPTraderAdapterTest.ReconnectPerformsLoginAndConfirmSettlement
+ts_ns=1788666027820555619 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="ready" will_reconnect="true"
+ts_ns=1788666027820640863 level=info app=ctp_trader_adapter event=ctp_trader_reconnect_scheduled attempt="1" max_attempts="8" delay_ms="500" generation="3"
+ts_ns=1788666028321128041 level=info app=ctp_trader_adapter event=ctp_trader_reconnect_ready attempt="1"
+[       OK ] CTPTraderAdapterTest.ReconnectPerformsLoginAndConfirmSettlement (506 ms)
+[ RUN      ] CTPTraderAdapterTest.ReconnectAttemptLimitUsesConnectConfig
+ts_ns=1788666028326996765 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="ready" will_reconnect="true"
+ts_ns=1788666028327107266 level=info app=ctp_trader_adapter event=ctp_trader_reconnect_scheduled attempt="1" max_attempts="2" delay_ms="1" generation="3"
+ts_ns=1788666028328280657 level=warn app=ctp_trader_adapter event=ctp_trader_reconnect_gateway_not_healthy attempt="1"
+ts_ns=1788666028328309071 level=info app=ctp_trader_adapter event=ctp_trader_reconnect_scheduled attempt="2" max_attempts="2" delay_ms="2" generation="3"
+ts_ns=1788666028330594925 level=warn app=ctp_trader_adapter event=ctp_trader_reconnect_gateway_not_healthy attempt="2"
+ts_ns=1788666028330621429 level=error app=ctp_trader_adapter event=ctp_trader_reconnect_exhausted attempts="2" max_attempts="2"
+ts_ns=1788666028330650398 level=info app=ctp_trader_adapter event=ctp_trader_reconnect_retry_after_exhaustion_scheduled attempts="2" max_attempts="2" delay_ms="100" generation="3"
+[       OK ] CTPTraderAdapterTest.ReconnectAttemptLimitUsesConnectConfig (12 ms)
+[ RUN      ] CTPTraderAdapterTest.GatewayHealthyAfterExhaustionRestoresReadyState
+ts_ns=1788666028339029047 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="ready" will_reconnect="true"
+ts_ns=1788666028339118036 level=info app=ctp_trader_adapter event=ctp_trader_reconnect_scheduled attempt="1" max_attempts="1" delay_ms="1" generation="3"
+ts_ns=1788666028340331879 level=warn app=ctp_trader_adapter event=ctp_trader_reconnect_gateway_not_healthy attempt="1"
+ts_ns=1788666028340347497 level=error app=ctp_trader_adapter event=ctp_trader_reconnect_exhausted attempts="1" max_attempts="1"
+ts_ns=1788666028340364581 level=info app=ctp_trader_adapter event=ctp_trader_reconnect_retry_after_exhaustion_scheduled attempts="1" max_attempts="1" delay_ms="10" generation="3"
+ts_ns=1788666028350090927 level=info app=ctp_trader_adapter event=ctp_trader_gateway_healthy_restore_scheduled previous_state="disconnected" was_reconnecting="true"
+ts_ns=1788666028351033752 level=info app=ctp_trader_adapter event=ctp_trader_reconnect_retry_after_exhaustion generation="3"
+ts_ns=1788666028351057141 level=info app=ctp_trader_adapter event=ctp_trader_reconnect_scheduled attempt="1" max_attempts="1" delay_ms="1" generation="3"
+ts_ns=1788666028352638965 level=info app=ctp_trader_adapter event=ctp_trader_reconnect_ready attempt="1"
+[       OK ] CTPTraderAdapterTest.GatewayHealthyAfterExhaustionRestoresReadyState (22 ms)
+[ RUN      ] CTPTraderAdapterTest.GatewayOwnedLoginIsNotRepeatedDuringRecoveryCycles
+ts_ns=1788666028361773944 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="ready" will_reconnect="true"
+ts_ns=1788666028361913565 level=info app=ctp_trader_adapter event=ctp_trader_reconnect_scheduled attempt="1" max_attempts="1" delay_ms="1" generation="3"
+ts_ns=1788666028363303656 level=info app=ctp_trader_adapter event=ctp_trader_reconnect_ready attempt="1"
+[       OK ] CTPTraderAdapterTest.GatewayOwnedLoginIsNotRepeatedDuringRecoveryCycles (11 ms)
+[ RUN      ] CTPTraderAdapterTest.DisconnectCancelsPendingReconnectTimer
+ts_ns=1788666028373501357 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="ready" will_reconnect="true"
+ts_ns=1788666028373588284 level=info app=ctp_trader_adapter event=ctp_trader_reconnect_scheduled attempt="1" max_attempts="8" delay_ms="500" generation="3"
+[       OK ] CTPTraderAdapterTest.DisconnectCancelsPendingReconnectTimer (1410 ms)
+[ RUN      ] CTPTraderAdapterTest.RecoverOrdersAndTradesQueriesCtp
+[       OK ] CTPTraderAdapterTest.RecoverOrdersAndTradesQueriesCtp (1 ms)
+[ RUN      ] CTPTraderAdapterTest.DisconnectRejectsPendingLoginPromise
+[       OK ] CTPTraderAdapterTest.DisconnectRejectsPendingLoginPromise (0 ms)
+[ RUN      ] CTPTraderAdapterTest.LoginAsyncReturnsFutureAndResolvesOnSuccess
+[       OK ] CTPTraderAdapterTest.LoginAsyncReturnsFutureAndResolvesOnSuccess (0 ms)
+[ RUN      ] CTPTraderAdapterTest.LoginAsyncTimesOut
+[       OK ] CTPTraderAdapterTest.LoginAsyncTimesOut (87 ms)
+[ RUN      ] CTPTraderAdapterTest.PlaceOrderWithRefReturnsNonEmptyString
+[       OK ] CTPTraderAdapterTest.PlaceOrderWithRefReturnsNonEmptyString (0 ms)
+[ RUN      ] CTPTraderAdapterTest.FinalDeliveryStopJoinsCallbackBeforeCapturedStateCanDie
+[       OK ] CTPTraderAdapterTest.FinalDeliveryStopJoinsCallbackBeforeCapturedStateCanDie (33 ms)
+[ RUN      ] CTPTraderAdapterTest.CriticalDispatchTimeoutTriggersCircuitBreakerCallback
+ts_ns=1788666029912800128 level=error app=callback_dispatcher event=queue_full is_critical="true" queue_depth="1" queue_capacity="1" dropped_total="1" critical_timeout_total="1" action="block_10ms_failed"
+ts_ns=1788666029912865000 level=error app=ctp_trader_adapter event=callback_dispatch_failed is_critical="true" queue_depth="1" queue_capacity="1" dropped_total="1" critical_timeout_total="1"
+[       OK ] CTPTraderAdapterTest.CriticalDispatchTimeoutTriggersCircuitBreakerCallback (128 ms)
+[----------] 14 tests from CTPTraderAdapterTest (2725 ms total)
+
+[----------] Global test environment tear-down
+[==========] 14 tests from 1 test suite ran. (2725 ms total)
+[  PASSED  ] 14 tests.
+binary=ctp_md_adapter_test
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 3 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 3 tests from CTPMdAdapterTest
+[ RUN      ] CTPMdAdapterTest.ConnectSubscribeAndUnsubscribe
+[       OK ] CTPMdAdapterTest.ConnectSubscribeAndUnsubscribe (0 ms)
+[ RUN      ] CTPMdAdapterTest.FailedConnectExposesDiagnostic
+[       OK ] CTPMdAdapterTest.FailedConnectExposesDiagnostic (0 ms)
+[ RUN      ] CTPMdAdapterTest.SaturationReportsGapAndPreservesAcceptedTickOrder
+ts_ns=1788666030039340544 level=warn app=callback_dispatcher event=queue_full is_critical="false" queue_depth="1" queue_capacity="1" dropped_total="1" action="drop"
+ts_ns=1788666030039373474 level=error app=ctp_md_adapter event=market_delivery_gap instrument_id="test"
+[       OK ] CTPMdAdapterTest.SaturationReportsGapAndPreservesAcceptedTickOrder (0 ms)
+[----------] 3 tests from CTPMdAdapterTest (1 ms total)
+
+[----------] Global test environment tear-down
+[==========] 3 tests from 1 test suite ran. (1 ms total)
+[  PASSED  ] 3 tests.
+binary=query_scheduler_test
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 8 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 8 tests from QuerySchedulerTest
+[ RUN      ] QuerySchedulerTest.RespectsRateLimit
+[       OK ] QuerySchedulerTest.RespectsRateLimit (1109 ms)
+[ RUN      ] QuerySchedulerTest.PriorityOrdering
+[       OK ] QuerySchedulerTest.PriorityOrdering (0 ms)
+[ RUN      ] QuerySchedulerTest.DeferredTaskOwnsStateUntilDrainedAfterCompletion
+[       OK ] QuerySchedulerTest.DeferredTaskOwnsStateUntilDrainedAfterCompletion (0 ms)
+[ RUN      ] QuerySchedulerTest.CompletionMustMatchTheActiveRequestAndGeneration
+[       OK ] QuerySchedulerTest.CompletionMustMatchTheActiveRequestAndGeneration (0 ms)
+[ RUN      ] QuerySchedulerTest.IntermediateResponseErrorPersistsUntilCompletion
+[       OK ] QuerySchedulerTest.IntermediateResponseErrorPersistsUntilCompletion (0 ms)
+[ RUN      ] QuerySchedulerTest.TimeoutDoesNotLetLateCompletionReleaseNextRequest
+[       OK ] QuerySchedulerTest.TimeoutDoesNotLetLateCompletionReleaseNextRequest (0 ms)
+[ RUN      ] QuerySchedulerTest.ResetWaitsForExecutingRequestBeforeApiCanBeReleased
+[       OK ] QuerySchedulerTest.ResetWaitsForExecutingRequestBeforeApiCanBeReleased (22 ms)
+[ RUN      ] QuerySchedulerTest.ThrowingRequestAndFailureHandlerDoNotEscapePoller
+[       OK ] QuerySchedulerTest.ThrowingRequestAndFailureHandlerDoNotEscapePoller (0 ms)
+[----------] 8 tests from QuerySchedulerTest (1132 ms total)
+
+[----------] Global test environment tear-down
+[==========] 8 tests from 1 test suite ran. (1132 ms total)
+[  PASSED  ] 8 tests.
+binary=query_batch_collector_test
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 5 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 5 tests from QueryBatchCollectorTest
+[ RUN      ] QueryBatchCollectorTest.NextRequestCannotClearCompletedRows
+[       OK ] QueryBatchCollectorTest.NextRequestCannotClearCompletedRows (0 ms)
+[ RUN      ] QueryBatchCollectorTest.ErrorOnAnIntermediatePacketCannotBecomeSuccessfulEmptyTruth
+[       OK ] QueryBatchCollectorTest.ErrorOnAnIntermediatePacketCannotBecomeSuccessfulEmptyTruth (0 ms)
+[ RUN      ] QueryBatchCollectorTest.OldGenerationCannotCompleteReusedRequestNumber
+[       OK ] QueryBatchCollectorTest.OldGenerationCannotCompleteReusedRequestNumber (0 ms)
+[ RUN      ] QueryBatchCollectorTest.SuccessfulEmptyFullBatchIsExplicit
+[       OK ] QueryBatchCollectorTest.SuccessfulEmptyFullBatchIsExplicit (0 ms)
+[ RUN      ] QueryBatchCollectorTest.CapacityFailureRemainsFailureUntilLastPacket
+[       OK ] QueryBatchCollectorTest.CapacityFailureRemainsFailureUntilLastPacket (0 ms)
+[----------] 5 tests from QueryBatchCollectorTest (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 5 tests from 1 test suite ran. (0 ms total)
+[  PASSED  ] 5 tests.
+binary=durable_order_event_inbox_test
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 3 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 3 tests from DurableOrderEventInboxTest
+[ RUN      ] DurableOrderEventInboxTest.FullQueuePersistsSuffixAndReplaysBarrierAtItsFifoPosition
+[       OK ] DurableOrderEventInboxTest.FullQueuePersistsSuffixAndReplaysBarrierAtItsFifoPosition (11 ms)
+[ RUN      ] DurableOrderEventInboxTest.ConsumerFailureBlocksLaterEventsUntilSuccessfulReplay
+[       OK ] DurableOrderEventInboxTest.ConsumerFailureBlocksLaterEventsUntilSuccessfulReplay (11 ms)
+[ RUN      ] DurableOrderEventInboxTest.DamagedRecoverySnapshotInvokesNoConsumer
+[       OK ] DurableOrderEventInboxTest.DamagedRecoverySnapshotInvokesNoConsumer (2 ms)
+[----------] 3 tests from DurableOrderEventInboxTest (25 ms total)
+
+[----------] Global test environment tear-down
+[==========] 3 tests from 1 test suite ran. (25 ms total)
+[  PASSED  ] 3 tests.
+binary=account_execution_scheduler_test
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 3 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 3 tests from AccountExecutionSchedulerTest
+[ RUN      ] AccountExecutionSchedulerTest.SerializesSameAccountWhileOtherAccountCanProgress
+[       OK ] AccountExecutionSchedulerTest.SerializesSameAccountWhileOtherAccountCanProgress (1 ms)
+[ RUN      ] AccountExecutionSchedulerTest.HonorsDeadlineAndExplicitCapacityAndCancellation
+[       OK ] AccountExecutionSchedulerTest.HonorsDeadlineAndExplicitCapacityAndCancellation (5 ms)
+[ RUN      ] AccountExecutionSchedulerTest.StopCancelsFutureTasksAndExceptionsAreObservable
+[       OK ] AccountExecutionSchedulerTest.StopCancelsFutureTasksAndExceptionsAreObservable (0 ms)
+[----------] 3 tests from AccountExecutionSchedulerTest (7 ms total)
+
+[----------] Global test environment tear-down
+[==========] 3 tests from 1 test suite ran. (7 ms total)
+[  PASSED  ] 3 tests.
+binary=wal_replay_loader_test
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 14 tests from 2 test suites.
+[----------] Global test environment set-up.
+[----------] 12 tests from WalReplayLoaderTest
+[ RUN      ] WalReplayLoaderTest.RebuildsOrderStateAndLedgerFromWal
+[       OK ] WalReplayLoaderTest.RebuildsOrderStateAndLedgerFromWal (9 ms)
+[ RUN      ] WalReplayLoaderTest.ReplaysLegacyTradeKindWithoutEventType
+[       OK ] WalReplayLoaderTest.ReplaysLegacyTradeKindWithoutEventType (2 ms)
+[ RUN      ] WalReplayLoaderTest.SupportsLegacyWalWithoutExtendedFields
+[       OK ] WalReplayLoaderTest.SupportsLegacyWalWithoutExtendedFields (1 ms)
+[ RUN      ] WalReplayLoaderTest.ReplaysCtpSubmitMappingForOrphanOrderResolution
+[       OK ] WalReplayLoaderTest.ReplaysCtpSubmitMappingForOrphanOrderResolution (3 ms)
+[ RUN      ] WalReplayLoaderTest.IgnoresRolloverLinesWithoutParseErrors
+[       OK ] WalReplayLoaderTest.IgnoresRolloverLinesWithoutParseErrors (1 ms)
+[ RUN      ] WalReplayLoaderTest.DurableReceiptSurvivesAbruptProcessExitAndKeepsStreamOnReopen
+[       OK ] WalReplayLoaderTest.DurableReceiptSurvivesAbruptProcessExitAndKeepsStreamOnReopen (4 ms)
+[ RUN      ] WalReplayLoaderTest.PreservesPricePrecisionAndRejectsNonFiniteRecordsBeforeWrite
+[       OK ] WalReplayLoaderTest.PreservesPricePrecisionAndRejectsNonFiniteRecordsBeforeWrite (1 ms)
+[ RUN      ] WalReplayLoaderTest.ValidatedVisitorIncludesMappingsTradesAndTheirExactReceipts
+[       OK ] WalReplayLoaderTest.ValidatedVisitorIncludesMappingsTradesAndTheirExactReceipts (7 ms)
+[ RUN      ] WalReplayLoaderTest.RejectsChecksumCorruptionBeforeApplyingAnyProjection
+[       OK ] WalReplayLoaderTest.RejectsChecksumCorruptionBeforeApplyingAnyProjection (4 ms)
+[ RUN      ] WalReplayLoaderTest.IncompleteTailRequiresExplicitRepairAndIsNeverSilentlyAppended
+[       OK ] WalReplayLoaderTest.IncompleteTailRequiresExplicitRepairAndIsNeverSilentlyAppended (2 ms)
+[ RUN      ] WalReplayLoaderTest.RejectsConcurrentWriterAndLegacySequenceGap
+[       OK ] WalReplayLoaderTest.RejectsConcurrentWriterAndLegacySequenceGap (2 ms)
+[ RUN      ] WalReplayLoaderTest.ContinuesLegacyStreamWithVersionedReceiptAndStableFirstSequence
+[       OK ] WalReplayLoaderTest.ContinuesLegacyStreamWithVersionedReceiptAndStableFirstSequence (3 ms)
+[----------] 12 tests from WalReplayLoaderTest (45 ms total)
+
+[----------] 2 tests from CtpOrderMappingStoreTest
+[ RUN      ] CtpOrderMappingStoreTest.SameOrderRefAcrossTradingDaysDoesNotCrossAttribute
+[       OK ] CtpOrderMappingStoreTest.SameOrderRefAcrossTradingDaysDoesNotCrossAttribute (0 ms)
+[ RUN      ] CtpOrderMappingStoreTest.ExchangeOrderIdentityResolvesTradeWithoutOrderRef
+[       OK ] CtpOrderMappingStoreTest.ExchangeOrderIdentityResolvesTradeWithoutOrderRef (0 ms)
+[----------] 2 tests from CtpOrderMappingStoreTest (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 14 tests from 2 test suites ran. (46 ms total)
+[  PASSED  ] 14 tests.
+binary=runtime_identity_test
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 8 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 8 tests from RuntimeIdentityTest
+[ RUN      ] RuntimeIdentityTest.RestartUsesStableStateAndRejectsConcurrentOwner
+[       OK ] RuntimeIdentityTest.RestartUsesStableStateAndRejectsConcurrentOwner (8 ms)
+[ RUN      ] RuntimeIdentityTest.DifferentEnvironmentsNeverShareDefaultRecoveryFiles
+[       OK ] RuntimeIdentityTest.DifferentEnvironmentsNeverShareDefaultRecoveryFiles (18 ms)
+[ RUN      ] RuntimeIdentityTest.SiblingInstancesCannotBypassAccountAdmission
+[       OK ] RuntimeIdentityTest.SiblingInstancesCannotBypassAccountAdmission (14 ms)
+[ RUN      ] RuntimeIdentityTest.NonemptyLegacyFilesRequireAnExplicitMigration
+[       OK ] RuntimeIdentityTest.NonemptyLegacyFilesRequireAnExplicitMigration (8 ms)
+[ RUN      ] RuntimeIdentityTest.MigrationCopiesLegacyForReviewWithoutAssigningIdentity
+[       OK ] RuntimeIdentityTest.MigrationCopiesLegacyForReviewWithoutAssigningIdentity (52 ms)
+[ RUN      ] RuntimeIdentityTest.MigrationRejectsActiveAccountAndChecksCopiedIdentity
+[       OK ] RuntimeIdentityTest.MigrationRejectsActiveAccountAndChecksCopiedIdentity (103 ms)
+[ RUN      ] RuntimeIdentityTest.RejectsTraversalAndConflictingLegacyOverrides
+[       OK ] RuntimeIdentityTest.RejectsTraversalAndConflictingLegacyOverrides (0 ms)
+[ RUN      ] RuntimeIdentityTest.CacheAndCheckpointKeysAreScopedTogether
+[       OK ] RuntimeIdentityTest.CacheAndCheckpointKeysAreScopedTogether (0 ms)
+[----------] 8 tests from RuntimeIdentityTest (207 ms total)
+
+[----------] Global test environment tear-down
+[==========] 8 tests from 1 test suite ran. (207 ms total)
+[  PASSED  ] 8 tests.
+binary=runtime_paths_test
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 3 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 3 tests from RuntimePathsTest
+[ RUN      ] RuntimePathsTest.ResolutionHasNoSideEffectsAndKeepsRunArtifactsOutsideRecovery
+[       OK ] RuntimePathsTest.ResolutionHasNoSideEffectsAndKeepsRunArtifactsOutsideRecovery (0 ms)
+[ RUN      ] RuntimePathsTest.ExplicitLegacyArtifactsRemainUnclaimedAndKeepTheirPaths
+[       OK ] RuntimePathsTest.ExplicitLegacyArtifactsRemainUnclaimedAndKeepTheirPaths (9 ms)
+[ RUN      ] RuntimePathsTest.ConflictingOverridesAndUnsafeIdentityFailBeforeCreatingDirectories
+[       OK ] RuntimePathsTest.ConflictingOverridesAndUnsafeIdentityFailBeforeCreatingDirectories (0 ms)
+[----------] 3 tests from RuntimePathsTest (11 ms total)
+
+[----------] Global test environment tear-down
+[==========] 3 tests from 1 test suite ran. (11 ms total)
+[  PASSED  ] 3 tests.
+binary=position_reconciliation_test
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 3 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 3 tests from PositionReconciliationTest
+[ RUN      ] PositionReconciliationTest.EmptyFailedOrPartialQueryCannotConfirmFlatAccount
+[       OK ] PositionReconciliationTest.EmptyFailedOrPartialQueryCannotConfirmFlatAccount (0 ms)
+[ RUN      ] PositionReconciliationTest.OffsetLongAndShortCannotHideUnattributedBrokerHoldings
+[       OK ] PositionReconciliationTest.OffsetLongAndShortCannotHideUnattributedBrokerHoldings (0 ms)
+[ RUN      ] PositionReconciliationTest.NonShfeUsesRemainingYesterdayAndChecksHedgeIdentity
+[       OK ] PositionReconciliationTest.NonShfeUsesRemainingYesterdayAndChecksHedgeIdentity (0 ms)
+[----------] 3 tests from PositionReconciliationTest (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 3 tests from 1 test suite ran. (0 ms total)
+[  PASSED  ] 3 tests.
+binary=execution_engine_test
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 18 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 18 tests from ExecutionEngineTest
+[ RUN      ] ExecutionEngineTest.PlaceOrderAsyncReturnsOrderRef
+ts_ns=1788666031491530784 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+ts_ns=1788666031491836079 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+ts_ns=1788666031492513364 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+[       OK ] ExecutionEngineTest.PlaceOrderAsyncReturnsOrderRef (1 ms)
+[ RUN      ] ExecutionEngineTest.UnknownSubmissionKeepsReservationWhileDefiniteFailureReleasesIt
+[       OK ] ExecutionEngineTest.UnknownSubmissionKeepsReservationWhileDefiniteFailureReleasesIt (0 ms)
+[ RUN      ] ExecutionEngineTest.ConcurrentCrossingOrdersAreSerializedThroughRiskAndRegistration
+[       OK ] ExecutionEngineTest.ConcurrentCrossingOrdersAreSerializedThroughRiskAndRegistration (0 ms)
+[ RUN      ] ExecutionEngineTest.ActiveOrderLimitIncludesUnknownAndSerializesConcurrentAdmission
+[       OK ] ExecutionEngineTest.ActiveOrderLimitIncludesUnknownAndSerializesConcurrentAdmission (0 ms)
+[ RUN      ] ExecutionEngineTest.TerminalOrderReportDoesNotDiscardUnbookedTrade
+[       OK ] ExecutionEngineTest.TerminalOrderReportDoesNotDiscardUnbookedTrade (0 ms)
+[ RUN      ] ExecutionEngineTest.OrderPersistenceFailureHoldsReceiptButDoesNotDiscardRealFill
+[       OK ] ExecutionEngineTest.OrderPersistenceFailureHoldsReceiptButDoesNotDiscardRealFill (0 ms)
+[ RUN      ] ExecutionEngineTest.PlaceOrderRiskRejectReturnsFailedResult
+ts_ns=1788666031495015860 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+ts_ns=1788666031495152507 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+ts_ns=1788666031495362188 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+[       OK ] ExecutionEngineTest.PlaceOrderRiskRejectReturnsFailedResult (0 ms)
+[ RUN      ] ExecutionEngineTest.PlaceOrderRiskContextUsesResolvedContractMultiplier
+ts_ns=1788666031495876311 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+ts_ns=1788666031495993921 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+ts_ns=1788666031496454669 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+[       OK ] ExecutionEngineTest.PlaceOrderRiskContextUsesResolvedContractMultiplier (1 ms)
+[ RUN      ] ExecutionEngineTest.CircuitBreakerOpenBlocksNewOrder
+ts_ns=1788666031496939317 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+ts_ns=1788666031497035003 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+ts_ns=1788666031497244945 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+[       OK ] ExecutionEngineTest.CircuitBreakerOpenBlocksNewOrder (0 ms)
+[ RUN      ] ExecutionEngineTest.OrderStateTransitionValidSequence
+ts_ns=1788666031497673750 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+ts_ns=1788666031497819189 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+ts_ns=1788666031498254605 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+[       OK ] ExecutionEngineTest.OrderStateTransitionValidSequence (1 ms)
+[ RUN      ] ExecutionEngineTest.OrderStateTransitionInvalidSequenceRejected
+ts_ns=1788666031498716995 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+ts_ns=1788666031498826519 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+ts_ns=1788666031499200579 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+[       OK ] ExecutionEngineTest.OrderStateTransitionInvalidSequenceRejected (0 ms)
+[ RUN      ] ExecutionEngineTest.CancelActionRejectDoesNotBlockLateTradeFill
+ts_ns=1788666031499658219 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+ts_ns=1788666031499863006 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+ts_ns=1788666031500299300 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+[       OK ] ExecutionEngineTest.CancelActionRejectDoesNotBlockLateTradeFill (1 ms)
+[ RUN      ] ExecutionEngineTest.DuplicateOrderEventIgnored
+ts_ns=1788666031500814892 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+ts_ns=1788666031500932111 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+ts_ns=1788666031501361894 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+[       OK ] ExecutionEngineTest.DuplicateOrderEventIgnored (0 ms)
+[ RUN      ] ExecutionEngineTest.CancelOrderAsyncSuccessReturnsTrue
+ts_ns=1788666031501793652 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+ts_ns=1788666031501912390 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+ts_ns=1788666031553886133 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+[       OK ] ExecutionEngineTest.CancelOrderAsyncSuccessReturnsTrue (52 ms)
+[ RUN      ] ExecutionEngineTest.CancelOrderAsyncRetryOnFailureEventuallyReturnsFalse
+ts_ns=1788666031554493673 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+ts_ns=1788666031554616568 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+ts_ns=1788666031554870706 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+[       OK ] ExecutionEngineTest.CancelOrderAsyncRetryOnFailureEventuallyReturnsFalse (0 ms)
+[ RUN      ] ExecutionEngineTest.PositionUpdateAfterTradeRedisAndPgConsistent
+ts_ns=1788666031555334038 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+ts_ns=1788666031555453145 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+ts_ns=1788666031556108590 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+[       OK ] ExecutionEngineTest.PositionUpdateAfterTradeRedisAndPgConsistent (1 ms)
+[ RUN      ] ExecutionEngineTest.QueryTradingAccountAsyncReturnsSnapshot
+ts_ns=1788666031556577203 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+ts_ns=1788666031556695529 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+ts_ns=1788666031556959653 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+[       OK ] ExecutionEngineTest.QueryTradingAccountAsyncReturnsSnapshot (0 ms)
+[ RUN      ] ExecutionEngineTest.EmptyPositionQueryCompletesAfterDispatcherCallback
+ts_ns=1788666031557394688 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+ts_ns=1788666031557511897 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+ts_ns=1788666031567974699 level=warn app=ctp_trader_adapter event=ctp_trader_connection_lost previous_state="disconnected" will_reconnect="false"
+[       OK ] ExecutionEngineTest.EmptyPositionQueryCompletesAfterDispatcherCallback (11 ms)
+[----------] 18 tests from ExecutionEngineTest (77 ms total)
+
+[----------] Global test environment tear-down
+[==========] 18 tests from 1 test suite ran. (77 ms total)
+[  PASSED  ] 18 tests.
+binary=strategy_engine_test
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 19 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 19 tests from StrategyEngineTest
+[ RUN      ] StrategyEngineTest.DispatchesStateAndOrderEventsToAllStrategies
+[       OK ] StrategyEngineTest.DispatchesStateAndOrderEventsToAllStrategies (6 ms)
+[ RUN      ] StrategyEngineTest.DrainBarrierWaitsForCallbackCompletion
+[       OK ] StrategyEngineTest.DrainBarrierWaitsForCallbackCompletion (101 ms)
+[ RUN      ] StrategyEngineTest.DispatchesMarketTicksToAllStrategies
+[       OK ] StrategyEngineTest.DispatchesMarketTicksToAllStrategies (5 ms)
+[ RUN      ] StrategyEngineTest.StartsLaunchSpecsWithPerStrategyMetadata
+[       OK ] StrategyEngineTest.StartsLaunchSpecsWithPerStrategyMetadata (0 ms)
+[ RUN      ] StrategyEngineTest.RoutesOrderEventByStrategyId
+[       OK ] StrategyEngineTest.RoutesOrderEventByStrategyId (5 ms)
+[ RUN      ] StrategyEngineTest.CountsUnmatchedOrderEvents
+[       OK ] StrategyEngineTest.CountsUnmatchedOrderEvents (5 ms)
+[ RUN      ] StrategyEngineTest.IsolatesStrategyExceptionsInOrderDispatch
+ts_ns=1788666031697291276 level=error app=strategy_engine event=strategy_callback_exception phase="order_event" strategy_id="alpha" error="order exception"
+[       OK ] StrategyEngineTest.IsolatesStrategyExceptionsInOrderDispatch (5 ms)
+[ RUN      ] StrategyEngineTest.TriggersTimerCallbacks
+[       OK ] StrategyEngineTest.TriggersTimerCallbacks (11 ms)
+[ RUN      ] StrategyEngineTest.DispatchesAccountSnapshotsToAllStrategies
+[       OK ] StrategyEngineTest.DispatchesAccountSnapshotsToAllStrategies (5 ms)
+[ RUN      ] StrategyEngineTest.CollectAllMetricsReturnsCachedMetrics
+[       OK ] StrategyEngineTest.CollectAllMetricsReturnsCachedMetrics (10 ms)
+[ RUN      ] StrategyEngineTest.LoadsAndSnapshotsStateWithPersistenceHook
+[       OK ] StrategyEngineTest.LoadsAndSnapshotsStateWithPersistenceHook (5 ms)
+[ RUN      ] StrategyEngineTest.RejectsAdmissionExplicitlyWithoutDroppingAcceptedEvents
+[       OK ] StrategyEngineTest.RejectsAdmissionExplicitlyWithoutDroppingAcceptedEvents (81 ms)
+[ RUN      ] StrategyEngineTest.ContractSwitchWarmsWithoutEmittingAndStampsNextIntent
+ts_ns=1788666031818427534 level=error app=strategy_engine event=strategy_callback_exception phase="state" strategy_id="alpha" error="state exception"
+[       OK ] StrategyEngineTest.ContractSwitchWarmsWithoutEmittingAndStampsNextIntent (11 ms)
+[ RUN      ] StrategyEngineTest.RetainsFilledOrderAndReportsReliableAdmissionOverflow
+[       OK ] StrategyEngineTest.RetainsFilledOrderAndReportsReliableAdmissionOverflow (0 ms)
+[ RUN      ] StrategyEngineTest.DeadlineMarkerPreservesFifoAndHealthRemainsReadableWhileWorkerBlocked
+[       OK ] StrategyEngineTest.DeadlineMarkerPreservesFifoAndHealthRemainsReadableWhileWorkerBlocked (6 ms)
+[ RUN      ] StrategyEngineTest.StopCompletesQueuedControlPromiseBeforeBlockedWorkerFinishes
+[       OK ] StrategyEngineTest.StopCompletesQueuedControlPromiseBeforeBlockedWorkerFinishes (6 ms)
+[ RUN      ] StrategyEngineTest.CommittedDeliveryAcknowledgesOnlyAfterSuccessfulSnapshot
+ts_ns=1788666031843155006 level=error app=strategy_engine event=strategy_callback_exception phase="order_event" strategy_id="alpha" error="order exception"
+[       OK ] StrategyEngineTest.CommittedDeliveryAcknowledgesOnlyAfterSuccessfulSnapshot (0 ms)
+[ RUN      ] StrategyEngineTest.MarketGapRecoveryRequiresCompleteWarmupAndPersistsBeforeSuccess
+[       OK ] StrategyEngineTest.MarketGapRecoveryRequiresCompleteWarmupAndPersistsBeforeSuccess (0 ms)
+[ RUN      ] StrategyEngineTest.MarketGapEvidenceRejectsPartialBarsAndStaleGenerationAcknowledgement
+[       OK ] StrategyEngineTest.MarketGapEvidenceRejectsPartialBarsAndStaleGenerationAcknowledgement (0 ms)
+[----------] 19 tests from StrategyEngineTest (272 ms total)
+
+[----------] Global test environment tear-down
+[==========] 19 tests from 1 test suite ran. (273 ms total)
+[  PASSED  ] 19 tests.
+binary=composite_strategy_test
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 46 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 46 tests from CompositeStrategyTest
+[ RUN      ] CompositeStrategyTest.DispatchesOnlyEnabledSubStrategies
+ts_ns=1788666031846841478 level=info app=composite_strategy event=strategy_decision strategy_id="s1" event_type="strategy_decision" event_ts_ns="10" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="s1-open"
+[       OK ] CompositeStrategyTest.DispatchesOnlyEnabledSubStrategies (0 ms)
+[ RUN      ] CompositeStrategyTest.FiltersStateAndOrderEventsByProductId
+ts_ns=1788666031846992004 level=info app=composite_strategy event=strategy_decision strategy_id="s1" event_type="strategy_decision" event_ts_ns="20" instrument_id="SHFE.rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="s1-open"
+[       OK ] CompositeStrategyTest.FiltersStateAndOrderEventsByProductId (0 ms)
+[ RUN      ] CompositeStrategyTest.PendingOpenGateBlocksSameProductUntilTerminalEvent
+ts_ns=1788666031847108452 level=info app=composite_strategy event=strategy_decision strategy_id="s1" event_type="strategy_decision" event_ts_ns="10" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="s1-open"
+ts_ns=1788666031847155514 level=info app=composite_strategy event=strategy_decision strategy_id="s1" event_type="strategy_decision" event_ts_ns="20" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="pending_open_exists" trace_id="s1-open"
+ts_ns=1788666031847209901 level=info app=composite_strategy event=strategy_decision strategy_id="s1" event_type="strategy_decision" event_ts_ns="30" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="s1-open"
+[       OK ] CompositeStrategyTest.PendingOpenGateBlocksSameProductUntilTerminalEvent (0 ms)
+[ RUN      ] CompositeStrategyTest.PendingOpenGateIsProductScoped
+ts_ns=1788666031847288992 level=info app=composite_strategy event=strategy_decision strategy_id="s1" event_type="strategy_decision" event_ts_ns="20" instrument_id="m2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="s1-open"
+ts_ns=1788666031847330702 level=info app=composite_strategy event=strategy_decision strategy_id="s1" event_type="strategy_decision" event_ts_ns="30" instrument_id="rb2406" timeframe_minutes="1" disposition="blocked" reason="pending_open_exists" trace_id="s1-open"
+[       OK ] CompositeStrategyTest.PendingOpenGateIsProductScoped (0 ms)
+[ RUN      ] CompositeStrategyTest.ExistingProductPositionBlocksDifferentContractOpen
+ts_ns=1788666031847396161 level=info app=composite_strategy event=strategy_decision strategy_id="s1" event_type="strategy_decision" event_ts_ns="20" instrument_id="rb2406" timeframe_minutes="1" disposition="blocked" reason="existing_product_position" trace_id="s1-open"
+[       OK ] CompositeStrategyTest.ExistingProductPositionBlocksDifferentContractOpen (0 ms)
+[ RUN      ] CompositeStrategyTest.ReconcileNetPositionsFlattensStaleBelief
+ts_ns=1788666031847464506 level=info app=composite_strategy event=strategy_decision strategy_id="s1" event_type="strategy_decision" event_ts_ns="20" instrument_id="rb2406" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="s1-open"
+[       OK ] CompositeStrategyTest.ReconcileNetPositionsFlattensStaleBelief (0 ms)
+[ RUN      ] CompositeStrategyTest.ReconcileIgnoresAndClearsNonMatchingProductPositions
+[       OK ] CompositeStrategyTest.ReconcileIgnoresAndClearsNonMatchingProductPositions (0 ms)
+[ RUN      ] CompositeStrategyTest.ReconcileNetPositionsNoopWhenBeliefMatchesAuthoritative
+[       OK ] CompositeStrategyTest.ReconcileNetPositionsNoopWhenBeliefMatchesAuthoritative (0 ms)
+[ RUN      ] CompositeStrategyTest.ReconcileBackfillsAvgOpenForAdoptedPosition
+ts_ns=1788666031847607145 level=warn app=composite_strategy event=position_owner_backfilled strategy_id="composite" event_type="position_owner_backfilled" instrument_id="rb2405" owner_strategy_id="s1" reason="single_sub_strategy_position_adoption"
+[       OK ] CompositeStrategyTest.ReconcileBackfillsAvgOpenForAdoptedPosition (0 ms)
+[ RUN      ] CompositeStrategyTest.ReconcileBackfillsMissingOwnerForMatchingSingleStrategyPosition
+ts_ns=1788666031847686973 level=warn app=composite_strategy event=position_owner_backfilled strategy_id="composite" event_type="position_owner_backfilled" instrument_id="rb2405" owner_strategy_id="s1" reason="single_sub_strategy_position_adoption"
+[       OK ] CompositeStrategyTest.ReconcileBackfillsMissingOwnerForMatchingSingleStrategyPosition (0 ms)
+[ RUN      ] CompositeStrategyTest.BacktestTickBackfillsMissingOwnerForSingleStrategyPosition
+ts_ns=1788666031847850950 level=warn app=composite_strategy event=position_owner_backfilled strategy_id="composite" event_type="position_owner_backfilled" instrument_id="rb2405" owner_strategy_id="s1" reason="single_sub_strategy_position_adoption"
+[       OK ] CompositeStrategyTest.BacktestTickBackfillsMissingOwnerForSingleStrategyPosition (0 ms)
+[ RUN      ] CompositeStrategyTest.BacktestTickKeepsMissingOwnerAmbiguousWithMultipleStrategies
+[       OK ] CompositeStrategyTest.BacktestTickKeepsMissingOwnerAmbiguousWithMultipleStrategies (0 ms)
+[ RUN      ] CompositeStrategyTest.ReconcileDoesNotOverwriteExistingAvgOpen
+[       OK ] CompositeStrategyTest.ReconcileDoesNotOverwriteExistingAvgOpen (0 ms)
+[ RUN      ] CompositeStrategyTest.DispatchesSubStrategiesByTimeframeMinutes
+ts_ns=1788666031848040867 level=info app=composite_strategy event=strategy_decision strategy_id="tf1" event_type="strategy_decision" event_ts_ns="10" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="tf1-open"
+ts_ns=1788666031848085248 level=info app=composite_strategy event=strategy_decision strategy_id="tf5" event_type="strategy_decision" event_ts_ns="11" instrument_id="rb2405" timeframe_minutes="5" disposition="allowed" reason="none" trace_id="tf5-open"
+[       OK ] CompositeStrategyTest.DispatchesSubStrategiesByTimeframeMinutes (0 ms)
+[ RUN      ] CompositeStrategyTest.MarketRegimeFilterAppliesOnlyToOpenSignals
+ts_ns=1788666031848170297 level=info app=composite_strategy event=strategy_decision strategy_id="s1" event_type="strategy_decision" event_ts_ns="20" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="s1-open"
+[       OK ] CompositeStrategyTest.MarketRegimeFilterAppliesOnlyToOpenSignals (0 ms)
+[ RUN      ] CompositeStrategyTest.EmitsSameCycleCloseAndReverseOpenForOwnedPosition
+ts_ns=1788666031848238360 level=info app=composite_strategy event=strategy_decision strategy_id="s1" event_type="strategy_decision" event_ts_ns="30" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="reverse_open_pending_close" trace_id="s1-open"
+ts_ns=1788666031848286680 level=info app=composite_strategy event=strategy_decision strategy_id="s1" event_type="strategy_decision" event_ts_ns="31" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="existing_same_direction" trace_id="s1-open"
+[       OK ] CompositeStrategyTest.EmitsSameCycleCloseAndReverseOpenForOwnedPosition (0 ms)
+[ RUN      ] CompositeStrategyTest.ReverseOpenCanBeDisabledPerSubStrategy
+ts_ns=1788666031848367106 level=info app=composite_strategy event=strategy_decision strategy_id="s1" event_type="strategy_decision" event_ts_ns="30" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="reverse_open_disabled" trace_id="s1-open"
+ts_ns=1788666031848417857 level=info app=composite_strategy event=strategy_decision strategy_id="s1" event_type="strategy_decision" event_ts_ns="31" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+[       OK ] CompositeStrategyTest.ReverseOpenCanBeDisabledPerSubStrategy (0 ms)
+[ RUN      ] CompositeStrategyTest.RepeatedReverseCloseTraceUsesUniqueExchangeOrderIdForPositionSync
+ts_ns=1788666031848523138 level=info app=composite_strategy event=strategy_decision strategy_id="s1" event_type="strategy_decision" event_ts_ns="32" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="reverse_open_pending_close" trace_id="s1-open"
+[       OK ] CompositeStrategyTest.RepeatedReverseCloseTraceUsesUniqueExchangeOrderIdForPositionSync (0 ms)
+[ RUN      ] CompositeStrategyTest.ReverseOpenDoesNotBypassHigherPriorityCloseSignals
+ts_ns=1788666031848607069 level=info app=composite_strategy event=strategy_decision strategy_id="s1" event_type="strategy_decision" event_ts_ns="30" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="s1-open"
+[       OK ] CompositeStrategyTest.ReverseOpenDoesNotBypassHigherPriorityCloseSignals (0 ms)
+[ RUN      ] CompositeStrategyTest.BuiltinTrendStrategyReverseOpenHonorsAllowReverseSetting
+ts_ns=1788666031848701485 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666031848741513 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="2" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666031848786295 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="3" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id=""
+ts_ns=1788666031848924104 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="4" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id=""
+ts_ns=1788666031848971361 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="5" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id=""
+ts_ns=1788666031849021353 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="100" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666031849063465 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="101" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="reverse_open_disabled" trace_id=""
+ts_ns=1788666031849104155 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="102" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="reverse_open_disabled" trace_id=""
+ts_ns=1788666031849144476 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="103" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="reverse_open_disabled" trace_id=""
+ts_ns=1788666031849185156 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="104" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="reverse_open_disabled" trace_id=""
+ts_ns=1788666031849275903 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666031849315497 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="2" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666031849363687 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="3" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id=""
+ts_ns=1788666031849404736 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="4" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id=""
+ts_ns=1788666031849445697 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="5" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id=""
+ts_ns=1788666031849487299 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="100" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666031849530855 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="101" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="reverse_open_pending_close" trace_id=""
+ts_ns=1788666031849574053 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="102" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="reverse_open_pending_close" trace_id=""
+ts_ns=1788666031849616176 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="103" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="reverse_open_pending_close" trace_id=""
+ts_ns=1788666031849658320 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="104" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="reverse_open_pending_close" trace_id=""
+[       OK ] CompositeStrategyTest.BuiltinTrendStrategyReverseOpenHonorsAllowReverseSetting (1 ms)
+[ RUN      ] CompositeStrategyTest.TickAwareSubStrategySignalsExitThroughCompositeBacktestTick
+[       OK ] CompositeStrategyTest.TickAwareSubStrategySignalsExitThroughCompositeBacktestTick (0 ms)
+[ RUN      ] CompositeStrategyTest.TickAwareSubStrategySignalsExitThroughCompositeMarketTick
+[       OK ] CompositeStrategyTest.TickAwareSubStrategySignalsExitThroughCompositeMarketTick (0 ms)
+[ RUN      ] CompositeStrategyTest.MergesByPriorityThenVolumeThenTimestampThenTraceId
+ts_ns=1788666031849841269 level=info app=composite_strategy event=strategy_decision strategy_id="stop" event_type="strategy_decision" event_ts_ns="40" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="a-stop"
+ts_ns=1788666031849880701 level=info app=composite_strategy event=strategy_decision strategy_id="openA" event_type="strategy_decision" event_ts_ns="40" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="position_owner_mismatch" trace_id="b-open"
+ts_ns=1788666031849919405 level=info app=composite_strategy event=strategy_decision strategy_id="openB" event_type="strategy_decision" event_ts_ns="40" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="position_owner_mismatch" trace_id="a-open"
+ts_ns=1788666031849958022 level=info app=composite_strategy event=strategy_decision strategy_id="openC" event_type="strategy_decision" event_ts_ns="40" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="position_owner_mismatch" trace_id="z-open"
+[       OK ] CompositeStrategyTest.MergesByPriorityThenVolumeThenTimestampThenTraceId (0 ms)
+[ RUN      ] CompositeStrategyTest.RejectsNonBacktestRunType
+[       OK ] CompositeStrategyTest.RejectsNonBacktestRunType (0 ms)
+[ RUN      ] CompositeStrategyTest.AllowsNonBacktestRunTypeWhenEnabled
+[       OK ] CompositeStrategyTest.AllowsNonBacktestRunTypeWhenEnabled (0 ms)
+[ RUN      ] CompositeStrategyTest.AppliesRunModeOverridesBeforeAtomicInit
+ts_ns=1788666031850122921 level=info app=composite_strategy event=strategy_decision strategy_id="s1" event_type="strategy_decision" event_ts_ns="70" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="s1-open"
+[       OK ] CompositeStrategyTest.AppliesRunModeOverridesBeforeAtomicInit (0 ms)
+[ RUN      ] CompositeStrategyTest.TimeFilterStrategiesCanBlockOpenSignals
+ts_ns=1788666031850190898 level=info app=composite_strategy event=strategy_decision strategy_id="open" event_type="strategy_decision" event_ts_ns="0" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="time_filter" trace_id="open-open"
+[       OK ] CompositeStrategyTest.TimeFilterStrategiesCanBlockOpenSignals (0 ms)
+[ RUN      ] CompositeStrategyTest.SubStrategyForbidOpenWindowsBlockOnlyMatchingStrategy
+ts_ns=1788666031850267448 level=info app=composite_strategy event=strategy_decision strategy_id="blocked" event_type="strategy_decision" event_ts_ns="1800000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="forbid_open_window" trace_id="a-open"
+ts_ns=1788666031850306304 level=info app=composite_strategy event=strategy_decision strategy_id="allowed" event_type="strategy_decision" event_ts_ns="1800000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="z-open"
+[       OK ] CompositeStrategyTest.SubStrategyForbidOpenWindowsBlockOnlyMatchingStrategy (0 ms)
+[ RUN      ] CompositeStrategyTest.ForceCloseWindowsAlsoBlockOpeningSignals
+ts_ns=1788666031850366640 level=info app=composite_strategy event=strategy_decision strategy_id="open" event_type="strategy_decision" event_ts_ns="1800000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="forbid_open_window" trace_id="open-open"
+ts_ns=1788666031850409078 level=info app=composite_strategy event=strategy_decision strategy_id="open" event_type="strategy_decision" event_ts_ns="7200000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="open-open"
+[       OK ] CompositeStrategyTest.ForceCloseWindowsAlsoBlockOpeningSignals (0 ms)
+[ RUN      ] CompositeStrategyTest.ForbidOpenWindowsBlockOpenButAllowCloseSignals
+ts_ns=1788666031850471171 level=info app=composite_strategy event=strategy_decision strategy_id="open" event_type="strategy_decision" event_ts_ns="33000000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="no_position" trace_id="open-open"
+ts_ns=1788666031850512730 level=info app=composite_strategy event=strategy_decision strategy_id="open" event_type="strategy_decision" event_ts_ns="76200000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="no_position" trace_id="open-open"
+ts_ns=1788666031850555873 level=info app=composite_strategy event=strategy_decision strategy_id="open" event_type="strategy_decision" event_ts_ns="34200000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="no_position" trace_id="open-open"
+ts_ns=1788666031850601296 level=info app=composite_strategy event=strategy_decision strategy_id="open" event_type="strategy_decision" event_ts_ns="76200000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="open-open"
+[       OK ] CompositeStrategyTest.ForbidOpenWindowsBlockOpenButAllowCloseSignals (0 ms)
+[ RUN      ] CompositeStrategyTest.SimForbidOpenWindowsUseMultiMinuteSignalDecisionTime
+ts_ns=1788666031850662022 level=info app=composite_strategy event=strategy_decision strategy_id="open" event_type="strategy_decision" event_ts_ns="3899000000000" instrument_id="rb2405" timeframe_minutes="5" disposition="blocked" reason="forbid_open_window" trace_id="open-open"
+ts_ns=1788666031850702604 level=info app=composite_strategy event=strategy_decision strategy_id="open" event_type="strategy_decision" event_ts_ns="5399000000000" instrument_id="rb2405" timeframe_minutes="5" disposition="blocked" reason="forbid_open_window" trace_id="open-open"
+ts_ns=1788666031850748221 level=info app=composite_strategy event=strategy_decision strategy_id="open" event_type="strategy_decision" event_ts_ns="5400000000000" instrument_id="rb2405" timeframe_minutes="5" disposition="allowed" reason="none" trace_id="open-open"
+[       OK ] CompositeStrategyTest.SimForbidOpenWindowsUseMultiMinuteSignalDecisionTime (0 ms)
+[ RUN      ] CompositeStrategyTest.TimeFilterUsesMultiMinuteSignalDecisionTime
+ts_ns=1788666031850814233 level=info app=composite_strategy event=strategy_decision strategy_id="open" event_type="strategy_decision" event_ts_ns="32699000000000" instrument_id="rb2405" timeframe_minutes="5" disposition="blocked" reason="time_filter" trace_id="open-open"
+ts_ns=1788666031850856638 level=info app=composite_strategy event=strategy_decision strategy_id="open" event_type="strategy_decision" event_ts_ns="36000000000000" instrument_id="rb2405" timeframe_minutes="5" disposition="allowed" reason="none" trace_id="open-open"
+[       OK ] CompositeStrategyTest.TimeFilterUsesMultiMinuteSignalDecisionTime (0 ms)
+[ RUN      ] CompositeStrategyTest.DailyMaxLossGuardBlocksOnlySameDayOpenSignals
+ts_ns=1788666031850942686 level=warn app=composite_strategy event=risk_guard_blocked strategy_id="open" event_type="risk_guard_blocked" reason="daily_max_loss_R" event_ts_ns="36600000000000" current_value="3000" threshold_value="3000" r_value="1000"
+ts_ns=1788666031850978872 level=info app=composite_strategy event=strategy_decision strategy_id="open" event_type="strategy_decision" event_ts_ns="36600000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="no_position" trace_id="open-open"
+ts_ns=1788666031851061392 level=warn app=composite_strategy event=risk_guard_blocked strategy_id="open" event_type="risk_guard_blocked" reason="daily_max_loss_R" event_ts_ns="37200000000000" current_value="3000" threshold_value="3000" r_value="1000"
+ts_ns=1788666031851104177 level=info app=composite_strategy event=strategy_decision strategy_id="open" event_type="strategy_decision" event_ts_ns="37200000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="open-open"
+ts_ns=1788666031851180023 level=info app=composite_strategy event=strategy_decision strategy_id="open" event_type="strategy_decision" event_ts_ns="123000000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="no_position" trace_id="open-open"
+[       OK ] CompositeStrategyTest.DailyMaxLossGuardBlocksOnlySameDayOpenSignals (0 ms)
+[ RUN      ] CompositeStrategyTest.DailyMaxLossGuardUsesDynamicRiskBudgetFromAccountEquity
+ts_ns=1788666031851293302 level=info app=composite_strategy event=strategy_decision strategy_id="open" event_type="strategy_decision" event_ts_ns="36600000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="open-open"
+ts_ns=1788666031851337542 level=warn app=composite_strategy event=risk_guard_blocked strategy_id="open" event_type="risk_guard_blocked" reason="daily_max_loss_R" event_ts_ns="36900000000000" current_value="3000" threshold_value="3000" r_value="1000"
+ts_ns=1788666031851373337 level=info app=composite_strategy event=strategy_decision strategy_id="open" event_type="strategy_decision" event_ts_ns="36900000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="risk_guard" trace_id="open-open"
+[       OK ] CompositeStrategyTest.DailyMaxLossGuardUsesDynamicRiskBudgetFromAccountEquity (0 ms)
+[ RUN      ] CompositeStrategyTest.ConsecutiveLossGuardPausesOpenSignalsUntilNextDay
+ts_ns=1788666031851445047 level=warn app=composite_strategy event=risk_guard_blocked strategy_id="open" event_type="risk_guard_blocked" reason="max_consecutive_losses" event_ts_ns="209400000000000" current_value="3" threshold_value="3"
+ts_ns=1788666031851476881 level=info app=composite_strategy event=strategy_decision strategy_id="open" event_type="strategy_decision" event_ts_ns="209400000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="risk_guard" trace_id="open-open"
+ts_ns=1788666031851525765 level=info app=composite_strategy event=strategy_decision strategy_id="open" event_type="strategy_decision" event_ts_ns="295800000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="open-open"
+[       OK ] CompositeStrategyTest.ConsecutiveLossGuardPausesOpenSignalsUntilNextDay (0 ms)
+[ RUN      ] CompositeStrategyTest.RejectsInvalidSubStrategyTimeWindows
+[       OK ] CompositeStrategyTest.RejectsInvalidSubStrategyTimeWindows (0 ms)
+[ RUN      ] CompositeStrategyTest.BacktestForbidOpenWindowsUsePseudoLocalAsiaShanghaiTime
+ts_ns=1788666031851622992 level=info app=composite_strategy event=strategy_decision strategy_id="open" event_type="strategy_decision" event_ts_ns="33000000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="forbid_open_window" trace_id="open-open"
+[       OK ] CompositeStrategyTest.BacktestForbidOpenWindowsUsePseudoLocalAsiaShanghaiTime (0 ms)
+[ RUN      ] CompositeStrategyTest.BacktestForbidOpenWindowsMapPseudoLocalTimeIntoUtcWindow
+ts_ns=1788666031851681537 level=info app=composite_strategy event=strategy_decision strategy_id="open" event_type="strategy_decision" event_ts_ns="33000000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="forbid_open_window" trace_id="open-open"
+[       OK ] CompositeStrategyTest.BacktestForbidOpenWindowsMapPseudoLocalTimeIntoUtcWindow (0 ms)
+[ RUN      ] CompositeStrategyTest.BacktestForceCloseWindowsRespectCrossNightAsiaShanghaiWindow
+ts_ns=1788666031851740006 level=info app=composite_strategy event=strategy_decision strategy_id="open" event_type="strategy_decision" event_ts_ns="84600000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="forbid_open_window" trace_id="open-open"
+[       OK ] CompositeStrategyTest.BacktestForceCloseWindowsRespectCrossNightAsiaShanghaiWindow (0 ms)
+[ RUN      ] CompositeStrategyTest.TimeFilterAppliesOnlyToMatchingTimeframe
+ts_ns=1788666031851911840 level=info app=composite_strategy event=strategy_decision strategy_id="open" event_type="strategy_decision" event_ts_ns="0" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="open-open"
+[       OK ] CompositeStrategyTest.TimeFilterAppliesOnlyToMatchingTimeframe (0 ms)
+[ RUN      ] CompositeStrategyTest.SaveAndLoadStateRestoresPositionGate
+ts_ns=1788666031852006300 level=info app=composite_strategy event=strategy_decision strategy_id="capture" event_type="strategy_decision" event_ts_ns="80" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="capture-close"
+[       OK ] CompositeStrategyTest.SaveAndLoadStateRestoresPositionGate (0 ms)
+[ RUN      ] CompositeStrategyTest.SaveStateEmitsPerInstrumentRiskPriceLevels
+[       OK ] CompositeStrategyTest.SaveStateEmitsPerInstrumentRiskPriceLevels (0 ms)
+[ RUN      ] CompositeStrategyTest.SaveStateOmitsRiskPriceLevelsWhenFlat
+[       OK ] CompositeStrategyTest.SaveStateOmitsRiskPriceLevelsWhenFlat (0 ms)
+[ RUN      ] CompositeStrategyTest.PropagatesBacktestSnapshotIntoAtomicContext
+ts_ns=1788666031852124572 level=info app=composite_strategy event=strategy_decision strategy_id="capture" event_type="strategy_decision" event_ts_ns="50" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+[       OK ] CompositeStrategyTest.PropagatesBacktestSnapshotIntoAtomicContext (0 ms)
+[ RUN      ] CompositeStrategyTest.CollectAtomicIndicatorTraceContainsStopAndTakePrices
+ts_ns=1788666031852185189 level=info app=composite_strategy event=strategy_decision strategy_id="trace" event_type="strategy_decision" event_ts_ns="60" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+[       OK ] CompositeStrategyTest.CollectAtomicIndicatorTraceContainsStopAndTakePrices (0 ms)
+[ RUN      ] CompositeStrategyTest.CommittedPositionSurvivesTerminalFirstDuplicateAndRestart
+[       OK ] CompositeStrategyTest.CommittedPositionSurvivesTerminalFirstDuplicateAndRestart (0 ms)
+[----------] 46 tests from CompositeStrategyTest (5 ms total)
+
+[----------] Global test environment tear-down
+[==========] 46 tests from 1 test suite ran. (5 ms total)
+[  PASSED  ] 46 tests.
+binary=state_persistence_test
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 6 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 6 tests from StatePersistenceTest
+[ RUN      ] StatePersistenceTest.SavesAndLoadsStrategyState
+[       OK ] StatePersistenceTest.SavesAndLoadsStrategyState (0 ms)
+[ RUN      ] StatePersistenceTest.ExpiresWhenTtlElapsed
+[       OK ] StatePersistenceTest.ExpiresWhenTtlElapsed (2005 ms)
+[ RUN      ] StatePersistenceTest.FileBackendSavesAndLoadsStrategyState
+[       OK ] StatePersistenceTest.FileBackendSavesAndLoadsStrategyState (6 ms)
+[ RUN      ] StatePersistenceTest.FailedReplacePreservesExistingDestination
+[       OK ] StatePersistenceTest.FailedReplacePreservesExistingDestination (3 ms)
+[ RUN      ] StatePersistenceTest.FileSyncFailureKeepsPreviousSnapshotAndAllowsRetry
+[       OK ] StatePersistenceTest.FileSyncFailureKeepsPreviousSnapshotAndAllowsRetry (7 ms)
+[ RUN      ] StatePersistenceTest.DirectorySyncFailureDoesNotReportDurableSuccess
+[       OK ] StatePersistenceTest.DirectorySyncFailureDoesNotReportDurableSuccess (6 ms)
+[----------] 6 tests from StatePersistenceTest (2029 ms total)
+
+[----------] Global test environment tear-down
+[==========] 6 tests from 1 test suite ran. (2029 ms total)
+[  PASSED  ] 6 tests.
+binary=order_manager_test
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 11 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 11 tests from OrderManagerTest
+[ RUN      ] OrderManagerTest.ValidStateTransitionAndPersistence
+[       OK ] OrderManagerTest.ValidStateTransitionAndPersistence (0 ms)
+[ RUN      ] OrderManagerTest.PersistenceFailureDoesNotMarkEventAndRetryWritesState
+[       OK ] OrderManagerTest.PersistenceFailureDoesNotMarkEventAndRetryWritesState (0 ms)
+[ RUN      ] OrderManagerTest.DurableMarkerDoesNotSkipProcessLocalRecovery
+[       OK ] OrderManagerTest.DurableMarkerDoesNotSkipProcessLocalRecovery (0 ms)
+[ RUN      ] OrderManagerTest.DuplicateEventIgnoredByIdempotency
+[       OK ] OrderManagerTest.DuplicateEventIgnoredByIdempotency (0 ms)
+[ RUN      ] OrderManagerTest.InvalidTransitionRejected
+[       OK ] OrderManagerTest.InvalidTransitionRejected (0 ms)
+[ RUN      ] OrderManagerTest.TradeEventIdempotentByTradeId
+[       OK ] OrderManagerTest.TradeEventIdempotentByTradeId (0 ms)
+[ RUN      ] OrderManagerTest.TradeEventUsesLastTradeVolumeWhenCumulativeFilledVolumeAdvances
+[       OK ] OrderManagerTest.TradeEventUsesLastTradeVolumeWhenCumulativeFilledVolumeAdvances (0 ms)
+[ RUN      ] OrderManagerTest.CancelActionRejectedDoesNotMakeOrderTerminal
+[       OK ] OrderManagerTest.CancelActionRejectedDoesNotMakeOrderTerminal (0 ms)
+[ RUN      ] OrderManagerTest.GetActiveOrdersByStrategyFiltersCorrectly
+[       OK ] OrderManagerTest.GetActiveOrdersByStrategyFiltersCorrectly (0 ms)
+[ RUN      ] OrderManagerTest.ReplaysDurableLocalRejectionWithoutBrokerOrderRef
+[       OK ] OrderManagerTest.ReplaysDurableLocalRejectionWithoutBrokerOrderRef (0 ms)
+[ RUN      ] OrderManagerTest.GetActiveOrdersByAccountSpansStrategies
+[       OK ] OrderManagerTest.GetActiveOrdersByAccountSpansStrategies (0 ms)
+[----------] 11 tests from OrderManagerTest (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 11 tests from 1 test suite ran. (0 ms total)
+[  PASSED  ] 11 tests.
+binary=risk_manager_test
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 15 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 15 tests from RiskManagerTest
+[ RUN      ] RiskManagerTest.CommittedTradeStatisticsRestoreAndDeduplicateByDay
+[       OK ] RiskManagerTest.CommittedTradeStatisticsRestoreAndDeduplicateByDay (0 ms)
+[ RUN      ] RiskManagerTest.CheckOrderMaxVolumeExceededRejects
+[       OK ] RiskManagerTest.CheckOrderMaxVolumeExceededRejects (0 ms)
+[ RUN      ] RiskManagerTest.CheckOrderSelfTradePreventionCrossPriceRejects
+[       OK ] RiskManagerTest.CheckOrderSelfTradePreventionCrossPriceRejects (0 ms)
+[ RUN      ] RiskManagerTest.SelfTradePreventionCoversEveryOpenCloseCombination
+[       OK ] RiskManagerTest.SelfTradePreventionCoversEveryOpenCloseCombination (0 ms)
+[ RUN      ] RiskManagerTest.CheckOrderSelfTradePreventionRejectsAcrossStrategiesInSameAccount
+[       OK ] RiskManagerTest.CheckOrderSelfTradePreventionRejectsAcrossStrategiesInSameAccount (0 ms)
+[ RUN      ] RiskManagerTest.CheckOrderOrderRateExceededRejects
+[       OK ] RiskManagerTest.CheckOrderOrderRateExceededRejects (0 ms)
+[ RUN      ] RiskManagerTest.CheckOrderSimSubaccountCapitalExceededRejects
+[       OK ] RiskManagerTest.CheckOrderSimSubaccountCapitalExceededRejects (0 ms)
+[ RUN      ] RiskManagerTest.CheckOrderSimSubaccountUsesContextContractMultiplier
+[       OK ] RiskManagerTest.CheckOrderSimSubaccountUsesContextContractMultiplier (0 ms)
+[ RUN      ] RiskManagerTest.CheckCancelCancelRateExceededRejects
+[       OK ] RiskManagerTest.CheckCancelCancelRateExceededRejects (0 ms)
+[ RUN      ] RiskManagerTest.CheckCancelDailyCancelCountExceededRejects
+[       OK ] RiskManagerTest.CheckCancelDailyCancelCountExceededRejects (0 ms)
+[ RUN      ] RiskManagerTest.RiskRuleLoadFromYamlSuccess
+[       OK ] RiskManagerTest.RiskRuleLoadFromYamlSuccess (0 ms)
+[ RUN      ] RiskManagerTest.RiskManagerReloadRulesDynamicUpdate
+[       OK ] RiskManagerTest.RiskManagerReloadRulesDynamicUpdate (0 ms)
+[ RUN      ] RiskManagerTest.InitializeStopsExistingDynamicReloadThread
+[       OK ] RiskManagerTest.InitializeStopsExistingDynamicReloadThread (0 ms)
+[ RUN      ] RiskManagerTest.VirtualClockRefillsTheSameRateLimiterWithoutWallClockSleep
+[       OK ] RiskManagerTest.VirtualClockRefillsTheSameRateLimiterWithoutWallClockSleep (0 ms)
+[ RUN      ] RiskManagerTest.DestructionInterruptsLongReloadInterval
+[       OK ] RiskManagerTest.DestructionInterruptsLongReloadInterval (20 ms)
+[----------] 15 tests from RiskManagerTest (21 ms total)
+
+[----------] Global test environment tear-down
+[==========] 15 tests from 1 test suite ran. (21 ms total)
+[  PASSED  ] 15 tests.

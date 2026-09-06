@@ -19,6 +19,13 @@ class KamaTrendOpening : public IOpeningStrategy, public IAtomicIndicatorTracePr
     void Init(const AtomicParams& params) override;
     std::string GetId() const override;
     void Reset() override;
+    bool ResetForMarketGap() override {
+        Reset();
+        return true;
+    }
+    std::int32_t RequiredMarketWarmupBars() const override {
+        return er_period_ + std_period_ + atr_period_ + 4;
+    }
     std::vector<SignalIntent> OnState(const StateSnapshot7D& state,
                                       const AtomicStrategyContext& ctx) override;
     std::optional<AtomicIndicatorSnapshot> IndicatorSnapshot() const override;

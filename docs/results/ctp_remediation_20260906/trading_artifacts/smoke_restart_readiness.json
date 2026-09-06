@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "heartbeat_ts_ns": 1788665655835711852,
+  "mode": "Blocked",
+  "generation": 1,
+  "recovery_complete": true,
+  "stability_started_ts_ns": 0,
+  "next_ready_ts_ns": 0,
+  "trader_ready": true,
+  "gateway_healthy": true,
+  "settlement_confirmed": true,
+  "trader_state": "ready",
+  "pending_exit_count": 0,
+  "unresolved_mapping_count": 0,
+  "reasons": ["shutdown"],
+  "suppressed_instruments": []
+}

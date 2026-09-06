@@ -13,6 +13,8 @@ class TimeFilter : public ITimeFilterStrategy {
     void Init(const AtomicParams& params) override;
     std::string GetId() const override;
     void Reset() override;
+    bool ResetForMarketGap() override { return true; }
+    std::int32_t RequiredMarketWarmupBars() const override { return 0; }
     bool AllowOpening(EpochNanos now_ns) override;
 
    private:

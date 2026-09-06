@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 QUANT_ROOT="${QUANT_ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 export QUANT_ROOT
+# shellcheck source=runtime_path_defaults.sh
+source "${SCRIPT_DIR}/runtime_path_defaults.sh"
 
 ENV_FILE="${ENV_FILE:-${QUANT_ROOT}/runtime/simnow.env}"
 CONFIG_PATH="${QUANT_ROOT}/configs/sim/ctp_sim_trade_candidates.yaml"
@@ -14,12 +16,12 @@ OPS_HEALTH_BIN="${OPS_HEALTH_BIN:-${BUILD_DIR}/ops_health_report_cli}"
 OPS_ALERT_BIN="${OPS_ALERT_BIN:-${BUILD_DIR}/ops_alert_report_cli}"
 EXPORT_SCRIPT="${SIMNOW_EXPORT_SCRIPT:-${SCRIPT_DIR}/export_simnow_trading_day.sh}"
 SIGNAL_MONITOR_SCRIPT="${SIMNOW_SIGNAL_MONITOR_SCRIPT:-${SCRIPT_DIR}/monitor_simnow_signal_execution.sh}"
-RUN_ROOT="${SIMNOW_RUN_ROOT:-${QUANT_ROOT}/runtime/trading/runs/simnow}"
-MARKET_DATA_DIR="${SIMNOW_MARKET_DATA_DIR:-${QUANT_ROOT}/runtime/market_data/simnow}"
-WAL_FILE="${SIMNOW_WAL_FILE:-${QUANT_ROOT}/runtime/trading/wal/simnow/events.wal}"
-EXPORT_ROOT="${SIMNOW_EXPORT_ROOT:-${QUANT_ROOT}/runtime/trading/exports/simnow}"
-RECONCILE_ROOT="${SIMNOW_RECONCILE_ROOT:-${QUANT_ROOT}/runtime/trading/reconcile/simnow}"
-REPORT_ROOT="${SIMNOW_REPORT_ROOT:-${QUANT_ROOT}/runtime/trading/reports/simnow}"
+RUN_ROOT="${SIMNOW_RUN_ROOT:-}"
+MARKET_DATA_DIR="${SIMNOW_MARKET_DATA_DIR:-${QUANT_HFT_MARKET_DATA_DIR:-}}"
+WAL_FILE="${SIMNOW_WAL_FILE:-${QUANT_HFT_WAL_FILE:-}}"
+EXPORT_ROOT="${SIMNOW_EXPORT_ROOT:-}"
+RECONCILE_ROOT="${SIMNOW_RECONCILE_ROOT:-}"
+REPORT_ROOT="${SIMNOW_REPORT_ROOT:-}"
 TRADING_WINDOWS="${SIMNOW_TRADING_WINDOWS:-night=20:55-02:35,day_am=08:55-11:35,day_pm=13:25-15:20}"
 TRADING_DAYS_FILE="${SIMNOW_TRADING_DAYS_FILE:-}"
 EOD_TIME="${SIMNOW_EOD_TIME:-15:25}"
@@ -49,7 +51,7 @@ ALLOW_UNCONFIRMED_SETTLEMENT="${SIMNOW_ALLOW_UNCONFIRMED_SETTLEMENT:-0}"
 SIGNAL_MONITOR_ENABLED="${SIMNOW_SIGNAL_EXECUTION_MONITOR:-0}"
 SIGNAL_MONITOR_EXTERNAL="${SIMNOW_SIGNAL_MONITOR_EXTERNAL:-0}"
 SIGNAL_MONITOR_POLL_SECONDS="${SIMNOW_SIGNAL_MONITOR_POLL_SECONDS:-5}"
-SIGNAL_MONITOR_ROOT="${SIMNOW_SIGNAL_MONITOR_ROOT:-${QUANT_ROOT}/runtime/trading/monitor/simnow}"
+SIGNAL_MONITOR_ROOT="${SIMNOW_SIGNAL_MONITOR_ROOT:-}"
 SIGNAL_MONITOR_HEARTBEAT_FILE="${SIMNOW_SIGNAL_MONITOR_HEARTBEAT_FILE:-${SIGNAL_MONITOR_ROOT}/heartbeat.json}"
 SIGNAL_MONITOR_HEARTBEAT_STALE_SECONDS="${SIMNOW_SIGNAL_MONITOR_HEARTBEAT_STALE_SECONDS:-30}"
 RUN_ID_PREFIX="${SIMNOW_RUN_ID_PREFIX:-simnow-auto}"
@@ -246,8 +248,12 @@ check_free_disk() {
   local min_free_mb="$2"
   local free_mb
 
-  mkdir -p "${path}"
-  free_mb="$(df -Pm "${path}" | awk 'NR == 2 {print $4}')"
+  # Inspect the nearest existing parent; never create unbound recovery artifacts.
+  local existing_path="${path}"
+  while [[ ! -d "${existing_path}" ]]; do
+    existing_path="$(dirname "${existing_path}")"
+  done
+  free_mb="$(df -Pm "${existing_path}" | awk 'NR == 2 {print $4}')"
   [[ "${free_mb}" =~ ^[0-9]+$ ]] || die "unable to determine free disk space for ${path}"
   if (( free_mb < min_free_mb )); then
     send_alert_once "disk.${path}" "critical" \
@@ -905,7 +911,7 @@ if [[ ${MARKET_DATA_DIR_SET_BY_CLI} -eq 0 ]]; then
   MARKET_DATA_DIR="${SIMNOW_MARKET_DATA_DIR:-${MARKET_DATA_DIR}}"
 fi
 if [[ ${WAL_FILE_SET_BY_CLI} -eq 0 ]]; then
-  WAL_FILE="${SIMNOW_WAL_FILE:-${WAL_FILE}}"
+  WAL_FILE="${SIMNOW_WAL_FILE:-${QUANT_HFT_WAL_FILE:-${WAL_FILE}}}"
 fi
 if [[ ${REPORT_ROOT_SET_BY_CLI} -eq 0 ]]; then
   REPORT_ROOT="${SIMNOW_REPORT_ROOT:-${REPORT_ROOT}}"
@@ -916,6 +922,30 @@ fi
 if [[ ${RECONCILE_ROOT_SET_BY_CLI} -eq 0 ]]; then
   RECONCILE_ROOT="${SIMNOW_RECONCILE_ROOT:-${RECONCILE_ROOT}}"
 fi
+# Resolve paths under exactly the environment that the engine will inherit.
+export CTP_SIM_MARKET_FRONT="${CTP_SIM_MARKET_FRONT:-tcp://182.254.243.31:30011}"
+export CTP_SIM_TRADER_FRONT="${CTP_SIM_TRADER_FRONT:-tcp://182.254.243.31:30001}"
+export CTP_SIM_IS_PRODUCTION_MODE="${CTP_SIM_IS_PRODUCTION_MODE:-true}"
+export CTP_SIM_ENABLE_REAL_API="${CTP_SIM_ENABLE_REAL_API:-true}"
+if [[ ${WAL_FILE_SET_BY_CLI} -eq 0 && -n "${QUANT_HFT_WAL_FILE:-}" &&
+      -n "${SIMNOW_WAL_FILE:-}" && "${QUANT_HFT_WAL_FILE}" != "${SIMNOW_WAL_FILE}" ]]; then
+  die "QUANT_HFT_WAL_FILE conflicts with SIMNOW_WAL_FILE; select one explicit --wal-file"
+fi
+if [[ -z "${RUN_ROOT}" || -z "${WAL_FILE}" || -z "${MARKET_DATA_DIR}" ||
+      -z "${REPORT_ROOT}" || -z "${EXPORT_ROOT}" || -z "${RECONCILE_ROOT}" ]]; then
+  load_runtime_path_defaults
+  RUN_ROOT="${RUN_ROOT:-${RESOLVED_RUN_ROOT}}"
+  WAL_FILE="${WAL_FILE:-${RESOLVED_WAL_FILE}}"
+  MARKET_DATA_DIR="${MARKET_DATA_DIR:-${RESOLVED_MARKET_DATA_DIR}}"
+  REPORT_ROOT="${REPORT_ROOT:-${RESOLVED_REPORT_ROOT}}"
+  EXPORT_ROOT="${EXPORT_ROOT:-${RESOLVED_EXPORT_ROOT}}"
+  RECONCILE_ROOT="${RECONCILE_ROOT:-${RESOLVED_RECONCILE_ROOT}}"
+  export QUANT_HFT_READINESS_FILE="${QUANT_HFT_READINESS_FILE:-${RESOLVED_READINESS_FILE}}"
+fi
+export QUANT_HFT_WAL_FILE="${WAL_FILE}"
+export SIMNOW_WAL_FILE="${WAL_FILE}"
+export QUANT_HFT_MARKET_DATA_DIR="${MARKET_DATA_DIR}"
+SIGNAL_MONITOR_ROOT="${SIGNAL_MONITOR_ROOT:-${RUN_ROOT}/monitor}"
 EOD_TIME="${SIMNOW_EOD_TIME:-${EOD_TIME}}"
 EOD_EXECUTE="${SIMNOW_EOD_EXECUTE:-${EOD_EXECUTE}}"
 EOD_PROJECT_DB="${SIMNOW_EOD_PROJECT_DB:-${EOD_PROJECT_DB}}"
@@ -958,7 +988,7 @@ if is_true_text "${CTP_SIM_ENABLE_REAL_API:-true}" && \
   die "settlement_confirm_required=false is unsafe for real SimNow trading; set it true or export SIMNOW_ALLOW_UNCONFIRMED_SETTLEMENT=1 for diagnostics only"
 fi
 
-mkdir -p "${RUN_ROOT}" "${REPORT_ROOT}" "${EXPORT_ROOT}" "${RECONCILE_ROOT}" "$(dirname "${WAL_FILE}")"
+mkdir -p "${RUN_ROOT}" "${REPORT_ROOT}" "${EXPORT_ROOT}" "${RECONCILE_ROOT}"
 LOCK_DIR="${SIMNOW_LOCK_DIR:-${RUN_ROOT}/locks}"
 LOCK_FILE="${LOCK_DIR}/supervisor.lock"
 CURRENT_PID_FILE="${SIMNOW_CURRENT_PID_FILE:-${RUN_ROOT}/current_core_engine.pid}"

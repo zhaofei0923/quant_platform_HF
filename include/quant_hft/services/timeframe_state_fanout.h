@@ -20,6 +20,10 @@ struct TimeframeStateEmission {
     // conflicting, and closing-auction endpoint buckets never advance market
     // state indicators or strategy logic.
     bool strategy_eligible{true};
+    std::optional<double> kama;
+    std::optional<double> atr;
+    std::optional<double> adx;
+    std::optional<double> er;
 };
 
 class TimeframeStateFanout {

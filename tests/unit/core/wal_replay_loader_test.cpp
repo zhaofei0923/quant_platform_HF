@@ -1,13 +1,17 @@
 #include "quant_hft/core/wal_replay_loader.h"
 
 #include <gtest/gtest.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <string>
 
 #include "quant_hft/core/local_wal_regulatory_sink.h"
+#include "quant_hft/core/wal_format.h"
 #include "quant_hft/services/in_memory_portfolio_ledger.h"
 #include "quant_hft/services/order_state_machine.h"
 
@@ -279,6 +283,216 @@ TEST(CtpOrderMappingStoreTest, ExchangeOrderIdentityResolvesTradeWithoutOrderRef
     EXPECT_EQ(trade.client_order_id, "client-1");
     EXPECT_EQ(trade.strategy_id, mapping.strategy_id);
     EXPECT_EQ(trade.instrument_id, "DCE.i2609");
+}
+
+TEST(WalReplayLoaderTest, DurableReceiptSurvivesAbruptProcessExitAndKeepsStreamOnReopen) {
+    const auto path = NewTempWalPath("crash_receipt");
+    const auto child = ::fork();
+    ASSERT_GE(child, 0);
+    if (child == 0) {
+        LocalWalRegulatorySink sink(path.string());
+        const auto receipt =
+            sink.CommitOrderEvent(BuildEvent("first", OrderStatus::kFilled, 1, 1, 10, 1));
+        ::_exit(receipt.durable && !receipt.stream_id.empty() ? 0 : 1);
+    }
+    int status = 0;
+    ASSERT_EQ(::waitpid(child, &status, 0), child);
+    ASSERT_TRUE(WIFEXITED(status));
+    ASSERT_EQ(WEXITSTATUS(status), 0);
+    const auto initial = ValidateWalFile(path.string());
+    ASSERT_TRUE(initial.valid) << initial.error;
+    EXPECT_EQ(initial.records, 1U);
+    EXPECT_GT(std::filesystem::file_size(path), 0U);
+    {
+        LocalWalRegulatorySink sink(path.string());
+        const auto next =
+            sink.CommitOrderEvent(BuildEvent("second", OrderStatus::kFilled, 1, 1, 12, 2));
+        ASSERT_TRUE(next.durable) << next.error;
+        EXPECT_EQ(next.sequence, initial.next_sequence);
+        EXPECT_EQ(next.stream_id, initial.stream_id);
+        EXPECT_EQ(next.first_sequence, initial.first_sequence);
+    }
+    EXPECT_TRUE(ValidateWalFile(path.string()).valid);
+    std::filesystem::remove(path);
+}
+
+TEST(WalReplayLoaderTest, PreservesPricePrecisionAndRejectsNonFiniteRecordsBeforeWrite) {
+    const auto path = NewTempWalPath("precision");
+    constexpr double kPrice = 123456.78901234567;
+    {
+        LocalWalRegulatorySink sink(path.string());
+        ASSERT_TRUE(
+            sink.CommitOrderEvent(BuildEvent("precise", OrderStatus::kFilled, 1, 1, kPrice, 1)));
+        const auto size = std::filesystem::file_size(path);
+        const auto invalid = sink.CommitOrderEvent(BuildEvent(
+            "invalid", OrderStatus::kFilled, 1, 1, std::numeric_limits<double>::infinity(), 2));
+        EXPECT_FALSE(invalid.durable);
+        EXPECT_EQ(std::filesystem::file_size(path), size);
+    }
+    std::ifstream input(path);
+    std::string line;
+    ASSERT_TRUE(static_cast<bool>(std::getline(input, line)));
+    const std::string key = "\"avg_fill_price\":";
+    const auto pos = line.find(key);
+    ASSERT_NE(pos, std::string::npos);
+    EXPECT_EQ(std::stod(line.substr(pos + key.size())), kPrice);
+    EXPECT_TRUE(ValidateWalFile(path.string()).valid);
+    std::filesystem::remove(path);
+}
+
+TEST(WalReplayLoaderTest, ValidatedVisitorIncludesMappingsTradesAndTheirExactReceipts) {
+    const auto path = NewTempWalPath("visit_receipts");
+    std::vector<WalReceipt> receipts;
+    {
+        LocalWalRegulatorySink sink(path.string());
+        receipts.push_back(sink.CommitCtpOrderSubmitMapping(BuildMapping()));
+        auto event = BuildEvent("fill", OrderStatus::kFilled, 1, 1, 123.456789, 1);
+        event.broker_id = "9999";
+        event.reason = std::string("control:") + '\x01';
+        receipts.push_back(sink.CommitOrderEvent(event));
+        receipts.push_back(sink.CommitTradeEvent(event));
+    }
+    std::vector<WalReplayRecord> records;
+    const auto result = WalReplayLoader().VisitValidated(path.string(), [&](const auto& record) {
+        records.push_back(record);
+        return true;
+    });
+    ASSERT_TRUE(result.completed) << result.error;
+    ASSERT_EQ(records.size(), 3U);
+    EXPECT_TRUE(records[0].mapping);
+    EXPECT_EQ(records[2].event_type, "trade_fill");
+    ASSERT_TRUE(records[1].event);
+    EXPECT_EQ(records[1].event->broker_id, "9999");
+    EXPECT_EQ(records[1].event->reason.back(), '\x01');
+    for (std::size_t i = 0; i < records.size(); ++i) {
+        EXPECT_TRUE(records[i].receipt.durable);
+        EXPECT_EQ(records[i].receipt.sequence, receipts[i].sequence);
+        EXPECT_EQ(records[i].receipt.checksum, receipts[i].checksum);
+        EXPECT_EQ(records[i].receipt.stream_id, receipts[i].stream_id);
+    }
+    int visits = 0;
+    const auto bounded = WalReplayLoader().VisitValidated(
+        path.string(),
+        [&](const auto&) {
+            ++visits;
+            return true;
+        },
+        10);
+    EXPECT_FALSE(bounded.completed);
+    EXPECT_EQ(visits, 0);
+    {
+        std::ofstream out(path, std::ios::app);
+        out << "{\"seq\":3";
+    }
+    const auto damaged = WalReplayLoader().VisitValidated(path.string(), [&](const auto&) {
+        ++visits;
+        return true;
+    });
+    EXPECT_FALSE(damaged.completed);
+    EXPECT_EQ(visits, 0);
+    std::filesystem::remove(path);
+}
+
+TEST(WalReplayLoaderTest, RejectsChecksumCorruptionBeforeApplyingAnyProjection) {
+    const auto path = NewTempWalPath("checksum");
+    {
+        LocalWalRegulatorySink sink(path.string());
+        ASSERT_TRUE(sink.AppendOrderEvent(BuildEvent("good", OrderStatus::kFilled, 1, 1, 10, 1)));
+        ASSERT_TRUE(sink.AppendOrderEvent(BuildEvent("bad", OrderStatus::kFilled, 1, 1, 11, 2)));
+    }
+    std::ifstream input(path);
+    std::string bytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    input.close();
+    const auto pos = bytes.find("\"avg_fill_price\":11");
+    ASSERT_NE(pos, std::string::npos);
+    bytes.replace(pos, std::string("\"avg_fill_price\":11").size(), "\"avg_fill_price\":99");
+    {
+        std::ofstream out(path, std::ios::trunc);
+        out << bytes;
+    }
+    OrderStateMachine orders;
+    InMemoryPortfolioLedger ledger;
+    const auto stats = WalReplayLoader().Replay(path.string(), &orders, &ledger);
+    EXPECT_FALSE(stats.integrity_ok);
+    EXPECT_EQ(stats.ledger_applied, 0U);
+    EXPECT_EQ(stats.events_loaded, 0U);
+    {
+        LocalWalRegulatorySink sink(path.string());
+        EXPECT_FALSE(sink.CommitOrderEvent(BuildEvent("no", OrderStatus::kFilled, 1, 1, 1, 3)));
+    }
+    std::filesystem::remove(path);
+}
+
+TEST(WalReplayLoaderTest, IncompleteTailRequiresExplicitRepairAndIsNeverSilentlyAppended) {
+    const auto path = NewTempWalPath("tail");
+    {
+        LocalWalRegulatorySink sink(path.string());
+        ASSERT_TRUE(sink.AppendOrderEvent(BuildEvent("good", OrderStatus::kFilled, 1, 1, 10, 1)));
+    }
+    {
+        std::ofstream out(path, std::ios::app);
+        out << "{\"seq\":1";
+    }
+    const auto size = std::filesystem::file_size(path);
+    const auto validated = ValidateWalFile(path.string());
+    EXPECT_FALSE(validated.valid);
+    EXPECT_TRUE(validated.incomplete_tail);
+    {
+        LocalWalRegulatorySink sink(path.string());
+        EXPECT_FALSE(
+            sink.AppendOrderEvent(BuildEvent("must-not-append", OrderStatus::kFilled, 1, 1, 1, 2)));
+    }
+    EXPECT_EQ(std::filesystem::file_size(path), size);
+    std::filesystem::remove(path);
+}
+
+TEST(WalReplayLoaderTest, RejectsConcurrentWriterAndLegacySequenceGap) {
+    const auto path = NewTempWalPath("writer_lock");
+    {
+        LocalWalRegulatorySink first(path.string());
+        ASSERT_TRUE(
+            first.AppendOrderEvent(BuildEvent("first", OrderStatus::kAccepted, 1, 0, 0, 1)));
+        LocalWalRegulatorySink second(path.string());
+        EXPECT_FALSE(
+            second.AppendOrderEvent(BuildEvent("second", OrderStatus::kAccepted, 1, 0, 0, 2)));
+        EXPECT_NE(second.LastError().find("writer"), std::string::npos);
+    }
+    {
+        std::ofstream out(path, std::ios::trunc);
+        out << "{\"seq\":1,\"kind\":\"rollover\"}\n{\"seq\":3,\"kind\":\"rollover\"}\n";
+    }
+    EXPECT_FALSE(ValidateWalFile(path.string()).valid);
+    std::filesystem::remove(path);
+}
+
+TEST(WalReplayLoaderTest, ContinuesLegacyStreamWithVersionedReceiptAndStableFirstSequence) {
+    const auto path = NewTempWalPath("migration");
+    {
+        std::ofstream out(path);
+        out << "{\"seq\":7,\"kind\":\"rollover\"}\n";
+    }
+    WalReceipt receipt;
+    {
+        LocalWalRegulatorySink sink(path.string());
+        receipt = sink.CommitOrderEvent(BuildEvent("new", OrderStatus::kAccepted, 1, 0, 0, 1));
+        ASSERT_TRUE(receipt) << receipt.error;
+        EXPECT_EQ(receipt.sequence, 8U);
+        EXPECT_EQ(receipt.first_sequence, 8U);
+    }
+    const auto result = ValidateWalFile(path.string());
+    ASSERT_TRUE(result.valid) << result.error;
+    EXPECT_EQ(result.legacy_records, 1U);
+    EXPECT_EQ(result.stream_id, receipt.stream_id);
+    {
+        LocalWalRegulatorySink sink(path.string());
+        const auto next =
+            sink.CommitOrderEvent(BuildEvent("next", OrderStatus::kAccepted, 1, 0, 0, 2));
+        EXPECT_TRUE(next);
+        EXPECT_EQ(next.stream_id, receipt.stream_id);
+        EXPECT_EQ(next.first_sequence, 8U);
+        EXPECT_EQ(next.sequence, 9U);
+    }
+    std::filesystem::remove(path);
 }
 
 }  // namespace quant_hft

@@ -500,7 +500,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* confi
     loaded.runtime.broker_id = get_value("broker_id");
     loaded.runtime.user_id = get_value("user_id");
     loaded.runtime.investor_id = get_value("investor_id");
-    if (loaded.runtime.investor_id.empty()) {
+    if (loaded.runtime.investor_id.empty() && !loaded.runtime.enable_real_api) {
         loaded.runtime.investor_id = loaded.runtime.user_id;
     }
     loaded.runtime.app_id = get_value("app_id");
@@ -1365,7 +1365,7 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* confi
     }
     loaded.account_id = get_value("account_id");
     if (loaded.account_id.empty()) {
-        loaded.account_id = loaded.runtime.user_id;
+        loaded.account_id = loaded.runtime.investor_id;
     }
 
     loaded.execution.mode = ExecutionMode::kDirect;

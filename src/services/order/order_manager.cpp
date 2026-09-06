@@ -299,10 +299,15 @@ bool OrderManager::IsOrderProcessed(const std::string& order_ref, int front_id,
 }
 
 std::string OrderManager::BuildOrderEventKey(const OrderEvent& event) {
+    std::string identity = event.order_ref;
     if (event.order_ref.empty()) {
-        return "";
+        if (event.account_id.empty() || event.client_order_id.empty()) return "";
+        // Local admission failures precede a broker OrderRef. Their durable WAL
+        // records still need an account-scoped identity for restart and deduplication.
+        identity = "client|" + std::to_string(event.account_id.size()) + ":" + event.account_id +
+                   "|" + std::to_string(event.client_order_id.size()) + ":" + event.client_order_id;
     }
-    return event.order_ref + "|" + std::to_string(event.front_id) + "|" +
+    return identity + "|" + std::to_string(event.front_id) + "|" +
            std::to_string(event.session_id) + "|" + std::to_string(static_cast<int>(event.status)) +
            "|" + std::to_string(event.filled_volume) + "|" + event.event_source + "|" +
            std::to_string(event.exchange_ts_ns);

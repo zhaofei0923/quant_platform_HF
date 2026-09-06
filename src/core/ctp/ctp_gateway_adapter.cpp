@@ -7,6 +7,7 @@
 #include <cmath>
 #include <condition_variable>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <functional>
@@ -17,6 +18,7 @@
 #include <utility>
 #include <vector>
 
+#include "quant_hft/core/ctp_account_identity.h"
 #include "quant_hft/core/ctp_text.h"
 #include "quant_hft/core/structured_log.h"
 #include "quant_hft/monitoring/metric_registry.h"
@@ -40,6 +42,35 @@ namespace quant_hft {
 namespace {
 
 constexpr int kDefaultConnectTimeoutMs = 10000;
+
+std::string SimulatedTradingDay() {
+    const char* injected = std::getenv("QUANT_HFT_SIMULATED_TRADING_DAY");
+    if (injected != nullptr && *injected != '\0') {
+        const std::string value(injected);
+        if (value.size() != 8 || !std::all_of(value.begin(), value.end(), [](unsigned char ch) {
+                return ch >= '0' && ch <= '9';
+            }))
+            return {};
+        std::tm requested{};
+        requested.tm_year = std::stoi(value.substr(0, 4)) - 1900;
+        requested.tm_mon = std::stoi(value.substr(4, 2)) - 1;
+        requested.tm_mday = std::stoi(value.substr(6, 2));
+        requested.tm_hour = 12;
+        const auto epoch = ::timegm(&requested);
+        std::tm normalized{};
+        if (epoch < 0 || ::gmtime_r(&epoch, &normalized) == nullptr) return {};
+        char text[16]{};
+        std::strftime(text, sizeof(text), "%Y%m%d", &normalized);
+        return value == text ? value : std::string{};
+    }
+    // A synthetic calendar date only; real CTP sessions always use the broker's TradingDay.
+    const std::time_t shanghai_now = std::time(nullptr) + 8 * 60 * 60;
+    std::tm calendar{};
+    if (::gmtime_r(&shanghai_now, &calendar) == nullptr) return {};
+    char text[16]{};
+    std::strftime(text, sizeof(text), "%Y%m%d", &calendar);
+    return text;
+}
 
 #if QUANT_HFT_HAS_REAL_CTP
 std::shared_ptr<MonitoringCounter> CtpReconnectCounter() {
@@ -404,8 +435,25 @@ std::string InferExchangeIdFromInstrument(const std::string& instrument_id) {
     return instrument_id.substr(0, dot_pos);
 }
 
+class QueryScopeExit {
+   public:
+    explicit QueryScopeExit(std::function<void()> finish) : finish_(std::move(finish)) {}
+    ~QueryScopeExit() noexcept {
+        try {
+            finish_();
+        } catch (...) {
+            std::fputs("CTP query completion callback threw; completion guard preserved\n", stderr);
+        }
+    }
+    QueryScopeExit(const QueryScopeExit&) = delete;
+    QueryScopeExit& operator=(const QueryScopeExit&) = delete;
+
+   private:
+    std::function<void()> finish_;
+};
+
 struct ScheduledQueryTaskState {
-    bool query_ok{true};
+    std::atomic<bool> query_ok{true};
 
     CtpGatewayAdapter::TradingAccountSnapshotCallback trading_account_callback;
     TradingAccountSnapshot trading_account_snapshot;
@@ -464,6 +512,7 @@ struct CtpGatewayAdapter::RealApiState {
     CtpMdSpi* md_spi{nullptr};
     CtpTdSpi* td_spi{nullptr};
 #endif
+    std::uint64_t query_generation{0};
     std::atomic<bool> active{true};
     std::atomic<int> callbacks_in_flight{0};
     std::mutex callback_quiesce_mutex;
@@ -522,143 +571,188 @@ class CtpMdSpi final : public CThostFtdcMdSpi {
 
     void OnFrontConnected() override {
         CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
-        }
-        {
-            std::lock_guard<std::mutex> event_lock(state_->event_mutex);
-            state_->md_front_connected = true;
-        }
-        state_->event_cv.notify_all();
+        try {
+            if (!scope.active()) {
+                return;
+            }
+            {
+                std::lock_guard<std::mutex> event_lock(state_->event_mutex);
+                state_->md_front_connected = true;
+            }
+            state_->event_cv.notify_all();
 
-        CThostFtdcReqUserLoginField req{};
-        int request_id = 0;
-        {
-            std::lock_guard<std::mutex> lock(owner_->mutex_);
-            CopyCtpField(req.BrokerID, owner_->runtime_config_.broker_id);
-            CopyCtpField(req.UserID, owner_->runtime_config_.user_id);
-            CopyCtpField(req.Password, owner_->runtime_config_.password);
-            request_id = owner_->NextRequestIdLocked();
-        }
+            CThostFtdcReqUserLoginField req{};
+            int request_id = 0;
+            {
+                std::lock_guard<std::mutex> lock(owner_->mutex_);
+                CopyCtpField(req.BrokerID, owner_->runtime_config_.broker_id);
+                CopyCtpField(req.UserID, owner_->runtime_config_.user_id);
+                CopyCtpField(req.Password, owner_->runtime_config_.password);
+                request_id = owner_->NextRequestIdLocked();
+            }
 
-        if (state_->md_api->ReqUserLogin(&req, request_id) != 0) {
-            SetError("Md ReqUserLogin failed");
+            if (state_->md_api->ReqUserLogin(&req, request_id) != 0) {
+                SetError("Md ReqUserLogin failed");
+            }
+
+        } catch (...) {
+            try {
+                SetError("SPI callback exception");
+            } catch (...) {
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
+            }
         }
     }
 
     void OnFrontDisconnected(int reason) override {
         CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
+        try {
+            if (!scope.active()) {
+                return;
+            }
+            {
+                std::lock_guard<std::mutex> event_lock(state_->event_mutex);
+                state_->md_front_connected = false;
+                state_->md_logged_in = false;
+            }
+            state_->event_cv.notify_all();
+            CtpRuntimeConfig runtime;
+            {
+                std::lock_guard<std::mutex> lock(owner_->mutex_);
+                runtime = owner_->runtime_config_;
+            }
+            EmitStructuredLog(&runtime, "ctp_gateway_adapter", "warn", "ctp_front_disconnected",
+                              {{"channel", "md"},
+                               {"reason", std::to_string(reason)},
+                               {"md_front", runtime.md_front},
+                               {"td_front", runtime.td_front}});
+            owner_->HandleConnectionLoss();
+
+        } catch (...) {
+            try {
+                SetError("SPI callback exception");
+            } catch (...) {
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
+            }
         }
-        {
-            std::lock_guard<std::mutex> event_lock(state_->event_mutex);
-            state_->md_front_connected = false;
-            state_->md_logged_in = false;
-        }
-        state_->event_cv.notify_all();
-        CtpRuntimeConfig runtime;
-        {
-            std::lock_guard<std::mutex> lock(owner_->mutex_);
-            runtime = owner_->runtime_config_;
-        }
-        EmitStructuredLog(&runtime, "ctp_gateway_adapter", "warn", "ctp_front_disconnected",
-                          {{"channel", "md"},
-                           {"reason", std::to_string(reason)},
-                           {"md_front", runtime.md_front},
-                           {"td_front", runtime.td_front}});
-        owner_->HandleConnectionLoss();
     }
 
     void OnRspUserLogin(CThostFtdcRspUserLoginField*, CThostFtdcRspInfoField* p_rsp_info, int,
                         bool b_is_last) override {
         CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
-        }
-        if (!b_is_last) {
-            return;
-        }
-        if (!IsRspSuccess(p_rsp_info)) {
-            SetError("Md login failed", p_rsp_info);
-            return;
-        }
+        try {
+            if (!scope.active()) {
+                return;
+            }
+            if (!b_is_last) {
+                return;
+            }
+            if (!IsRspSuccess(p_rsp_info)) {
+                SetError("Md login failed", p_rsp_info);
+                return;
+            }
 
-        {
-            std::lock_guard<std::mutex> event_lock(state_->event_mutex);
-            state_->md_logged_in = true;
-        }
-        state_->event_cv.notify_all();
-        owner_->TryMarkHealthyFromState();
-        if (!owner_->ReplayMarketDataSubscriptions()) {
-            owner_->HandleConnectionLoss();
+            {
+                std::lock_guard<std::mutex> event_lock(state_->event_mutex);
+                state_->md_logged_in = true;
+            }
+            state_->event_cv.notify_all();
+            owner_->TryMarkHealthyFromState();
+            if (!owner_->ReplayMarketDataSubscriptions()) {
+                owner_->HandleConnectionLoss();
+            }
+
+        } catch (...) {
+            try {
+                SetError("SPI callback exception");
+            } catch (...) {
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
+            }
         }
     }
 
     void OnRspError(CThostFtdcRspInfoField* p_rsp_info, int, bool) override {
         CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
-        }
-        if (!IsRspSuccess(p_rsp_info)) {
-            SetError("Md response error", p_rsp_info);
+        try {
+            if (!scope.active()) {
+                return;
+            }
+            if (!IsRspSuccess(p_rsp_info)) {
+                SetError("Md response error", p_rsp_info);
+            }
+
+        } catch (...) {
+            try {
+                SetError("SPI callback exception");
+            } catch (...) {
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
+            }
         }
     }
 
     void OnRtnDepthMarketData(CThostFtdcDepthMarketDataField* p_depth_market_data) override {
         CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
-        }
-        if (p_depth_market_data == nullptr) {
-            return;
-        }
-
-        MarketSnapshot snapshot;
-        snapshot.instrument_id = SafeCtpString(p_depth_market_data->InstrumentID);
-        snapshot.exchange_id = SafeCtpString(p_depth_market_data->ExchangeID);
-        snapshot.trading_day = SafeCtpString(p_depth_market_data->TradingDay);
-        snapshot.action_day = SafeCtpString(p_depth_market_data->ActionDay);
-        snapshot.update_time = SafeCtpString(p_depth_market_data->UpdateTime);
-        snapshot.update_millisec = p_depth_market_data->UpdateMillisec;
-        snapshot.last_price = p_depth_market_data->LastPrice;
-        snapshot.bid_price_1 = p_depth_market_data->BidPrice1;
-        snapshot.ask_price_1 = p_depth_market_data->AskPrice1;
-        snapshot.bid_volume_1 = p_depth_market_data->BidVolume1;
-        snapshot.ask_volume_1 = p_depth_market_data->AskVolume1;
-        snapshot.volume = p_depth_market_data->Volume;
-        snapshot.open_interest = static_cast<std::int64_t>(p_depth_market_data->OpenInterest);
-        snapshot.settlement_price = p_depth_market_data->SettlementPrice;
-        snapshot.average_price_raw = p_depth_market_data->AveragePrice;
-        snapshot.exchange_ts_ns = CtpGatewayAdapter::ParseMarketExchangeTimestamp(
-            snapshot.action_day, snapshot.update_time, snapshot.update_millisec);
-        snapshot.recv_ts_ns = NowEpochNanos();
-        CtpGatewayAdapter::NormalizeMarketSnapshot(&snapshot);
-        std::function<void(const MarketSnapshot&)> callback;
-        {
-            std::lock_guard<std::mutex> lock(owner_->mutex_);
-            for (const auto& meta : owner_->instrument_meta_snapshots_) {
-                if (meta.instrument_id != snapshot.instrument_id) {
-                    continue;
-                }
-                if (snapshot.exchange_id.empty() && !meta.exchange_id.empty()) {
-                    snapshot.exchange_id = meta.exchange_id;
-                }
-                if (!IsInvalidMarketPrice(snapshot.average_price_raw) &&
-                    snapshot.average_price_raw > 0.0 && meta.volume_multiple > 0) {
-                    snapshot.average_price_norm =
-                        snapshot.exchange_id == "CZCE"
-                            ? snapshot.average_price_raw
-                            : snapshot.average_price_raw /
-                                  static_cast<double>(meta.volume_multiple);
-                    snapshot.average_price_norm_valid = true;
-                }
-                break;
+        try {
+            if (!scope.active()) {
+                return;
             }
-            callback = owner_->market_data_callback_;
-        }
-        if (callback) {
-            callback(snapshot);
+            if (p_depth_market_data == nullptr) {
+                return;
+            }
+
+            MarketSnapshot snapshot;
+            snapshot.instrument_id = SafeCtpString(p_depth_market_data->InstrumentID);
+            snapshot.exchange_id = SafeCtpString(p_depth_market_data->ExchangeID);
+            snapshot.trading_day = SafeCtpString(p_depth_market_data->TradingDay);
+            snapshot.action_day = SafeCtpString(p_depth_market_data->ActionDay);
+            snapshot.update_time = SafeCtpString(p_depth_market_data->UpdateTime);
+            snapshot.update_millisec = p_depth_market_data->UpdateMillisec;
+            snapshot.last_price = p_depth_market_data->LastPrice;
+            snapshot.bid_price_1 = p_depth_market_data->BidPrice1;
+            snapshot.ask_price_1 = p_depth_market_data->AskPrice1;
+            snapshot.bid_volume_1 = p_depth_market_data->BidVolume1;
+            snapshot.ask_volume_1 = p_depth_market_data->AskVolume1;
+            snapshot.volume = p_depth_market_data->Volume;
+            snapshot.open_interest = static_cast<std::int64_t>(p_depth_market_data->OpenInterest);
+            snapshot.settlement_price = p_depth_market_data->SettlementPrice;
+            snapshot.average_price_raw = p_depth_market_data->AveragePrice;
+            snapshot.exchange_ts_ns = CtpGatewayAdapter::ParseMarketExchangeTimestamp(
+                snapshot.action_day, snapshot.update_time, snapshot.update_millisec);
+            snapshot.recv_ts_ns = NowEpochNanos();
+            CtpGatewayAdapter::NormalizeMarketSnapshot(&snapshot);
+            std::function<void(const MarketSnapshot&)> callback;
+            {
+                std::lock_guard<std::mutex> lock(owner_->mutex_);
+                for (const auto& meta : owner_->instrument_meta_snapshots_) {
+                    if (meta.instrument_id != snapshot.instrument_id) {
+                        continue;
+                    }
+                    if (snapshot.exchange_id.empty() && !meta.exchange_id.empty()) {
+                        snapshot.exchange_id = meta.exchange_id;
+                    }
+                    if (!IsInvalidMarketPrice(snapshot.average_price_raw) &&
+                        snapshot.average_price_raw > 0.0 && meta.volume_multiple > 0) {
+                        snapshot.average_price_norm =
+                            snapshot.exchange_id == "CZCE"
+                                ? snapshot.average_price_raw
+                                : snapshot.average_price_raw /
+                                      static_cast<double>(meta.volume_multiple);
+                        snapshot.average_price_norm_valid = true;
+                    }
+                    break;
+                }
+                callback = owner_->market_data_callback_;
+            }
+            if (callback) {
+                callback(snapshot);
+            }
+
+        } catch (...) {
+            try {
+                SetError("SPI callback exception");
+            } catch (...) {
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
+            }
         }
     }
 
@@ -684,273 +778,340 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
 
     void OnFrontConnected() override {
         CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
-        }
-        {
-            std::lock_guard<std::mutex> event_lock(state_->event_mutex);
-            state_->td_front_connected = true;
-        }
-        state_->event_cv.notify_all();
-
-        CtpRuntimeConfig runtime;
-        int request_id = 0;
-        {
-            std::lock_guard<std::mutex> lock(owner_->mutex_);
-            runtime = owner_->runtime_config_;
-            request_id = owner_->NextRequestIdLocked();
-        }
-
-        if (runtime.enable_terminal_auth && !runtime.auth_code.empty() && !runtime.app_id.empty()) {
-            CThostFtdcReqAuthenticateField auth_req{};
-            CopyCtpField(auth_req.BrokerID, runtime.broker_id);
-            CopyCtpField(auth_req.UserID, runtime.user_id);
-            CopyCtpField(auth_req.AuthCode, runtime.auth_code);
-            CopyCtpField(auth_req.AppID, runtime.app_id);
-            if (state_->td_api->ReqAuthenticate(&auth_req, request_id) != 0) {
-                SetError("Td ReqAuthenticate failed");
+        try {
+            if (!scope.active()) {
+                return;
             }
-            return;
-        }
+            {
+                std::lock_guard<std::mutex> event_lock(state_->event_mutex);
+                state_->td_front_connected = true;
+            }
+            state_->event_cv.notify_all();
 
-        SendUserLogin();
+            CtpRuntimeConfig runtime;
+            int request_id = 0;
+            {
+                std::lock_guard<std::mutex> lock(owner_->mutex_);
+                runtime = owner_->runtime_config_;
+                request_id = owner_->NextRequestIdLocked();
+            }
+
+            if (runtime.enable_terminal_auth && !runtime.auth_code.empty() &&
+                !runtime.app_id.empty()) {
+                CThostFtdcReqAuthenticateField auth_req{};
+                CopyCtpField(auth_req.BrokerID, runtime.broker_id);
+                CopyCtpField(auth_req.UserID, runtime.user_id);
+                CopyCtpField(auth_req.AuthCode, runtime.auth_code);
+                CopyCtpField(auth_req.AppID, runtime.app_id);
+                if (state_->td_api->ReqAuthenticate(&auth_req, request_id) != 0) {
+                    SetError("Td ReqAuthenticate failed");
+                }
+                return;
+            }
+
+            SendUserLogin();
+
+        } catch (...) {
+            try {
+                SetError("SPI callback exception");
+            } catch (...) {
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
+            }
+        }
     }
 
     void OnFrontDisconnected(int reason) override {
         CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
+        try {
+            if (!scope.active()) {
+                return;
+            }
+            {
+                std::lock_guard<std::mutex> event_lock(state_->event_mutex);
+                state_->td_front_connected = false;
+                state_->td_logged_in = false;
+            }
+            state_->event_cv.notify_all();
+            CtpRuntimeConfig runtime;
+            {
+                std::lock_guard<std::mutex> lock(owner_->mutex_);
+                runtime = owner_->runtime_config_;
+            }
+            EmitStructuredLog(&runtime, "ctp_gateway_adapter", "warn", "ctp_front_disconnected",
+                              {{"channel", "td"},
+                               {"reason", std::to_string(reason)},
+                               {"md_front", runtime.md_front},
+                               {"td_front", runtime.td_front}});
+            owner_->HandleConnectionLoss();
+
+        } catch (...) {
+            try {
+                SetError("SPI callback exception");
+            } catch (...) {
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
+            }
         }
-        {
-            std::lock_guard<std::mutex> event_lock(state_->event_mutex);
-            state_->td_front_connected = false;
-            state_->td_logged_in = false;
-        }
-        state_->event_cv.notify_all();
-        CtpRuntimeConfig runtime;
-        {
-            std::lock_guard<std::mutex> lock(owner_->mutex_);
-            runtime = owner_->runtime_config_;
-        }
-        EmitStructuredLog(&runtime, "ctp_gateway_adapter", "warn", "ctp_front_disconnected",
-                          {{"channel", "td"},
-                           {"reason", std::to_string(reason)},
-                           {"md_front", runtime.md_front},
-                           {"td_front", runtime.td_front}});
-        owner_->HandleConnectionLoss();
     }
 
-    void OnRspAuthenticate(CThostFtdcRspAuthenticateField*, CThostFtdcRspInfoField* p_rsp_info, int,
-                           bool b_is_last) override {
+    void OnRspAuthenticate(CThostFtdcRspAuthenticateField*, CThostFtdcRspInfoField* p_rsp_info,
+                           int n_request_id, bool b_is_last) override {
         CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
+        try {
+            if (!scope.active()) {
+                return;
+            }
+            if (!b_is_last) {
+                return;
+            }
+            if (!IsRspSuccess(p_rsp_info)) {
+                SetError("Td authenticate failed", p_rsp_info);
+                return;
+            }
+            SendUserLogin();
+
+        } catch (...) {
+            try {
+                SetError("SPI callback exception");
+            } catch (...) {
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
+            }
         }
-        if (!b_is_last) {
-            return;
-        }
-        if (!IsRspSuccess(p_rsp_info)) {
-            SetError("Td authenticate failed", p_rsp_info);
-            return;
-        }
-        SendUserLogin();
     }
 
     void OnRspUserLogin(CThostFtdcRspUserLoginField* p_rsp_user_login,
                         CThostFtdcRspInfoField* p_rsp_info, int n_request_id,
                         bool b_is_last) override {
         CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
-        }
-        if (!b_is_last) {
-            return;
-        }
-        if (!IsRspSuccess(p_rsp_info) || p_rsp_user_login == nullptr) {
+        try {
+            if (!scope.active()) {
+                return;
+            }
+            if (!b_is_last) {
+                return;
+            }
+            if (!IsRspSuccess(p_rsp_info) || p_rsp_user_login == nullptr) {
+                CtpGatewayAdapter::LoginResponseCallback callback;
+                {
+                    std::lock_guard<std::mutex> lock(owner_->mutex_);
+                    callback = owner_->login_response_callback_;
+                }
+                if (callback) {
+                    callback(
+                        n_request_id, p_rsp_info == nullptr ? -1 : p_rsp_info->ErrorID,
+                        p_rsp_info == nullptr ? "Td login failed" : SafeCtpErrorString(p_rsp_info));
+                }
+                SetError("Td login failed", p_rsp_info);
+                return;
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(owner_->mutex_);
+                owner_->front_id_ = p_rsp_user_login->FrontID;
+                owner_->session_id_ = p_rsp_user_login->SessionID;
+                owner_->runtime_config_.last_login_time = ResolveLastLoginTime(*p_rsp_user_login);
+                owner_->runtime_config_.reserve_info = ResolveReserveInfo(*p_rsp_user_login);
+                owner_->user_session_.investor_id = owner_->runtime_config_.investor_id;
+                owner_->user_session_.login_time = SafeCtpString(p_rsp_user_login->LoginTime);
+                owner_->user_session_.last_login_time = owner_->runtime_config_.last_login_time;
+                owner_->user_session_.reserve_info = owner_->runtime_config_.reserve_info;
+                owner_->user_session_.trading_day = SafeCtpString(p_rsp_user_login->TradingDay);
+                owner_->user_session_.max_order_ref = SafeCtpString(p_rsp_user_login->MaxOrderRef);
+                owner_->user_session_.front_id = p_rsp_user_login->FrontID;
+                owner_->user_session_.session_id = p_rsp_user_login->SessionID;
+                try {
+                    owner_->order_ref_seq_ =
+                        std::max(owner_->order_ref_seq_, static_cast<std::uint64_t>(std::stoull(
+                                                             owner_->user_session_.max_order_ref)));
+                } catch (...) {
+                    // Some brokers return an empty/non-numeric MaxOrderRef. WAL seeding in the
+                    // application layer remains the fallback in that case.
+                }
+            }
+
+            {
+                std::lock_guard<std::mutex> event_lock(state_->event_mutex);
+                state_->td_logged_in = true;
+            }
+            state_->event_cv.notify_all();
             CtpGatewayAdapter::LoginResponseCallback callback;
             {
                 std::lock_guard<std::mutex> lock(owner_->mutex_);
                 callback = owner_->login_response_callback_;
             }
             if (callback) {
-                callback(
-                    n_request_id, p_rsp_info == nullptr ? -1 : p_rsp_info->ErrorID,
-                    p_rsp_info == nullptr ? "Td login failed" : SafeCtpErrorString(p_rsp_info));
+                callback(n_request_id, 0, "");
             }
-            SetError("Td login failed", p_rsp_info);
-            return;
-        }
+            owner_->TryMarkHealthyFromState();
 
-        {
-            std::lock_guard<std::mutex> lock(owner_->mutex_);
-            owner_->front_id_ = p_rsp_user_login->FrontID;
-            owner_->session_id_ = p_rsp_user_login->SessionID;
-            owner_->runtime_config_.last_login_time = ResolveLastLoginTime(*p_rsp_user_login);
-            owner_->runtime_config_.reserve_info = ResolveReserveInfo(*p_rsp_user_login);
-            owner_->user_session_.investor_id = owner_->runtime_config_.investor_id;
-            owner_->user_session_.login_time = SafeCtpString(p_rsp_user_login->LoginTime);
-            owner_->user_session_.last_login_time = owner_->runtime_config_.last_login_time;
-            owner_->user_session_.reserve_info = owner_->runtime_config_.reserve_info;
-            owner_->user_session_.trading_day = SafeCtpString(p_rsp_user_login->TradingDay);
-            owner_->user_session_.max_order_ref = SafeCtpString(p_rsp_user_login->MaxOrderRef);
-            owner_->user_session_.front_id = p_rsp_user_login->FrontID;
-            owner_->user_session_.session_id = p_rsp_user_login->SessionID;
+        } catch (...) {
             try {
-                owner_->order_ref_seq_ = std::max(
-                    owner_->order_ref_seq_,
-                    static_cast<std::uint64_t>(std::stoull(owner_->user_session_.max_order_ref)));
+                SetError("SPI callback exception");
             } catch (...) {
-                // Some brokers return an empty/non-numeric MaxOrderRef. WAL seeding in the
-                // application layer remains the fallback in that case.
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
             }
         }
-
-        {
-            std::lock_guard<std::mutex> event_lock(state_->event_mutex);
-            state_->td_logged_in = true;
-        }
-        state_->event_cv.notify_all();
-        CtpGatewayAdapter::LoginResponseCallback callback;
-        {
-            std::lock_guard<std::mutex> lock(owner_->mutex_);
-            callback = owner_->login_response_callback_;
-        }
-        if (callback) {
-            callback(n_request_id, 0, "");
-        }
-        owner_->TryMarkHealthyFromState();
     }
 
     void OnRspQryUserSession(CThostFtdcUserSessionField* p_user_session,
-                             CThostFtdcRspInfoField* p_rsp_info, int, bool b_is_last) {
+                             CThostFtdcRspInfoField* p_rsp_info, int n_request_id, bool b_is_last) {
         CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
-        }
-        if (!b_is_last) {
-            return;
-        }
-        owner_->CompleteScheduledQuery();
-        if (!IsRspSuccess(p_rsp_info) || p_user_session == nullptr) {
-            return;
-        }
+        try {
+            if (!scope.active()) {
+                return;
+            }
+            if (!b_is_last) {
+                return;
+            }
+            if (!IsRspSuccess(p_rsp_info) || p_user_session == nullptr) {
+                return;
+            }
 
-        std::lock_guard<std::mutex> lock(owner_->mutex_);
-        owner_->user_session_.investor_id = owner_->runtime_config_.investor_id;
-        owner_->user_session_.login_time = SafeCtpString(p_user_session->LoginTime);
+            std::lock_guard<std::mutex> lock(owner_->mutex_);
+            owner_->user_session_.investor_id = owner_->runtime_config_.investor_id;
+            owner_->user_session_.login_time = SafeCtpString(p_user_session->LoginTime);
+
+        } catch (...) {
+            try {
+                SetError("SPI callback exception");
+            } catch (...) {
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
+            }
+        }
     }
 
     void OnRspSettlementInfoConfirm(CThostFtdcSettlementInfoConfirmField*,
                                     CThostFtdcRspInfoField* p_rsp_info, int n_request_id,
                                     bool b_is_last) override {
         CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
-        }
-        if (!b_is_last) {
-            return;
-        }
-        CtpGatewayAdapter::SettlementConfirmCallback callback;
-        {
-            std::lock_guard<std::mutex> lock(owner_->mutex_);
-            callback = owner_->settlement_confirm_callback_;
-        }
-        if (callback) {
-            callback(n_request_id, p_rsp_info == nullptr ? 0 : p_rsp_info->ErrorID,
-                     SafeCtpErrorString(p_rsp_info));
+        try {
+            if (!scope.active()) {
+                return;
+            }
+            if (!b_is_last) {
+                return;
+            }
+            CtpGatewayAdapter::SettlementConfirmCallback callback;
+            {
+                std::lock_guard<std::mutex> lock(owner_->mutex_);
+                callback = owner_->settlement_confirm_callback_;
+            }
+            if (callback) {
+                callback(n_request_id, p_rsp_info == nullptr ? 0 : p_rsp_info->ErrorID,
+                         SafeCtpErrorString(p_rsp_info));
+            }
+
+        } catch (...) {
+            try {
+                SetError("SPI callback exception");
+            } catch (...) {
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
+            }
         }
     }
 
     void OnRtnOffsetSetting(CThostFtdcOffsetSettingField*) {}
 
     void OnRspQryOffsetSetting(CThostFtdcOffsetSettingField* p_offset_setting,
-                               CThostFtdcRspInfoField* p_rsp_info, int, bool b_is_last) {
+                               CThostFtdcRspInfoField* p_rsp_info, int n_request_id,
+                               bool b_is_last) {
         CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
+        try {
+            if (!scope.active()) {
+                return;
+            }
+            (void)p_offset_setting;
+            (void)p_rsp_info;
+            (void)b_is_last;
+
+        } catch (...) {
+            try {
+                SetError("SPI callback exception");
+            } catch (...) {
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
+            }
         }
-        (void)p_offset_setting;
-        (void)p_rsp_info;
-        (void)b_is_last;
     }
 
     void OnRspQryTradingAccount(CThostFtdcTradingAccountField* p_trading_account,
-                                CThostFtdcRspInfoField* p_rsp_info, int, bool b_is_last) override {
+                                CThostFtdcRspInfoField* p_rsp_info, int n_request_id,
+                                bool b_is_last) override {
         CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
-        }
-        if (b_is_last) {
-            owner_->CompleteScheduledQuery();
-        }
-        if (!IsRspSuccess(p_rsp_info)) {
-            return;
-        }
-
-        TradingAccountSnapshot snapshot;
-        bool has_snapshot = false;
-        std::function<void(const TradingAccountSnapshot&)> callback;
-        {
-            std::lock_guard<std::mutex> lock(owner_->mutex_);
-            if (p_trading_account != nullptr) {
-                owner_->trading_account_snapshot_.account_id =
-                    SafeCtpString(p_trading_account->AccountID);
-                if (owner_->trading_account_snapshot_.account_id.empty()) {
-                    owner_->trading_account_snapshot_.account_id = owner_->runtime_config_.user_id;
+        try {
+            if (!scope.active()) return;
+            const auto generation = state_->query_generation;
+            if (!owner_->IsQueryActive(n_request_id, generation)) return;
+            QueryScopeExit completion([&]() {
+                if (b_is_last) owner_->CompleteScheduledQuery(n_request_id, generation);
+            });
+            TradingAccountSnapshot snapshot;
+            const bool valid_row = IsRspSuccess(p_rsp_info) && p_trading_account != nullptr;
+            if (valid_row) {
+                std::lock_guard<std::mutex> lock(owner_->mutex_);
+                if (generation != owner_->query_generation_) return;
+                snapshot.account_id = SafeCtpString(p_trading_account->AccountID);
+                if (snapshot.account_id.empty()) {
+                    snapshot.account_id = owner_->runtime_config_.investor_id;
                 }
-                owner_->trading_account_snapshot_.investor_id = owner_->runtime_config_.investor_id;
-                owner_->trading_account_snapshot_.balance = p_trading_account->Balance;
-                owner_->trading_account_snapshot_.available = p_trading_account->Available;
-                owner_->trading_account_snapshot_.curr_margin = p_trading_account->CurrMargin;
-                owner_->trading_account_snapshot_.frozen_margin = p_trading_account->FrozenMargin;
-                owner_->trading_account_snapshot_.frozen_cash = p_trading_account->FrozenCash;
-                owner_->trading_account_snapshot_.frozen_commission =
-                    p_trading_account->FrozenCommission;
-                owner_->trading_account_snapshot_.commission = p_trading_account->Commission;
-                owner_->trading_account_snapshot_.close_profit = p_trading_account->CloseProfit;
-                owner_->trading_account_snapshot_.position_profit =
-                    p_trading_account->PositionProfit;
-                owner_->trading_account_snapshot_.trading_day =
-                    SafeCtpString(p_trading_account->TradingDay);
-                owner_->trading_account_snapshot_.ts_ns = NowEpochNanos();
-                owner_->trading_account_snapshot_.source = "ctp";
+                snapshot.investor_id = owner_->runtime_config_.investor_id;
+                snapshot.balance = p_trading_account->Balance;
+                snapshot.available = p_trading_account->Available;
+                snapshot.curr_margin = p_trading_account->CurrMargin;
+                snapshot.frozen_margin = p_trading_account->FrozenMargin;
+                snapshot.frozen_cash = p_trading_account->FrozenCash;
+                snapshot.frozen_commission = p_trading_account->FrozenCommission;
+                snapshot.commission = p_trading_account->Commission;
+                snapshot.close_profit = p_trading_account->CloseProfit;
+                snapshot.position_profit = p_trading_account->PositionProfit;
+                snapshot.trading_day = SafeCtpString(p_trading_account->TradingDay);
+                snapshot.ts_ns = NowEpochNanos();
+                snapshot.source = "ctp";
             }
+            if (valid_row && (snapshot.account_id.empty() || snapshot.investor_id.empty())) {
+                owner_->FailQuery(n_request_id, generation, "trading_account",
+                                  "missing investor identity");
+                owner_->CompleteScheduledQuery(n_request_id, generation);
+                return;
+            }
+            owner_->PublishSnapshotQueryResponse(
+                owner_->trading_account_queries_, n_request_id, generation,
+                valid_row ? &snapshot : nullptr, p_rsp_info == nullptr ? 0 : p_rsp_info->ErrorID,
+                SafeCtpErrorString(p_rsp_info), b_is_last, owner_->trading_account_snapshot_,
+                owner_->trading_account_snapshot_callback_);
 
-            if (!owner_->trading_account_snapshot_.account_id.empty()) {
-                snapshot = owner_->trading_account_snapshot_;
-                has_snapshot = true;
+        } catch (...) {
+            try {
+                SetError("SPI callback exception");
+            } catch (...) {
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
             }
-            if (b_is_last) {
-                callback = owner_->trading_account_snapshot_callback_;
-            }
-        }
-        if (b_is_last && has_snapshot && callback) {
-            callback(snapshot);
         }
     }
 
     void OnRspQryInvestorPosition(CThostFtdcInvestorPositionField* p_investor_position,
-                                  CThostFtdcRspInfoField* p_rsp_info, int,
+                                  CThostFtdcRspInfoField* p_rsp_info, int n_request_id,
                                   bool b_is_last) override {
         CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
-        }
-        if (b_is_last) {
-            owner_->CompleteScheduledQuery();
-        }
-        if (!IsRspSuccess(p_rsp_info)) {
-            return;
-        }
-
-        std::function<void(const std::vector<InvestorPositionSnapshot>&)> callback;
-        std::vector<InvestorPositionSnapshot> snapshots;
-        {
-            std::lock_guard<std::mutex> lock(owner_->mutex_);
-            if (p_investor_position != nullptr) {
-                InvestorPositionSnapshot snapshot;
-                snapshot.account_id = owner_->runtime_config_.user_id;
-                snapshot.investor_id = owner_->runtime_config_.investor_id;
+        try {
+            if (!scope.active()) {
+                return;
+            }
+            const auto generation = state_->query_generation;
+            if (!owner_->IsQueryActive(n_request_id, generation)) {
+                return;
+            }
+            QueryScopeExit completion([&]() {
+                if (b_is_last) {
+                    owner_->CompleteScheduledQuery(n_request_id, generation);
+                }
+            });
+            InvestorPositionSnapshot snapshot;
+            const bool valid_row = IsRspSuccess(p_rsp_info) && p_investor_position != nullptr;
+            if (valid_row) {
+                std::lock_guard<std::mutex> lock(owner_->mutex_);
+                snapshot.investor_id =
+                    ResolveCtpInvestorId(SafeCtpString(p_investor_position->InvestorID),
+                                         owner_->runtime_config_.investor_id);
+                snapshot.account_id = snapshot.investor_id;
                 snapshot.instrument_id = SafeCtpString(p_investor_position->InstrumentID);
                 snapshot.exchange_id = SafeCtpString(p_investor_position->ExchangeID);
                 snapshot.posi_direction = std::string(1, p_investor_position->PosiDirection);
@@ -972,37 +1133,43 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
                 snapshot.use_margin = p_investor_position->UseMargin;
                 snapshot.ts_ns = NowEpochNanos();
                 snapshot.source = "ctp";
-                owner_->investor_position_snapshots_.push_back(std::move(snapshot));
             }
-            if (b_is_last) {
-                snapshots = owner_->investor_position_snapshots_;
-                callback = owner_->investor_position_snapshot_callback_;
+            if (valid_row && snapshot.account_id.empty()) {
+                owner_->FailQuery(n_request_id, generation, "investor_position",
+                                  "missing investor identity");
+                owner_->CompleteScheduledQuery(n_request_id, generation);
+                return;
             }
-        }
-        if (b_is_last && callback) {
-            callback(snapshots);
+            owner_->PublishInvestorPositionQueryResponse(
+                n_request_id, generation, valid_row ? &snapshot : nullptr,
+                IsRspSuccess(p_rsp_info) ? 0 : p_rsp_info->ErrorID, SafeCtpErrorString(p_rsp_info),
+                b_is_last);
+
+        } catch (...) {
+            try {
+                SetError("SPI callback exception");
+            } catch (...) {
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
+            }
         }
     }
 
     void OnRspQryInstrument(CThostFtdcInstrumentField* p_instrument,
-                            CThostFtdcRspInfoField* p_rsp_info, int, bool b_is_last) override {
+                            CThostFtdcRspInfoField* p_rsp_info, int n_request_id,
+                            bool b_is_last) override {
         CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
-        }
-        if (b_is_last) {
-            owner_->CompleteScheduledQuery();
-        }
-        if (!IsRspSuccess(p_rsp_info)) {
-            return;
-        }
-
-        std::function<void(const std::vector<InstrumentMetaSnapshot>&)> callback;
-        std::vector<InstrumentMetaSnapshot> snapshots;
-        {
-            std::lock_guard<std::mutex> lock(owner_->mutex_);
-            if (p_instrument != nullptr) {
-                InstrumentMetaSnapshot meta;
+        try {
+            if (!scope.active()) return;
+            const auto generation = state_->query_generation;
+            if (!owner_->IsQueryActive(n_request_id, generation)) return;
+            QueryScopeExit completion([&]() {
+                if (b_is_last) owner_->CompleteScheduledQuery(n_request_id, generation);
+            });
+            InstrumentMetaSnapshot meta;
+            const bool valid_row = IsRspSuccess(p_rsp_info) && p_instrument != nullptr;
+            if (valid_row) {
+                std::lock_guard<std::mutex> lock(owner_->mutex_);
+                if (generation != owner_->query_generation_) return;
                 meta.instrument_id = SafeCtpString(p_instrument->InstrumentID);
                 meta.exchange_id = SafeCtpString(p_instrument->ExchangeID);
                 meta.product_id = SafeCtpString(p_instrument->ProductID);
@@ -1016,43 +1183,38 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
                 meta.expire_date = SafeCtpString(p_instrument->ExpireDate);
                 meta.is_trading = p_instrument->IsTrading != 0;
                 meta.product_class = std::string(1, p_instrument->ProductClass);
-                owner_->instrument_meta_snapshots_.erase(
-                    std::remove_if(
-                        owner_->instrument_meta_snapshots_.begin(),
-                        owner_->instrument_meta_snapshots_.end(),
-                        [&](const auto& row) { return row.instrument_id == meta.instrument_id; }),
-                    owner_->instrument_meta_snapshots_.end());
-                owner_->instrument_meta_snapshots_.push_back(std::move(meta));
             }
-            if (b_is_last) {
-                snapshots = owner_->instrument_meta_snapshots_;
-                callback = owner_->instrument_meta_snapshot_callback_;
+            owner_->PublishSnapshotQueryResponse(
+                owner_->instrument_meta_queries_, n_request_id, generation,
+                valid_row ? &meta : nullptr, p_rsp_info == nullptr ? 0 : p_rsp_info->ErrorID,
+                SafeCtpErrorString(p_rsp_info), b_is_last, owner_->instrument_meta_snapshots_,
+                owner_->instrument_meta_snapshot_callback_);
+
+        } catch (...) {
+            try {
+                SetError("SPI callback exception");
+            } catch (...) {
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
             }
-        }
-        if (b_is_last && callback) {
-            callback(snapshots);
         }
     }
 
     void OnRspQryDepthMarketData(CThostFtdcDepthMarketDataField* p_depth_market_data,
-                                 CThostFtdcRspInfoField* p_rsp_info, int, bool b_is_last) override {
+                                 CThostFtdcRspInfoField* p_rsp_info, int n_request_id,
+                                 bool b_is_last) override {
         CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
-        }
-        if (b_is_last) {
-            owner_->CompleteScheduledQuery();
-        }
-        if (!IsRspSuccess(p_rsp_info)) {
-            return;
-        }
-
-        std::function<void(const std::vector<MarketSnapshot>&)> callback;
-        std::vector<MarketSnapshot> snapshots;
-        {
-            std::lock_guard<std::mutex> lock(owner_->mutex_);
-            if (p_depth_market_data != nullptr) {
-                MarketSnapshot snapshot;
+        try {
+            if (!scope.active()) return;
+            const auto generation = state_->query_generation;
+            if (!owner_->IsQueryActive(n_request_id, generation)) return;
+            QueryScopeExit completion([&]() {
+                if (b_is_last) owner_->CompleteScheduledQuery(n_request_id, generation);
+            });
+            MarketSnapshot snapshot;
+            const bool valid_row = IsRspSuccess(p_rsp_info) && p_depth_market_data != nullptr;
+            if (valid_row) {
+                std::lock_guard<std::mutex> lock(owner_->mutex_);
+                if (generation != owner_->query_generation_) return;
                 snapshot.instrument_id = SafeCtpString(p_depth_market_data->InstrumentID);
                 snapshot.exchange_id = SafeCtpString(p_depth_market_data->ExchangeID);
                 snapshot.trading_day = SafeCtpString(p_depth_market_data->TradingDay);
@@ -1073,83 +1235,88 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
                     snapshot.action_day, snapshot.update_time, snapshot.update_millisec);
                 snapshot.recv_ts_ns = NowEpochNanos();
                 CtpGatewayAdapter::NormalizeMarketSnapshot(&snapshot);
-                owner_->depth_market_snapshots_.erase(
-                    std::remove_if(owner_->depth_market_snapshots_.begin(),
-                                   owner_->depth_market_snapshots_.end(),
-                                   [&](const auto& row) {
-                                       return row.instrument_id == snapshot.instrument_id;
-                                   }),
-                    owner_->depth_market_snapshots_.end());
-                owner_->depth_market_snapshots_.push_back(std::move(snapshot));
             }
-            if (b_is_last) {
-                snapshots = owner_->depth_market_snapshots_;
-                callback = owner_->depth_market_snapshot_callback_;
+            owner_->PublishSnapshotQueryResponse(
+                owner_->depth_market_queries_, n_request_id, generation,
+                valid_row ? &snapshot : nullptr, p_rsp_info == nullptr ? 0 : p_rsp_info->ErrorID,
+                SafeCtpErrorString(p_rsp_info), b_is_last, owner_->depth_market_snapshots_,
+                owner_->depth_market_snapshot_callback_);
+
+        } catch (...) {
+            try {
+                SetError("SPI callback exception");
+            } catch (...) {
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
             }
-        }
-        if (b_is_last && callback) {
-            callback(snapshots);
         }
     }
 
     void OnRspQryBrokerTradingParams(CThostFtdcBrokerTradingParamsField* p_broker_trading_params,
-                                     CThostFtdcRspInfoField* p_rsp_info, int,
+                                     CThostFtdcRspInfoField* p_rsp_info, int n_request_id,
                                      bool b_is_last) override {
         CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
-        }
-        if (b_is_last) {
-            owner_->CompleteScheduledQuery();
-        }
-        if (!b_is_last || !IsRspSuccess(p_rsp_info) || p_broker_trading_params == nullptr) {
-            return;
-        }
+        try {
+            if (!scope.active()) return;
+            const auto generation = state_->query_generation;
+            if (!owner_->IsQueryActive(n_request_id, generation)) return;
+            QueryScopeExit completion([&]() {
+                if (b_is_last) owner_->CompleteScheduledQuery(n_request_id, generation);
+            });
+            BrokerTradingParamsSnapshot snapshot;
+            const bool valid_row = IsRspSuccess(p_rsp_info) && p_broker_trading_params != nullptr;
+            if (valid_row) {
+                std::lock_guard<std::mutex> lock(owner_->mutex_);
+                if (generation != owner_->query_generation_) return;
+                snapshot.investor_id =
+                    ResolveCtpInvestorId(SafeCtpString(p_broker_trading_params->InvestorID),
+                                         owner_->runtime_config_.investor_id);
+                snapshot.account_id = snapshot.investor_id;
+                snapshot.margin_price_type =
+                    std::string(1, p_broker_trading_params->MarginPriceType);
+                snapshot.algorithm = "";
+                snapshot.ts_ns = NowEpochNanos();
+                snapshot.source = "ctp";
+            }
+            if (valid_row && snapshot.account_id.empty()) {
+                owner_->FailQuery(n_request_id, generation, "broker_trading_params",
+                                  "missing investor identity");
+                owner_->CompleteScheduledQuery(n_request_id, generation);
+                return;
+            }
+            owner_->PublishSnapshotQueryResponse(
+                owner_->broker_trading_params_queries_, n_request_id, generation,
+                valid_row ? &snapshot : nullptr, p_rsp_info == nullptr ? 0 : p_rsp_info->ErrorID,
+                SafeCtpErrorString(p_rsp_info), b_is_last, owner_->broker_trading_params_snapshot_,
+                owner_->broker_trading_params_snapshot_callback_);
 
-        BrokerTradingParamsSnapshot snapshot;
-        std::function<void(const BrokerTradingParamsSnapshot&)> callback;
-        {
-            std::lock_guard<std::mutex> lock(owner_->mutex_);
-            owner_->broker_trading_params_snapshot_.account_id = owner_->runtime_config_.user_id;
-            owner_->broker_trading_params_snapshot_.investor_id =
-                owner_->runtime_config_.investor_id;
-            owner_->broker_trading_params_snapshot_.margin_price_type =
-                std::string(1, p_broker_trading_params->MarginPriceType);
-            owner_->broker_trading_params_snapshot_.algorithm = "";
-            owner_->broker_trading_params_snapshot_.ts_ns = NowEpochNanos();
-            owner_->broker_trading_params_snapshot_.source = "ctp";
-            snapshot = owner_->broker_trading_params_snapshot_;
-            callback = owner_->broker_trading_params_snapshot_callback_;
-        }
-        if (callback) {
-            callback(snapshot);
+        } catch (...) {
+            try {
+                SetError("SPI callback exception");
+            } catch (...) {
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
+            }
         }
     }
 
     void OnRspQryInstrumentMarginRate(CThostFtdcInstrumentMarginRateField* p_margin_rate,
-                                      CThostFtdcRspInfoField* p_rsp_info, int,
+                                      CThostFtdcRspInfoField* p_rsp_info, int n_request_id,
                                       bool b_is_last) override {
         CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
-        }
-        if (b_is_last) {
-            owner_->CompleteScheduledQuery();
-        }
-        if (!IsRspSuccess(p_rsp_info)) {
-            if (IsRecoverableQueryError(p_rsp_info)) {
-                return;
-            }
-            return;
-        }
-        std::vector<InstrumentMarginRateSnapshot> snapshots;
-        CtpGatewayAdapter::InstrumentMarginRateSnapshotCallback callback;
-        {
-            std::lock_guard<std::mutex> lock(owner_->mutex_);
-            if (p_margin_rate != nullptr) {
-                InstrumentMarginRateSnapshot snapshot;
-                snapshot.account_id = SafeCtpString(p_margin_rate->InvestorID);
-                snapshot.investor_id = SafeCtpString(p_margin_rate->InvestorID);
+        try {
+            if (!scope.active()) return;
+            const auto generation = state_->query_generation;
+            if (!owner_->IsQueryActive(n_request_id, generation)) return;
+            QueryScopeExit completion([&]() {
+                if (b_is_last) owner_->CompleteScheduledQuery(n_request_id, generation);
+            });
+            InstrumentMarginRateSnapshot snapshot;
+            const bool valid_row = IsRspSuccess(p_rsp_info) && p_margin_rate != nullptr;
+            if (valid_row) {
+                std::lock_guard<std::mutex> lock(owner_->mutex_);
+                if (generation != owner_->query_generation_) return;
+                snapshot.investor_id = ResolveCtpInvestorId(
+                    SafeCtpString(p_margin_rate->InvestorID), owner_->runtime_config_.investor_id);
+                snapshot.account_id = snapshot.investor_id;
                 snapshot.instrument_id = SafeCtpString(p_margin_rate->InstrumentID);
                 snapshot.exchange_id = SafeCtpString(p_margin_rate->ExchangeID);
                 snapshot.hedge_flag = std::string(1, p_margin_rate->HedgeFlag);
@@ -1161,51 +1328,49 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
                     p_margin_rate->IsRelative != 0 && p_margin_rate->IsRelative != '0';
                 snapshot.ts_ns = NowEpochNanos();
                 snapshot.source = "ctp";
-                auto& rows = owner_->instrument_margin_rate_snapshots_;
-                rows.erase(std::remove_if(rows.begin(), rows.end(),
-                                          [&](const auto& row) {
-                                              return row.account_id == snapshot.account_id &&
-                                                     row.instrument_id == snapshot.instrument_id &&
-                                                     row.exchange_id == snapshot.exchange_id &&
-                                                     row.hedge_flag == snapshot.hedge_flag;
-                                          }),
-                           rows.end());
-                rows.push_back(std::move(snapshot));
             }
-            if (b_is_last) {
-                snapshots = owner_->instrument_margin_rate_snapshots_;
-                callback = owner_->instrument_margin_rate_snapshot_callback_;
+            if (valid_row && snapshot.account_id.empty()) {
+                owner_->FailQuery(n_request_id, generation, "instrument_margin_rate",
+                                  "missing investor identity");
+                owner_->CompleteScheduledQuery(n_request_id, generation);
+                return;
             }
-        }
-        if (b_is_last && callback) {
-            callback(snapshots);
+            owner_->PublishSnapshotQueryResponse(
+                owner_->instrument_margin_rate_queries_, n_request_id, generation,
+                valid_row ? &snapshot : nullptr, p_rsp_info == nullptr ? 0 : p_rsp_info->ErrorID,
+                SafeCtpErrorString(p_rsp_info), b_is_last,
+                owner_->instrument_margin_rate_snapshots_,
+                owner_->instrument_margin_rate_snapshot_callback_);
+
+        } catch (...) {
+            try {
+                SetError("SPI callback exception");
+            } catch (...) {
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
+            }
         }
     }
 
     void OnRspQryInstrumentCommissionRate(
         CThostFtdcInstrumentCommissionRateField* p_commission_rate,
-        CThostFtdcRspInfoField* p_rsp_info, int, bool b_is_last) override {
+        CThostFtdcRspInfoField* p_rsp_info, int n_request_id, bool b_is_last) override {
         CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
-        }
-        if (b_is_last) {
-            owner_->CompleteScheduledQuery();
-        }
-        if (!IsRspSuccess(p_rsp_info)) {
-            if (IsRecoverableQueryError(p_rsp_info)) {
-                return;
-            }
-            return;
-        }
-        std::vector<InstrumentCommissionRateSnapshot> snapshots;
-        CtpGatewayAdapter::InstrumentCommissionRateSnapshotCallback callback;
-        {
-            std::lock_guard<std::mutex> lock(owner_->mutex_);
-            if (p_commission_rate != nullptr) {
-                InstrumentCommissionRateSnapshot snapshot;
-                snapshot.account_id = SafeCtpString(p_commission_rate->InvestorID);
-                snapshot.investor_id = SafeCtpString(p_commission_rate->InvestorID);
+        try {
+            if (!scope.active()) return;
+            const auto generation = state_->query_generation;
+            if (!owner_->IsQueryActive(n_request_id, generation)) return;
+            QueryScopeExit completion([&]() {
+                if (b_is_last) owner_->CompleteScheduledQuery(n_request_id, generation);
+            });
+            InstrumentCommissionRateSnapshot snapshot;
+            const bool valid_row = IsRspSuccess(p_rsp_info) && p_commission_rate != nullptr;
+            if (valid_row) {
+                std::lock_guard<std::mutex> lock(owner_->mutex_);
+                if (generation != owner_->query_generation_) return;
+                snapshot.investor_id =
+                    ResolveCtpInvestorId(SafeCtpString(p_commission_rate->InvestorID),
+                                         owner_->runtime_config_.investor_id);
+                snapshot.account_id = snapshot.investor_id;
                 snapshot.instrument_id = SafeCtpString(p_commission_rate->InstrumentID);
                 snapshot.exchange_id = SafeCtpString(p_commission_rate->ExchangeID);
                 snapshot.open_ratio_by_money = p_commission_rate->OpenRatioByMoney;
@@ -1216,50 +1381,49 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
                 snapshot.close_today_ratio_by_volume = p_commission_rate->CloseTodayRatioByVolume;
                 snapshot.ts_ns = NowEpochNanos();
                 snapshot.source = "ctp";
-                auto& rows = owner_->instrument_commission_rate_snapshots_;
-                rows.erase(std::remove_if(rows.begin(), rows.end(),
-                                          [&](const auto& row) {
-                                              return row.account_id == snapshot.account_id &&
-                                                     row.instrument_id == snapshot.instrument_id &&
-                                                     row.exchange_id == snapshot.exchange_id;
-                                          }),
-                           rows.end());
-                rows.push_back(std::move(snapshot));
             }
-            if (b_is_last) {
-                snapshots = owner_->instrument_commission_rate_snapshots_;
-                callback = owner_->instrument_commission_rate_snapshot_callback_;
+            if (valid_row && snapshot.account_id.empty()) {
+                owner_->FailQuery(n_request_id, generation, "instrument_commission_rate",
+                                  "missing investor identity");
+                owner_->CompleteScheduledQuery(n_request_id, generation);
+                return;
             }
-        }
-        if (b_is_last && callback) {
-            callback(snapshots);
+            owner_->PublishSnapshotQueryResponse(
+                owner_->instrument_commission_rate_queries_, n_request_id, generation,
+                valid_row ? &snapshot : nullptr, p_rsp_info == nullptr ? 0 : p_rsp_info->ErrorID,
+                SafeCtpErrorString(p_rsp_info), b_is_last,
+                owner_->instrument_commission_rate_snapshots_,
+                owner_->instrument_commission_rate_snapshot_callback_);
+
+        } catch (...) {
+            try {
+                SetError("SPI callback exception");
+            } catch (...) {
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
+            }
         }
     }
 
     void OnRspQryInstrumentOrderCommRate(CThostFtdcInstrumentOrderCommRateField* p_order_comm_rate,
-                                         CThostFtdcRspInfoField* p_rsp_info, int,
+                                         CThostFtdcRspInfoField* p_rsp_info, int n_request_id,
                                          bool b_is_last) override {
         CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
-        }
-        if (b_is_last) {
-            owner_->CompleteScheduledQuery();
-        }
-        if (!IsRspSuccess(p_rsp_info)) {
-            if (IsRecoverableQueryError(p_rsp_info)) {
-                return;
-            }
-            return;
-        }
-        std::vector<InstrumentOrderCommRateSnapshot> snapshots;
-        CtpGatewayAdapter::InstrumentOrderCommRateSnapshotCallback callback;
-        {
-            std::lock_guard<std::mutex> lock(owner_->mutex_);
-            if (p_order_comm_rate != nullptr) {
-                InstrumentOrderCommRateSnapshot snapshot;
-                snapshot.account_id = SafeCtpString(p_order_comm_rate->InvestorID);
-                snapshot.investor_id = SafeCtpString(p_order_comm_rate->InvestorID);
+        try {
+            if (!scope.active()) return;
+            const auto generation = state_->query_generation;
+            if (!owner_->IsQueryActive(n_request_id, generation)) return;
+            QueryScopeExit completion([&]() {
+                if (b_is_last) owner_->CompleteScheduledQuery(n_request_id, generation);
+            });
+            InstrumentOrderCommRateSnapshot snapshot;
+            const bool valid_row = IsRspSuccess(p_rsp_info) && p_order_comm_rate != nullptr;
+            if (valid_row) {
+                std::lock_guard<std::mutex> lock(owner_->mutex_);
+                if (generation != owner_->query_generation_) return;
+                snapshot.investor_id =
+                    ResolveCtpInvestorId(SafeCtpString(p_order_comm_rate->InvestorID),
+                                         owner_->runtime_config_.investor_id);
+                snapshot.account_id = snapshot.investor_id;
                 snapshot.instrument_id = SafeCtpString(p_order_comm_rate->InstrumentID);
                 snapshot.exchange_id = SafeCtpString(p_order_comm_rate->ExchangeID);
                 snapshot.hedge_flag = std::string(1, p_order_comm_rate->HedgeFlag);
@@ -1267,377 +1431,106 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
                 snapshot.order_action_comm_by_volume = p_order_comm_rate->OrderActionCommByVolume;
                 snapshot.ts_ns = NowEpochNanos();
                 snapshot.source = "ctp";
-                auto& rows = owner_->instrument_order_comm_rate_snapshots_;
-                rows.erase(std::remove_if(rows.begin(), rows.end(),
-                                          [&](const auto& row) {
-                                              return row.account_id == snapshot.account_id &&
-                                                     row.instrument_id == snapshot.instrument_id &&
-                                                     row.exchange_id == snapshot.exchange_id &&
-                                                     row.hedge_flag == snapshot.hedge_flag;
-                                          }),
-                           rows.end());
-                rows.push_back(std::move(snapshot));
             }
-            if (b_is_last) {
-                snapshots = owner_->instrument_order_comm_rate_snapshots_;
-                callback = owner_->instrument_order_comm_rate_snapshot_callback_;
+            if (valid_row && snapshot.account_id.empty()) {
+                owner_->FailQuery(n_request_id, generation, "instrument_order_comm_rate",
+                                  "missing investor identity");
+                owner_->CompleteScheduledQuery(n_request_id, generation);
+                return;
             }
-        }
-        if (b_is_last && callback) {
-            callback(snapshots);
+            owner_->PublishSnapshotQueryResponse(
+                owner_->instrument_order_comm_rate_queries_, n_request_id, generation,
+                valid_row ? &snapshot : nullptr, p_rsp_info == nullptr ? 0 : p_rsp_info->ErrorID,
+                SafeCtpErrorString(p_rsp_info), b_is_last,
+                owner_->instrument_order_comm_rate_snapshots_,
+                owner_->instrument_order_comm_rate_snapshot_callback_);
+
+        } catch (...) {
+            try {
+                SetError("SPI callback exception");
+            } catch (...) {
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
+            }
         }
     }
 
     void OnRspQryOrder(CThostFtdcOrderField* p_order, CThostFtdcRspInfoField* p_rsp_info,
                        int n_request_id, bool b_is_last) override {
         CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
-        }
-        if (b_is_last) {
-            owner_->CompleteScheduledQuery();
-        }
-        const bool success = IsRspSuccess(p_rsp_info);
-        auto notify_complete = [&]() {
-            if (!b_is_last) {
+        try {
+            if (!scope.active()) {
                 return;
             }
-            CtpGatewayAdapter::QueryCompleteCallback query_callback;
-            {
-                std::lock_guard<std::mutex> lock(owner_->mutex_);
-                query_callback = owner_->query_complete_callback_;
-            }
-            if (query_callback) {
-                query_callback(n_request_id, "order", success);
-            }
-        };
-        if (!success || p_order == nullptr) {
-            notify_complete();
-            return;
-        }
-
-        OrderEvent event;
-        event.account_id = SafeCtpString(p_order->InvestorID);
-        event.exchange_order_id = SafeCtpString(p_order->OrderSysID);
-        event.instrument_id = SafeCtpString(p_order->InstrumentID);
-        event.exchange_id = SafeCtpString(p_order->ExchangeID);
-        event.side = FromCtpDirection(p_order->Direction);
-        event.offset = FromCtpOffset(p_order->CombOffsetFlag[0]);
-        event.status = FromCtpOrderStatus(p_order->OrderStatus);
-        event.total_volume = p_order->VolumeTotalOriginal;
-        event.filled_volume = p_order->VolumeTraded;
-        event.avg_fill_price = p_order->LimitPrice;
-        event.reason = SafeCtpString(p_order->StatusMsg);
-        event.status_msg = SafeCtpString(p_order->StatusMsg);
-        event.order_submit_status = std::string(1, p_order->OrderSubmitStatus);
-        event.order_ref = SafeCtpString(p_order->OrderRef);
-        event.trading_day = SafeCtpString(p_order->TradingDay);
-        event.front_id = p_order->FrontID;
-        event.session_id = p_order->SessionID;
-        event.event_source = "OnRspQryOrder";
-        event.query_request_id = n_request_id;
-        event.ts_ns = NowEpochNanos();
-        event.exchange_ts_ns = ParseCtpDateTimeToEpochNanos(SafeCtpString(p_order->InsertDate),
-                                                            SafeCtpString(p_order->InsertTime));
-
-        std::function<void(const OrderEvent&)> callback;
-        {
-            std::lock_guard<std::mutex> lock(owner_->mutex_);
-            const auto order_ref = SafeCtpString(p_order->OrderRef);
-            const auto it = owner_->order_ref_to_client_id_.find(order_ref);
-            if (it != owner_->order_ref_to_client_id_.end()) {
-                event.client_order_id = it->second;
-            } else {
-                event.client_order_id = order_ref;
-            }
-            const auto meta_it = owner_->client_order_meta_.find(event.client_order_id);
-            if (meta_it != owner_->client_order_meta_.end()) {
-                event.strategy_id = meta_it->second.strategy_id;
-                meta_it->second.terminal = IsTerminalOrderStatus(event.status);
-                if (event.trading_day.empty()) {
-                    event.trading_day = meta_it->second.trading_day;
-                }
-            }
-            if (event.trading_day.empty()) {
-                event.trading_day = owner_->user_session_.trading_day;
-            }
-            event.recovery_generation = owner_->session_generation_;
-            callback = owner_->order_event_callback_;
-        }
-        if (callback) {
-            StampOrderEventTimestamps(&event);
-            callback(event);
-        }
-        notify_complete();
-    }
-
-    void OnRspQryTrade(CThostFtdcTradeField* p_trade, CThostFtdcRspInfoField* p_rsp_info,
-                       int n_request_id, bool b_is_last) override {
-        CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
-        }
-        if (b_is_last) {
-            owner_->CompleteScheduledQuery();
-        }
-        const bool success = IsRspSuccess(p_rsp_info);
-        auto notify_complete = [&]() {
-            if (!b_is_last) {
+            const auto generation = state_->query_generation;
+            if (!owner_->IsQueryActive(n_request_id, generation)) {
                 return;
             }
-            CtpGatewayAdapter::QueryCompleteCallback query_callback;
+            QueryScopeExit completion([&]() {
+                if (b_is_last) {
+                    owner_->CompleteScheduledQuery(n_request_id, generation);
+                }
+            });
+            if (!owner_->RecordQueryResponse(n_request_id, generation, IsRspSuccess(p_rsp_info))) {
+                if (b_is_last) {
+                    owner_->FailQuery(n_request_id, generation, "order",
+                                      "query response failed: " + SafeCtpErrorString(p_rsp_info));
+                }
+                return;
+            }
+            const bool success = IsRspSuccess(p_rsp_info);
+            auto notify_complete = [&]() {
+                if (!b_is_last) {
+                    return;
+                }
+                CtpGatewayAdapter::QueryCompleteCallback query_callback;
+                {
+                    std::lock_guard<std::mutex> lock(owner_->mutex_);
+                    query_callback = owner_->query_complete_callback_;
+                }
+                if (query_callback) {
+                    query_callback(n_request_id, "order", success);
+                }
+            };
+            if (!success || p_order == nullptr) {
+                notify_complete();
+                return;
+            }
+
+            OrderEvent event;
+            event.account_id = SafeCtpString(p_order->InvestorID);
+            event.exchange_order_id = SafeCtpString(p_order->OrderSysID);
+            event.instrument_id = SafeCtpString(p_order->InstrumentID);
+            event.exchange_id = SafeCtpString(p_order->ExchangeID);
+            event.side = FromCtpDirection(p_order->Direction);
+            event.offset = FromCtpOffset(p_order->CombOffsetFlag[0]);
+            event.status = FromCtpOrderStatus(p_order->OrderStatus);
+            event.total_volume = p_order->VolumeTotalOriginal;
+            event.filled_volume = p_order->VolumeTraded;
+            event.avg_fill_price = p_order->LimitPrice;
+            event.reason = SafeCtpString(p_order->StatusMsg);
+            event.status_msg = SafeCtpString(p_order->StatusMsg);
+            event.order_submit_status = std::string(1, p_order->OrderSubmitStatus);
+            event.order_ref = SafeCtpString(p_order->OrderRef);
+            event.trading_day = SafeCtpString(p_order->TradingDay);
+            event.front_id = p_order->FrontID;
+            event.session_id = p_order->SessionID;
+            event.event_source = "OnRspQryOrder";
+            event.query_request_id = n_request_id;
+            event.ts_ns = NowEpochNanos();
+            event.exchange_ts_ns = ParseCtpDateTimeToEpochNanos(SafeCtpString(p_order->InsertDate),
+                                                                SafeCtpString(p_order->InsertTime));
+
+            std::function<void(const OrderEvent&)> callback;
             {
                 std::lock_guard<std::mutex> lock(owner_->mutex_);
-                query_callback = owner_->query_complete_callback_;
-            }
-            if (query_callback) {
-                query_callback(n_request_id, "trade", success);
-            }
-        };
-        if (!success || p_trade == nullptr) {
-            notify_complete();
-            return;
-        }
-
-        OrderEvent event;
-        event.account_id = SafeCtpString(p_trade->InvestorID);
-        event.exchange_order_id = SafeCtpString(p_trade->OrderSysID);
-        event.instrument_id = SafeCtpString(p_trade->InstrumentID);
-        event.exchange_id = SafeCtpString(p_trade->ExchangeID);
-        event.side = FromCtpDirection(p_trade->Direction);
-        event.offset = FromCtpOffset(p_trade->OffsetFlag);
-        event.status = OrderStatus::kFilled;
-        event.last_trade_volume = p_trade->Volume;
-        event.total_volume = p_trade->Volume;
-        event.filled_volume = p_trade->Volume;
-        event.avg_fill_price = p_trade->Price;
-        event.reason = "trade_query";
-        event.order_ref = SafeCtpString(p_trade->OrderRef);
-        event.raw_trade_id = SafeCtpString(p_trade->TradeID);
-        event.trading_day = SafeCtpString(p_trade->TradeDate);
-        event.trade_id = BuildCtpTradeId(event.exchange_id, event.side, event.raw_trade_id);
-        event.event_source = "OnRspQryTrade";
-        event.query_request_id = n_request_id;
-        event.ts_ns = NowEpochNanos();
-        event.exchange_ts_ns = ParseCtpDateTimeToEpochNanos(SafeCtpString(p_trade->TradeDate),
-                                                            SafeCtpString(p_trade->TradeTime));
-
-        std::function<void(const OrderEvent&)> callback;
-        {
-            std::lock_guard<std::mutex> lock(owner_->mutex_);
-            const auto order_ref = SafeCtpString(p_trade->OrderRef);
-            const auto it = owner_->order_ref_to_client_id_.find(order_ref);
-            event.client_order_id =
-                it == owner_->order_ref_to_client_id_.end() ? order_ref : it->second;
-            const auto meta_it = owner_->client_order_meta_.find(event.client_order_id);
-            if (meta_it != owner_->client_order_meta_.end()) {
-                auto& meta = meta_it->second;
-                event.strategy_id = meta.strategy_id;
-                if (event.trading_day.empty()) {
-                    event.trading_day = meta.trading_day;
+                const auto order_ref = SafeCtpString(p_order->OrderRef);
+                const auto it = owner_->order_ref_to_client_id_.find(order_ref);
+                if (it != owner_->order_ref_to_client_id_.end()) {
+                    event.client_order_id = it->second;
+                } else {
+                    event.client_order_id = order_ref;
                 }
-            }
-            if (event.trading_day.empty()) {
-                event.trading_day = owner_->user_session_.trading_day;
-            }
-            if (event.account_id.empty()) {
-                event.account_id = owner_->runtime_config_.investor_id;
-            }
-            event.recovery_generation = owner_->session_generation_;
-            const std::string trade_key = BuildCanonicalTradeKey(event);
-            const bool duplicate =
-                !trade_key.empty() && !owner_->seen_trade_keys_.insert(trade_key).second;
-            if (duplicate) {
-                ++owner_->duplicate_trades_suppressed_;
-            }
-            if (!duplicate && meta_it != owner_->client_order_meta_.end()) {
-                auto& meta = meta_it->second;
-                meta.cumulative_filled_volume += std::max(0, p_trade->Volume);
-                event.total_volume = meta.total_volume > 0 ? meta.total_volume : p_trade->Volume;
-                event.filled_volume = meta.cumulative_filled_volume;
-                event.status = event.filled_volume >= event.total_volume
-                                   ? OrderStatus::kFilled
-                                   : OrderStatus::kPartiallyFilled;
-                meta.terminal = IsTerminalOrderStatus(event.status);
-            }
-            callback = duplicate ? nullptr : owner_->order_event_callback_;
-        }
-        if (callback) {
-            StampOrderEventTimestamps(&event);
-            callback(event);
-        }
-        notify_complete();
-    }
-
-    void OnRspOrderInsert(CThostFtdcInputOrderField* p_input_order,
-                          CThostFtdcRspInfoField* p_rsp_info, int, bool b_is_last) override {
-        CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
-        }
-        if (!b_is_last || IsRspSuccess(p_rsp_info)) {
-            return;
-        }
-
-        OrderEvent event;
-        event.account_id = p_input_order == nullptr ? owner_->runtime_config_.investor_id
-                                                    : SafeCtpString(p_input_order->InvestorID);
-        event.instrument_id =
-            p_input_order == nullptr ? "" : SafeCtpString(p_input_order->InstrumentID);
-        event.exchange_id =
-            p_input_order == nullptr ? "" : SafeCtpString(p_input_order->ExchangeID);
-        event.side =
-            p_input_order == nullptr ? Side::kBuy : FromCtpDirection(p_input_order->Direction);
-        event.offset = p_input_order == nullptr ? OffsetFlag::kOpen
-                                                : FromCtpOffset(p_input_order->CombOffsetFlag[0]);
-        event.status = OrderStatus::kRejected;
-        event.total_volume = p_input_order == nullptr ? 0 : p_input_order->VolumeTotalOriginal;
-        event.filled_volume = 0;
-        event.avg_fill_price = p_input_order == nullptr ? 0.0 : p_input_order->LimitPrice;
-        event.reason = FormatRspError("order_insert_rejected", p_rsp_info);
-        event.status_msg = SafeCtpErrorString(p_rsp_info);
-        event.order_ref = p_input_order == nullptr ? "" : SafeCtpString(p_input_order->OrderRef);
-        event.front_id = owner_->front_id_;
-        event.session_id = owner_->session_id_;
-        event.event_source = "OnRspOrderInsert";
-        event.ts_ns = NowEpochNanos();
-        EmitOrderEvent(std::move(event), true);
-    }
-
-    void OnErrRtnOrderInsert(CThostFtdcInputOrderField* p_input_order,
-                             CThostFtdcRspInfoField* p_rsp_info) override {
-        CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
-        }
-        if (IsRspSuccess(p_rsp_info)) {
-            return;
-        }
-
-        OrderEvent event;
-        event.account_id = p_input_order == nullptr ? owner_->runtime_config_.investor_id
-                                                    : SafeCtpString(p_input_order->InvestorID);
-        event.instrument_id =
-            p_input_order == nullptr ? "" : SafeCtpString(p_input_order->InstrumentID);
-        event.exchange_id =
-            p_input_order == nullptr ? "" : SafeCtpString(p_input_order->ExchangeID);
-        event.side =
-            p_input_order == nullptr ? Side::kBuy : FromCtpDirection(p_input_order->Direction);
-        event.offset = p_input_order == nullptr ? OffsetFlag::kOpen
-                                                : FromCtpOffset(p_input_order->CombOffsetFlag[0]);
-        event.status = OrderStatus::kRejected;
-        event.total_volume = p_input_order == nullptr ? 0 : p_input_order->VolumeTotalOriginal;
-        event.filled_volume = 0;
-        event.avg_fill_price = p_input_order == nullptr ? 0.0 : p_input_order->LimitPrice;
-        event.reason = FormatRspError("order_insert_error", p_rsp_info);
-        event.status_msg = SafeCtpErrorString(p_rsp_info);
-        event.order_ref = p_input_order == nullptr ? "" : SafeCtpString(p_input_order->OrderRef);
-        event.front_id = owner_->front_id_;
-        event.session_id = owner_->session_id_;
-        event.event_source = "OnErrRtnOrderInsert";
-        event.ts_ns = NowEpochNanos();
-        EmitOrderEvent(std::move(event), true);
-    }
-
-    void OnRspOrderAction(CThostFtdcInputOrderActionField* p_input_order_action,
-                          CThostFtdcRspInfoField* p_rsp_info, int, bool b_is_last) override {
-        CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
-        }
-        if (!b_is_last) {
-            return;
-        }
-
-        OrderEvent event;
-        event.account_id = owner_->runtime_config_.investor_id;
-        event.instrument_id = p_input_order_action == nullptr
-                                  ? ""
-                                  : SafeCtpString(p_input_order_action->InstrumentID);
-        event.exchange_id =
-            p_input_order_action == nullptr ? "" : SafeCtpString(p_input_order_action->ExchangeID);
-        event.status = IsRspSuccess(p_rsp_info) ? OrderStatus::kAccepted : OrderStatus::kRejected;
-        event.order_ref =
-            p_input_order_action == nullptr ? "" : SafeCtpString(p_input_order_action->OrderRef);
-        event.front_id =
-            p_input_order_action == nullptr ? owner_->front_id_ : p_input_order_action->FrontID;
-        event.session_id =
-            p_input_order_action == nullptr ? owner_->session_id_ : p_input_order_action->SessionID;
-        event.reason = IsRspSuccess(p_rsp_info)
-                           ? "cancel_request_accepted"
-                           : FormatRspError("cancel_request_rejected", p_rsp_info);
-        event.status_msg = SafeCtpErrorString(p_rsp_info);
-        event.event_source = "OnRspOrderAction";
-        event.ts_ns = NowEpochNanos();
-        EmitOrderEvent(std::move(event), false);
-    }
-
-    void OnErrRtnOrderAction(CThostFtdcOrderActionField* p_order_action,
-                             CThostFtdcRspInfoField* p_rsp_info) override {
-        CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
-        }
-        if (IsRspSuccess(p_rsp_info)) {
-            return;
-        }
-
-        OrderEvent event;
-        event.account_id = owner_->runtime_config_.investor_id;
-        event.instrument_id =
-            p_order_action == nullptr ? "" : SafeCtpString(p_order_action->InstrumentID);
-        event.exchange_id =
-            p_order_action == nullptr ? "" : SafeCtpString(p_order_action->ExchangeID);
-        event.status = OrderStatus::kRejected;
-        event.order_ref = p_order_action == nullptr ? "" : SafeCtpString(p_order_action->OrderRef);
-        event.front_id = p_order_action == nullptr ? owner_->front_id_ : p_order_action->FrontID;
-        event.session_id =
-            p_order_action == nullptr ? owner_->session_id_ : p_order_action->SessionID;
-        event.reason = FormatRspError("cancel_error", p_rsp_info);
-        event.status_msg = SafeCtpErrorString(p_rsp_info);
-        event.event_source = "OnErrRtnOrderAction";
-        event.ts_ns = NowEpochNanos();
-        EmitOrderEvent(std::move(event), false);
-    }
-
-    void OnRtnOrder(CThostFtdcOrderField* p_order) override {
-        CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
-        }
-        if (p_order == nullptr) {
-            return;
-        }
-
-        OrderEvent event;
-        event.account_id = SafeCtpString(p_order->InvestorID);
-        event.exchange_order_id = SafeCtpString(p_order->OrderSysID);
-        event.instrument_id = SafeCtpString(p_order->InstrumentID);
-        event.exchange_id = SafeCtpString(p_order->ExchangeID);
-        event.side = FromCtpDirection(p_order->Direction);
-        event.offset = FromCtpOffset(p_order->CombOffsetFlag[0]);
-        event.status = FromCtpOrderStatus(p_order->OrderStatus);
-        event.total_volume = p_order->VolumeTotalOriginal;
-        event.filled_volume = p_order->VolumeTraded;
-        event.avg_fill_price = p_order->LimitPrice;
-        event.reason = SafeCtpString(p_order->StatusMsg);
-        event.status_msg = SafeCtpString(p_order->StatusMsg);
-        event.order_submit_status = std::string(1, p_order->OrderSubmitStatus);
-        event.order_ref = SafeCtpString(p_order->OrderRef);
-        event.trading_day = SafeCtpString(p_order->TradingDay);
-        event.front_id = p_order->FrontID;
-        event.session_id = p_order->SessionID;
-        event.event_source = "OnRtnOrder";
-        event.ts_ns = NowEpochNanos();
-
-        std::function<void(const OrderEvent&)> callback;
-        {
-            std::lock_guard<std::mutex> lock(owner_->mutex_);
-            const auto order_ref = SafeCtpString(p_order->OrderRef);
-            const auto it = owner_->order_ref_to_client_id_.find(order_ref);
-            if (it != owner_->order_ref_to_client_id_.end()) {
-                event.client_order_id = it->second;
-                const auto meta_it = owner_->client_order_meta_.find(it->second);
+                const auto meta_it = owner_->client_order_meta_.find(event.client_order_id);
                 if (meta_it != owner_->client_order_meta_.end()) {
                     event.strategy_id = meta_it->second.strategy_id;
                     meta_it->second.terminal = IsTerminalOrderStatus(event.status);
@@ -1645,110 +1538,516 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
                         event.trading_day = meta_it->second.trading_day;
                     }
                 }
-            } else {
-                event.client_order_id = order_ref;
+                if (event.trading_day.empty()) {
+                    event.trading_day = owner_->user_session_.trading_day;
+                }
+                event.broker_id = owner_->runtime_config_.broker_id;
+                event.recovery_generation = owner_->session_generation_;
+                callback = owner_->order_event_callback_;
             }
-            if (event.trading_day.empty()) {
-                event.trading_day = owner_->user_session_.trading_day;
+            if (callback) {
+                StampOrderEventTimestamps(&event);
+                callback(event);
             }
-            event.recovery_generation = owner_->session_generation_;
-            callback = owner_->order_event_callback_;
-        }
+            notify_complete();
 
-        if (callback) {
-            StampOrderEventTimestamps(&event);
-            callback(event);
+        } catch (...) {
+            try {
+                SetError("SPI callback exception");
+            } catch (...) {
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
+            }
+        }
+    }
+
+    void OnRspQryTrade(CThostFtdcTradeField* p_trade, CThostFtdcRspInfoField* p_rsp_info,
+                       int n_request_id, bool b_is_last) override {
+        CtpCallbackScope scope(state_);
+        try {
+            if (!scope.active()) {
+                return;
+            }
+            const auto generation = state_->query_generation;
+            if (!owner_->IsQueryActive(n_request_id, generation)) {
+                return;
+            }
+            QueryScopeExit completion([&]() {
+                if (b_is_last) {
+                    owner_->CompleteScheduledQuery(n_request_id, generation);
+                }
+            });
+            if (!owner_->RecordQueryResponse(n_request_id, generation, IsRspSuccess(p_rsp_info))) {
+                if (b_is_last) {
+                    owner_->FailQuery(n_request_id, generation, "trade",
+                                      "query response failed: " + SafeCtpErrorString(p_rsp_info));
+                }
+                return;
+            }
+            const bool success = IsRspSuccess(p_rsp_info);
+            auto notify_complete = [&]() {
+                if (!b_is_last) {
+                    return;
+                }
+                CtpGatewayAdapter::QueryCompleteCallback query_callback;
+                {
+                    std::lock_guard<std::mutex> lock(owner_->mutex_);
+                    query_callback = owner_->query_complete_callback_;
+                }
+                if (query_callback) {
+                    query_callback(n_request_id, "trade", success);
+                }
+            };
+            if (!success || p_trade == nullptr) {
+                notify_complete();
+                return;
+            }
+
+            OrderEvent event;
+            event.account_id = SafeCtpString(p_trade->InvestorID);
+            event.exchange_order_id = SafeCtpString(p_trade->OrderSysID);
+            event.instrument_id = SafeCtpString(p_trade->InstrumentID);
+            event.exchange_id = SafeCtpString(p_trade->ExchangeID);
+            event.side = FromCtpDirection(p_trade->Direction);
+            event.offset = FromCtpOffset(p_trade->OffsetFlag);
+            event.hedge_flag =
+                p_trade->HedgeFlag == '3'
+                    ? HedgeFlag::kHedge
+                    : (p_trade->HedgeFlag == '2' ? HedgeFlag::kArbitrage : HedgeFlag::kSpeculation);
+            event.status = OrderStatus::kFilled;
+            event.last_trade_volume = p_trade->Volume;
+            event.total_volume = p_trade->Volume;
+            event.filled_volume = p_trade->Volume;
+            event.avg_fill_price = p_trade->Price;
+            event.reason = "trade_query";
+            event.order_ref = SafeCtpString(p_trade->OrderRef);
+            event.raw_trade_id = SafeCtpString(p_trade->TradeID);
+            event.trading_day = SafeCtpString(p_trade->TradingDay);
+            event.trade_id = BuildCtpTradeId(event.exchange_id, event.side, event.raw_trade_id);
+            event.event_source = "OnRspQryTrade";
+            event.query_request_id = n_request_id;
+            event.ts_ns = NowEpochNanos();
+            event.exchange_ts_ns = ParseCtpDateTimeToEpochNanos(SafeCtpString(p_trade->TradeDate),
+                                                                SafeCtpString(p_trade->TradeTime));
+
+            std::function<void(const OrderEvent&)> callback;
+            {
+                std::lock_guard<std::mutex> lock(owner_->mutex_);
+                const auto order_ref = SafeCtpString(p_trade->OrderRef);
+                const auto it = owner_->order_ref_to_client_id_.find(order_ref);
+                event.client_order_id =
+                    it == owner_->order_ref_to_client_id_.end() ? order_ref : it->second;
+                const auto meta_it = owner_->client_order_meta_.find(event.client_order_id);
+                if (meta_it != owner_->client_order_meta_.end()) {
+                    auto& meta = meta_it->second;
+                    event.strategy_id = meta.strategy_id;
+                    if (event.trading_day.empty()) {
+                        event.trading_day = meta.trading_day;
+                    }
+                }
+                if (event.trading_day.empty()) {
+                    event.trading_day = owner_->user_session_.trading_day;
+                }
+                if (event.account_id.empty()) {
+                    event.account_id = owner_->runtime_config_.investor_id;
+                }
+                event.broker_id = owner_->runtime_config_.broker_id;
+                event.recovery_generation = owner_->session_generation_;
+                const std::string trade_key = BuildCanonicalTradeKey(event);
+                const bool duplicate =
+                    !trade_key.empty() && !owner_->seen_trade_keys_.insert(trade_key).second;
+                if (duplicate) {
+                    ++owner_->duplicate_trades_suppressed_;
+                }
+                if (!duplicate && meta_it != owner_->client_order_meta_.end()) {
+                    auto& meta = meta_it->second;
+                    meta.cumulative_filled_volume += std::max(0, p_trade->Volume);
+                    event.total_volume =
+                        meta.total_volume > 0 ? meta.total_volume : p_trade->Volume;
+                    event.filled_volume = meta.cumulative_filled_volume;
+                    event.status = event.filled_volume >= event.total_volume
+                                       ? OrderStatus::kFilled
+                                       : OrderStatus::kPartiallyFilled;
+                    meta.terminal = IsTerminalOrderStatus(event.status);
+                }
+                callback = owner_->order_event_callback_;
+            }
+            if (callback) {
+                StampOrderEventTimestamps(&event);
+                callback(event);
+            }
+            notify_complete();
+
+        } catch (...) {
+            try {
+                SetError("SPI callback exception");
+            } catch (...) {
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
+            }
+        }
+    }
+
+    void OnRspOrderInsert(CThostFtdcInputOrderField* p_input_order,
+                          CThostFtdcRspInfoField* p_rsp_info, int n_request_id,
+                          bool b_is_last) override {
+        CtpCallbackScope scope(state_);
+        try {
+            if (!scope.active()) {
+                return;
+            }
+            if (!b_is_last || IsRspSuccess(p_rsp_info)) {
+                return;
+            }
+
+            OrderEvent event;
+            event.account_id = p_input_order == nullptr ? owner_->runtime_config_.investor_id
+                                                        : SafeCtpString(p_input_order->InvestorID);
+            event.instrument_id =
+                p_input_order == nullptr ? "" : SafeCtpString(p_input_order->InstrumentID);
+            event.exchange_id =
+                p_input_order == nullptr ? "" : SafeCtpString(p_input_order->ExchangeID);
+            event.side =
+                p_input_order == nullptr ? Side::kBuy : FromCtpDirection(p_input_order->Direction);
+            event.offset = p_input_order == nullptr
+                               ? OffsetFlag::kOpen
+                               : FromCtpOffset(p_input_order->CombOffsetFlag[0]);
+            event.status = OrderStatus::kRejected;
+            event.total_volume = p_input_order == nullptr ? 0 : p_input_order->VolumeTotalOriginal;
+            event.filled_volume = 0;
+            event.avg_fill_price = p_input_order == nullptr ? 0.0 : p_input_order->LimitPrice;
+            event.reason = FormatRspError("order_insert_rejected", p_rsp_info);
+            event.status_msg = SafeCtpErrorString(p_rsp_info);
+            event.order_ref =
+                p_input_order == nullptr ? "" : SafeCtpString(p_input_order->OrderRef);
+            event.front_id = owner_->front_id_;
+            event.session_id = owner_->session_id_;
+            event.event_source = "OnRspOrderInsert";
+            event.ts_ns = NowEpochNanos();
+            EmitOrderEvent(std::move(event), true);
+
+        } catch (...) {
+            try {
+                SetError("SPI callback exception");
+            } catch (...) {
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
+            }
+        }
+    }
+
+    void OnErrRtnOrderInsert(CThostFtdcInputOrderField* p_input_order,
+                             CThostFtdcRspInfoField* p_rsp_info) override {
+        CtpCallbackScope scope(state_);
+        try {
+            if (!scope.active()) {
+                return;
+            }
+            if (IsRspSuccess(p_rsp_info)) {
+                return;
+            }
+
+            OrderEvent event;
+            event.account_id = p_input_order == nullptr ? owner_->runtime_config_.investor_id
+                                                        : SafeCtpString(p_input_order->InvestorID);
+            event.instrument_id =
+                p_input_order == nullptr ? "" : SafeCtpString(p_input_order->InstrumentID);
+            event.exchange_id =
+                p_input_order == nullptr ? "" : SafeCtpString(p_input_order->ExchangeID);
+            event.side =
+                p_input_order == nullptr ? Side::kBuy : FromCtpDirection(p_input_order->Direction);
+            event.offset = p_input_order == nullptr
+                               ? OffsetFlag::kOpen
+                               : FromCtpOffset(p_input_order->CombOffsetFlag[0]);
+            event.status = OrderStatus::kRejected;
+            event.total_volume = p_input_order == nullptr ? 0 : p_input_order->VolumeTotalOriginal;
+            event.filled_volume = 0;
+            event.avg_fill_price = p_input_order == nullptr ? 0.0 : p_input_order->LimitPrice;
+            event.reason = FormatRspError("order_insert_error", p_rsp_info);
+            event.status_msg = SafeCtpErrorString(p_rsp_info);
+            event.order_ref =
+                p_input_order == nullptr ? "" : SafeCtpString(p_input_order->OrderRef);
+            event.front_id = owner_->front_id_;
+            event.session_id = owner_->session_id_;
+            event.event_source = "OnErrRtnOrderInsert";
+            event.ts_ns = NowEpochNanos();
+            EmitOrderEvent(std::move(event), true);
+
+        } catch (...) {
+            try {
+                SetError("SPI callback exception");
+            } catch (...) {
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
+            }
+        }
+    }
+
+    void OnRspOrderAction(CThostFtdcInputOrderActionField* p_input_order_action,
+                          CThostFtdcRspInfoField* p_rsp_info, int n_request_id,
+                          bool b_is_last) override {
+        CtpCallbackScope scope(state_);
+        try {
+            if (!scope.active()) {
+                return;
+            }
+            if (!b_is_last) {
+                return;
+            }
+
+            OrderEvent event;
+            event.account_id = owner_->runtime_config_.investor_id;
+            event.instrument_id = p_input_order_action == nullptr
+                                      ? ""
+                                      : SafeCtpString(p_input_order_action->InstrumentID);
+            event.exchange_id = p_input_order_action == nullptr
+                                    ? ""
+                                    : SafeCtpString(p_input_order_action->ExchangeID);
+            event.status =
+                IsRspSuccess(p_rsp_info) ? OrderStatus::kAccepted : OrderStatus::kRejected;
+            event.order_ref = p_input_order_action == nullptr
+                                  ? ""
+                                  : SafeCtpString(p_input_order_action->OrderRef);
+            event.front_id =
+                p_input_order_action == nullptr ? owner_->front_id_ : p_input_order_action->FrontID;
+            event.session_id = p_input_order_action == nullptr ? owner_->session_id_
+                                                               : p_input_order_action->SessionID;
+            event.reason = IsRspSuccess(p_rsp_info)
+                               ? "cancel_request_accepted"
+                               : FormatRspError("cancel_request_rejected", p_rsp_info);
+            event.status_msg = SafeCtpErrorString(p_rsp_info);
+            event.event_source = "OnRspOrderAction";
+            event.ts_ns = NowEpochNanos();
+            EmitOrderEvent(std::move(event), false);
+
+        } catch (...) {
+            try {
+                SetError("SPI callback exception");
+            } catch (...) {
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
+            }
+        }
+    }
+
+    void OnErrRtnOrderAction(CThostFtdcOrderActionField* p_order_action,
+                             CThostFtdcRspInfoField* p_rsp_info) override {
+        CtpCallbackScope scope(state_);
+        try {
+            if (!scope.active()) {
+                return;
+            }
+            if (IsRspSuccess(p_rsp_info)) {
+                return;
+            }
+
+            OrderEvent event;
+            event.account_id = owner_->runtime_config_.investor_id;
+            event.instrument_id =
+                p_order_action == nullptr ? "" : SafeCtpString(p_order_action->InstrumentID);
+            event.exchange_id =
+                p_order_action == nullptr ? "" : SafeCtpString(p_order_action->ExchangeID);
+            event.status = OrderStatus::kRejected;
+            event.order_ref =
+                p_order_action == nullptr ? "" : SafeCtpString(p_order_action->OrderRef);
+            event.front_id =
+                p_order_action == nullptr ? owner_->front_id_ : p_order_action->FrontID;
+            event.session_id =
+                p_order_action == nullptr ? owner_->session_id_ : p_order_action->SessionID;
+            event.reason = FormatRspError("cancel_error", p_rsp_info);
+            event.status_msg = SafeCtpErrorString(p_rsp_info);
+            event.event_source = "OnErrRtnOrderAction";
+            event.ts_ns = NowEpochNanos();
+            EmitOrderEvent(std::move(event), false);
+
+        } catch (...) {
+            try {
+                SetError("SPI callback exception");
+            } catch (...) {
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
+            }
+        }
+    }
+
+    void OnRtnOrder(CThostFtdcOrderField* p_order) override {
+        CtpCallbackScope scope(state_);
+        try {
+            if (!scope.active()) {
+                return;
+            }
+            if (p_order == nullptr) {
+                return;
+            }
+
+            OrderEvent event;
+            event.account_id = SafeCtpString(p_order->InvestorID);
+            event.exchange_order_id = SafeCtpString(p_order->OrderSysID);
+            event.instrument_id = SafeCtpString(p_order->InstrumentID);
+            event.exchange_id = SafeCtpString(p_order->ExchangeID);
+            event.side = FromCtpDirection(p_order->Direction);
+            event.offset = FromCtpOffset(p_order->CombOffsetFlag[0]);
+            event.status = FromCtpOrderStatus(p_order->OrderStatus);
+            event.total_volume = p_order->VolumeTotalOriginal;
+            event.filled_volume = p_order->VolumeTraded;
+            event.avg_fill_price = p_order->LimitPrice;
+            event.reason = SafeCtpString(p_order->StatusMsg);
+            event.status_msg = SafeCtpString(p_order->StatusMsg);
+            event.order_submit_status = std::string(1, p_order->OrderSubmitStatus);
+            event.order_ref = SafeCtpString(p_order->OrderRef);
+            event.trading_day = SafeCtpString(p_order->TradingDay);
+            event.front_id = p_order->FrontID;
+            event.session_id = p_order->SessionID;
+            event.event_source = "OnRtnOrder";
+            event.ts_ns = NowEpochNanos();
+
+            std::function<void(const OrderEvent&)> callback;
+            {
+                std::lock_guard<std::mutex> lock(owner_->mutex_);
+                const auto order_ref = SafeCtpString(p_order->OrderRef);
+                const auto it = owner_->order_ref_to_client_id_.find(order_ref);
+                if (it != owner_->order_ref_to_client_id_.end()) {
+                    event.client_order_id = it->second;
+                    const auto meta_it = owner_->client_order_meta_.find(it->second);
+                    if (meta_it != owner_->client_order_meta_.end()) {
+                        event.strategy_id = meta_it->second.strategy_id;
+                        meta_it->second.terminal = IsTerminalOrderStatus(event.status);
+                        if (event.trading_day.empty()) {
+                            event.trading_day = meta_it->second.trading_day;
+                        }
+                    }
+                } else {
+                    event.client_order_id = order_ref;
+                }
+                if (event.trading_day.empty()) {
+                    event.trading_day = owner_->user_session_.trading_day;
+                }
+                event.broker_id = owner_->runtime_config_.broker_id;
+                event.recovery_generation = owner_->session_generation_;
+                callback = owner_->order_event_callback_;
+            }
+
+            if (callback) {
+                StampOrderEventTimestamps(&event);
+                callback(event);
+            }
+
+        } catch (...) {
+            try {
+                SetError("SPI callback exception");
+            } catch (...) {
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
+            }
         }
     }
 
     void OnRtnTrade(CThostFtdcTradeField* p_trade) override {
         CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
-        }
-        if (p_trade == nullptr) {
-            return;
-        }
+        try {
+            if (!scope.active()) {
+                return;
+            }
+            if (p_trade == nullptr) {
+                return;
+            }
 
-        OrderEvent event;
-        event.account_id = SafeCtpString(p_trade->InvestorID);
-        event.exchange_order_id = SafeCtpString(p_trade->OrderSysID);
-        event.instrument_id = SafeCtpString(p_trade->InstrumentID);
-        event.exchange_id = SafeCtpString(p_trade->ExchangeID);
-        event.side = FromCtpDirection(p_trade->Direction);
-        event.offset = FromCtpOffset(p_trade->OffsetFlag);
-        event.status = OrderStatus::kFilled;
-        event.last_trade_volume = p_trade->Volume;
-        event.total_volume = p_trade->Volume;
-        event.filled_volume = p_trade->Volume;
-        event.avg_fill_price = p_trade->Price;
-        event.reason = "trade";
-        event.order_ref = SafeCtpString(p_trade->OrderRef);
-        event.raw_trade_id = SafeCtpString(p_trade->TradeID);
-        event.trading_day = SafeCtpString(p_trade->TradeDate);
-        event.trade_id = BuildCtpTradeId(event.exchange_id, event.side, event.raw_trade_id);
-        event.event_source = "OnRtnTrade";
-        event.ts_ns = NowEpochNanos();
-        event.exchange_ts_ns = ParseCtpDateTimeToEpochNanos(SafeCtpString(p_trade->TradeDate),
-                                                            SafeCtpString(p_trade->TradeTime));
+            OrderEvent event;
+            event.account_id = SafeCtpString(p_trade->InvestorID);
+            event.exchange_order_id = SafeCtpString(p_trade->OrderSysID);
+            event.instrument_id = SafeCtpString(p_trade->InstrumentID);
+            event.exchange_id = SafeCtpString(p_trade->ExchangeID);
+            event.side = FromCtpDirection(p_trade->Direction);
+            event.offset = FromCtpOffset(p_trade->OffsetFlag);
+            event.hedge_flag =
+                p_trade->HedgeFlag == '3'
+                    ? HedgeFlag::kHedge
+                    : (p_trade->HedgeFlag == '2' ? HedgeFlag::kArbitrage : HedgeFlag::kSpeculation);
+            event.status = OrderStatus::kFilled;
+            event.last_trade_volume = p_trade->Volume;
+            event.total_volume = p_trade->Volume;
+            event.filled_volume = p_trade->Volume;
+            event.avg_fill_price = p_trade->Price;
+            event.reason = "trade";
+            event.order_ref = SafeCtpString(p_trade->OrderRef);
+            event.raw_trade_id = SafeCtpString(p_trade->TradeID);
+            event.trading_day = SafeCtpString(p_trade->TradingDay);
+            event.trade_id = BuildCtpTradeId(event.exchange_id, event.side, event.raw_trade_id);
+            event.event_source = "OnRtnTrade";
+            event.ts_ns = NowEpochNanos();
+            event.exchange_ts_ns = ParseCtpDateTimeToEpochNanos(SafeCtpString(p_trade->TradeDate),
+                                                                SafeCtpString(p_trade->TradeTime));
 
-        std::function<void(const OrderEvent&)> callback;
-        {
-            std::lock_guard<std::mutex> lock(owner_->mutex_);
-            const auto order_ref = SafeCtpString(p_trade->OrderRef);
-            const auto it = owner_->order_ref_to_client_id_.find(order_ref);
-            event.client_order_id =
-                it == owner_->order_ref_to_client_id_.end() ? order_ref : it->second;
-            const auto meta_it = owner_->client_order_meta_.find(event.client_order_id);
-            if (meta_it != owner_->client_order_meta_.end()) {
-                auto& meta = meta_it->second;
-                event.strategy_id = meta.strategy_id;
-                if (event.trading_day.empty()) {
-                    event.trading_day = meta.trading_day;
+            std::function<void(const OrderEvent&)> callback;
+            {
+                std::lock_guard<std::mutex> lock(owner_->mutex_);
+                const auto order_ref = SafeCtpString(p_trade->OrderRef);
+                const auto it = owner_->order_ref_to_client_id_.find(order_ref);
+                event.client_order_id =
+                    it == owner_->order_ref_to_client_id_.end() ? order_ref : it->second;
+                const auto meta_it = owner_->client_order_meta_.find(event.client_order_id);
+                if (meta_it != owner_->client_order_meta_.end()) {
+                    auto& meta = meta_it->second;
+                    event.strategy_id = meta.strategy_id;
+                    if (event.trading_day.empty()) {
+                        event.trading_day = meta.trading_day;
+                    }
                 }
+                if (event.trading_day.empty()) {
+                    event.trading_day = owner_->user_session_.trading_day;
+                }
+                if (event.account_id.empty()) {
+                    event.account_id = owner_->runtime_config_.investor_id;
+                }
+                event.broker_id = owner_->runtime_config_.broker_id;
+                event.recovery_generation = owner_->session_generation_;
+                const std::string trade_key = BuildCanonicalTradeKey(event);
+                const bool duplicate =
+                    !trade_key.empty() && !owner_->seen_trade_keys_.insert(trade_key).second;
+                if (duplicate) {
+                    ++owner_->duplicate_trades_suppressed_;
+                }
+                if (!duplicate && meta_it != owner_->client_order_meta_.end()) {
+                    auto& meta = meta_it->second;
+                    meta.cumulative_filled_volume += std::max(0, p_trade->Volume);
+                    event.total_volume =
+                        meta.total_volume > 0 ? meta.total_volume : p_trade->Volume;
+                    event.filled_volume = meta.cumulative_filled_volume;
+                    event.status = event.filled_volume >= event.total_volume
+                                       ? OrderStatus::kFilled
+                                       : OrderStatus::kPartiallyFilled;
+                    meta.terminal = IsTerminalOrderStatus(event.status);
+                }
+                callback = owner_->order_event_callback_;
             }
-            if (event.trading_day.empty()) {
-                event.trading_day = owner_->user_session_.trading_day;
-            }
-            if (event.account_id.empty()) {
-                event.account_id = owner_->runtime_config_.investor_id;
-            }
-            event.recovery_generation = owner_->session_generation_;
-            const std::string trade_key = BuildCanonicalTradeKey(event);
-            const bool duplicate =
-                !trade_key.empty() && !owner_->seen_trade_keys_.insert(trade_key).second;
-            if (duplicate) {
-                ++owner_->duplicate_trades_suppressed_;
-            }
-            if (!duplicate && meta_it != owner_->client_order_meta_.end()) {
-                auto& meta = meta_it->second;
-                meta.cumulative_filled_volume += std::max(0, p_trade->Volume);
-                event.total_volume = meta.total_volume > 0 ? meta.total_volume : p_trade->Volume;
-                event.filled_volume = meta.cumulative_filled_volume;
-                event.status = event.filled_volume >= event.total_volume
-                                   ? OrderStatus::kFilled
-                                   : OrderStatus::kPartiallyFilled;
-                meta.terminal = IsTerminalOrderStatus(event.status);
-            }
-            callback = duplicate ? nullptr : owner_->order_event_callback_;
-        }
 
-        if (callback) {
-            StampOrderEventTimestamps(&event);
-            callback(event);
+            if (callback) {
+                StampOrderEventTimestamps(&event);
+                callback(event);
+            }
+
+        } catch (...) {
+            try {
+                SetError("SPI callback exception");
+            } catch (...) {
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
+            }
         }
     }
 
-    void OnRspError(CThostFtdcRspInfoField* p_rsp_info, int, bool) override {
+    void OnRspError(CThostFtdcRspInfoField* p_rsp_info, int n_request_id, bool) override {
         CtpCallbackScope scope(state_);
-        if (!scope.active()) {
-            return;
-        }
-        if (!IsRspSuccess(p_rsp_info)) {
-            if (IsRecoverableQueryError(p_rsp_info)) {
+        try {
+            if (!scope.active()) return;
+            if (IsRspSuccess(p_rsp_info)) return;
+            const auto generation = state_->query_generation;
+            if (owner_->IsQueryActive(n_request_id, generation)) {
+                QueryScopeExit completion(
+                    [&]() { owner_->CompleteScheduledQuery(n_request_id, generation); });
+                owner_->FailQuery(n_request_id, generation, "", SafeCtpErrorString(p_rsp_info));
                 return;
             }
-            SetError("Td response error", p_rsp_info);
+            if (!IsRecoverableQueryError(p_rsp_info)) SetError("Td response error", p_rsp_info);
+
+        } catch (...) {
+            try {
+                SetError("SPI callback exception");
+            } catch (...) {
+                std::fputs("CTP SPI exception reporting failed\n", stderr);
+            }
         }
     }
 
@@ -1807,6 +2106,7 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
             if (event.trading_day.empty()) {
                 event.trading_day = owner_->user_session_.trading_day;
             }
+            event.broker_id = owner_->runtime_config_.broker_id;
             event.recovery_generation = owner_->session_generation_;
             callback = owner_->order_event_callback_;
         }
@@ -1940,7 +2240,8 @@ bool CtpGatewayAdapter::Connect(const MarketDataConnectConfig& config) {
     runtime.flow_path = config.flow_path;
     runtime.broker_id = config.broker_id;
     runtime.user_id = config.user_id;
-    runtime.investor_id = config.investor_id.empty() ? config.user_id : config.investor_id;
+    runtime.investor_id =
+        config.investor_id.empty() && !config.enable_real_api ? config.user_id : config.investor_id;
     runtime.password = config.password;
     runtime.app_id = config.app_id;
     runtime.auth_code = config.auth_code;
@@ -1989,11 +2290,24 @@ bool CtpGatewayAdapter::Connect(const MarketDataConnectConfig& config) {
 }
 
 bool CtpGatewayAdapter::ConnectSimulated() {
+    const auto trading_day = SimulatedTradingDay();
+    if (trading_day.empty()) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        connected_ = false;
+        healthy_ = false;
+        desired_connected_ = false;
+        last_connect_diagnostic_ = "invalid QUANT_HFT_SIMULATED_TRADING_DAY (expected YYYYMMDD)";
+        return false;
+    }
     DisconnectRealApi();
     ConnectionStateCallback callback;
     std::vector<ConnectionStateCallback> listeners;
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        user_session_ = {};
+        user_session_.investor_id = runtime_config_.investor_id;
+        user_session_.trading_day = trading_day;
+        user_session_.login_time = "09:00:00";
         connected_ = true;
         healthy_ = true;
         ++session_generation_;
@@ -2088,6 +2402,10 @@ bool CtpGatewayAdapter::ConnectRealApiWithFrontPair(const CtpRuntimeConfig& runt
     DisconnectRealApi();
 
     auto state = std::make_unique<RealApiState>();
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        state->query_generation = query_generation_;
+    }
     const std::string flow_path = runtime.flow_path.empty() ? "ctp_flow" : runtime.flow_path;
 
     state->md_api = CreateMdApiCompat(flow_path, runtime.is_production_mode);
@@ -2417,6 +2735,24 @@ bool CtpGatewayAdapter::ReplayMarketDataSubscriptions() {
 }
 
 void CtpGatewayAdapter::DisconnectRealApi() {
+    std::uint64_t generation = 0;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        generation = ++query_generation_;
+    }
+    // A dispatched request may still own an SDK pointer. Wait outside mutex_ before release.
+    query_scheduler_.Reset(generation);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        investor_position_queries_.Reset();
+        trading_account_queries_.Reset();
+        instrument_meta_queries_.Reset();
+        depth_market_queries_.Reset();
+        broker_trading_params_queries_.Reset();
+        instrument_margin_rate_queries_.Reset();
+        instrument_commission_rate_queries_.Reset();
+        instrument_order_comm_rate_queries_.Reset();
+    }
 #if QUANT_HFT_HAS_REAL_CTP
     std::unique_ptr<RealApiState> state;
     {
@@ -2438,7 +2774,8 @@ void CtpGatewayAdapter::DisconnectRealApi() {
     state->event_cv.notify_all();
     {
         std::unique_lock<std::mutex> lock(state->callback_quiesce_mutex);
-        (void)state->callback_quiesce_cv.wait_for(lock, std::chrono::seconds(5), [&state]() {
+        // Releasing an SDK/SPI with a live callback is unsafe, even after a timeout.
+        state->callback_quiesce_cv.wait(lock, [&state]() {
             return state->callbacks_in_flight.load(std::memory_order_acquire) == 0;
         });
     }
@@ -2694,7 +3031,7 @@ bool CtpGatewayAdapter::PlaceOrder(const OrderIntent& intent) {
             order_ref_to_client_id_[order_ref] = intent.client_order_id;
             submit_mapping.run_id.clear();
             submit_mapping.account_id =
-                intent.account_id.empty() ? runtime_config_.user_id : intent.account_id;
+                intent.account_id.empty() ? runtime_config_.investor_id : intent.account_id;
             submit_mapping.strategy_id = intent.strategy_id;
             submit_mapping.trace_id = intent.trace_id;
             submit_mapping.client_order_id = intent.client_order_id;
@@ -2806,7 +3143,8 @@ bool CtpGatewayAdapter::PlaceOrder(const OrderIntent& intent) {
             return false;
         }
 
-        simulated_event.account_id = intent.account_id;
+        simulated_event.account_id =
+            intent.account_id.empty() ? runtime_config_.investor_id : intent.account_id;
         simulated_event.strategy_id = intent.strategy_id;
         simulated_event.client_order_id = intent.client_order_id;
         simulated_event.exchange_order_id = "ctp-sim-" + intent.client_order_id;
@@ -2834,7 +3172,7 @@ bool CtpGatewayAdapter::PlaceOrder(const OrderIntent& intent) {
         client_order_meta_[intent.client_order_id] = meta;
         order_ref_to_client_id_[meta.order_ref] = intent.client_order_id;
         submit_mapping.account_id =
-            intent.account_id.empty() ? runtime_config_.user_id : intent.account_id;
+            intent.account_id.empty() ? runtime_config_.investor_id : intent.account_id;
         submit_mapping.strategy_id = intent.strategy_id;
         submit_mapping.trace_id = intent.trace_id;
         submit_mapping.client_order_id = intent.client_order_id;
@@ -2951,7 +3289,7 @@ bool CtpGatewayAdapter::CancelOrder(const std::string& client_order_id,
             return false;
         }
 
-        simulated_event.account_id = runtime_config_.user_id;
+        simulated_event.account_id = runtime_config_.investor_id;
         simulated_event.client_order_id = client_order_id;
         simulated_event.exchange_order_id = "ctp-sim-" + client_order_id;
         simulated_event.status = OrderStatus::kCanceled;
@@ -3059,7 +3397,7 @@ bool CtpGatewayAdapter::RequestUserLogin(int request_id, const std::string& brok
     if (!use_real) {
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            user_session_.investor_id = runtime.investor_id.empty() ? user_id : runtime.investor_id;
+            user_session_.investor_id = runtime.investor_id;
             user_session_.login_time = "09:00:00";
             user_session_.last_login_time = runtime.last_login_time;
             user_session_.reserve_info = runtime.reserve_info;
@@ -3153,20 +3491,57 @@ bool CtpGatewayAdapter::EnqueueTradingAccountQuery(int request_id) {
     }
 
     QueryScheduler::QueryTask task;
+    const auto generation = GetQueryGeneration();
+    task.query_name = "trading_account";
     task.request_id = request_id;
+    task.generation = generation;
+    task.on_timeout = [this, request_id, generation]() {
+        FailQuery(request_id, generation, "trading_account", "query timeout");
+    };
     task.priority = QueryScheduler::Priority::kHigh;
-    task.execute = [this, request_id, state]() {
-        auto mark_failed = [&]() {
-            state->query_ok = false;
-            query_scheduler_.MarkComplete();
-        };
+    task.execute = [this, request_id, generation, state]() {
+        auto mark_failed = [&]() { state->query_ok = false; };
         CtpRuntimeConfig runtime;
+        QueryScopeExit completion([&]() {
+            QueryScopeExit release([&]() {
+                if (!state->query_ok.load() || !runtime.enable_real_api) {
+                    CompleteScheduledQuery(request_id, generation);
+                }
+            });
+            if (!state->query_ok.load()) {
+                FailQuery(request_id, generation, "trading_account", "query submission failed");
+                CompleteScheduledQuery(request_id, generation);
+            } else if (!runtime.enable_real_api) {
+                if (state->trading_account_callback) {
+                    state->trading_account_callback(state->trading_account_snapshot);
+                }
+                CompleteScheduledQuery(request_id, generation);
+            }
+        });
 #if QUANT_HFT_HAS_REAL_CTP
         CThostFtdcTraderApi* td_api = nullptr;
 #endif
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            if (generation != query_generation_ || !connected_) {
+                mark_failed();
+                return;
+            }
             runtime = runtime_config_;
+            if (runtime.enable_real_api) {
+                QueryResultMetadata metadata;
+                metadata.request_id = request_id;
+                metadata.generation = generation;
+                metadata.query_name = "trading_account";
+                metadata.account_id = runtime_config_.investor_id;
+                metadata.trading_day = user_session_.trading_day;
+                metadata.source = runtime_config_.enable_real_api ? "ctp" : "simulated";
+                metadata.full_account = metadata.instrument_id.empty();
+                if (!trading_account_queries_.Begin(std::move(metadata))) {
+                    mark_failed();
+                    return;
+                }
+            }
             if (runtime_config_.enable_real_api) {
 #if QUANT_HFT_HAS_REAL_CTP
                 if (!healthy_ || !real_api_ || !real_api_->td_api) {
@@ -3180,9 +3555,9 @@ bool CtpGatewayAdapter::EnqueueTradingAccountQuery(int request_id) {
 #endif
             }
             if (!runtime_config_.enable_real_api) {
-                trading_account_snapshot_.account_id = runtime_config_.user_id;
+                trading_account_snapshot_.account_id = runtime_config_.investor_id;
                 trading_account_snapshot_.investor_id = runtime_config_.investor_id;
-                trading_account_snapshot_.trading_day = "19700101";
+                trading_account_snapshot_.trading_day = user_session_.trading_day;
                 trading_account_snapshot_.ts_ns = NowEpochNanos();
                 trading_account_snapshot_.source = "simulated";
                 state->trading_account_snapshot = trading_account_snapshot_;
@@ -3196,22 +3571,14 @@ bool CtpGatewayAdapter::EnqueueTradingAccountQuery(int request_id) {
         CopyCtpField(req.InvestorID, runtime.investor_id);
         state->query_ok = ExecuteTdQueryWithRetry(
             [&]() { return td_api->ReqQryTradingAccount(&req, request_id); });
-        if (!state->query_ok) {
-            query_scheduler_.MarkComplete();
-        }
 #endif
     };
 
     if (!query_scheduler_.TrySchedule(std::move(task))) {
         return false;
     }
-    if (!FinishQuerySchedule(query_scheduler_.DrainOnce(), state->query_ok)) {
-        return false;
-    }
-    if (state->trading_account_callback) {
-        state->trading_account_callback(state->trading_account_snapshot);
-    }
-    return true;
+    const auto drained = query_scheduler_.DrainOnce();
+    return drained == 0U || state->query_ok.load();
 }
 
 bool CtpGatewayAdapter::EnqueueInvestorPositionQuery(int request_id) {
@@ -3224,21 +3591,53 @@ bool CtpGatewayAdapter::EnqueueInvestorPositionQuery(int request_id) {
     }
 
     QueryScheduler::QueryTask task;
+    const auto generation = GetQueryGeneration();
+    task.query_name = "investor_position";
     task.request_id = request_id;
+    task.generation = generation;
+    task.on_timeout = [this, request_id, generation]() {
+        FailQuery(request_id, generation, "investor_position", "query timeout");
+    };
     task.priority = QueryScheduler::Priority::kHigh;
-    task.execute = [this, request_id, state]() {
-        auto mark_failed = [&]() {
-            state->query_ok = false;
-            query_scheduler_.MarkComplete();
-        };
+    task.execute = [this, request_id, generation, state]() {
+        auto mark_failed = [&]() { state->query_ok = false; };
         CtpRuntimeConfig runtime;
+        QueryScopeExit completion([&]() {
+            QueryScopeExit release([&]() {
+                if (!state->query_ok.load() || !runtime.enable_real_api) {
+                    CompleteScheduledQuery(request_id, generation);
+                }
+            });
+            if (!state->query_ok.load()) {
+                FailQuery(request_id, generation, "investor_position", "query submission failed");
+                CompleteScheduledQuery(request_id, generation);
+            } else if (!runtime.enable_real_api) {
+                PublishInvestorPositionQueryResponse(request_id, generation, nullptr, 0, "", true);
+                CompleteScheduledQuery(request_id, generation);
+            }
+        });
 #if QUANT_HFT_HAS_REAL_CTP
         CThostFtdcTraderApi* td_api = nullptr;
 #endif
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            if (generation != query_generation_ || !connected_) {
+                mark_failed();
+                return;
+            }
             runtime = runtime_config_;
-            investor_position_snapshots_.clear();
+            QueryResultMetadata metadata;
+            metadata.request_id = request_id;
+            metadata.generation = generation;
+            metadata.query_name = "investor_position";
+            metadata.account_id = runtime_config_.investor_id;
+            metadata.trading_day = user_session_.trading_day;
+            metadata.source = runtime_config_.enable_real_api ? "ctp" : "simulated";
+            metadata.full_account = true;
+            if (!investor_position_queries_.Begin(std::move(metadata))) {
+                mark_failed();
+                return;
+            }
             if (runtime_config_.enable_real_api) {
 #if QUANT_HFT_HAS_REAL_CTP
                 if (!healthy_ || !real_api_ || !real_api_->td_api) {
@@ -3263,22 +3662,14 @@ bool CtpGatewayAdapter::EnqueueInvestorPositionQuery(int request_id) {
         CopyCtpField(req.InvestorID, runtime.investor_id);
         state->query_ok = ExecuteTdQueryWithRetry(
             [&]() { return td_api->ReqQryInvestorPosition(&req, request_id); });
-        if (!state->query_ok) {
-            query_scheduler_.MarkComplete();
-        }
 #endif
     };
 
     if (!query_scheduler_.TrySchedule(std::move(task))) {
         return false;
     }
-    if (!FinishQuerySchedule(query_scheduler_.DrainOnce(), state->query_ok)) {
-        return false;
-    }
-    if (state->investor_position_callback) {
-        state->investor_position_callback(state->investor_position_snapshots);
-    }
-    return true;
+    const auto drained = query_scheduler_.DrainOnce();
+    return drained == 0U || state->query_ok.load();
 }
 
 bool CtpGatewayAdapter::EnqueueInstrumentQuery(int request_id) {
@@ -3295,21 +3686,64 @@ bool CtpGatewayAdapter::EnqueueInstrumentQuery(int request_id, const std::string
     }
 
     QueryScheduler::QueryTask task;
+    const auto generation = GetQueryGeneration();
+    task.query_name = "Instrument";
     task.request_id = request_id;
+    task.generation = generation;
+    task.on_timeout = [this, request_id, generation]() {
+        FailQuery(request_id, generation, "Instrument", "query timeout");
+    };
     task.priority = QueryScheduler::Priority::kNormal;
-    task.execute = [this, request_id, instrument_id, state]() {
-        auto mark_failed = [&]() {
-            state->query_ok = false;
-            query_scheduler_.MarkComplete();
-        };
+    task.execute = [this, request_id, generation, instrument_id, state]() {
+        auto mark_failed = [&]() { state->query_ok = false; };
         CtpRuntimeConfig runtime;
+        QueryScopeExit completion([&]() {
+            QueryScopeExit release([&]() {
+                if (!state->query_ok.load() || !runtime.enable_real_api) {
+                    CompleteScheduledQuery(request_id, generation);
+                }
+            });
+            if (!state->query_ok.load()) {
+                FailQuery(request_id, generation, "Instrument", "query submission failed");
+                CompleteScheduledQuery(request_id, generation);
+            } else if (!runtime.enable_real_api) {
+                for (const auto& snapshot : state->instrument_meta_snapshots) {
+                    if (!instrument_id.empty() && snapshot.instrument_id != instrument_id) continue;
+                    PublishSnapshotQueryResponse(instrument_meta_queries_, request_id, generation,
+                        &snapshot, 0, "", false, instrument_meta_snapshots_, instrument_meta_snapshot_callback_);
+                }
+                PublishSnapshotQueryResponse(instrument_meta_queries_, request_id, generation,
+                    static_cast<const InstrumentMetaSnapshot*>(nullptr), 0, "", true,
+                    instrument_meta_snapshots_, instrument_meta_snapshot_callback_);
+                CompleteScheduledQuery(request_id, generation);
+            }
+        });
 #if QUANT_HFT_HAS_REAL_CTP
         CThostFtdcTraderApi* td_api = nullptr;
 #endif
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            if (generation != query_generation_ || !connected_) {
+                mark_failed();
+                return;
+            }
             runtime = runtime_config_;
-            if (instrument_id.empty()) {
+            {
+                QueryResultMetadata metadata;
+                metadata.request_id = request_id;
+                metadata.generation = generation;
+                metadata.query_name = "Instrument";
+                metadata.account_id = runtime_config_.investor_id;
+                metadata.trading_day = user_session_.trading_day;
+                metadata.source = runtime_config_.enable_real_api ? "ctp" : "simulated";
+                metadata.instrument_id = instrument_id;
+                metadata.full_account = metadata.instrument_id.empty();
+                if (!instrument_meta_queries_.Begin(std::move(metadata))) {
+                    mark_failed();
+                    return;
+                }
+            }
+            if (instrument_id.empty() && !runtime.enable_real_api) {
                 instrument_meta_snapshots_.clear();
             }
             if (runtime_config_.enable_real_api) {
@@ -3365,22 +3799,14 @@ bool CtpGatewayAdapter::EnqueueInstrumentQuery(int request_id, const std::string
         }
         state->query_ok =
             ExecuteTdQueryWithRetry([&]() { return td_api->ReqQryInstrument(&req, request_id); });
-        if (!state->query_ok) {
-            query_scheduler_.MarkComplete();
-        }
 #endif
     };
 
     if (!query_scheduler_.TrySchedule(std::move(task))) {
         return false;
     }
-    if (!FinishQuerySchedule(query_scheduler_.DrainOnce(), state->query_ok)) {
-        return false;
-    }
-    if (state->instrument_meta_callback) {
-        state->instrument_meta_callback(state->instrument_meta_snapshots);
-    }
-    return true;
+    const auto drained = query_scheduler_.DrainOnce();
+    return drained == 0U || state->query_ok.load();
 }
 
 bool CtpGatewayAdapter::EnqueueDepthMarketDataQuery(int request_id) {
@@ -3393,19 +3819,56 @@ bool CtpGatewayAdapter::EnqueueDepthMarketDataQuery(int request_id) {
     }
 
     QueryScheduler::QueryTask task;
+    const auto generation = GetQueryGeneration();
+    task.query_name = "DepthMarketData";
     task.request_id = request_id;
+    task.generation = generation;
+    task.on_timeout = [this, request_id, generation]() {
+        FailQuery(request_id, generation, "DepthMarketData", "query timeout");
+    };
     task.priority = QueryScheduler::Priority::kNormal;
-    task.execute = [this, request_id, state]() {
-        auto mark_failed = [&]() {
-            state->query_ok = false;
-            query_scheduler_.MarkComplete();
-        };
+    task.execute = [this, request_id, generation, state]() {
+        auto mark_failed = [&]() { state->query_ok = false; };
+        CtpRuntimeConfig runtime;
+        QueryScopeExit completion([&]() {
+            QueryScopeExit release([&]() {
+                if (!state->query_ok.load() || !runtime.enable_real_api) {
+                    CompleteScheduledQuery(request_id, generation);
+                }
+            });
+            if (!state->query_ok.load()) {
+                FailQuery(request_id, generation, "DepthMarketData", "query submission failed");
+            } else if (!runtime.enable_real_api && state->depth_market_callback) {
+                state->depth_market_callback(state->depth_market_snapshots);
+            }
+            if (!state->query_ok.load() || !runtime.enable_real_api) {
+                CompleteScheduledQuery(request_id, generation);
+            }
+        });
 #if QUANT_HFT_HAS_REAL_CTP
         CThostFtdcTraderApi* td_api = nullptr;
 #endif
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            depth_market_snapshots_.clear();
+            if (generation != query_generation_ || !connected_) {
+                mark_failed();
+                return;
+            }
+            runtime = runtime_config_;
+            if (runtime.enable_real_api) {
+                QueryResultMetadata metadata;
+                metadata.request_id = request_id;
+                metadata.generation = generation;
+                metadata.query_name = "DepthMarketData";
+                metadata.account_id = runtime_config_.investor_id;
+                metadata.trading_day = user_session_.trading_day;
+                metadata.source = runtime_config_.enable_real_api ? "ctp" : "simulated";
+                metadata.full_account = metadata.instrument_id.empty();
+                if (!depth_market_queries_.Begin(std::move(metadata))) {
+                    mark_failed();
+                    return;
+                }
+            }
             if (runtime_config_.enable_real_api) {
 #if QUANT_HFT_HAS_REAL_CTP
                 if (!healthy_ || !real_api_ || !real_api_->td_api) {
@@ -3427,22 +3890,14 @@ bool CtpGatewayAdapter::EnqueueDepthMarketDataQuery(int request_id) {
         CThostFtdcQryDepthMarketDataField req{};
         state->query_ok = ExecuteTdQueryWithRetry(
             [&]() { return td_api->ReqQryDepthMarketData(&req, request_id); });
-        if (!state->query_ok) {
-            query_scheduler_.MarkComplete();
-        }
 #endif
     };
 
     if (!query_scheduler_.TrySchedule(std::move(task))) {
         return false;
     }
-    if (!FinishQuerySchedule(query_scheduler_.DrainOnce(), state->query_ok)) {
-        return false;
-    }
-    if (state->depth_market_callback) {
-        state->depth_market_callback(state->depth_market_snapshots);
-    }
-    return true;
+    const auto drained = query_scheduler_.DrainOnce();
+    return drained == 0U || state->query_ok.load();
 }
 
 bool CtpGatewayAdapter::EnqueueInstrumentMarginRateQuery(int request_id,
@@ -3460,23 +3915,62 @@ bool CtpGatewayAdapter::EnqueueInstrumentMarginRateQuery(int request_id,
     }
 
     QueryScheduler::QueryTask task;
+    const auto generation = GetQueryGeneration();
+    task.query_name = "InstrumentMarginRate";
     task.request_id = request_id;
+    task.generation = generation;
+    task.on_timeout = [this, request_id, generation]() {
+        FailQuery(request_id, generation, "InstrumentMarginRate", "query timeout");
+    };
     task.priority = QueryScheduler::Priority::kLow;
-    task.execute = [this, request_id, instrument_id, state]() {
-        auto mark_failed = [&]() {
-            state->query_ok = false;
-            query_scheduler_.MarkComplete();
-        };
+    task.execute = [this, request_id, generation, instrument_id, state]() {
+        auto mark_failed = [&]() { state->query_ok = false; };
         CtpRuntimeConfig runtime;
+        QueryScopeExit completion([&]() {
+            QueryScopeExit release([&]() {
+                if (!state->query_ok.load() || !runtime.enable_real_api) {
+                    CompleteScheduledQuery(request_id, generation);
+                }
+            });
+            if (!state->query_ok.load()) {
+                FailQuery(request_id, generation, "InstrumentMarginRate",
+                          "query submission failed");
+                CompleteScheduledQuery(request_id, generation);
+            } else if (!runtime.enable_real_api) {
+                if (state->instrument_margin_rate_callback) {
+                    state->instrument_margin_rate_callback(state->instrument_margin_rate_snapshots);
+                }
+                CompleteScheduledQuery(request_id, generation);
+            }
+        });
 #if QUANT_HFT_HAS_REAL_CTP
         CThostFtdcTraderApi* td_api = nullptr;
 #endif
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            if (generation != query_generation_ || !connected_) {
+                mark_failed();
+                return;
+            }
             runtime = runtime_config_;
+            if (runtime.enable_real_api) {
+                QueryResultMetadata metadata;
+                metadata.request_id = request_id;
+                metadata.generation = generation;
+                metadata.query_name = "InstrumentMarginRate";
+                metadata.account_id = runtime_config_.investor_id;
+                metadata.trading_day = user_session_.trading_day;
+                metadata.source = runtime_config_.enable_real_api ? "ctp" : "simulated";
+                metadata.instrument_id = instrument_id;
+                metadata.full_account = metadata.instrument_id.empty();
+                if (!instrument_margin_rate_queries_.Begin(std::move(metadata))) {
+                    mark_failed();
+                    return;
+                }
+            }
             if (!runtime_config_.enable_real_api) {
                 InstrumentMarginRateSnapshot snapshot;
-                snapshot.account_id = runtime_config_.user_id;
+                snapshot.account_id = runtime_config_.investor_id;
                 snapshot.investor_id = runtime_config_.investor_id;
                 snapshot.instrument_id = instrument_id;
                 snapshot.exchange_id = InferExchangeIdFromInstrument(instrument_id);
@@ -3519,22 +4013,14 @@ bool CtpGatewayAdapter::EnqueueInstrumentMarginRateQuery(int request_id,
         req.HedgeFlag = THOST_FTDC_HF_Speculation;
         state->query_ok = ExecuteTdQueryWithRetry(
             [&]() { return td_api->ReqQryInstrumentMarginRate(&req, request_id); });
-        if (!state->query_ok) {
-            query_scheduler_.MarkComplete();
-        }
 #endif
     };
 
     if (!query_scheduler_.TrySchedule(std::move(task))) {
         return false;
     }
-    if (!FinishQuerySchedule(query_scheduler_.DrainOnce(), state->query_ok)) {
-        return false;
-    }
-    if (state->instrument_margin_rate_callback) {
-        state->instrument_margin_rate_callback(state->instrument_margin_rate_snapshots);
-    }
-    return true;
+    const auto drained = query_scheduler_.DrainOnce();
+    return drained == 0U || state->query_ok.load();
 }
 
 bool CtpGatewayAdapter::EnqueueInstrumentCommissionRateQuery(int request_id,
@@ -3552,23 +4038,67 @@ bool CtpGatewayAdapter::EnqueueInstrumentCommissionRateQuery(int request_id,
     }
 
     QueryScheduler::QueryTask task;
+    const auto generation = GetQueryGeneration();
+    task.query_name = "InstrumentCommissionRate";
     task.request_id = request_id;
+    task.generation = generation;
+    task.on_timeout = [this, request_id, generation]() {
+        FailQuery(request_id, generation, "InstrumentCommissionRate", "query timeout");
+    };
     task.priority = QueryScheduler::Priority::kLow;
-    task.execute = [this, request_id, instrument_id, state]() {
-        auto mark_failed = [&]() {
-            state->query_ok = false;
-            query_scheduler_.MarkComplete();
-        };
+    task.execute = [this, request_id, generation, instrument_id, state]() {
+        auto mark_failed = [&]() { state->query_ok = false; };
         CtpRuntimeConfig runtime;
+        QueryScopeExit completion([&]() {
+            QueryScopeExit release([&]() {
+                if (!state->query_ok.load() || !runtime.enable_real_api) {
+                    CompleteScheduledQuery(request_id, generation);
+                }
+            });
+            if (!state->query_ok.load()) {
+                FailQuery(request_id, generation, "InstrumentCommissionRate",
+                          "query submission failed");
+                CompleteScheduledQuery(request_id, generation);
+            } else if (!runtime.enable_real_api) {
+                for (const auto& snapshot : state->instrument_commission_rate_snapshots) {
+                    if (!instrument_id.empty() && snapshot.instrument_id != instrument_id) continue;
+                    PublishSnapshotQueryResponse(instrument_commission_rate_queries_, request_id, generation,
+                        &snapshot, 0, "", false, instrument_commission_rate_snapshots_, instrument_commission_rate_snapshot_callback_);
+                }
+                PublishSnapshotQueryResponse(instrument_commission_rate_queries_, request_id, generation,
+                    static_cast<const InstrumentCommissionRateSnapshot*>(nullptr), 0, "", true,
+                    instrument_commission_rate_snapshots_, instrument_commission_rate_snapshot_callback_);
+                CompleteScheduledQuery(request_id, generation);
+            }
+        });
 #if QUANT_HFT_HAS_REAL_CTP
         CThostFtdcTraderApi* td_api = nullptr;
 #endif
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            if (generation != query_generation_ || !connected_) {
+                mark_failed();
+                return;
+            }
             runtime = runtime_config_;
+            {
+                QueryResultMetadata metadata;
+                metadata.request_id = request_id;
+                metadata.generation = generation;
+                metadata.query_name = "InstrumentCommissionRate";
+                metadata.account_id = runtime_config_.investor_id;
+                metadata.trading_day = user_session_.trading_day;
+                metadata.source = runtime_config_.enable_real_api ? "ctp" : "simulated";
+                metadata.instrument_id = instrument_id;
+                metadata.full_account = metadata.instrument_id.empty();
+                if (!instrument_commission_rate_queries_.Begin(std::move(metadata))) {
+                    mark_failed();
+                    return;
+                }
+            }
             if (!runtime_config_.enable_real_api) {
                 InstrumentCommissionRateSnapshot snapshot;
-                snapshot.account_id = runtime_config_.user_id;
+                snapshot.account_id = runtime_config_.investor_id;
                 snapshot.investor_id = runtime_config_.investor_id;
                 snapshot.instrument_id = instrument_id;
                 snapshot.exchange_id = InferExchangeIdFromInstrument(instrument_id);
@@ -3610,22 +4140,14 @@ bool CtpGatewayAdapter::EnqueueInstrumentCommissionRateQuery(int request_id,
         CopyCtpField(req.InstrumentID, instrument_id);
         state->query_ok = ExecuteTdQueryWithRetry(
             [&]() { return td_api->ReqQryInstrumentCommissionRate(&req, request_id); });
-        if (!state->query_ok) {
-            query_scheduler_.MarkComplete();
-        }
 #endif
     };
 
     if (!query_scheduler_.TrySchedule(std::move(task))) {
         return false;
     }
-    if (!FinishQuerySchedule(query_scheduler_.DrainOnce(), state->query_ok)) {
-        return false;
-    }
-    if (state->instrument_commission_rate_callback) {
-        state->instrument_commission_rate_callback(state->instrument_commission_rate_snapshots);
-    }
-    return true;
+    const auto drained = query_scheduler_.DrainOnce();
+    return drained == 0U || state->query_ok.load();
 }
 
 bool CtpGatewayAdapter::EnqueueInstrumentOrderCommRateQuery(int request_id,
@@ -3643,23 +4165,63 @@ bool CtpGatewayAdapter::EnqueueInstrumentOrderCommRateQuery(int request_id,
     }
 
     QueryScheduler::QueryTask task;
+    const auto generation = GetQueryGeneration();
+    task.query_name = "InstrumentOrderCommRate";
     task.request_id = request_id;
+    task.generation = generation;
+    task.on_timeout = [this, request_id, generation]() {
+        FailQuery(request_id, generation, "InstrumentOrderCommRate", "query timeout");
+    };
     task.priority = QueryScheduler::Priority::kLow;
-    task.execute = [this, request_id, instrument_id, state]() {
-        auto mark_failed = [&]() {
-            state->query_ok = false;
-            query_scheduler_.MarkComplete();
-        };
+    task.execute = [this, request_id, generation, instrument_id, state]() {
+        auto mark_failed = [&]() { state->query_ok = false; };
         CtpRuntimeConfig runtime;
+        QueryScopeExit completion([&]() {
+            QueryScopeExit release([&]() {
+                if (!state->query_ok.load() || !runtime.enable_real_api) {
+                    CompleteScheduledQuery(request_id, generation);
+                }
+            });
+            if (!state->query_ok.load()) {
+                FailQuery(request_id, generation, "InstrumentOrderCommRate",
+                          "query submission failed");
+                CompleteScheduledQuery(request_id, generation);
+            } else if (!runtime.enable_real_api) {
+                if (state->instrument_order_comm_rate_callback) {
+                    state->instrument_order_comm_rate_callback(
+                        state->instrument_order_comm_rate_snapshots);
+                }
+                CompleteScheduledQuery(request_id, generation);
+            }
+        });
 #if QUANT_HFT_HAS_REAL_CTP
         CThostFtdcTraderApi* td_api = nullptr;
 #endif
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            if (generation != query_generation_ || !connected_) {
+                mark_failed();
+                return;
+            }
             runtime = runtime_config_;
+            if (runtime.enable_real_api) {
+                QueryResultMetadata metadata;
+                metadata.request_id = request_id;
+                metadata.generation = generation;
+                metadata.query_name = "InstrumentOrderCommRate";
+                metadata.account_id = runtime_config_.investor_id;
+                metadata.trading_day = user_session_.trading_day;
+                metadata.source = runtime_config_.enable_real_api ? "ctp" : "simulated";
+                metadata.instrument_id = instrument_id;
+                metadata.full_account = metadata.instrument_id.empty();
+                if (!instrument_order_comm_rate_queries_.Begin(std::move(metadata))) {
+                    mark_failed();
+                    return;
+                }
+            }
             if (!runtime_config_.enable_real_api) {
                 InstrumentOrderCommRateSnapshot snapshot;
-                snapshot.account_id = runtime_config_.user_id;
+                snapshot.account_id = runtime_config_.investor_id;
                 snapshot.investor_id = runtime_config_.investor_id;
                 snapshot.instrument_id = instrument_id;
                 snapshot.exchange_id = InferExchangeIdFromInstrument(instrument_id);
@@ -3700,22 +4262,14 @@ bool CtpGatewayAdapter::EnqueueInstrumentOrderCommRateQuery(int request_id,
         CopyCtpField(req.InstrumentID, instrument_id);
         state->query_ok = ExecuteTdQueryWithRetry(
             [&]() { return td_api->ReqQryInstrumentOrderCommRate(&req, request_id); });
-        if (!state->query_ok) {
-            query_scheduler_.MarkComplete();
-        }
 #endif
     };
 
     if (!query_scheduler_.TrySchedule(std::move(task))) {
         return false;
     }
-    if (!FinishQuerySchedule(query_scheduler_.DrainOnce(), state->query_ok)) {
-        return false;
-    }
-    if (state->instrument_order_comm_rate_callback) {
-        state->instrument_order_comm_rate_callback(state->instrument_order_comm_rate_snapshots);
-    }
-    return true;
+    const auto drained = query_scheduler_.DrainOnce();
+    return drained == 0U || state->query_ok.load();
 }
 
 bool CtpGatewayAdapter::EnqueueBrokerTradingParamsQuery(int request_id) {
@@ -3728,20 +4282,57 @@ bool CtpGatewayAdapter::EnqueueBrokerTradingParamsQuery(int request_id) {
     }
 
     QueryScheduler::QueryTask task;
+    const auto generation = GetQueryGeneration();
+    task.query_name = "BrokerTradingParams";
     task.request_id = request_id;
+    task.generation = generation;
+    task.on_timeout = [this, request_id, generation]() {
+        FailQuery(request_id, generation, "BrokerTradingParams", "query timeout");
+    };
     task.priority = QueryScheduler::Priority::kHigh;
-    task.execute = [this, request_id, state]() {
-        auto mark_failed = [&]() {
-            state->query_ok = false;
-            query_scheduler_.MarkComplete();
-        };
+    task.execute = [this, request_id, generation, state]() {
+        auto mark_failed = [&]() { state->query_ok = false; };
         CtpRuntimeConfig runtime;
+        QueryScopeExit completion([&]() {
+            QueryScopeExit release([&]() {
+                if (!state->query_ok.load() || !runtime.enable_real_api) {
+                    CompleteScheduledQuery(request_id, generation);
+                }
+            });
+            if (!state->query_ok.load()) {
+                FailQuery(request_id, generation, "BrokerTradingParams", "query submission failed");
+                CompleteScheduledQuery(request_id, generation);
+            } else if (!runtime.enable_real_api) {
+                if (state->broker_trading_params_callback) {
+                    state->broker_trading_params_callback(state->broker_trading_params_snapshot);
+                }
+                CompleteScheduledQuery(request_id, generation);
+            }
+        });
 #if QUANT_HFT_HAS_REAL_CTP
         CThostFtdcTraderApi* td_api = nullptr;
 #endif
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            if (generation != query_generation_ || !connected_) {
+                mark_failed();
+                return;
+            }
             runtime = runtime_config_;
+            if (runtime.enable_real_api) {
+                QueryResultMetadata metadata;
+                metadata.request_id = request_id;
+                metadata.generation = generation;
+                metadata.query_name = "BrokerTradingParams";
+                metadata.account_id = runtime_config_.investor_id;
+                metadata.trading_day = user_session_.trading_day;
+                metadata.source = runtime_config_.enable_real_api ? "ctp" : "simulated";
+                metadata.full_account = metadata.instrument_id.empty();
+                if (!broker_trading_params_queries_.Begin(std::move(metadata))) {
+                    mark_failed();
+                    return;
+                }
+            }
             if (runtime_config_.enable_real_api) {
 #if QUANT_HFT_HAS_REAL_CTP
                 if (!healthy_ || !real_api_ || !real_api_->td_api) {
@@ -3755,7 +4346,7 @@ bool CtpGatewayAdapter::EnqueueBrokerTradingParamsQuery(int request_id) {
 #endif
             }
             if (!runtime_config_.enable_real_api) {
-                broker_trading_params_snapshot_.account_id = runtime_config_.user_id;
+                broker_trading_params_snapshot_.account_id = runtime_config_.investor_id;
                 broker_trading_params_snapshot_.investor_id = runtime_config_.investor_id;
                 broker_trading_params_snapshot_.margin_price_type = "1";
                 broker_trading_params_snapshot_.algorithm = "pre_settlement";
@@ -3772,22 +4363,14 @@ bool CtpGatewayAdapter::EnqueueBrokerTradingParamsQuery(int request_id) {
         CopyCtpField(req.InvestorID, runtime.investor_id);
         state->query_ok = ExecuteTdQueryWithRetry(
             [&]() { return td_api->ReqQryBrokerTradingParams(&req, request_id); });
-        if (!state->query_ok) {
-            query_scheduler_.MarkComplete();
-        }
 #endif
     };
 
     if (!query_scheduler_.TrySchedule(std::move(task))) {
         return false;
     }
-    if (!FinishQuerySchedule(query_scheduler_.DrainOnce(), state->query_ok)) {
-        return false;
-    }
-    if (state->broker_trading_params_callback) {
-        state->broker_trading_params_callback(state->broker_trading_params_snapshot);
-    }
-    return true;
+    const auto drained = query_scheduler_.DrainOnce();
+    return drained == 0U || state->query_ok.load();
 }
 
 bool CtpGatewayAdapter::EnqueueOrderQuery(int request_id) {
@@ -3800,19 +4383,42 @@ bool CtpGatewayAdapter::EnqueueOrderQuery(int request_id) {
     }
 
     QueryScheduler::QueryTask task;
+    const auto generation = GetQueryGeneration();
+    task.query_name = "order";
     task.request_id = request_id;
+    task.generation = generation;
+    task.on_timeout = [this, request_id, generation]() {
+        FailQuery(request_id, generation, "order", "query timeout");
+    };
     task.priority = QueryScheduler::Priority::kHigh;
-    task.execute = [this, request_id, state]() {
-        auto mark_failed = [&]() {
-            state->query_ok = false;
-            query_scheduler_.MarkComplete();
-        };
+    task.execute = [this, request_id, generation, state]() {
+        auto mark_failed = [&]() { state->query_ok = false; };
         CtpRuntimeConfig runtime;
+        QueryScopeExit completion([&]() {
+            QueryScopeExit release([&]() {
+                if (!state->query_ok.load() || !runtime.enable_real_api) {
+                    CompleteScheduledQuery(request_id, generation);
+                }
+            });
+            if (!state->query_ok.load()) {
+                FailQuery(request_id, generation, "order", "query submission failed");
+                CompleteScheduledQuery(request_id, generation);
+            } else if (!runtime.enable_real_api) {
+                if (state->completion_callback) {
+                    state->completion_callback(request_id, "order", true);
+                }
+                CompleteScheduledQuery(request_id, generation);
+            }
+        });
 #if QUANT_HFT_HAS_REAL_CTP
         CThostFtdcTraderApi* td_api = nullptr;
 #endif
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            if (generation != query_generation_ || !connected_) {
+                mark_failed();
+                return;
+            }
             runtime = runtime_config_;
             if (!runtime_config_.enable_real_api) {
                 state->completion_callback = query_complete_callback_;
@@ -3836,20 +4442,14 @@ bool CtpGatewayAdapter::EnqueueOrderQuery(int request_id) {
         CopyCtpField(req.InvestorID, runtime.investor_id);
         state->query_ok =
             ExecuteTdQueryWithRetry([&]() { return td_api->ReqQryOrder(&req, request_id); });
-        if (!state->query_ok) {
-            query_scheduler_.MarkComplete();
-        }
 #endif
     };
 
     if (!query_scheduler_.TrySchedule(std::move(task))) {
         return false;
     }
-    const bool ok = FinishQuerySchedule(query_scheduler_.DrainOnce(), state->query_ok);
-    if (state->completion_notified && state->completion_callback) {
-        state->completion_callback(request_id, "order", ok);
-    }
-    return ok;
+    const auto drained = query_scheduler_.DrainOnce();
+    return drained == 0U || state->query_ok.load();
 }
 
 bool CtpGatewayAdapter::EnqueueTradeQuery(int request_id) {
@@ -3862,19 +4462,42 @@ bool CtpGatewayAdapter::EnqueueTradeQuery(int request_id) {
     }
 
     QueryScheduler::QueryTask task;
+    const auto generation = GetQueryGeneration();
+    task.query_name = "trade";
     task.request_id = request_id;
+    task.generation = generation;
+    task.on_timeout = [this, request_id, generation]() {
+        FailQuery(request_id, generation, "trade", "query timeout");
+    };
     task.priority = QueryScheduler::Priority::kHigh;
-    task.execute = [this, request_id, state]() {
-        auto mark_failed = [&]() {
-            state->query_ok = false;
-            query_scheduler_.MarkComplete();
-        };
+    task.execute = [this, request_id, generation, state]() {
+        auto mark_failed = [&]() { state->query_ok = false; };
         CtpRuntimeConfig runtime;
+        QueryScopeExit completion([&]() {
+            QueryScopeExit release([&]() {
+                if (!state->query_ok.load() || !runtime.enable_real_api) {
+                    CompleteScheduledQuery(request_id, generation);
+                }
+            });
+            if (!state->query_ok.load()) {
+                FailQuery(request_id, generation, "trade", "query submission failed");
+                CompleteScheduledQuery(request_id, generation);
+            } else if (!runtime.enable_real_api) {
+                if (state->completion_callback) {
+                    state->completion_callback(request_id, "trade", true);
+                }
+                CompleteScheduledQuery(request_id, generation);
+            }
+        });
 #if QUANT_HFT_HAS_REAL_CTP
         CThostFtdcTraderApi* td_api = nullptr;
 #endif
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            if (generation != query_generation_ || !connected_) {
+                mark_failed();
+                return;
+            }
             runtime = runtime_config_;
             if (!runtime_config_.enable_real_api) {
                 state->completion_callback = query_complete_callback_;
@@ -3898,20 +4521,14 @@ bool CtpGatewayAdapter::EnqueueTradeQuery(int request_id) {
         CopyCtpField(req.InvestorID, runtime.investor_id);
         state->query_ok =
             ExecuteTdQueryWithRetry([&]() { return td_api->ReqQryTrade(&req, request_id); });
-        if (!state->query_ok) {
-            query_scheduler_.MarkComplete();
-        }
 #endif
     };
 
     if (!query_scheduler_.TrySchedule(std::move(task))) {
         return false;
     }
-    const bool ok = FinishQuerySchedule(query_scheduler_.DrainOnce(), state->query_ok);
-    if (state->completion_notified && state->completion_callback) {
-        state->completion_callback(request_id, "trade", ok);
-    }
-    return ok;
+    const auto drained = query_scheduler_.DrainOnce();
+    return drained == 0U || state->query_ok.load();
 }
 
 void CtpGatewayAdapter::RegisterTradingAccountSnapshotCallback(
@@ -3924,6 +4541,15 @@ void CtpGatewayAdapter::RegisterInvestorPositionSnapshotCallback(
     InvestorPositionSnapshotCallback callback) {
     std::lock_guard<std::mutex> lock(mutex_);
     investor_position_snapshot_callback_ = std::move(callback);
+}
+
+void CtpGatewayAdapter::RegisterInstrumentMetaQueryCallback(InstrumentMetaQueryCallback callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    instrument_meta_query_callback_ = std::move(callback);
+}
+void CtpGatewayAdapter::RegisterInstrumentCommissionRateQueryCallback(InstrumentCommissionRateQueryCallback callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    instrument_commission_rate_query_callback_ = std::move(callback);
 }
 
 void CtpGatewayAdapter::RegisterInstrumentMetaSnapshotCallback(
@@ -4061,22 +4687,95 @@ bool CtpGatewayAdapter::ExecuteTdQueryWithRetry(const std::function<int()>& requ
     return false;
 }
 
-void CtpGatewayAdapter::CompleteScheduledQuery() {
-    query_scheduler_.MarkComplete();
-    while (query_scheduler_.DrainOnce() > 0U) {
+void CtpGatewayAdapter::CompleteScheduledQuery(int request_id, std::uint64_t generation) {
+    (void)query_scheduler_.MarkComplete(request_id, generation);
+}
+
+bool CtpGatewayAdapter::IsQueryActive(int request_id, std::uint64_t generation) const {
+    return query_scheduler_.IsActive(request_id, generation);
+}
+
+bool CtpGatewayAdapter::RecordQueryResponse(int request_id, std::uint64_t generation,
+                                            bool success) {
+    return query_scheduler_.RecordResponse(request_id, generation, success);
+}
+
+std::uint64_t CtpGatewayAdapter::GetQueryGeneration() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return query_generation_;
+}
+
+void CtpGatewayAdapter::PollQueries() { (void)query_scheduler_.DrainOnce(); }
+
+void CtpGatewayAdapter::RegisterInvestorPositionQueryCallback(
+    InvestorPositionQueryCallback callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    investor_position_query_callback_ = std::move(callback);
+}
+
+void CtpGatewayAdapter::PublishInvestorPositionQueryResponse(int request_id,
+                                                             std::uint64_t generation,
+                                                             const InvestorPositionSnapshot* row,
+                                                             int error_code,
+                                                             const std::string& error, bool last) {
+    auto result =
+        investor_position_queries_.Accept(request_id, generation, row, error_code, error, last);
+    if (!result) {
+        return;
+    }
+    InvestorPositionSnapshotCallback legacy_callback;
+    InvestorPositionQueryCallback callback;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (generation != query_generation_) {
+            return;
+        }
+        if (result->metadata.success && result->metadata.full_account) {
+            investor_position_snapshots_ = result->rows;
+            legacy_callback = investor_position_snapshot_callback_;
+        }
+        callback = investor_position_query_callback_;
+    }
+    if (callback) {
+        callback(*result);
+    }
+    if (legacy_callback) {
+        legacy_callback(result->rows);
     }
 }
 
-bool CtpGatewayAdapter::FinishQuerySchedule(std::size_t drained, bool query_ok) {
-    bool complete_immediately = false;
+void CtpGatewayAdapter::FailQuery(int request_id, std::uint64_t generation, const std::string& name,
+                                  const std::string& error) {
+    const auto query_name =
+        name.empty() ? query_scheduler_.ActiveQueryName(request_id, generation) : name;
+    if (query_name == "investor_position") {
+        PublishInvestorPositionQueryResponse(request_id, generation, nullptr, -1, error, true);
+    }
+    (void)trading_account_queries_.Accept(request_id, generation, nullptr, -1, error, true);
+    auto meta_result = instrument_meta_queries_.Accept(request_id, generation, nullptr, -1, error, true);
+    (void)depth_market_queries_.Accept(request_id, generation, nullptr, -1, error, true);
+    (void)broker_trading_params_queries_.Accept(request_id, generation, nullptr, -1, error, true);
+    (void)instrument_margin_rate_queries_.Accept(request_id, generation, nullptr, -1, error, true);
+    auto fee_result = instrument_commission_rate_queries_.Accept(request_id, generation, nullptr, -1, error, true);
+    (void)instrument_order_comm_rate_queries_.Accept(request_id, generation, nullptr, -1, error,
+                                                     true);
+    QueryCompleteCallback callback;
+    InstrumentMetaQueryCallback meta_callback;
+    InstrumentCommissionRateQueryCallback fee_callback;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        complete_immediately = !runtime_config_.enable_real_api;
+        if (generation != query_generation_) {
+            return;
+        }
+        callback = query_complete_callback_;
+        meta_callback = instrument_meta_query_callback_;
+        fee_callback = instrument_commission_rate_query_callback_;
     }
-    if (drained > 0U && (complete_immediately || !query_ok)) {
-        query_scheduler_.MarkComplete();
+    if (meta_result && meta_callback) meta_callback(*meta_result);
+    if (fee_result && fee_callback) fee_callback(*fee_result);
+    if (callback) {
+        callback(request_id, query_name, false);
     }
-    return complete_immediately ? (drained > 0U && query_ok) : query_ok;
 }
 
 int CtpGatewayAdapter::NextRequestIdLocked() { return ++request_id_seq_; }

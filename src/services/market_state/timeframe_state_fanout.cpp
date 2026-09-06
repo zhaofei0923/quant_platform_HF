@@ -409,7 +409,7 @@ TimeframeStateFanout::TimeframeStateFanout(
       detector_config_by_product_(std::move(detector_config_by_product)) {
     std::sort(timeframes.begin(), timeframes.end());
     timeframes.erase(std::remove_if(timeframes.begin(), timeframes.end(),
-                                    [](std::int32_t tf) { return tf <= 1; }),
+                                    [](std::int32_t tf) { return tf <= 0; }),
                      timeframes.end());
     timeframes.erase(std::unique(timeframes.begin(), timeframes.end()), timeframes.end());
     timeframes_ = std::move(timeframes);
@@ -694,7 +694,7 @@ bool TimeframeStateFanout::LoadState(const PersistenceState& state, std::string*
         if (!ReadInt(state, "timeframes." + std::to_string(i), &timeframe, error)) {
             return false;
         }
-        if (timeframe > 1) {
+        if (timeframe > 0) {
             loaded_timeframes.push_back(timeframe);
         }
     }
@@ -879,7 +879,7 @@ std::string TimeframeStateFanout::BuildBucketMinute(const std::string& minute_ke
                                                     std::int32_t timeframe_minutes) {
     std::string trading_day;
     int minute_of_day = 0;
-    if (timeframe_minutes <= 1 || !ParseMinuteValue(minute_key, &trading_day, &minute_of_day)) {
+    if (timeframe_minutes <= 0 || !ParseMinuteValue(minute_key, &trading_day, &minute_of_day)) {
         return "";
     }
     const int bucket_start = (minute_of_day / timeframe_minutes) * timeframe_minutes;
@@ -890,7 +890,7 @@ EpochNanos TimeframeStateFanout::ResolveBucketPeriodEnd(const BarSnapshot& bar,
                                                         std::int32_t timeframe_minutes) {
     std::string trading_day;
     int minute_of_day = 0;
-    if (timeframe_minutes <= 1 || !ParseMinuteValue(bar.minute, &trading_day, &minute_of_day)) {
+    if (timeframe_minutes <= 0 || !ParseMinuteValue(bar.minute, &trading_day, &minute_of_day)) {
         return 0;
     }
     const int slot = minute_of_day % timeframe_minutes;
@@ -938,7 +938,7 @@ bool TimeframeStateFanout::IsTerminalSlot(const std::string& minute_key,
                                           std::int32_t timeframe_minutes) {
     std::string trading_day;
     int minute_of_day = 0;
-    return timeframe_minutes > 1 && ParseMinuteValue(minute_key, &trading_day, &minute_of_day) &&
+    return timeframe_minutes > 0 && ParseMinuteValue(minute_key, &trading_day, &minute_of_day) &&
            minute_of_day % timeframe_minutes == timeframe_minutes - 1;
 }
 
@@ -994,6 +994,10 @@ TimeframeStateEmission TimeframeStateFanout::BuildEmission(const BarSnapshot& ba
     emission.bar = bar;
     emission.state = state;
     emission.strategy_eligible = strategy_eligible;
+    emission.kama = detector.GetKAMA();
+    emission.atr = detector.GetATR();
+    emission.adx = detector.GetADX();
+    emission.er = detector.GetKAMAER();
     return emission;
 }
 

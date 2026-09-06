@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "quant_hft/common/position_projection.h"
 #include "quant_hft/contracts/instrument_utils.h"
 #include "quant_hft/core/structured_log.h"
 #include "quant_hft/strategy/atomic_factory.h"
@@ -463,6 +464,10 @@ void CompositeStrategy::Initialize(const StrategyContext& ctx) {
                                                       : merger_error);
     }
 
+    if (const auto profile = strategy_context_.metadata.find("parameter_profile");
+        profile != strategy_context_.metadata.end() && !IsValidRunType(profile->second)) {
+        throw std::runtime_error("unsupported parameter_profile: " + profile->second);
+    }
     BuildAtomicStrategies();
 }
 
@@ -573,11 +578,100 @@ std::vector<SignalIntent> CompositeStrategy::OnState(const StateSnapshot7D& stat
     return final_signals;
 }
 
+void CompositeStrategy::RebuildCommittedPositionContext() {
+    struct Holding {
+        int longs{0};
+        int shorts{0};
+        double long_cost{0};
+        double short_cost{0};
+        std::string owner;
+        bool ambiguous{false};
+    };
+    std::unordered_map<std::string, Holding> holdings;
+    for (const auto& item : committed_positions_) {
+        const Position& position = item.second;
+        auto& held = holdings[position.symbol];
+        held.longs += position.long_qty;
+        held.shorts += position.short_qty;
+        held.long_cost += position.long_qty * position.avg_long_price;
+        held.short_cost += position.short_qty * position.avg_short_price;
+        if (position.long_qty != 0 || position.short_qty != 0) {
+            if (!held.owner.empty() && held.owner != position.strategy_id) held.ambiguous = true;
+            held.owner = position.strategy_id;
+        }
+    }
+    for (const auto& item : holdings) {
+        const auto& held = item.second;
+        const int net = held.longs - held.shorts;
+        atomic_context_.net_positions[item.first] = net;
+        if (net == 0) {
+            atomic_context_.avg_open_prices.erase(item.first);
+            position_owner_by_instrument_.erase(item.first);
+            active_force_close_window_by_instrument_.erase(item.first);
+        } else {
+            atomic_context_.avg_open_prices[item.first] =
+                net > 0 ? held.long_cost / held.longs : held.short_cost / held.shorts;
+            if (held.ambiguous)
+                position_owner_by_instrument_.erase(item.first);
+            else
+                position_owner_by_instrument_[item.first] = held.owner;
+        }
+    }
+}
+
+bool CompositeStrategy::OwnsOrderEvent(const OrderEvent& event) const {
+    return (event.account_id.empty() || event.account_id == strategy_context_.account_id) &&
+           MatchesProduct(event.instrument_id) &&
+           (event.strategy_id == strategy_context_.strategy_id ||
+            FindSubStrategySlot(event.strategy_id) != nullptr);
+}
+
 void CompositeStrategy::OnOrderEvent(const OrderEvent& event) {
     if (!MatchesProduct(event.instrument_id)) {
         return;
     }
     TrackPendingOpenOrder(event);
+    if (event.committed_position.has_value()) {
+        const Position& position = *event.committed_position;
+        if (position.symbol != event.instrument_id || position.account_id != event.account_id ||
+            position.strategy_id != event.strategy_id || position.version == 0 ||
+            position.long_qty < 0 || position.short_qty < 0 ||
+            !std::isfinite(position.avg_long_price) || !std::isfinite(position.avg_short_price)) {
+            throw std::runtime_error("invalid committed strategy position projection");
+        }
+        const std::string key = PositionProjectionKey(position);
+        const auto previous = committed_positions_.find(key);
+        if (previous != committed_positions_.end() &&
+            previous->second.version >= position.version) {
+            if (previous->second.version == position.version &&
+                EncodePositionProjection(previous->second) != EncodePositionProjection(position)) {
+                throw std::runtime_error("conflicting committed strategy position version");
+            }
+            return;
+        }
+        if (event.offset != OffsetFlag::kOpen && event.last_trade_volume > 0 &&
+            previous != committed_positions_.end()) {
+            const Position& before = previous->second;
+            const double cost =
+                event.side == Side::kSell ? before.avg_long_price : before.avg_short_price;
+            const double signed_difference = event.side == Side::kSell
+                                                 ? event.avg_fill_price - cost
+                                                 : cost - event.avg_fill_price;
+            ApplyRiskGuardRealizedPnl(
+                event.strategy_id, ResolveOrderEventTs(event),
+                signed_difference * event.last_trade_volume *
+                    ResolveContractMultiplier(atomic_context_, event.instrument_id));
+        }
+        committed_positions_[key] = position;
+        RebuildCommittedPositionContext();
+        for (IAtomicOrderAware* strategy : order_aware_strategies_) {
+            strategy->OnOrderEvent(event, atomic_context_);
+        }
+        return;
+    }
+    // Broker order statuses describe the order lifecycle, never a committed fill.
+    // Legacy synthetic research events have no source and retain their simulator path.
+    if (!event.event_source.empty()) return;
     const std::string order_id =
         !event.exchange_order_id.empty() ? event.exchange_order_id : event.client_order_id;
     if (order_id.empty() || event.instrument_id.empty()) {
@@ -916,6 +1010,17 @@ bool CompositeStrategy::SaveState(StrategyState* out, std::string* error) const 
         return false;
     }
     out->clear();
+    for (const auto& item : committed_positions_) {
+        (*out)["committed_position." + item.first] = EncodePositionProjection(item.second);
+    }
+    for (const auto& item : risk_guard_state_by_strategy_) {
+        const auto& guard = item.second;
+        std::ostringstream value;
+        value << std::setprecision(17) << guard.has_daily_day << ' ' << guard.daily_day_index << ' '
+              << guard.daily_realized_pnl << ' ' << guard.consecutive_losses << ' '
+              << guard.has_loss_pause_day << ' ' << guard.loss_pause_day_index;
+        (*out)["risk_guard." + item.first] = value.str();
+    }
     (*out)[kStateRunType] = atomic_context_.run_type;
     (*out)[kStateRunMode] = RunModeToString(atomic_context_.run_mode);
     (*out)[kStateAccountEquity] = std::to_string(atomic_context_.account_equity);
@@ -1000,6 +1105,19 @@ bool CompositeStrategy::SaveState(StrategyState* out, std::string* error) const 
 }
 
 bool CompositeStrategy::LoadState(const StrategyState& state, std::string* error) {
+    std::unordered_map<std::string, Position> restored_positions;
+    const std::string projection_prefix = "committed_position.";
+    for (const auto& item : state) {
+        if (item.first.compare(0, projection_prefix.size(), projection_prefix) != 0) continue;
+        Position position;
+        if (!DecodePositionProjection(item.second, &position) ||
+            item.first.substr(projection_prefix.size()) != PositionProjectionKey(position)) {
+            if (error != nullptr) *error = "invalid committed position checkpoint";
+            return false;
+        }
+        restored_positions.emplace(PositionProjectionKey(position), std::move(position));
+    }
+    committed_positions_ = std::move(restored_positions);
     atomic_context_.net_positions.clear();
     atomic_context_.avg_open_prices.clear();
     atomic_context_.contract_multipliers.clear();
@@ -1008,6 +1126,23 @@ bool CompositeStrategy::LoadState(const StrategyState& state, std::string* error
     position_owner_by_instrument_.clear();
     active_force_close_window_by_instrument_.clear();
     risk_guard_state_by_strategy_.clear();
+    for (const auto& item : state) {
+        if (item.first.compare(0, 11, "risk_guard.") != 0) continue;
+        StrategyRiskGuardState guard;
+        std::istringstream value(item.second);
+        if (!(value >> guard.has_daily_day >> guard.daily_day_index >> guard.daily_realized_pnl >>
+              guard.consecutive_losses >> guard.has_loss_pause_day >> guard.loss_pause_day_index) ||
+            !std::isfinite(guard.daily_realized_pnl) || guard.consecutive_losses < 0) {
+            if (error != nullptr) *error = "invalid risk guard checkpoint";
+            return false;
+        }
+        value >> std::ws;
+        if (!value.eof()) {
+            if (error != nullptr) *error = "invalid risk guard checkpoint tail";
+            return false;
+        }
+        risk_guard_state_by_strategy_[item.first.substr(11)] = guard;
+    }
 
     std::unordered_map<std::string, AtomicState> atomic_state_by_strategy;
     for (const auto& [key, value] : state) {
@@ -1132,6 +1267,47 @@ bool CompositeStrategy::LoadState(const StrategyState& state, std::string* error
             return false;
         }
     }
+    RebuildCommittedPositionContext();
+    return true;
+}
+
+MarketWarmupRequirements CompositeStrategy::RequiredMarketWarmupBars(
+    const std::string& instrument_id) const {
+    MarketWarmupRequirements required;
+    if (!MatchesProduct(instrument_id)) return required;
+    for (const auto& definition : definition_.sub_strategies) {
+        if (!definition.enabled) continue;
+        for (const auto& strategy : owned_atomic_strategies_) {
+            if (strategy->GetId() != definition.id) continue;
+            auto& bars = required[std::max(1, definition.timeframe_minutes)];
+            bars = std::max(bars, std::max(2, strategy->RequiredMarketWarmupBars()));
+        }
+    }
+    return required;
+}
+
+void CompositeStrategy::WarmupMarketState(const StateSnapshot7D& state) {
+    if (!MatchesProduct(state.instrument_id)) return;
+    atomic_context_.market_regime = state.market_regime;
+    for (const auto& slot : sub_strategies_)
+        if (slot.strategy && slot.timeframe_minutes == state.timeframe_minutes)
+            (void)slot.strategy->OnState(state, atomic_context_);
+    // No opening gate, order bookkeeping, daily-risk rollover, force-close windows
+    // or execution is driven by replayed warmup states.
+}
+
+bool CompositeStrategy::ResetForMarketGap(const MarketGapContext& context, std::string* error) {
+    if (!MatchesProduct(context.instrument_id)) return true;
+    for (const auto& strategy : owned_atomic_strategies_) {
+        if (!strategy->ResetForMarketGap()) {
+            if (error != nullptr)
+                *error = "atomic strategy cannot preserve risk on gap: " + strategy->GetId();
+            return false;
+        }
+    }
+    // Committed positions, owners, pending orders, force-close windows and risk guards
+    // remain intact. This operation is not a contract switch or account reconciliation.
+    last_state_matched_for_trace_ = false;
     return true;
 }
 
@@ -1145,6 +1321,19 @@ bool CompositeStrategy::ResetForContractSwitch(const ContractSwitchContext& cont
     }
     if (!MatchesProduct(context.current_instrument_id)) {
         return true;
+    }
+    const auto held = [&](const std::string& instrument) {
+        const auto found = atomic_context_.net_positions.find(instrument);
+        return found != atomic_context_.net_positions.end() && found->second != 0;
+    };
+    if ((!context.previous_instrument_id.empty() && held(context.previous_instrument_id)) ||
+        held(context.current_instrument_id)) {
+        if (!context.previous_instrument_id.empty() &&
+            context.previous_instrument_id != context.current_instrument_id) {
+            if (error != nullptr) *error = "contract switch requires both contracts flat";
+            return false;
+        }
+        return ResetForMarketGap({context.current_instrument_id, context.generation}, error);
     }
     for (auto& strategy : owned_atomic_strategies_) {
         strategy->Reset();
@@ -1170,6 +1359,7 @@ bool CompositeStrategy::ResetForContractSwitch(const ContractSwitchContext& cont
     active_force_close_window_by_instrument_.erase(context.current_instrument_id);
     last_blocked_reason_by_strategy_.clear();
     last_state_matched_for_trace_ = false;
+    RebuildCommittedPositionContext();
     return true;
 }
 
@@ -1285,7 +1475,8 @@ void CompositeStrategy::ApplyBacktestRollover(const std::string& previous_instru
     close_event.filled_volume = rollover_volume;
     close_event.avg_fill_price = close_price;
     close_event.trade_id = close_event.client_order_id;
-    close_event.event_source = "backtest_rollover";
+    // Legacy research rollover is a synthetic simulator fill, not a broker callback.
+    close_event.event_source.clear();
     close_event.exchange_ts_ns = ts_ns;
     close_event.recv_ts_ns = ts_ns;
     close_event.ts_ns = ts_ns;
@@ -1304,7 +1495,7 @@ void CompositeStrategy::ApplyBacktestRollover(const std::string& previous_instru
     open_event.filled_volume = rollover_volume;
     open_event.avg_fill_price = open_price;
     open_event.trade_id = open_event.client_order_id;
-    open_event.event_source = "backtest_rollover";
+    open_event.event_source.clear();
     open_event.exchange_ts_ns = ts_ns;
     open_event.recv_ts_ns = ts_ns;
     open_event.ts_ns = ts_ns;
@@ -1384,7 +1575,7 @@ bool CompositeStrategy::IsOpenSignalBlockedByRiskGuards(const SubStrategySlot& s
     }
 
     const std::int64_t day_index =
-        DayIndexFromEpochNs(now_ns, slot.timezone_offset_hours, atomic_context_.run_mode);
+        DayIndexFromEpochNs(now_ns, slot.timezone_offset_hours, ClockRunMode());
     StrategyRiskGuardState& state = risk_guard_state_by_strategy_[slot.strategy_id];
     if (!state.has_daily_day || state.daily_day_index != day_index) {
         state.has_daily_day = true;
@@ -1437,7 +1628,7 @@ void CompositeStrategy::ApplyRiskGuardRealizedPnl(const std::string& strategy_id
     }
 
     const std::int64_t day_index =
-        DayIndexFromEpochNs(ts_ns, slot->timezone_offset_hours, atomic_context_.run_mode);
+        DayIndexFromEpochNs(ts_ns, slot->timezone_offset_hours, ClockRunMode());
     StrategyRiskGuardState& state = risk_guard_state_by_strategy_[strategy_id];
     if (!state.has_daily_day || state.daily_day_index != day_index) {
         state.has_daily_day = true;
@@ -1462,7 +1653,7 @@ bool CompositeStrategy::FindMatchingWindow(const std::vector<TimeWindow>& window
                                            EpochNanos now_ns, std::int32_t timezone_offset_hours,
                                            std::string* window_key) const {
     const std::int32_t minute_of_day =
-        MinuteOfDayFromEpochNs(now_ns, timezone_offset_hours, atomic_context_.run_mode);
+        MinuteOfDayFromEpochNs(now_ns, timezone_offset_hours, ClockRunMode());
     for (const TimeWindow& window : windows) {
         bool contains = false;
         if (window.start_minute < window.end_minute) {
@@ -1753,6 +1944,13 @@ AtomicParams CompositeStrategy::MergeParamsForRunMode(const SubStrategyDefinitio
     return merged;
 }
 
+RunMode CompositeStrategy::ClockRunMode() const {
+    const auto basis = strategy_context_.metadata.find("timestamp_basis");
+    return basis != strategy_context_.metadata.end() && basis->second == "utc"
+               ? RunMode::kSim
+               : atomic_context_.run_mode;
+}
+
 bool CompositeStrategy::IsValidRunType(const std::string& run_type) {
     return run_type == "live" || run_type == "sim" || run_type == "backtest";
 }
@@ -1793,7 +1991,12 @@ void CompositeStrategy::BuildAtomicStrategies() {
         if (!strategy) {
             throw std::runtime_error(error.empty() ? "failed to create atomic strategy" : error);
         }
-        AtomicParams merged_params = MergeParamsForRunMode(definition, atomic_context_.run_mode);
+        RunMode parameter_mode = atomic_context_.run_mode;
+        if (const auto profile = strategy_context_.metadata.find("parameter_profile");
+            profile != strategy_context_.metadata.end()) {
+            parameter_mode = RunModeFromString(profile->second);
+        }
+        AtomicParams merged_params = MergeParamsForRunMode(definition, parameter_mode);
 
         bool allow_reverse_open = true;
         if (const auto allow_it = merged_params.find("allow_reverse_open");

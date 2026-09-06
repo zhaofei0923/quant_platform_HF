@@ -244,3 +244,44 @@ TEST(MarketBarPipelineTest, CorruptNestedCheckpointDoesNotPartiallyMutateLiveSta
 }
 
 }  // namespace quant_hft
+
+namespace quant_hft {
+TEST(MarketBarPipelineTest, OneMinuteSourceAndStrategyEmissionHaveDistinctDeduplicationKeys) {
+    auto config = MakeConfig();
+    config.timeframes = {1, 5};
+    MarketBarPipeline pipeline(config);
+    std::vector<TimeframeStateEmission> emissions;
+    FeedAndFinalizeMinute(&pipeline, 0, 100, &emissions);
+    ASSERT_EQ(emissions.size(), 1U);
+    EXPECT_EQ(emissions[0].timeframe_minutes, 1);
+    // The first cumulative-volume baseline is unknown; the second minute is tradable.
+    EXPECT_FALSE(emissions[0].strategy_eligible);
+    FeedAndFinalizeMinute(&pipeline, 1, 110, &emissions);
+    ASSERT_EQ(emissions.size(), 2U);
+    EXPECT_TRUE(emissions[1].strategy_eligible);
+    EXPECT_EQ(emissions[1].state.market_state_bars_seen, 1);
+    EXPECT_TRUE(pipeline.AdvanceWatermark(ShanghaiEpochNs("20260710", 9, 2, 5))
+                    .timeframe_emissions.empty());
+}
+}  // namespace quant_hft
+
+namespace quant_hft {
+TEST(MarketBarPipelineTest, GapResetCannotRecoverThroughIncompleteBars) {
+    MarketBarPipeline pipeline(MakeConfig());
+    for (int minute = 0; minute < 10; ++minute)
+        FeedAndFinalizeMinute(&pipeline, minute, 100 + minute * 10);
+    ASSERT_FALSE(pipeline.RecentCompleteStates("DCE.c2609").empty());
+    pipeline.MarkGap("DCE.c2609");
+    EXPECT_TRUE(pipeline.IsOpeningSuppressed("DCE.c2609"));
+    EXPECT_TRUE(pipeline.RecentCompleteStates("DCE.c2609").empty());
+    for (int minute : {10, 11, 13, 14}) FeedAndFinalizeMinute(&pipeline, minute, 100 + minute * 10);
+    EXPECT_TRUE(pipeline.IsOpeningSuppressed("DCE.c2609"));
+    for (int minute = 15; minute < 20; ++minute)
+        FeedAndFinalizeMinute(&pipeline, minute, 100 + minute * 10);
+    EXPECT_TRUE(pipeline.IsOpeningSuppressed("DCE.c2609"));
+    for (int minute = 20; minute < 25; ++minute)
+        FeedAndFinalizeMinute(&pipeline, minute, 100 + minute * 10);
+    EXPECT_FALSE(pipeline.IsOpeningSuppressed("DCE.c2609"));
+    EXPECT_TRUE(pipeline.RecentCompleteStates("DCE.c2609").empty());
+}
+}  // namespace quant_hft

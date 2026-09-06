@@ -28,6 +28,13 @@ struct ContractSwitchContext {
     std::uint64_t generation{0};
 };
 
+struct MarketGapContext {
+    std::string instrument_id;
+    std::uint64_t generation{0};
+};
+
+using MarketWarmupRequirements = std::unordered_map<std::int32_t, std::int32_t>;
+
 using StrategyState = std::unordered_map<std::string, std::string>;
 
 class ILiveStrategy {
@@ -82,6 +89,14 @@ class ILiveStrategy {
         (void)context;
         return 0;
     }
+    virtual MarketWarmupRequirements RequiredMarketWarmupBars(const std::string&) const {
+        return {{5, 30}};
+    }
+    virtual bool ResetForMarketGap(const MarketGapContext&, std::string* error) {
+        if (error != nullptr) *error = "strategy does not support safe market gap recovery";
+        return false;
+    }
+    virtual void WarmupMarketState(const StateSnapshot7D& state) { (void)OnState(state); }
     virtual void Shutdown() = 0;
 };
 

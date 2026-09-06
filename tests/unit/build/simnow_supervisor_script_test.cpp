@@ -447,9 +447,82 @@ TEST(SimnowSupervisorScriptTest, IndependentSignalMonitorUnitRestartsAlways) {
     const std::string unit = ReadFile("infra/systemd/quant-hft-simnow-signal-monitor.service");
     EXPECT_NE(unit.find("Restart=always"), std::string::npos) << unit;
     EXPECT_NE(unit.find("monitor_simnow_signal_execution.sh"), std::string::npos) << unit;
-    EXPECT_NE(unit.find("--heartbeat-file"), std::string::npos) << unit;
-    EXPECT_NE(unit.find("--health-snapshot-file"), std::string::npos) << unit;
-    EXPECT_NE(unit.find("pipeline_checkpoint_v3.tsv"), std::string::npos) << unit;
+    EXPECT_EQ(unit.find("runtime/trading/monitor/simnow"), std::string::npos) << unit;
+    const auto monitor = ReadFile("scripts/ops/monitor_simnow_signal_execution.sh");
+    EXPECT_NE(monitor.find("load_runtime_path_defaults"), std::string::npos);
+    EXPECT_NE(monitor.find("pipeline_checkpoint_v3.tsv"), std::string::npos);
+}
+
+TEST(SimnowSupervisorScriptTest,
+     IdentityDefaultsSurviveRunIdsAndSeparateAccountsWithoutClaimingState) {
+    const auto root = MakeTempDir("identity_defaults_" + std::to_string(getpid()));
+    const auto config = root / "config.yaml";
+    const auto env_file = root / "empty.env";
+    WriteFile(env_file, "# Synthetic test environment; no broker is contacted.\n");
+    WriteFile(config,
+              "ctp:\n  environment: sim\n  enable_real_api: false\n"
+              "  is_production_mode: false\n  broker_id: b\n"
+              "  user_id: ${PATH_TEST_ACCOUNT}\n  password: fixture-only\n"
+              "  market_front: tcp://127.0.0.1:40011\n"
+              "  trader_front: tcp://127.0.0.1:40001\n");
+    const auto runtime = root / "runtime";
+    const auto run = [&](const std::string& account, const std::string& run_id) {
+        const auto output = root / (account + run_id + ".out");
+        const std::string command =
+            "env -u SIMNOW_WAL_FILE -u QUANT_HFT_WAL_FILE -u SIMNOW_RUN_ROOT "
+            "-u SIMNOW_MARKET_DATA_DIR -u QUANT_HFT_MARKET_DATA_DIR "
+            "-u SIMNOW_REPORT_ROOT -u SIMNOW_EXPORT_ROOT -u SIMNOW_RECONCILE_ROOT "
+            "-u QUANT_HFT_READINESS_FILE QUANT_HFT_INSTANCE=default "
+            "QUANT_HFT_RUNTIME_ROOT='" +
+            EscapePathForShell(runtime) +
+            "' "
+            "PATH_TEST_ACCOUNT='" +
+            account + "' SIMNOW_RUN_ID='" + run_id +
+            "' "
+            "SIMNOW_FAKE_NOW='2026-07-20 12:00:00' "
+            "bash scripts/ops/supervise_simnow_trading.sh --env-file '" +
+            EscapePathForShell(env_file) + "' --config '" + EscapePathForShell(config) +
+            "' --build-dir '" + EscapeForShell(QUANT_HFT_BUILD_DIR) + "' --no-eod --dry-run > '" +
+            EscapePathForShell(output) + "' 2>&1";
+        EXPECT_EQ(RunCommand(command), 0) << ReadFile(output);
+        return ReadFile(output);
+    };
+    const auto first = run("a", "run1");
+    const auto restart = run("a", "run2");
+    const auto other = run("other", "run1");
+    const auto wal_a = (runtime / "sim/b/a/default/wal/events.wal").string();
+    const auto wal_other = (runtime / "sim/b/other/default/wal/events.wal").string();
+    EXPECT_NE(first.find("wal_file=" + wal_a), std::string::npos) << first;
+    EXPECT_NE(restart.find("wal_file=" + wal_a), std::string::npos) << restart;
+    EXPECT_NE(other.find("wal_file=" + wal_other), std::string::npos) << other;
+    EXPECT_EQ(other.find("wal_file=" + wal_a), std::string::npos);
+    EXPECT_FALSE(std::filesystem::exists(runtime / "sim"));
+    EXPECT_TRUE(std::filesystem::is_directory(runtime / "runs/sim/b/a/default"));
+    EXPECT_TRUE(std::filesystem::is_directory(runtime / "runs/sim/b/other/default"));
+    const auto monitor_output = root / "monitor.out";
+    const std::string monitor_command =
+        "env -u SIMNOW_WAL_FILE -u QUANT_HFT_WAL_FILE -u SIMNOW_RUN_ROOT "
+        "-u SIMNOW_MARKET_DATA_DIR -u QUANT_HFT_MARKET_DATA_DIR "
+        "-u SIMNOW_SIGNAL_MONITOR_ROOT -u QUANT_HFT_READINESS_FILE "
+        "QUANT_HFT_INSTANCE=default PATH_TEST_ACCOUNT=a "
+        "QUANT_HFT_RUNTIME_ROOT='" +
+        EscapePathForShell(runtime) +
+        "' "
+        "CTP_CONFIG_PATH='" +
+        EscapePathForShell(config) +
+        "' "
+        "SIMNOW_MONITOR_FAKE_NOW='2026-07-19 12:00:00' "
+        "bash scripts/ops/monitor_simnow_signal_execution.sh --build-dir '" +
+        EscapeForShell(QUANT_HFT_BUILD_DIR) + "' --once > '" + EscapePathForShell(monitor_output) +
+        "' 2>&1";
+    ASSERT_EQ(RunCommand(monitor_command), 0) << ReadFile(monitor_output);
+    const auto monitor = ReadFile(monitor_output);
+    EXPECT_NE(monitor.find("wal_file=" + wal_a), std::string::npos) << monitor;
+    EXPECT_NE(monitor.find("core_readiness_file=" +
+                           (runtime / "sim/b/a/default/monitor/readiness.json").string()),
+              std::string::npos);
+    EXPECT_TRUE(std::filesystem::exists(runtime / "runs/sim/b/a/default/monitor/heartbeat.json"));
+    EXPECT_FALSE(std::filesystem::exists(runtime / "sim"));
 }
 
 }  // namespace

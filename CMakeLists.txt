@@ -38,6 +38,12 @@ if(QUANT_HFT_ENABLE_ARROW_PARQUET OR QUANT_HFT_ENABLE_REDIS_EXTERNAL OR
 endif()
 
 add_library(quant_hft_core STATIC
+    src/core/config/runtime_semantics_loader.cpp
+    src/core/regulatory/wal_projection_replay.cpp
+    src/core/runtime/account_execution_scheduler.cpp
+    src/core/runtime/runtime_identity.cpp
+    src/core/runtime/runtime_paths.cpp
+    src/core/runtime/durable_order_event_inbox.cpp
     src/backtest/broker.cpp
     src/backtest/backtest_data_feed.cpp
     src/backtest/engine.cpp
@@ -225,6 +231,9 @@ else()
     target_compile_definitions(quant_hft_core PUBLIC QUANT_HFT_ENABLE_TIMESCALE_EXTERNAL=0)
 endif()
 
+add_executable(runtime_paths_cli src/apps/runtime_paths_cli_main.cpp)
+target_link_libraries(runtime_paths_cli PRIVATE quant_hft_core)
+
 add_executable(core_engine src/apps/core_engine_main.cpp)
 target_link_libraries(core_engine PRIVATE quant_hft_core)
 
@@ -311,13 +320,15 @@ if(QUANT_HFT_BUILD_TESTS)
     include(CTest)
     enable_testing()
 
-    include(FetchContent)
+    if(POLICY CMP0135)
+    cmake_policy(SET CMP0135 NEW)
+endif()
+include(FetchContent)
     set(FETCHCONTENT_QUIET OFF)
     FetchContent_Declare(
       googletest
       URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip
-      DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-    )
+      )
     set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(googletest)
 
@@ -827,4 +838,26 @@ if(QUANT_HFT_BUILD_TESTS)
     if(QUANT_HFT_METRICS_ACTIVE)
         gtest_discover_tests(exporter_test)
     endif()
+endif()
+
+# Phase 2 runtime regression targets, before module extraction.
+if(QUANT_HFT_BUILD_TESTS)
+    add_executable(durable_order_event_inbox_test tests/unit/core/durable_order_event_inbox_test.cpp)
+    target_link_libraries(durable_order_event_inbox_test PRIVATE quant_hft_core GTest::gtest_main)
+    gtest_discover_tests(durable_order_event_inbox_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    add_executable(query_batch_collector_test tests/unit/core/query_batch_collector_test.cpp)
+    target_link_libraries(query_batch_collector_test PRIVATE quant_hft_core GTest::gtest_main)
+    gtest_discover_tests(query_batch_collector_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    add_executable(account_execution_scheduler_test tests/unit/core/account_execution_scheduler_test.cpp)
+    target_link_libraries(account_execution_scheduler_test PRIVATE quant_hft_core GTest::gtest_main)
+    gtest_discover_tests(account_execution_scheduler_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    add_executable(runtime_identity_test tests/unit/core/runtime_identity_test.cpp)
+    target_link_libraries(runtime_identity_test PRIVATE quant_hft_core GTest::gtest_main)
+    gtest_discover_tests(runtime_identity_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    add_executable(runtime_paths_test tests/unit/core/runtime_paths_test.cpp)
+    target_link_libraries(runtime_paths_test PRIVATE quant_hft_core GTest::gtest_main)
+    gtest_discover_tests(runtime_paths_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    add_executable(position_reconciliation_test tests/unit/services/position_reconciliation_test.cpp)
+    target_link_libraries(position_reconciliation_test PRIVATE quant_hft_core GTest::gtest_main)
+    gtest_discover_tests(position_reconciliation_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 endif()

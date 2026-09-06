@@ -279,10 +279,10 @@ TEST(AtomicStrategiesTest, KamaTrendStrategyTrailingStopRefreshesAndTriggersOnTi
     EXPECT_GT(snapshot_after_tick_refresh->stop_loss_price.value(), bar_stop);
     const double tick_refreshed_stop = snapshot_after_tick_refresh->stop_loss_price.value();
 
-    const std::vector<SignalIntent> bar_cross_signals = strategy.OnState(
-        MakeBarState("IF2406", tick_refreshed_stop + 1.0, tick_refreshed_stop - 1.0,
-                     tick_refreshed_stop - 0.5, 6),
-        ctx);
+    const std::vector<SignalIntent> bar_cross_signals =
+        strategy.OnState(MakeBarState("IF2406", tick_refreshed_stop + 1.0,
+                                      tick_refreshed_stop - 1.0, tick_refreshed_stop - 0.5, 6),
+                         ctx);
     for (const SignalIntent& signal : bar_cross_signals) {
         EXPECT_NE(signal.signal_type, SignalType::kStopLoss);
         EXPECT_NE(signal.signal_type, SignalType::kTakeProfit);
@@ -344,6 +344,27 @@ TEST(AtomicStrategiesTest, KamaTrendStrategyExposesInitialAndTrailingRiskPrices)
     ctx.net_positions["IF2406"] = 0;
     (void)tick_aware->OnBacktestTick(MakeTick("IF2406", rally_tick_price, 5), ctx);
     EXPECT_TRUE(risk_provider->RiskPricesByInstrument().empty());
+}
+
+TEST(AtomicStrategiesTest, MarketGapResetPreservesHeldKamaRiskLevels) {
+    KamaTrendStrategy strategy;
+    strategy.Init(MakeKamaParams());
+    auto ctx = MakeContext("acct");
+    ctx.net_positions["IF2406"] = 1;
+    ctx.avg_open_prices["IF2406"] = 100;
+    (void)FeedCloses(&strategy, "IF2406", &ctx, {100, 101, 103, 105});
+    (void)strategy.OnBacktestTick(MakeTick("IF2406", 125, 5), ctx);
+    const auto before = strategy.RiskPricesByInstrument();
+    ASSERT_TRUE(before.at("IF2406").trailing_stop.has_value());
+    ASSERT_TRUE(strategy.ResetForMarketGap());
+    const auto after = strategy.RiskPricesByInstrument();
+    ASSERT_EQ(after.size(), 1U);
+    EXPECT_EQ(after.at("IF2406").trailing_stop, before.at("IF2406").trailing_stop);
+    EXPECT_EQ(after.at("IF2406").initial_stop, before.at("IF2406").initial_stop);
+    EXPECT_EQ(after.at("IF2406").take_profit, before.at("IF2406").take_profit);
+    (void)FeedCloses(&strategy, "IF2406", &ctx, {100, 101, 103, 105});
+    EXPECT_GE(*strategy.RiskPricesByInstrument().at("IF2406").trailing_stop,
+              *before.at("IF2406").trailing_stop);
 }
 
 TEST(AtomicStrategiesTest, TrendStrategyEmitsOpenAndTakeProfitSignalsOnTick) {

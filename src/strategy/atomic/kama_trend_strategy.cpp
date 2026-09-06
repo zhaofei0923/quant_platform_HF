@@ -551,6 +551,19 @@ void KamaTrendStrategy::Init(const AtomicParams& params) {
 
 std::string KamaTrendStrategy::GetId() const { return id_; }
 
+bool KamaTrendStrategy::ResetForMarketGap() {
+    auto saved_0 = std::move(trailing_stop_by_instrument_);
+    auto saved_1 = std::move(trailing_direction_by_instrument_);
+    auto saved_2 = std::move(initial_stop_by_instrument_);
+    auto saved_3 = std::move(take_profit_by_instrument_);
+    Reset();
+    trailing_stop_by_instrument_ = std::move(saved_0);
+    trailing_direction_by_instrument_ = std::move(saved_1);
+    initial_stop_by_instrument_ = std::move(saved_2);
+    take_profit_by_instrument_ = std::move(saved_3);
+    return true;
+}
+
 void KamaTrendStrategy::Reset() {
     if (kama_ != nullptr) {
         kama_->Reset();
@@ -743,7 +756,7 @@ std::vector<SignalIntent> KamaTrendStrategy::OnState(const StateSnapshot7D& stat
             trailing_stop_by_instrument_[state.instrument_id] = stop_price;
             trailing_direction_by_instrument_[state.instrument_id] = direction;
             last_stop_loss_price_ = stop_price;
-        } else {
+        } else if (stop_loss_mode_ != "trailing_atr") {
             trailing_stop_by_instrument_.erase(state.instrument_id);
             trailing_direction_by_instrument_.erase(state.instrument_id);
             initial_stop_by_instrument_.erase(state.instrument_id);
@@ -756,7 +769,7 @@ std::vector<SignalIntent> KamaTrendStrategy::OnState(const StateSnapshot7D& stat
                 direction > 0 ? (avg_open_price + take_distance) : (avg_open_price - take_distance);
             last_take_profit_price_ = take_price;
             take_profit_by_instrument_[state.instrument_id] = take_price;
-        } else {
+        } else if (take_profit_mode_ != "atr_target") {
             take_profit_by_instrument_.erase(state.instrument_id);
         }
 

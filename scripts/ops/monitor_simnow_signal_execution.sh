@@ -5,11 +5,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 QUANT_ROOT="${QUANT_ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 export QUANT_ROOT
 
-RUN_ROOT="${SIMNOW_RUN_ROOT:-${QUANT_ROOT}/runtime/trading/runs/simnow}"
-MARKET_DATA_DIR="${SIMNOW_MARKET_DATA_DIR:-${QUANT_ROOT}/runtime/market_data/simnow}"
-WAL_FILE="${SIMNOW_WAL_FILE:-${QUANT_ROOT}/runtime/trading/wal/simnow/events.wal}"
+BUILD_DIR="${BUILD_DIR:-${QUANT_ROOT}/build}"
+# shellcheck source=runtime_path_defaults.sh
+source "${SCRIPT_DIR}/runtime_path_defaults.sh"
+RUN_ROOT="${SIMNOW_RUN_ROOT:-}"
+MARKET_DATA_DIR="${SIMNOW_MARKET_DATA_DIR:-${QUANT_HFT_MARKET_DATA_DIR:-}}"
+WAL_FILE="${SIMNOW_WAL_FILE:-${QUANT_HFT_WAL_FILE:-}}"
+WAL_FILE_SET_BY_CLI=0
 CONFIG_PATH="${CTP_CONFIG_PATH:-${QUANT_ROOT}/configs/sim/ctp_sim_trade_candidates.yaml}"
-MONITOR_ROOT="${SIMNOW_SIGNAL_MONITOR_ROOT:-${QUANT_ROOT}/runtime/trading/monitor/simnow}"
+MONITOR_ROOT="${SIMNOW_SIGNAL_MONITOR_ROOT:-}"
 EVENT_LOG="${SIMNOW_SIGNAL_MONITOR_EVENT_LOG:-${MONITOR_ROOT}/signal_execution_watch.jsonl}"
 INCIDENT_ROOT="${SIMNOW_SIGNAL_MONITOR_INCIDENT_ROOT:-${MONITOR_ROOT}/incidents}"
 HEARTBEAT_FILE="${SIMNOW_SIGNAL_MONITOR_HEARTBEAT_FILE:-${MONITOR_ROOT}/heartbeat.json}"
@@ -52,6 +56,7 @@ decisions, order submission, CTP callbacks, and fills. The script is read-only f
 trading state and writes versioned health/checkpoint evidence under runtime.
 
 Options:
+  --build-dir <path>                   Build containing runtime_paths_cli
   --run-root <path>                    SimNow run root (default: ${RUN_ROOT})
   --market-data-dir <path>             Market CSV root (default: ${MARKET_DATA_DIR})
   --wal-file <path>                    WAL file path (default: ${WAL_FILE})
@@ -140,7 +145,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --run-root) require_value "$1" "${2:-}"; RUN_ROOT="$2"; shift 2 ;;
     --market-data-dir) require_value "$1" "${2:-}"; MARKET_DATA_DIR="$2"; shift 2 ;;
-    --wal-file) require_value "$1" "${2:-}"; WAL_FILE="$2"; shift 2 ;;
+    --wal-file) require_value "$1" "${2:-}"; WAL_FILE="$2"; WAL_FILE_SET_BY_CLI=1; shift 2 ;;
+    --build-dir) require_value "$1" "${2:-}"; BUILD_DIR="$2"; shift 2 ;;
     --monitor-root)
       require_value "$1" "${2:-}"
       MONITOR_ROOT="$2"
@@ -235,6 +241,39 @@ is_non_negative_int "${FILL_TIMEOUT_SECONDS}" || die "--fill-timeout must be non
 is_non_negative_int "${STATUS_INTERVAL_SECONDS}" || die "--status-interval-seconds must be non-negative"
 [[ "${START_AT_END}" == "0" || "${START_AT_END}" == "1" ]] || die "start-at-end flag must be 0 or 1"
 [[ "${STRICT_EXIT}" == "0" || "${STRICT_EXIT}" == "1" ]] || die "strict-exit flag must be 0 or 1"
+
+if [[ ${WAL_FILE_SET_BY_CLI} -eq 0 && -n "${QUANT_HFT_WAL_FILE:-}" &&
+      -n "${SIMNOW_WAL_FILE:-}" && "${QUANT_HFT_WAL_FILE}" != "${SIMNOW_WAL_FILE}" ]]; then
+  die "QUANT_HFT_WAL_FILE conflicts with SIMNOW_WAL_FILE; select one explicit --wal-file"
+fi
+if [[ -z "${RUN_ROOT}" || -z "${MARKET_DATA_DIR}" || -z "${WAL_FILE}" ]]; then
+  cd "${QUANT_ROOT}"
+  load_runtime_path_defaults
+  RUN_ROOT="${RUN_ROOT:-${RESOLVED_RUN_ROOT}}"
+  MARKET_DATA_DIR="${MARKET_DATA_DIR:-${RESOLVED_MARKET_DATA_DIR}}"
+  WAL_FILE="${WAL_FILE:-${RESOLVED_WAL_FILE}}"
+  if [[ ${CORE_READINESS_SET_BY_CLI} -eq 0 && -z "${QUANT_HFT_READINESS_FILE:-}" ]]; then
+    CORE_READINESS_FILE="${RESOLVED_READINESS_FILE}"
+  fi
+fi
+if [[ -z "${MONITOR_ROOT}" ]]; then
+  MONITOR_ROOT="${RUN_ROOT}/monitor"
+  EVENT_LOG="${SIMNOW_SIGNAL_MONITOR_EVENT_LOG:-${MONITOR_ROOT}/signal_execution_watch.jsonl}"
+  INCIDENT_ROOT="${SIMNOW_SIGNAL_MONITOR_INCIDENT_ROOT:-${MONITOR_ROOT}/incidents}"
+  if [[ ${HEARTBEAT_SET_BY_CLI} -eq 0 ]]; then
+    HEARTBEAT_FILE="${SIMNOW_SIGNAL_MONITOR_HEARTBEAT_FILE:-${MONITOR_ROOT}/heartbeat.json}"
+  fi
+  if [[ ${HEALTH_SNAPSHOT_SET_BY_CLI} -eq 0 ]]; then
+    HEALTH_SNAPSHOT_FILE="${SIMNOW_PIPELINE_HEALTH_FILE:-${MONITOR_ROOT}/pipeline_health.json}"
+  fi
+  if [[ ${CHECKPOINT_SET_BY_CLI} -eq 0 ]]; then
+    CHECKPOINT_FILE="${SIMNOW_SIGNAL_MONITOR_CHECKPOINT_FILE:-${MONITOR_ROOT}/pipeline_checkpoint_v3.tsv}"
+  fi
+  if [[ ${CORE_READINESS_SET_BY_CLI} -eq 0 && -z "${QUANT_HFT_READINESS_FILE:-}" &&
+        -z "${RESOLVED_READINESS_FILE:-}" ]]; then
+    CORE_READINESS_FILE="${MONITOR_ROOT}/readiness.json"
+  fi
+fi
 
 CURRENT_PID_FILE="${SIMNOW_CURRENT_PID_FILE:-${RUN_ROOT}/current_core_engine.pid}"
 CURRENT_LOG_FILE="${SIMNOW_CURRENT_LOG_FILE:-${RUN_ROOT}/current_core_engine_log}"

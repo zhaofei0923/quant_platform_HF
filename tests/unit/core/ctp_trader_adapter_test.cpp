@@ -147,15 +147,18 @@ class FakeGateway final : public CtpGatewayAdapter {
 
     bool EnqueueOrderQuery(int request_id) override {
         QueryCompleteCallback cb;
+        std::function<void()> before_query;
         bool do_callback = false;
         bool success = true;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             ++enqueue_order_query_calls_;
             cb = query_complete_callback_;
+            before_query = before_order_query_;
             do_callback = auto_query_complete_;
             success = query_success_;
         }
+        if (before_query) before_query();
         if (do_callback && cb) {
             cb(request_id, "order", success);
         }
@@ -209,6 +212,11 @@ class FakeGateway final : public CtpGatewayAdapter {
     void RegisterQueryCompleteCallback(QueryCompleteCallback callback) override {
         std::lock_guard<std::mutex> lock(mutex_);
         query_complete_callback_ = std::move(callback);
+    }
+
+    void SetBeforeOrderQuery(std::function<void()> callback) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        before_order_query_ = std::move(callback);
     }
 
     void RegisterSettlementConfirmCallback(SettlementConfirmCallback callback) override {
@@ -324,6 +332,7 @@ class FakeGateway final : public CtpGatewayAdapter {
     ConnectionListenerToken next_connection_listener_token_{1};
     LoginResponseCallback login_response_callback_;
     QueryCompleteCallback query_complete_callback_;
+    std::function<void()> before_order_query_;
     SettlementConfirmCallback settlement_confirm_callback_;
     OrderEventCallback order_event_callback_;
 };
@@ -374,6 +383,13 @@ TEST(CTPTraderAdapterTest, ReconnectPerformsLoginAndConfirmSettlement) {
     ASSERT_TRUE(adapter.ConfirmSettlement());
     ASSERT_TRUE(adapter.IsReady());
 
+    std::atomic<bool> recovery_observed_not_ready{false};
+    fake_gateway->SetBeforeOrderQuery([&]() {
+        const auto readiness = adapter.GetReadinessSnapshot();
+        recovery_observed_not_ready =
+            !adapter.IsReady() && !readiness.ready && readiness.need_reconnect;
+    });
+
     fake_gateway->EmitConnectionState(false);
     fake_gateway->SetHealthy(true);
 
@@ -382,6 +398,7 @@ TEST(CTPTraderAdapterTest, ReconnectPerformsLoginAndConfirmSettlement) {
     EXPECT_GE(fake_gateway->request_settlement_confirm_calls(), 1);
     EXPECT_GE(fake_gateway->enqueue_order_query_calls(), 1);
     EXPECT_GE(fake_gateway->enqueue_trade_query_calls(), 1);
+    EXPECT_TRUE(recovery_observed_not_ready.load());
 }
 
 TEST(CTPTraderAdapterTest, ReconnectAttemptLimitUsesConnectConfig) {
@@ -541,6 +558,45 @@ TEST(CTPTraderAdapterTest, PlaceOrderWithRefReturnsNonEmptyString) {
     ASSERT_FALSE(client_order_id.empty());
     EXPECT_EQ(client_order_id.rfind("stratA_", 0), 0U);
     EXPECT_EQ(fake_gateway->last_order_intent().client_order_id, client_order_id);
+}
+
+TEST(CTPTraderAdapterTest, FinalDeliveryStopJoinsCallbackBeforeCapturedStateCanDie) {
+    auto gateway = std::make_shared<FakeGateway>();
+    CTPTraderAdapter adapter(gateway, 1);
+    ASSERT_TRUE(adapter.Connect(BuildSimConfig()));
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool entered = false;
+    bool release = false;
+    std::atomic<int> calls{0};
+    adapter.RegisterOrderEventCallback([&](const OrderEvent&) {
+        ++calls;
+        std::unique_lock<std::mutex> lock(mutex);
+        entered = true;
+        cv.notify_all();
+        cv.wait(lock, [&] { return release; });
+    });
+    OrderEvent event;
+    event.client_order_id = event.order_ref = "join";
+    gateway->EmitOrderEvent(event);
+    bool callback_entered;
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        callback_entered = cv.wait_for(lock, std::chrono::seconds(1), [&] { return entered; });
+    }
+    auto stop = std::async(std::launch::async, [&] { adapter.StopEventDelivery(); });
+    const auto waiting = stop.wait_for(std::chrono::milliseconds(30));
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        release = true;
+    }
+    cv.notify_all();
+    stop.get();
+    EXPECT_TRUE(callback_entered);
+    EXPECT_EQ(waiting, std::future_status::timeout);
+    const auto before = calls.load();
+    gateway->EmitOrderEvent(event);
+    EXPECT_EQ(calls.load(), before);
 }
 
 TEST(CTPTraderAdapterTest, CriticalDispatchTimeoutTriggersCircuitBreakerCallback) {

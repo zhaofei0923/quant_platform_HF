@@ -313,6 +313,31 @@ TEST(OrderManagerTest, GetActiveOrdersByStrategyFiltersCorrectly) {
     EXPECT_EQ(filtered.front().symbol, "SHFE.ag2406");
 }
 
+TEST(OrderManagerTest, ReplaysDurableLocalRejectionWithoutBrokerOrderRef) {
+    auto store = std::make_shared<FakeTradingDomainStore>();
+    OrderEvent event;
+    event.account_id = "acc1";
+    event.client_order_id = "local-reject";
+    event.strategy_id = "s1";
+    event.instrument_id = "rb2701";
+    event.total_volume = 1;
+    event.status = OrderStatus::kRejected;
+    event.event_source = "internal";
+    event.ts_ns = event.exchange_ts_ns = 123;
+    OrderManager first(store);
+    Order order;
+    std::string error;
+    ASSERT_TRUE(first.OnOrderEvent(event, &order, &error)) << error;
+    EXPECT_EQ(order.status, OrderStatus::kRejected);
+    OrderManager restarted(store);
+    ASSERT_TRUE(restarted.OnOrderEvent(event, &order, &error)) << error;
+    EXPECT_TRUE(restarted.GetActiveOrders().empty());
+    auto other_account = event;
+    other_account.account_id = "acc2";
+    EXPECT_NE(OrderManager::BuildOrderEventKey(event),
+              OrderManager::BuildOrderEventKey(other_account));
+}
+
 TEST(OrderManagerTest, GetActiveOrdersByAccountSpansStrategies) {
     auto store = std::make_shared<FakeTradingDomainStore>();
     OrderManager manager(store);

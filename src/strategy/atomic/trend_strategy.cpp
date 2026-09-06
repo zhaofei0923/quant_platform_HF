@@ -14,9 +14,8 @@ namespace quant_hft {
 namespace {
 
 std::string NormalizeMode(std::string mode) {
-    std::transform(mode.begin(), mode.end(), mode.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
+    std::transform(mode.begin(), mode.end(), mode.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     return mode;
 }
 
@@ -38,8 +37,7 @@ void TrendStrategy::Init(const AtomicParams& params) {
     stop_loss_mode_ =
         NormalizeMode(atomic_internal::GetString(params, "stop_loss_mode", "trailing_atr"));
     stop_loss_atr_period_ = atomic_internal::GetInt(params, "stop_loss_atr_period", 14);
-    stop_loss_atr_multiplier_ =
-        atomic_internal::GetDouble(params, "stop_loss_atr_multiplier", 2.0);
+    stop_loss_atr_multiplier_ = atomic_internal::GetDouble(params, "stop_loss_atr_multiplier", 2.0);
     take_profit_mode_ =
         NormalizeMode(atomic_internal::GetString(params, "take_profit_mode", "atr_target"));
     take_profit_atr_period_ = atomic_internal::GetInt(params, "take_profit_atr_period", 14);
@@ -110,6 +108,19 @@ void TrendStrategy::Init(const AtomicParams& params) {
 }
 
 std::string TrendStrategy::GetId() const { return id_; }
+
+bool TrendStrategy::ResetForMarketGap() {
+    auto saved_0 = std::move(trailing_stop_by_instrument_);
+    auto saved_1 = std::move(trailing_direction_by_instrument_);
+    auto saved_2 = std::move(initial_stop_by_instrument_);
+    auto saved_3 = std::move(take_profit_by_instrument_);
+    Reset();
+    trailing_stop_by_instrument_ = std::move(saved_0);
+    trailing_direction_by_instrument_ = std::move(saved_1);
+    initial_stop_by_instrument_ = std::move(saved_2);
+    take_profit_by_instrument_ = std::move(saved_3);
+    return true;
+}
 
 void TrendStrategy::Reset() {
     if (kama_ != nullptr) {
@@ -225,7 +236,7 @@ std::vector<SignalIntent> TrendStrategy::OnState(const StateSnapshot7D& state,
             trailing_stop_by_instrument_[state.instrument_id] = stop_price;
             trailing_direction_by_instrument_[state.instrument_id] = direction;
             last_stop_loss_price_ = stop_price;
-        } else {
+        } else if (stop_loss_mode_ != "trailing_atr") {
             trailing_stop_by_instrument_.erase(state.instrument_id);
             trailing_direction_by_instrument_.erase(state.instrument_id);
             initial_stop_by_instrument_.erase(state.instrument_id);
@@ -238,7 +249,7 @@ std::vector<SignalIntent> TrendStrategy::OnState(const StateSnapshot7D& state,
                 direction > 0 ? (avg_open_price + take_distance) : (avg_open_price - take_distance);
             last_take_profit_price_ = take_price;
             take_profit_by_instrument_[state.instrument_id] = take_price;
-        } else {
+        } else if (take_profit_mode_ != "atr_target") {
             take_profit_by_instrument_.erase(state.instrument_id);
         }
 
@@ -284,8 +295,7 @@ std::vector<SignalIntent> TrendStrategy::OnBacktestTick(const AtomicTickSnapshot
     const double avg_open_price = avg_price_it->second;
     const int direction = position > 0 ? 1 : -1;
     if (stop_loss_mode_ == "trailing_atr") {
-        if (last_stop_atr_.has_value() && std::isfinite(*last_stop_atr_) &&
-            *last_stop_atr_ > 0.0) {
+        if (last_stop_atr_.has_value() && std::isfinite(*last_stop_atr_) && *last_stop_atr_ > 0.0) {
             const double stop_distance = stop_loss_atr_multiplier_ * (*last_stop_atr_);
             const double base_stop =
                 direction > 0 ? (avg_open_price - stop_distance) : (avg_open_price + stop_distance);
@@ -365,8 +375,8 @@ int TrendStrategy::ComputeOrderVolume(const AtomicStrategyContext& ctx,
         return default_volume_;
     }
 
-    const double equity = std::isfinite(ctx.account_equity) ? std::max(0.0, ctx.account_equity)
-                                                             : 0.0;
+    const double equity =
+        std::isfinite(ctx.account_equity) ? std::max(0.0, ctx.account_equity) : 0.0;
     const double usable_equity = equity * risk_per_trade_pct_;
     if (usable_equity <= 0.0) {
         return default_volume_;
@@ -378,8 +388,8 @@ int TrendStrategy::ComputeOrderVolume(const AtomicStrategyContext& ctx,
             return;
         }
         const auto multiplier_it = ctx.contract_multipliers.find(key);
-        if (multiplier_it != ctx.contract_multipliers.end() && std::isfinite(multiplier_it->second) &&
-            multiplier_it->second > 0.0) {
+        if (multiplier_it != ctx.contract_multipliers.end() &&
+            std::isfinite(multiplier_it->second) && multiplier_it->second > 0.0) {
             contract_multiplier = multiplier_it->second;
         }
     };
@@ -409,8 +419,7 @@ int TrendStrategy::ComputeOrderVolume(const AtomicStrategyContext& ctx,
 
 std::vector<SignalIntent> TrendStrategy::EvaluateRiskSignals(const AtomicStrategyContext& ctx,
                                                              const std::string& instrument_id,
-                                                             double price,
-                                                             EpochNanos ts_ns) const {
+                                                             double price, EpochNanos ts_ns) const {
     if (instrument_id.empty() || !std::isfinite(price)) {
         return {};
     }
@@ -436,8 +445,8 @@ std::vector<SignalIntent> TrendStrategy::EvaluateRiskSignals(const AtomicStrateg
         const bool take_triggered = direction > 0 ? (price >= *last_take_profit_price_)
                                                   : (price <= *last_take_profit_price_);
         if (take_triggered) {
-            signals.push_back(BuildCloseSignal(id_, instrument_id, SignalType::kTakeProfit, position,
-                                               price, ts_ns));
+            signals.push_back(BuildCloseSignal(id_, instrument_id, SignalType::kTakeProfit,
+                                               position, price, ts_ns));
         }
     }
 
@@ -456,9 +465,8 @@ std::string TrendStrategy::ExtractSymbolPrefixLower(const std::string& instrumen
 }
 
 std::string TrendStrategy::ToUpper(std::string text) {
-    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::toupper(ch));
-    });
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
     return text;
 }
 

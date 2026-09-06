@@ -2,21 +2,22 @@
 
 #include <algorithm>
 #include <thread>
+#include <utility>
 
 namespace quant_hft {
 
-TokenBucket::TokenBucket()
-    : last_refill_(std::chrono::steady_clock::now()) {}
+TokenBucket::TokenBucket() : TokenBucket(1.0, 1) {}
 
-TokenBucket::TokenBucket(double rate_per_second, int capacity)
-    : rate_per_second_(std::max(0.1, rate_per_second)),
+TokenBucket::TokenBucket(double rate_per_second, int capacity, Clock clock)
+    : clock_(clock ? std::move(clock) : Clock([] { return std::chrono::steady_clock::now(); })),
+      rate_per_second_(std::max(0.1, rate_per_second)),
       capacity_(std::max(1, capacity)),
       tokens_(static_cast<double>(std::max(1, capacity))),
-      last_refill_(std::chrono::steady_clock::now()) {}
+      last_refill_(clock_()) {}
 
 bool TokenBucket::TryAcquire() {
     std::lock_guard<std::mutex> lock(mutex_);
-    RefillLocked(std::chrono::steady_clock::now());
+    RefillLocked(clock_());
     if (tokens_ < 1.0) {
         return false;
     }
@@ -40,13 +41,12 @@ bool TokenBucket::Acquire(int timeout_ms) {
 
 void TokenBucket::SetRate(double rate_per_second) {
     std::lock_guard<std::mutex> lock(mutex_);
-    RefillLocked(std::chrono::steady_clock::now());
+    RefillLocked(clock_());
     rate_per_second_ = std::max(0.1, rate_per_second);
 }
 
 void TokenBucket::RefillLocked(std::chrono::steady_clock::time_point now) {
-    const auto elapsed =
-        std::chrono::duration_cast<std::chrono::milliseconds>(now - last_refill_);
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_refill_);
     if (elapsed.count() <= 0) {
         return;
     }

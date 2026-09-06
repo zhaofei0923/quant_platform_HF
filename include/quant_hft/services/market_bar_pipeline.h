@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -15,11 +16,25 @@
 
 namespace quant_hft {
 
+// Optional analysis-only transformation. Raw execution prices are never changed. A
+// checkpoint includes both identity and state; Clone enables transactional restoration.
+class IBarAnalysisTransform {
+   public:
+    using PersistenceState = std::unordered_map<std::string, std::string>;
+    virtual ~IBarAnalysisTransform() = default;
+    virtual std::string Identity() const = 0;
+    virtual BarSnapshot Apply(const BarSnapshot& raw) = 0;
+    virtual std::unique_ptr<IBarAnalysisTransform> Clone() const = 0;
+    virtual bool SaveState(PersistenceState* out, std::string* error) const = 0;
+    virtual bool LoadState(const PersistenceState& state, std::string* error) = 0;
+};
+
 struct MarketBarPipelineConfig {
     BarAggregatorConfig bar_aggregator;
     std::vector<std::int32_t> timeframes{5};
     MarketStateDetectorConfig detector;
     MarketStateDetectorConfigByProduct detector_by_product;
+    std::shared_ptr<IBarAnalysisTransform> analysis_transform;
     std::int64_t tick_fingerprint_retention_ms{10'000};
     std::int32_t complete_five_minute_bars_to_reenable{2};
     std::size_t recent_complete_state_limit{128};
@@ -62,6 +77,8 @@ class MarketBarPipeline {
     bool SaveCheckpointAtomically(const std::string& path, std::string* error) const;
     bool LoadCheckpointFile(const std::string& path, std::string* error);
 
+    // Drops pre-gap market state and requires complete, conflict-free recovery bars.
+    void MarkGap(const std::string& instrument_id);
     bool IsOpeningSuppressed(const std::string& instrument_id) const;
     std::vector<std::string> SuppressedInstruments() const;
     void ResetInstrument(const std::string& instrument_id, bool preserve_detector_state = true);
@@ -80,6 +97,7 @@ class MarketBarPipeline {
     static std::string EscapeCheckpointValue(const std::string& value);
     static bool UnescapeCheckpointValue(const std::string& value, std::string* out);
 
+    void ResetInstrumentLocked(const std::string& instrument_id, bool preserve_detector_state);
     void PruneTickFingerprintsLocked(EpochNanos reference_ts_ns);
     MarketBarPipelineResult ProcessOneMinuteBarsLocked(std::vector<BarSnapshot> bars,
                                                        bool recovery_replay);

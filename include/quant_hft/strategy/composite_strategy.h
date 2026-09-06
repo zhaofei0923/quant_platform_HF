@@ -75,6 +75,7 @@ class CompositeStrategy : public ILiveStrategy {
     std::vector<SignalIntent> OnState(const StateSnapshot7D& state) override;
     std::vector<SignalIntent> OnMarketTick(const MarketSnapshot& snapshot) override;
     void OnOrderEvent(const OrderEvent& event) override;
+    bool OwnsOrderEvent(const OrderEvent& event) const;
     void OnAccountSnapshot(const TradingAccountSnapshot& snapshot) override;
     std::size_t ReconcileNetPositions(
         const std::unordered_map<std::string, std::int32_t>& authoritative_net,
@@ -85,6 +86,10 @@ class CompositeStrategy : public ILiveStrategy {
     bool SaveState(StrategyState* out, std::string* error) const override;
     bool LoadState(const StrategyState& state, std::string* error) override;
     bool ResetForContractSwitch(const ContractSwitchContext& context, std::string* error) override;
+    bool ResetForMarketGap(const MarketGapContext& context, std::string* error) override;
+    MarketWarmupRequirements RequiredMarketWarmupBars(
+        const std::string& instrument_id) const override;
+    void WarmupMarketState(const StateSnapshot7D& state) override;
     std::int32_t RequiredContractWarmupBars(const ContractSwitchContext& context) const override;
     void Shutdown() override;
     std::vector<CompositeAtomicTraceRow> CollectAtomicIndicatorTrace() const;
@@ -168,10 +173,12 @@ class CompositeStrategy : public ILiveStrategy {
     std::vector<SignalIntent> MergeSignals(const std::vector<SignalIntent>& signals) const;
     static AtomicParams MergeParamsForRunMode(const SubStrategyDefinition& definition,
                                               RunMode run_mode);
+    RunMode ClockRunMode() const;
     static bool IsValidRunType(const std::string& run_type);
     bool MatchesProduct(const std::string& instrument_id) const;
     void LoadDefinitionFromContext();
     void BuildAtomicStrategies();
+    void RebuildCommittedPositionContext();
     const SubStrategySlot* FindSubStrategySlot(const std::string& strategy_id) const;
     bool FindMatchingWindow(const std::vector<TimeWindow>& windows, EpochNanos now_ns,
                             std::int32_t timezone_offset_hours,
@@ -192,6 +199,7 @@ class CompositeStrategy : public ILiveStrategy {
     std::vector<AtomicTraceSlot> trace_providers_;
     std::unordered_map<std::string, std::size_t> sub_strategy_slot_index_by_id_;
     std::unordered_map<std::string, std::int32_t> last_filled_volume_by_order_;
+    std::unordered_map<std::string, Position> committed_positions_;
     std::unordered_map<std::string, std::unordered_set<std::string>>
         pending_open_orders_by_product_;
     std::unordered_map<std::string, std::string> pending_open_product_by_order_id_;

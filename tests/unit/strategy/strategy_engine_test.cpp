@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "quant_hft/strategy/live_strategy.h"
+#include "quant_hft/strategy/market_gap_recovery.h"
 #include "quant_hft/strategy/strategy_registry.h"
 
 namespace quant_hft {
@@ -194,6 +195,16 @@ class RecordingStrategy final : public ILiveStrategy {
         (void)context;
         return 2;
     }
+    MarketWarmupRequirements RequiredMarketWarmupBars(const std::string&) const override {
+        return {{5, 2}};
+    }
+    bool ResetForMarketGap(const MarketGapContext& context, std::string*) override {
+        if (g_probe) {
+            std::lock_guard<std::mutex> lock(g_probe->mutex);
+            g_probe->contract_switches.push_back("gap:" + context.instrument_id);
+        }
+        return true;
+    }
 
     bool SaveState(StrategyState* out, std::string* error) const override {
         (void)error;
@@ -225,6 +236,10 @@ class TestStatePersistence final : public IStrategyStatePersistence {
         (void)error;
         std::lock_guard<std::mutex> lock(mutex_);
         ++save_calls_;
+        if (fail_save_) {
+            if (error != nullptr) *error = "injected durable snapshot failure";
+            return false;
+        }
         storage_[account_id + ":" + strategy_id] = state;
         return true;
     }
@@ -254,6 +269,10 @@ class TestStatePersistence final : public IStrategyStatePersistence {
         std::lock_guard<std::mutex> lock(mutex_);
         storage_[key] = state;
     }
+    void FailSave(bool fail) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        fail_save_ = fail;
+    }
 
     std::uint64_t save_calls() const {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -269,6 +288,7 @@ class TestStatePersistence final : public IStrategyStatePersistence {
     mutable std::mutex mutex_;
     mutable std::uint64_t load_calls_{0};
     std::uint64_t save_calls_{0};
+    bool fail_save_{false};
     std::unordered_map<std::string, StrategyState> storage_;
 };
 
@@ -744,7 +764,7 @@ TEST(StrategyEngineTest, LoadsAndSnapshotsStateWithPersistenceHook) {
     g_probe = nullptr;
 }
 
-TEST(StrategyEngineTest, DropsOldestEventsWhenQueueIsFull) {
+TEST(StrategyEngineTest, RejectsAdmissionExplicitlyWithoutDroppingAcceptedEvents) {
     Probe probe;
     g_probe = &probe;
     ResetThrowingBehavior();
@@ -778,8 +798,8 @@ TEST(StrategyEngineTest, DropsOldestEventsWhenQueueIsFull) {
 
     ASSERT_TRUE(WaitUntil(
         [&]() {
-            std::lock_guard<std::mutex> lock(sink_mutex);
-            return !emitted_intents.empty();
+            std::lock_guard<std::mutex> lock(probe.mutex);
+            return !probe.observed_state_ts.empty();
         },
         std::chrono::milliseconds(500)));
 
@@ -788,7 +808,9 @@ TEST(StrategyEngineTest, DropsOldestEventsWhenQueueIsFull) {
     g_state_delay_ms.store(0);
 
     const auto stats = engine.GetStats();
-    EXPECT_GT(stats.dropped_oldest_events, 0U);
+    EXPECT_EQ(stats.dropped_oldest_events, 0U);
+    EXPECT_GT(stats.rejected_events, 0U);
+    EXPECT_TRUE(engine.GetHealth().overloaded);
 }
 
 TEST(StrategyEngineTest, ContractSwitchWarmsWithoutEmittingAndStampsNextIntent) {
@@ -908,4 +930,283 @@ TEST(StrategyEngineTest, ContractSwitchWarmsWithoutEmittingAndStampsNextIntent) 
 }
 
 }  // namespace
+namespace {
+
+struct ReliableProbe {
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool entered{false};
+    bool released{false};
+    std::vector<std::string> seen;
+};
+
+class ReliableProbeStrategy final : public ILiveStrategy {
+   public:
+    explicit ReliableProbeStrategy(std::shared_ptr<ReliableProbe> probe)
+        : probe_(std::move(probe)) {}
+    void Initialize(const StrategyContext&) override {}
+    std::vector<SignalIntent> OnState(const StateSnapshot7D& state) override {
+        std::unique_lock<std::mutex> lock(probe_->mutex);
+        if (!probe_->entered) {
+            probe_->entered = true;
+            probe_->cv.notify_all();
+            probe_->cv.wait(lock, [&] { return probe_->released; });
+        }
+        probe_->seen.push_back("state:" + std::to_string(state.ts_ns));
+        return {};
+    }
+    void OnOrderEvent(const OrderEvent& event) override {
+        std::lock_guard<std::mutex> lock(probe_->mutex);
+        probe_->seen.push_back("order:" + event.client_order_id);
+    }
+    std::vector<SignalIntent> OnTimer(EpochNanos) override {
+        std::lock_guard<std::mutex> lock(probe_->mutex);
+        probe_->seen.push_back("timer");
+        return {};
+    }
+    void Shutdown() override {}
+
+   private:
+    std::shared_ptr<ReliableProbe> probe_;
+};
+
+std::string RegisterReliableProbe(const std::shared_ptr<ReliableProbe>& probe) {
+    const auto name = UniqueFactoryName();
+    std::string error;
+    EXPECT_TRUE(StrategyRegistry::Instance().RegisterFactory(
+        name, [probe] { return std::make_unique<ReliableProbeStrategy>(probe); }, &error));
+    return name;
+}
+
+void ReleaseReliableProbe(const std::shared_ptr<ReliableProbe>& probe) {
+    std::lock_guard<std::mutex> lock(probe->mutex);
+    probe->released = true;
+    probe->cv.notify_all();
+}
+
+bool WaitForReliableProbe(const std::shared_ptr<ReliableProbe>& probe) {
+    std::unique_lock<std::mutex> lock(probe->mutex);
+    return probe->cv.wait_for(lock, std::chrono::seconds(1), [&] { return probe->entered; });
+}
+
+}  // namespace
+
+TEST(StrategyEngineTest, RetainsFilledOrderAndReportsReliableAdmissionOverflow) {
+    auto probe = std::make_shared<ReliableProbe>();
+    StrategyEngineConfig config;
+    config.queue_capacity = 1;
+    config.reliable_queue_capacity = 1;
+    config.timer_interval_ns = 1'000'000'000;
+    StrategyEngine engine(config);
+    std::string error;
+    ASSERT_TRUE(engine.Start({"probe"}, RegisterReliableProbe(probe), {}, &error));
+    StateSnapshot7D state;
+    state.ts_ns = 1;
+    ASSERT_TRUE(engine.EnqueueState(state));
+    const bool entered = WaitForReliableProbe(probe);
+    OrderEvent fill;
+    fill.client_order_id = "fill";
+    fill.strategy_id = "probe";
+    fill.status = OrderStatus::kFilled;
+    fill.filled_volume = 1;
+    const auto order_result = engine.EnqueueOrderEvent(fill);
+    state.ts_ns = 2;
+    const auto state_result = engine.EnqueueState(state);
+    const auto rejected = engine.EnqueueOrderEvent(fill);
+    ReleaseReliableProbe(probe);
+    EXPECT_TRUE(entered);
+    EXPECT_TRUE(order_result);
+    EXPECT_TRUE(state_result);
+    EXPECT_EQ(rejected.status, StrategyEnqueueStatus::kQueueFull);
+    EXPECT_TRUE(engine.WaitUntilDrained(1000));
+    EXPECT_TRUE(engine.GetHealth().overloaded);
+    EXPECT_TRUE(engine.AcknowledgeRecovery());
+    engine.Stop();
+    EXPECT_EQ(probe->seen, (std::vector<std::string>{"state:1", "order:fill", "state:2"}));
+    EXPECT_EQ(engine.GetStats().dropped_oldest_events, 0U);
+    EXPECT_EQ(engine.GetStats().rejected_reliable_events, 1U);
+    EXPECT_EQ(engine.EnqueueOrderEvent(fill).status, StrategyEnqueueStatus::kStopped);
+}
+
+TEST(StrategyEngineTest, DeadlineMarkerPreservesFifoAndHealthRemainsReadableWhileWorkerBlocked) {
+    auto probe = std::make_shared<ReliableProbe>();
+    StrategyEngineConfig config;
+    config.queue_capacity = 1;
+    config.reliable_queue_capacity = 1;
+    config.timer_interval_ns = 5'000'000;
+    StrategyEngine engine(config);
+    std::string error;
+    ASSERT_TRUE(engine.Start({"probe"}, RegisterReliableProbe(probe), {}, &error));
+    StateSnapshot7D state;
+    state.ts_ns = 1;
+    ASSERT_TRUE(engine.EnqueueState(state));
+    const bool entered = WaitForReliableProbe(probe);
+    const bool deadline_queued =
+        WaitUntil([&] { return engine.GetHealth().pending_timer_lateness_ns > 0; },
+                  std::chrono::milliseconds(500));
+    const auto health = engine.GetHealth();
+    OrderEvent order;
+    order.client_order_id = "after-deadline";
+    order.strategy_id = "probe";
+    const auto admitted = engine.EnqueueOrderEvent(order);
+    ReleaseReliableProbe(probe);
+    EXPECT_TRUE(entered);
+    EXPECT_TRUE(deadline_queued);
+    EXPECT_TRUE(health.callback_in_progress);
+    EXPECT_GT(health.worker_progress_age_ns, 0U);
+    EXPECT_TRUE(admitted);
+    EXPECT_TRUE(engine.WaitUntilDrained(1000));
+    engine.Stop();
+    const auto timer = std::find(probe->seen.begin(), probe->seen.end(), "timer");
+    const auto event = std::find(probe->seen.begin(), probe->seen.end(), "order:after-deadline");
+    ASSERT_NE(timer, probe->seen.end());
+    ASSERT_NE(event, probe->seen.end());
+    EXPECT_LT(timer, event);
+    EXPECT_GT(engine.GetStats().timer_callbacks, 0U);
+}
+
+TEST(StrategyEngineTest, StopCompletesQueuedControlPromiseBeforeBlockedWorkerFinishes) {
+    auto probe = std::make_shared<ReliableProbe>();
+    StrategyEngineConfig config;
+    config.timer_interval_ns = 1'000'000'000;
+    StrategyEngine engine(config);
+    std::string error;
+    ASSERT_TRUE(engine.Start({"probe"}, RegisterReliableProbe(probe), {}, &error));
+    ASSERT_TRUE(engine.EnqueueState({}));
+    const bool entered = WaitForReliableProbe(probe);
+    auto barrier = std::async(std::launch::async, [&] {
+        return engine.ApplyContractSwitch({"rb", "rb2609", "rb2610", 1}, {}, 2000);
+    });
+    const bool queued = WaitUntil([&] { return engine.GetHealth().queue_depth != 0; },
+                                  std::chrono::milliseconds(500));
+    auto stopped = std::async(std::launch::async, [&] { engine.Stop(); });
+    const bool woke = barrier.wait_for(std::chrono::milliseconds(500)) == std::future_status::ready;
+    ReleaseReliableProbe(probe);
+    EXPECT_TRUE(entered);
+    EXPECT_TRUE(queued);
+    EXPECT_TRUE(woke);
+    EXPECT_FALSE(barrier.get().success);
+    stopped.get();
+}
+
+TEST(StrategyEngineTest, CommittedDeliveryAcknowledgesOnlyAfterSuccessfulSnapshot) {
+    ResetThrowingBehavior();
+    const auto factory = UniqueFactoryName();
+    std::string error;
+    ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
+        factory, []() { return std::make_unique<RecordingStrategy>(); }, &error));
+    auto persistence = std::make_shared<TestStatePersistence>();
+    std::atomic<int> acknowledgements{0};
+    std::atomic<int> failed_deliveries{0};
+    std::atomic<bool> saved_before_ack{false};
+    StrategyEngineConfig config;
+    config.state_persistence = persistence;
+    config.committed_event_sink = [&](const OrderEvent&) {
+        saved_before_ack.store(persistence->save_calls() > 0);
+        ++acknowledgements;
+        return true;
+    };
+    config.committed_event_failure_sink = [&](const OrderEvent&) { ++failed_deliveries; };
+    StrategyEngine engine(config);
+    StrategyContext context;
+    context.account_id = "test-account";
+    ASSERT_TRUE(engine.Start({"alpha"}, factory, context, &error));
+    OrderEvent event;
+    event.account_id = context.account_id;
+    event.strategy_id = "alpha";
+    event.committed_position = Position{};
+    event.committed_trade_identity = "committed";
+    ASSERT_TRUE(engine.EnqueueOrderEvent(event));
+    ASSERT_TRUE(engine.WaitUntilDrained(1000));
+    EXPECT_EQ(acknowledgements.load(), 1);
+    EXPECT_TRUE(saved_before_ack.load());
+    {
+        std::lock_guard<std::mutex> lock(g_behavior_mutex);
+        g_throw_on_order_strategy = "alpha";
+    }
+    ASSERT_TRUE(engine.EnqueueOrderEvent(event));
+    ASSERT_TRUE(engine.WaitUntilDrained(1000));
+    EXPECT_EQ(acknowledgements.load(), 1);
+    EXPECT_TRUE(engine.GetHealth().overloaded);
+    EXPECT_EQ(failed_deliveries.load(), 1);
+    engine.Stop();
+    ResetThrowingBehavior();
+}
+
+TEST(StrategyEngineTest, MarketGapRecoveryRequiresCompleteWarmupAndPersistsBeforeSuccess) {
+    ResetThrowingBehavior();
+    Probe probe;
+    g_probe = &probe;
+    const auto factory = UniqueFactoryName();
+    std::string error;
+    ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
+        factory, [] { return std::make_unique<RecordingStrategy>(); }, &error));
+    auto persistence = std::make_shared<TestStatePersistence>();
+    StrategyEngineConfig config;
+    config.timer_interval_ns = 10'000'000'000LL;
+    config.state_persistence = persistence;
+    std::atomic<int> intents{0};
+    StrategyEngine engine(config, [&](const SignalIntent&) { ++intents; });
+    ASSERT_TRUE(engine.Start({"gap"}, factory, {}, &error));
+    MarketGapContext gap{"rb2609", 1};
+    auto report = engine.ApplyMarketGapRecovery(gap, {}, 1000);
+    EXPECT_FALSE(report.success);
+    EXPECT_EQ(report.required_bars.at(5), 2);
+    EXPECT_TRUE(probe.contract_switches.empty());
+    StateSnapshot7D state;
+    state.instrument_id = gap.instrument_id;
+    state.timeframe_minutes = 5;
+    state.ts_ns = 1;
+    state.has_bar = true;
+    state.bar_close = 4000;
+    auto later = state;
+    later.ts_ns = 2;
+    report = engine.ApplyMarketGapRecovery(gap, {later, state, state}, 1000);
+    EXPECT_TRUE(report.success) << report.error;
+    EXPECT_GT(persistence->save_calls(), 0);
+    EXPECT_EQ(probe.observed_state_ts, (std::vector<EpochNanos>{1, 2}));
+    EXPECT_EQ(intents.load(), 0);
+    persistence->FailSave(true);
+    report = engine.ApplyMarketGapRecovery(gap, {state, later}, 1000);
+    EXPECT_FALSE(report.success);
+    EXPECT_EQ(report.error, "injected durable snapshot failure");
+    persistence->FailSave(false);
+    report = engine.ApplyMarketGapRecovery(gap, {state, later}, 1000);
+    EXPECT_TRUE(report.success) << report.error;
+    engine.Stop();
+    g_probe = nullptr;
+}
+
+TEST(StrategyEngineTest, MarketGapEvidenceRejectsPartialBarsAndStaleGenerationAcknowledgement) {
+    MarketGapRecovery recovery;
+    recovery.MarkGap("rb", 1);
+    const auto first = recovery.Snapshot().front().context;
+    TimeframeStateEmission emission;
+    emission.timeframe_minutes = 5;
+    emission.bar.instrument_id = emission.state.instrument_id = "rb";
+    emission.bar.period_end_ts_ns = 600'000'000'000LL;
+    emission.state.ts_ns = emission.bar.period_end_ts_ns;
+    emission.state.timeframe_minutes = 5;
+    emission.state.has_bar = true;
+    emission.state.bar_close = 4000;
+    ASSERT_TRUE(recovery.Observe(emission));
+    EXPECT_EQ(recovery.Snapshot().front().states.size(), 1U);
+    ASSERT_TRUE(recovery.Observe(emission));
+    EXPECT_EQ(recovery.Snapshot().front().states.size(), 1U);
+    emission.bar.is_complete = false;
+    ASSERT_TRUE(recovery.Observe(emission));
+    EXPECT_TRUE(recovery.Snapshot().front().states.empty());
+    recovery.MarkGap("rb", 2);
+    EXPECT_FALSE(recovery.Complete(first));
+    StrategyState saved;
+    recovery.SaveState(&saved);
+    MarketGapRecovery restarted;
+    std::string error;
+    ASSERT_TRUE(restarted.LoadState(saved, &error)) << error;
+    EXPECT_TRUE(restarted.Suppresses("rb"));
+    EXPECT_TRUE(restarted.Snapshot().front().states.empty());
+    EXPECT_TRUE(restarted.Complete(restarted.Snapshot().front().context));
+    EXPECT_FALSE(restarted.Suppresses("rb"));
+}
+
 }  // namespace quant_hft

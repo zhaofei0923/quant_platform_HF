@@ -25,6 +25,11 @@ class KamaTrendStrategy final : public ISubStrategy,
     void Init(const AtomicParams& params) override;
     std::string GetId() const override;
     void Reset() override;
+    bool ResetForMarketGap() override;
+    std::int32_t RequiredMarketWarmupBars() const override {
+        return er_period_ + std_period_ + 2 * adx_period_ + stop_loss_atr_period_ +
+               take_profit_atr_period_ + 4;
+    }
     std::vector<SignalIntent> OnState(const StateSnapshot7D& state,
                                       const AtomicStrategyContext& ctx) override;
     std::vector<SignalIntent> OnBacktestTick(const AtomicTickSnapshot& tick,

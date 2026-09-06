@@ -33,6 +33,15 @@ void TrailingStopLoss::Init(const AtomicParams& params) {
 
 std::string TrailingStopLoss::GetId() const { return id_; }
 
+bool TrailingStopLoss::ResetForMarketGap() {
+    auto saved_0 = std::move(trailing_stop_by_instrument_);
+    auto saved_1 = std::move(direction_by_instrument_);
+    Reset();
+    trailing_stop_by_instrument_ = std::move(saved_0);
+    direction_by_instrument_ = std::move(saved_1);
+    return true;
+}
+
 void TrailingStopLoss::Reset() {
     if (atr_ != nullptr) {
         atr_->Reset();

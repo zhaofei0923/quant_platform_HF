@@ -1,16 +1,19 @@
 #pragma once
 
+#include <algorithm>
 #include <condition_variable>
 #include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 #include "quant_hft/core/ctp_config.h"
+#include "quant_hft/core/query_batch_collector.h"
 #include "quant_hft/core/query_scheduler.h"
 #include "quant_hft/interfaces/market_data_gateway.h"
 #include "quant_hft/interfaces/order_gateway.h"
@@ -45,6 +48,10 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
     using TradingAccountSnapshotCallback = std::function<void(const TradingAccountSnapshot&)>;
     using InvestorPositionSnapshotCallback =
         std::function<void(const std::vector<InvestorPositionSnapshot>&)>;
+    using InvestorPositionQueryCallback =
+        std::function<void(const QueryResult<InvestorPositionSnapshot>&)>;
+    using InstrumentMetaQueryCallback = std::function<void(const QueryResult<InstrumentMetaSnapshot>&)>;
+    using InstrumentCommissionRateQueryCallback = std::function<void(const QueryResult<InstrumentCommissionRateSnapshot>&)>;
     using InstrumentMetaSnapshotCallback =
         std::function<void(const std::vector<InstrumentMetaSnapshot>&)>;
     using DepthMarketSnapshotCallback = std::function<void(const std::vector<MarketSnapshot>&)>;
@@ -58,7 +65,11 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
         std::function<void(const std::vector<InstrumentOrderCommRateSnapshot>&)>;
 
     explicit CtpGatewayAdapter(std::size_t query_qps_limit = 10);
-    void CompleteScheduledQuery();
+    void CompleteScheduledQuery(int request_id, std::uint64_t generation);
+    bool IsQueryActive(int request_id, std::uint64_t generation) const;
+    bool RecordQueryResponse(int request_id, std::uint64_t generation, bool success);
+    std::uint64_t GetQueryGeneration() const;
+    void PollQueries();
     ~CtpGatewayAdapter() override;
 
     bool Connect(const MarketDataConnectConfig& config) override;
@@ -103,6 +114,9 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
 
     void RegisterTradingAccountSnapshotCallback(TradingAccountSnapshotCallback callback);
     void RegisterInvestorPositionSnapshotCallback(InvestorPositionSnapshotCallback callback);
+    void RegisterInvestorPositionQueryCallback(InvestorPositionQueryCallback callback);
+    void RegisterInstrumentMetaQueryCallback(InstrumentMetaQueryCallback callback);
+    void RegisterInstrumentCommissionRateQueryCallback(InstrumentCommissionRateQueryCallback callback);
     void RegisterInstrumentMetaSnapshotCallback(InstrumentMetaSnapshotCallback callback);
     void RegisterDepthMarketSnapshotCallback(DepthMarketSnapshotCallback callback);
     void RegisterBrokerTradingParamsSnapshotCallback(BrokerTradingParamsSnapshotCallback callback);
@@ -137,6 +151,7 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
     friend class CtpMdSpi;
     friend class CtpTdSpi;
     friend class CtpCallbackScope;
+    friend class CtpGatewayAdapterTestPeer;
 
     struct OrderMeta {
         std::string order_ref;
@@ -166,7 +181,59 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
     void TryMarkHealthyFromState();
     bool ReplayMarketDataSubscriptions();
     void DisconnectRealApi();
-    bool FinishQuerySchedule(std::size_t drained, bool query_ok);
+    void PublishInvestorPositionQueryResponse(int request_id, std::uint64_t generation,
+                                              const InvestorPositionSnapshot* row, int error_code,
+                                              const std::string& error, bool last);
+    void FailQuery(int request_id, std::uint64_t generation, const std::string& name,
+                   const std::string& error);
+    template <typename Row, typename Cache, typename Callback>
+    void PublishSnapshotQueryResponse(QueryBatchCollector<Row>& collector, int request_id,
+                                      std::uint64_t generation, const Row* row, int error_code,
+                                      const std::string& error, bool last, Cache& cache,
+                                      Callback& callback_slot) {
+        auto result = collector.Accept(request_id, generation, row, error_code, error, last);
+        if (!result) return;
+        Callback callback;
+        std::function<void(const QueryResult<Row>&)> query_callback;
+        QueryCompleteCallback complete;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (generation != query_generation_) return;
+            if constexpr (std::is_same_v<Cache, std::vector<Row>>) {
+                if (result->metadata.success) {
+                    if (result->metadata.instrument_id.empty()) {
+                        cache = result->rows;
+                    } else {
+                        const auto& instrument = result->metadata.instrument_id;
+                        cache.erase(std::remove_if(cache.begin(), cache.end(),
+                                                   [&](const Row& value) {
+                                                       return value.instrument_id == instrument;
+                                                   }),
+                                    cache.end());
+                        cache.insert(cache.end(), result->rows.begin(), result->rows.end());
+                    }
+                }
+            } else {
+                // Scalar account/parameter APIs cannot represent an empty or multi-currency batch.
+                result->metadata.success = result->metadata.success && result->rows.size() == 1;
+                if (result->metadata.success) cache = result->rows.front();
+            }
+            if (result->metadata.success) callback = callback_slot;
+            if constexpr (std::is_same_v<Row, InstrumentMetaSnapshot>)
+                query_callback = instrument_meta_query_callback_;
+            if constexpr (std::is_same_v<Row, InstrumentCommissionRateSnapshot>)
+                query_callback = instrument_commission_rate_query_callback_;
+            complete = query_complete_callback_;
+        }
+        if (query_callback) query_callback(*result);
+        if (callback) {
+            if constexpr (std::is_same_v<Cache, std::vector<Row>>)
+                callback(result->rows);
+            else
+                callback(result->rows.front());
+        }
+        if (complete) complete(request_id, result->metadata.query_name, result->metadata.success);
+    }
     bool ExecuteTdQueryWithRetry(const std::function<int()>& request_fn) const;
     int NextRequestIdLocked();
     std::string NextOrderRefLocked();
@@ -189,6 +256,15 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
     OrderSubmitPrepareCallback order_submit_prepare_callback_;
 
     QueryScheduler query_scheduler_;
+    std::uint64_t query_generation_{0};
+    QueryBatchCollector<InvestorPositionSnapshot> investor_position_queries_;
+    QueryBatchCollector<TradingAccountSnapshot> trading_account_queries_;
+    QueryBatchCollector<InstrumentMetaSnapshot> instrument_meta_queries_;
+    QueryBatchCollector<MarketSnapshot> depth_market_queries_;
+    QueryBatchCollector<BrokerTradingParamsSnapshot> broker_trading_params_queries_;
+    QueryBatchCollector<InstrumentMarginRateSnapshot> instrument_margin_rate_queries_;
+    QueryBatchCollector<InstrumentCommissionRateSnapshot> instrument_commission_rate_queries_;
+    QueryBatchCollector<InstrumentOrderCommRateSnapshot> instrument_order_comm_rate_queries_;
     CtpUserSessionInfo user_session_;
     TradingAccountSnapshot trading_account_snapshot_;
     std::vector<InvestorPositionSnapshot> investor_position_snapshots_;
@@ -201,6 +277,9 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
 
     TradingAccountSnapshotCallback trading_account_snapshot_callback_;
     InvestorPositionSnapshotCallback investor_position_snapshot_callback_;
+    InvestorPositionQueryCallback investor_position_query_callback_;
+    InstrumentMetaQueryCallback instrument_meta_query_callback_;
+    InstrumentCommissionRateQueryCallback instrument_commission_rate_query_callback_;
     InstrumentMetaSnapshotCallback instrument_meta_snapshot_callback_;
     DepthMarketSnapshotCallback depth_market_snapshot_callback_;
     BrokerTradingParamsSnapshotCallback broker_trading_params_snapshot_callback_;

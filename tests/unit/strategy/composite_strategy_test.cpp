@@ -89,6 +89,7 @@ class ScriptedSubStrategy final : public ISubStrategy,
     std::string GetId() const override { return id_; }
 
     void Reset() override {}
+    bool ResetForMarketGap() override { return true; }
 
     std::vector<SignalIntent> OnState(const StateSnapshot7D& state,
                                       const AtomicStrategyContext& ctx) override {
@@ -1650,6 +1651,72 @@ TEST(CompositeStrategyTest, CollectAtomicIndicatorTraceContainsStopAndTakePrices
     ASSERT_TRUE(rows.front().take_profit_price.has_value());
     EXPECT_DOUBLE_EQ(rows.front().stop_loss_price.value(), 98.8);
     EXPECT_DOUBLE_EQ(rows.front().take_profit_price.value(), 106.6);
+}
+
+TEST(CompositeStrategyTest, CommittedPositionSurvivesTerminalFirstDuplicateAndRestart) {
+    const std::string type = UniqueType("committed_projection");
+    RegisterScriptedType(type);
+    CompositeStrategyDefinition definition;
+    definition.product_id = "rb";
+    definition.run_type = "sim";
+    definition.enable_non_backtest = true;
+    definition.sub_strategies = {MakeSubStrategy("s1", type, {{"id", "s1"}})};
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext("sim"));
+    OrderEvent event =
+        MakeOrderEvent("s1", "rb2701", Side::kBuy, OffsetFlag::kOpen, 5, 100.0, "order");
+    event.account_id = "acct";
+    event.event_source = "OnRtnOrder";
+    strategy.OnOrderEvent(event);
+    StrategyState state;
+    std::string error;
+    ASSERT_TRUE(strategy.SaveState(&state, &error));
+    EXPECT_EQ(state.count("net_pos.rb2701"), 0U);
+
+    Position position;
+    position.account_id = "acct";
+    position.strategy_id = "s1";
+    position.symbol = "rb2701";
+    position.exchange = "SHFE";
+    position.long_qty = position.long_today_qty = 2;
+    position.avg_long_price = 101.25;
+    position.version = 1;
+    event.event_source = "CommittedTradeOutbox";
+    event.last_trade_volume = 2;
+    event.avg_fill_price = 101.25;
+    event.committed_position = position;
+    event.committed_trade_identity = "trade1";
+    strategy.OnOrderEvent(event);
+    strategy.OnOrderEvent(event);
+    ASSERT_TRUE(strategy.SaveState(&state, &error));
+    EXPECT_EQ(state.at("net_pos.rb2701"), "2");
+    EXPECT_DOUBLE_EQ(std::stod(state.at("avg_open.rb2701")), 101.25);
+    EXPECT_TRUE(strategy.OwnsOrderEvent(event));
+
+    // Historical warmup must not erase held quantity or roll daily loss guards backward.
+    state["risk_guard.s1"] = "1 20000 -50 3 1 20000";
+    ASSERT_TRUE(strategy.LoadState(state, &error)) << error;
+    ASSERT_TRUE(strategy.ResetForMarketGap({"rb2701", 1}, &error)) << error;
+    StateSnapshot7D warmup;
+    warmup.instrument_id = "rb2701";
+    warmup.timeframe_minutes = 5;
+    warmup.ts_ns = 1;
+    warmup.has_bar = true;
+    warmup.bar_close = 100;
+    strategy.WarmupMarketState(warmup);
+    ASSERT_TRUE(strategy.SaveState(&state, &error));
+    EXPECT_EQ(state.at("net_pos.rb2701"), "2");
+    EXPECT_EQ(state.at("risk_guard.s1"), "1 20000 -50 3 1 20000");
+    EXPECT_TRUE(strategy.OwnsOrderEvent(event));
+
+    CompositeStrategy restarted(definition, &AtomicFactory::Instance());
+    restarted.Initialize(MakeStrategyContext("sim"));
+    ASSERT_TRUE(restarted.LoadState(state, &error)) << error;
+    restarted.OnOrderEvent(event);
+    ASSERT_TRUE(restarted.SaveState(&state, &error));
+    EXPECT_EQ(state.at("net_pos.rb2701"), "2");
+    event.committed_position->long_qty = 3;
+    EXPECT_THROW(restarted.OnOrderEvent(event), std::runtime_error);
 }
 
 }  // namespace quant_hft

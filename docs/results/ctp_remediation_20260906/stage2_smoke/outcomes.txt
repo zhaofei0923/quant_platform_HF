@@ -1,0 +1,4 @@
+first_exit=0
+second_instance_exit=7
+restart_exit=0
+identity_compare_exit=0

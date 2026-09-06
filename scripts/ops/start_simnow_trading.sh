@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 QUANT_ROOT="${QUANT_ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 export QUANT_ROOT
+# shellcheck source=runtime_path_defaults.sh
+source "${SCRIPT_DIR}/runtime_path_defaults.sh"
 
 ENV_FILE="${ENV_FILE:-${QUANT_ROOT}/runtime/simnow.env}"
 CONFIG_PATH="${QUANT_ROOT}/configs/sim/ctp_sim_trade_candidates.yaml"
@@ -11,8 +13,8 @@ BUILD_DIR="${BUILD_DIR:-${QUANT_ROOT}/build-gcc}"
 CORE_ENGINE_BIN="${CORE_ENGINE_BIN:-${BUILD_DIR}/core_engine}"
 SIMNOW_PROBE_BIN="${SIMNOW_PROBE_BIN:-${BUILD_DIR}/simnow_probe}"
 RUN_ID="${SIMNOW_RUN_ID:-simnow-$(date +%Y%m%dT%H%M%S)}"
-RUN_ROOT="${SIMNOW_RUN_ROOT:-${QUANT_ROOT}/runtime/trading/runs/simnow}"
-WAL_FILE="${SIMNOW_WAL_FILE:-${QUANT_ROOT}/runtime/trading/wal/simnow/events.wal}"
+RUN_ROOT="${SIMNOW_RUN_ROOT:-}"
+WAL_FILE="${SIMNOW_WAL_FILE:-${QUANT_HFT_WAL_FILE:-}}"
 RUN_SECONDS="${SIMNOW_RUN_SECONDS:-0}"
 PROBE_SECONDS="${SIMNOW_PROBE_SECONDS:-5}"
 PROBE_TIMEOUT_SECONDS="${SIMNOW_PROBE_TIMEOUT_SECONDS:-120}"
@@ -181,17 +183,12 @@ stop_pid() {
 }
 
 find_existing_core_engine_pids() {
-  local process_pid
-  local process_args
-  while read -r process_pid process_args; do
-    [[ -n "${process_pid:-}" ]] || continue
-    [[ "${process_pid}" == "$$" || "${process_pid}" == "${BASHPID}" ]] && continue
-    if [[ "${process_args:-}" == *"${CORE_ENGINE_BIN}"* || "${process_args:-}" == *"/core_engine"* ]]; then
-      if [[ "${process_args:-}" == *"${CONFIG_PATH}"* || "${process_args:-}" == *"$(basename "${CONFIG_PATH}")"* ]]; then
-        printf '%s\n' "${process_pid}"
-      fi
-    fi
-  done < <(ps -eo pid=,args=)
+  # PID ownership follows this identity's run directory, never a shared config basename.
+  local pid_file process_pid
+  while IFS= read -r -d '' pid_file; do
+    process_pid="$(tr -dc '0-9' < "${pid_file}")"
+    pid_is_alive "${process_pid}" && printf '%s\n' "${process_pid}"
+  done < <(find "${RUN_ROOT}" -maxdepth 2 -name core_engine.pid -type f -print0)
 }
 
 check_free_disk() {
@@ -301,7 +298,7 @@ if [[ ${RUN_ROOT_SET_BY_CLI} -eq 0 ]]; then
   RUN_ROOT="${SIMNOW_RUN_ROOT:-${RUN_ROOT}}"
 fi
 if [[ ${WAL_FILE_SET_BY_CLI} -eq 0 ]]; then
-  WAL_FILE="${SIMNOW_WAL_FILE:-${WAL_FILE}}"
+  WAL_FILE="${SIMNOW_WAL_FILE:-${QUANT_HFT_WAL_FILE:-${WAL_FILE}}}"
 fi
 if [[ ${PROBE_TIMEOUT_SECONDS_SET_BY_CLI} -eq 0 ]]; then
   PROBE_TIMEOUT_SECONDS="${SIMNOW_PROBE_TIMEOUT_SECONDS:-${PROBE_TIMEOUT_SECONDS}}"
@@ -318,12 +315,29 @@ is_positive_int "${PROBE_TIMEOUT_SECONDS}" || die "SIMNOW_PROBE_TIMEOUT_SECONDS 
 is_positive_int "${INSTRUMENT_TIMEOUT_SECONDS}" || die "SIMNOW_INSTRUMENT_TIMEOUT_SECONDS must be a positive integer"
 is_bool_flag "${ALLOW_UNCONFIRMED_SETTLEMENT}" || die "SIMNOW_ALLOW_UNCONFIRMED_SETTLEMENT must be 0 or 1"
 is_bool_flag "${FORCE_INSTRUMENT_REFRESH}" || die "SIMNOW_FORCE_INSTRUMENT_REFRESH must be 0 or 1"
+# Resolve paths under exactly the environment that the engine will inherit.
+export CTP_SIM_MARKET_FRONT="${CTP_SIM_MARKET_FRONT:-tcp://182.254.243.31:30011}"
+export CTP_SIM_TRADER_FRONT="${CTP_SIM_TRADER_FRONT:-tcp://182.254.243.31:30001}"
+export CTP_SIM_IS_PRODUCTION_MODE="${CTP_SIM_IS_PRODUCTION_MODE:-true}"
+export CTP_SIM_ENABLE_REAL_API="${CTP_SIM_ENABLE_REAL_API:-true}"
+if [[ ${WAL_FILE_SET_BY_CLI} -eq 0 && -n "${QUANT_HFT_WAL_FILE:-}" &&
+      -n "${SIMNOW_WAL_FILE:-}" && "${QUANT_HFT_WAL_FILE}" != "${SIMNOW_WAL_FILE}" ]]; then
+  die "QUANT_HFT_WAL_FILE conflicts with SIMNOW_WAL_FILE; select one explicit --wal-file"
+fi
+if [[ -z "${RUN_ROOT}" || -z "${WAL_FILE}" ]]; then
+  load_runtime_path_defaults
+  RUN_ROOT="${RUN_ROOT:-${RESOLVED_RUN_ROOT}}"
+  WAL_FILE="${WAL_FILE:-${RESOLVED_WAL_FILE}}"
+  export QUANT_HFT_MARKET_DATA_DIR="${QUANT_HFT_MARKET_DATA_DIR:-${RESOLVED_MARKET_DATA_DIR}}"
+  export QUANT_HFT_READINESS_FILE="${QUANT_HFT_READINESS_FILE:-${RESOLVED_READINESS_FILE}}"
+fi
 [[ -n "${RUN_ROOT}" ]] || die "SIMNOW_RUN_ROOT must not be empty"
 [[ -n "${WAL_FILE}" ]] || die "SIMNOW_WAL_FILE must not be empty"
 
 export CTP_CONFIG_PATH="${CONFIG_PATH}"
 export SIMNOW_RUN_ID="${RUN_ID}"
 export SIMNOW_WAL_FILE="${WAL_FILE}"
+export QUANT_HFT_WAL_FILE="${WAL_FILE}"
 export CTP_SIM_MARKET_FRONT="${CTP_SIM_MARKET_FRONT:-tcp://182.254.243.31:30011}"
 export CTP_SIM_TRADER_FRONT="${CTP_SIM_TRADER_FRONT:-tcp://182.254.243.31:30001}"
 export CTP_SIM_IS_PRODUCTION_MODE="${CTP_SIM_IS_PRODUCTION_MODE:-true}"

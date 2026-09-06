@@ -17,7 +17,9 @@
 #include "quant_hft/contracts/types.h"
 #include "quant_hft/core/callback_dispatcher.h"
 #include "quant_hft/core/ctp_gateway_adapter.h"
+#include "quant_hft/core/durable_order_event_inbox.h"
 #include "quant_hft/core/event_dispatcher.h"
+#include "quant_hft/interfaces/execution_gateway.h"
 #include "quant_hft/interfaces/market_data_gateway.h"
 #include "quant_hft/interfaces/order_gateway.h"
 
@@ -64,13 +66,16 @@ struct CtpRecoveryReport {
     }
 };
 
-class CTPTraderAdapter {
+class CTPTraderAdapter : public IExecutionGateway {
    public:
     using OrderEventCallback = IOrderGateway::OrderEventCallback;
     using OrderSubmitMappingCallback = CtpGatewayAdapter::OrderSubmitMappingCallback;
     using OrderSubmitPrepareCallback = CtpGatewayAdapter::OrderSubmitPrepareCallback;
     using TradingAccountSnapshotCallback = CtpGatewayAdapter::TradingAccountSnapshotCallback;
     using InvestorPositionSnapshotCallback = CtpGatewayAdapter::InvestorPositionSnapshotCallback;
+    using InvestorPositionQueryCallback = CtpGatewayAdapter::InvestorPositionQueryCallback;
+    using InstrumentMetaQueryCallback = CtpGatewayAdapter::InstrumentMetaQueryCallback;
+    using InstrumentCommissionRateQueryCallback = CtpGatewayAdapter::InstrumentCommissionRateQueryCallback;
     using InstrumentMetaSnapshotCallback = CtpGatewayAdapter::InstrumentMetaSnapshotCallback;
     using DepthMarketSnapshotCallback = CtpGatewayAdapter::DepthMarketSnapshotCallback;
     using BrokerTradingParamsSnapshotCallback =
@@ -102,6 +107,8 @@ class CTPTraderAdapter {
     bool ConfirmSettlement();
     bool PlaceOrder(const OrderIntent& intent);
     std::string PlaceOrderWithRef(const OrderIntent& intent);
+    SubmissionResult SubmitOrder(const OrderIntent& intent) override;
+    std::string GetDefaultAccountId() const override;
     bool CancelOrder(const std::string& client_order_id, const std::string& trace_id);
 
     std::future<std::pair<int, std::string>> LoginAsync(const std::string& broker_id,
@@ -137,10 +144,22 @@ class CTPTraderAdapter {
     int EnqueueTradeQuery();
 
     void RegisterOrderEventCallback(OrderEventCallback callback);
+    // Configure before connecting. The sink must outlive the adapter and its worker.
+    bool ConfigureDurableOrderEvents(IRegulatorySink* sink,
+                                     DurableOrderEventInbox::Consumer callback);
+    bool RecoverDurableOrderEvents(const std::string& wal_path, int timeout_ms = 5000);
+    bool DurableOrderEventsHealthy() const;
+    DurableOrderEventInbox::Stats GetDurableOrderEventStats() const;
+    void StopOrderEventDelivery();
+    // Final shutdown: stop all producers and join callbacks before their captures die.
+    void StopEventDelivery();
     void RegisterOrderSubmitMappingCallback(OrderSubmitMappingCallback callback);
     void RegisterOrderSubmitPrepareCallback(OrderSubmitPrepareCallback callback);
     void RegisterTradingAccountSnapshotCallback(TradingAccountSnapshotCallback callback);
     void RegisterInvestorPositionSnapshotCallback(InvestorPositionSnapshotCallback callback);
+    void RegisterInvestorPositionQueryCallback(InvestorPositionQueryCallback callback);
+    void RegisterInstrumentMetaQueryCallback(InstrumentMetaQueryCallback callback);
+    void RegisterInstrumentCommissionRateQueryCallback(InstrumentCommissionRateQueryCallback callback);
     void RegisterInstrumentMetaSnapshotCallback(InstrumentMetaSnapshotCallback callback);
     void RegisterDepthMarketSnapshotCallback(DepthMarketSnapshotCallback callback);
     void RegisterBrokerTradingParamsSnapshotCallback(BrokerTradingParamsSnapshotCallback callback);
@@ -189,11 +208,16 @@ class CTPTraderAdapter {
     CtpGatewayAdapter::ConnectionListenerToken connection_listener_token_{0};
     EventDispatcher dispatcher_;
     CallbackDispatcher callback_dispatcher_;
+    DurableOrderEventInbox durable_order_inbox_;
+    std::atomic<bool> durable_order_events_enabled_{false};
     OrderEventCallback user_order_event_callback_;
     OrderSubmitMappingCallback user_order_submit_mapping_callback_;
     OrderSubmitPrepareCallback user_order_submit_prepare_callback_;
     TradingAccountSnapshotCallback user_trading_account_callback_;
     InvestorPositionSnapshotCallback user_investor_position_callback_;
+    InvestorPositionQueryCallback user_investor_position_query_callback_;
+    InstrumentMetaQueryCallback user_instrument_meta_query_callback_;
+    InstrumentCommissionRateQueryCallback user_instrument_commission_rate_query_callback_;
     InstrumentMetaSnapshotCallback user_instrument_meta_callback_;
     DepthMarketSnapshotCallback user_depth_market_callback_;
     BrokerTradingParamsSnapshotCallback user_broker_trading_params_callback_;

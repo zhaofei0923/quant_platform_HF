@@ -89,6 +89,9 @@ class IAtomicStrategy {
     virtual void Init(const AtomicParams& params) = 0;
     virtual std::string GetId() const = 0;
     virtual void Reset() = 0;
+    // Explicit capability: unknown extensions remain blocked rather than losing risk state.
+    virtual bool ResetForMarketGap() { return false; }
+    virtual std::int32_t RequiredMarketWarmupBars() const { return 30; }
 };
 
 class ISubStrategy : public IAtomicStrategy {

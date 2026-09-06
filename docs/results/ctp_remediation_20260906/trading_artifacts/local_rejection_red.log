@@ -1,0 +1,22 @@
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+Note: Google Test filter = OrderManagerTest.ReplaysDurableLocalRejectionWithoutBrokerOrderRef
+[==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from OrderManagerTest
+[ RUN      ] OrderManagerTest.ReplaysDurableLocalRejectionWithoutBrokerOrderRef
+/home/kevin/quant_platform_HF/tests/unit/services/order_manager_test.cpp:330: Failure
+Value of: first.OnOrderEvent(event, &order, &error)
+  Actual: false
+Expected: true
+empty order event key
+
+[  FAILED  ] OrderManagerTest.ReplaysDurableLocalRejectionWithoutBrokerOrderRef (0 ms)
+[----------] 1 test from OrderManagerTest (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test suite ran. (0 ms total)
+[  PASSED  ] 0 tests.
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] OrderManagerTest.ReplaysDurableLocalRejectionWithoutBrokerOrderRef
+
+ 1 FAILED TEST

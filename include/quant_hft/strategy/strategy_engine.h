@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -21,6 +22,14 @@
 
 namespace quant_hft {
 
+enum class StrategyEnqueueStatus { kAccepted, kQueueFull, kStopped };
+
+struct StrategyEnqueueResult {
+    StrategyEnqueueStatus status{StrategyEnqueueStatus::kStopped};
+    std::uint64_t sequence{0};
+    explicit operator bool() const noexcept { return status == StrategyEnqueueStatus::kAccepted; }
+};
+
 struct StrategyContractIdentity {
     std::string product_id;
     std::uint64_t generation{0};
@@ -28,6 +37,14 @@ struct StrategyContractIdentity {
 
 struct StrategyEngineConfig {
     std::size_t queue_capacity{8192};
+    // Additional slots reserved for order/account/recovery/control events.
+    // Full admission fails explicitly; no already-accepted event is evicted.
+    std::size_t reliable_queue_capacity{1024};
+    std::function<void(StrategyEnqueueStatus)> enqueue_failure_sink;
+    // Runs only after the callback and strategy snapshot succeed. Returning false keeps
+    // the durable outbox pending and latches the engine until recovery.
+    std::function<bool(const OrderEvent&)> committed_event_sink;
+    std::function<void(const OrderEvent&)> committed_event_failure_sink;
     EpochNanos timer_interval_ns{100'000'000};  // 100ms
     std::shared_ptr<IStrategyStatePersistence> state_persistence;
     std::function<void(const StateSnapshot7D&, const std::string&, const CompositeAtomicTraceRow&)>
@@ -54,11 +71,23 @@ class StrategyEngine {
         std::string strategy_factory;
         StrategyContext context;
     };
+    struct MarketGapRecoveryReport {
+        bool success{false};
+        std::uint64_t generation{0};
+        MarketWarmupRequirements required_bars;
+        std::string error;
+    };
 
     struct Stats {
         std::uint64_t enqueued_events{0};
         std::uint64_t processed_events{0};
         std::uint64_t dropped_oldest_events{0};
+        std::uint64_t rejected_events{0};
+        std::uint64_t rejected_reliable_events{0};
+        std::uint64_t timer_callbacks{0};
+        std::uint64_t max_timer_lateness_ns{0};
+        std::uint64_t last_enqueued_sequence{0};
+        std::uint64_t last_processed_sequence{0};
         std::uint64_t broadcast_order_events{0};
         std::uint64_t unmatched_order_events{0};
         std::uint64_t strategy_callback_exceptions{0};
@@ -69,6 +98,16 @@ class StrategyEngine {
 
     using IntentSink = std::function<void(const SignalIntent&)>;
 
+    struct Health {
+        bool running{false};
+        bool overloaded{false};
+        bool callback_in_progress{false};
+        std::size_t queue_depth{0};
+        std::uint64_t worker_progress_age_ns{0};
+        std::uint64_t oldest_event_age_ns{0};
+        std::uint64_t pending_timer_lateness_ns{0};
+    };
+
     explicit StrategyEngine(StrategyEngineConfig config = {}, IntentSink intent_sink = nullptr);
     ~StrategyEngine();
 
@@ -77,12 +116,16 @@ class StrategyEngine {
     bool Start(const std::vector<StrategyLaunchSpec>& launch_specs, std::string* error);
     void Stop();
 
-    void EnqueueState(const StateSnapshot7D& state, const std::string& product_id = {},
-                      std::uint64_t contract_generation = 0, bool emit_intents = true);
-    void EnqueueMarketTick(const MarketSnapshot& snapshot, const std::string& product_id = {},
-                           std::uint64_t contract_generation = 0, bool emit_intents = true);
-    void EnqueueOrderEvent(const OrderEvent& event);
-    void EnqueueAccountSnapshot(const TradingAccountSnapshot& snapshot);
+    StrategyEnqueueResult EnqueueState(const StateSnapshot7D& state,
+                                       const std::string& product_id = {},
+                                       std::uint64_t contract_generation = 0,
+                                       bool emit_intents = true);
+    StrategyEnqueueResult EnqueueMarketTick(const MarketSnapshot& snapshot,
+                                            const std::string& product_id = {},
+                                            std::uint64_t contract_generation = 0,
+                                            bool emit_intents = true);
+    StrategyEnqueueResult EnqueueOrderEvent(const OrderEvent& event);
+    StrategyEnqueueResult EnqueueAccountSnapshot(const TradingAccountSnapshot& snapshot);
     // Enqueue an authoritative (broker-truth) signed net position snapshot so the
     // matching strategies reconcile their believed net positions. Routed through
     // the same FIFO queue as order events, which guarantees it is processed after
@@ -90,7 +133,7 @@ class StrategyEngine {
     // `authoritative_avg_open`, when populated, carries broker-derived average
     // open prices keyed by instrument so reconcile-sourced positions can recover
     // an entry price for risk logic (e.g. trailing stops).
-    void EnqueueReconcilePositions(
+    StrategyEnqueueResult EnqueueReconcilePositions(
         const std::string& account_id,
         const std::unordered_map<std::string, std::int32_t>& authoritative_net,
         const std::unordered_map<std::string, double>& authoritative_avg_open = {});
@@ -103,8 +146,15 @@ class StrategyEngine {
                                              std::int64_t timeout_ms);
     bool ApplyContractWarmupState(const StateSnapshot7D& state, const std::string& product_id,
                                   std::uint64_t contract_generation, std::int64_t timeout_ms);
+    MarketGapRecoveryReport ApplyMarketGapRecovery(
+        const MarketGapContext& context, const std::vector<StateSnapshot7D>& complete_states,
+        std::int64_t timeout_ms);
 
     Stats GetStats() const;
+    // Reads wall-clock health independently of queued strategy timers/callbacks.
+    Health GetHealth() const;
+    // Only the recovery owner may clear the failure latch after reconciliation.
+    bool AcknowledgeRecovery();
 
    private:
     enum class EventType {
@@ -115,6 +165,8 @@ class StrategyEngine {
         kReconcilePositions,
         kContractSwitch,
         kContractWarmupState,
+        kMarketGapRecovery,
+        kTimer,
     };
 
     struct EngineEvent {
@@ -129,10 +181,16 @@ class StrategyEngine {
         std::string product_id;
         std::uint64_t contract_generation{0};
         bool emit_intents{true};
+        std::uint64_t sequence{0};
+        std::chrono::steady_clock::time_point enqueued_at;
+        std::chrono::steady_clock::time_point timer_deadline;
+        std::shared_ptr<std::atomic<bool>> canceled;
         ContractSwitchContext contract_switch;
         std::vector<StateSnapshot7D> warmup_states;
         std::shared_ptr<std::promise<ContractSwitchReport>> contract_switch_promise;
         std::shared_ptr<std::promise<bool>> contract_warmup_promise;
+        MarketGapContext market_gap;
+        std::shared_ptr<std::promise<MarketGapRecoveryReport>> market_gap_promise;
     };
 
     struct StrategyEntry {
@@ -141,7 +199,9 @@ class StrategyEngine {
         std::unique_ptr<ILiveStrategy> strategy;
     };
 
-    void EnqueueEvent(EngineEvent event);
+    StrategyEnqueueResult EnqueueEvent(EngineEvent event);
+    void TimerLoop();
+    void CompleteCanceledControl(EngineEvent& event, const std::string& reason);
     void WorkerLoop();
     bool DispatchState(const StateSnapshot7D& state, const std::string& product_id,
                        std::uint64_t contract_generation, bool emit_intents);
@@ -156,6 +216,8 @@ class StrategyEngine {
     void DispatchTimer(EpochNanos now_ns);
     ContractSwitchReport DispatchContractSwitch(const ContractSwitchContext& context,
                                                 const std::vector<StateSnapshot7D>& warmup_states);
+    MarketGapRecoveryReport DispatchMarketGapRecovery(
+        const MarketGapContext& context, const std::vector<StateSnapshot7D>& complete_states);
     void MaybeSnapshotStates(EpochNanos now_ns);
     void SnapshotStates(EpochNanos now_ns);
     void MaybeCollectMetrics(EpochNanos now_ns);
@@ -174,10 +236,17 @@ class StrategyEngine {
     bool running_{false};
     bool stop_requested_{false};
     bool dispatching_{false};
+    bool overloaded_{false};
+    bool timer_pending_{false};
+    std::size_t ordinary_pending_{0};
+    std::size_t admitted_pending_{0};
+    std::chrono::steady_clock::time_point last_worker_progress_;
+    std::chrono::steady_clock::time_point pending_timer_deadline_;
     EpochNanos last_state_snapshot_ns_{0};
     EpochNanos last_metrics_collect_ns_{0};
 
     std::thread worker_thread_;
+    std::thread timer_thread_;
 };
 
 }  // namespace quant_hft

@@ -2,12 +2,19 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <system_error>
 #include <utility>
+
+#if !defined(_WIN32)
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 #include "quant_hft/core/simple_json.h"
 
@@ -193,6 +200,7 @@ bool FileStrategyStatePersistence::SaveStrategyState(const std::string& account_
                                                      const std::string& strategy_id,
                                                      const StrategyState& state,
                                                      std::string* error) {
+    if (error != nullptr) error->clear();
     if (account_id.empty() || strategy_id.empty()) {
         SetPersistenceError(error, "account_id and strategy_id must be non-empty");
         return false;
@@ -205,32 +213,71 @@ bool FileStrategyStatePersistence::SaveStrategyState(const std::string& account_
         return false;
     }
 
+#if defined(_WIN32)
+    SetPersistenceError(error, "durable file state requires the supported POSIX runtime");
+    return false;
+#else
     const std::filesystem::path path(BuildPath(account_id, strategy_id));
-    const std::filesystem::path tmp_path = path.string() + ".tmp";
-    {
-        std::ofstream output(tmp_path, std::ios::trunc);
-        if (!output.is_open()) {
-            SetPersistenceError(error, "failed to open state temp file: " + tmp_path.string());
-            return false;
-        }
-        output << SerializeFileStateJson(account_id, strategy_id, state);
-        if (!output.good()) {
-            SetPersistenceError(error, "failed to write state temp file: " + tmp_path.string());
-            return false;
-        }
-    }
-
-    std::filesystem::rename(tmp_path, path, ec);
-    if (ec) {
-        std::filesystem::remove(path, ec);
-        ec.clear();
-        std::filesystem::rename(tmp_path, path, ec);
-    }
-    if (ec) {
-        SetPersistenceError(error, "failed to replace state file: " + ec.message());
+    std::string temporary = path.string() + ".tmp.XXXXXX";
+    const std::string data = SerializeFileStateJson(account_id, strategy_id, state);
+    int fd = ::mkstemp(temporary.data());
+    if (fd < 0) {
+        SetPersistenceError(
+            error, "failed to create state temp file: " + std::string(std::strerror(errno)));
         return false;
     }
+    const auto fail = [&](const std::string& phase, int code) {
+        if (fd >= 0) {
+            ::close(fd);
+            fd = -1;
+        }
+        ::unlink(temporary.c_str());
+        SetPersistenceError(error, phase + ": " + std::strerror(code));
+        return false;
+    };
+    if (::fcntl(fd, F_SETFD, FD_CLOEXEC) < 0) return fail("state close-on-exec", errno);
+    std::size_t written = 0;
+    while (written < data.size()) {
+        const auto count = ::write(fd, data.data() + written, data.size() - written);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) return fail("state file write", count == 0 ? EIO : errno);
+        written += static_cast<std::size_t>(count);
+    }
+    const auto sync = [](int descriptor) {
+        int rc;
+        do {
+            rc = ::fsync(descriptor);
+        } while (rc < 0 && errno == EINTR);
+        return rc == 0;
+    };
+    if (!sync(fd)) return fail("state file fsync", errno);
+    const int close_result = ::close(fd);
+    fd = -1;
+    if (close_result < 0) return fail("state file close", errno);
+    // Atomic replacement in the same directory. A failed rename must never remove
+    // the previous committed snapshot. Unique temp files also isolate concurrent saves.
+    if (::rename(temporary.c_str(), path.c_str()) < 0) return fail("state file rename", errno);
+    auto directory = std::filesystem::absolute(path.parent_path(), ec);
+    if (ec) {
+        SetPersistenceError(error, "state directory resolution: " + ec.message());
+        return false;
+    }
+    // Synchronize ancestors too: create_directories may have created more than one
+    // directory, including on an earlier failed attempt. Success covers their links.
+    while (!directory.empty()) {
+        const int directory_fd = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        if (directory_fd < 0) return fail("state directory open", errno);
+        const bool synced = sync(directory_fd);
+        const int saved_error = errno;
+        const int closed = ::close(directory_fd);
+        if (!synced) return fail("state directory fsync", saved_error);
+        if (closed < 0) return fail("state directory close", errno);
+        const auto parent = directory.parent_path();
+        if (parent == directory) break;
+        directory = parent;
+    }
     return true;
+#endif
 }
 
 bool FileStrategyStatePersistence::LoadStrategyState(const std::string& account_id,

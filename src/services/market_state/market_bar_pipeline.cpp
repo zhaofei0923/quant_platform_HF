@@ -345,6 +345,18 @@ void MarketBarPipeline::ResetInstrument(const std::string& instrument_id,
         return;
     }
     std::lock_guard<std::mutex> lock(mutex_);
+    ResetInstrumentLocked(instrument_id, preserve_detector_state);
+}
+
+void MarketBarPipeline::MarkGap(const std::string& instrument_id) {
+    if (instrument_id.empty()) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    ResetInstrumentLocked(instrument_id, false);
+    recovery_by_instrument_[instrument_id] = RecoveryState{};
+}
+
+void MarketBarPipeline::ResetInstrumentLocked(const std::string& instrument_id,
+                                              bool preserve_detector_state) {
     bar_aggregator_.ResetInstrument(instrument_id);
     if (preserve_detector_state) {
         timeframe_fanout_.ResetInstrumentBuckets(instrument_id);
@@ -492,6 +504,10 @@ MarketBarPipelineResult MarketBarPipeline::ProcessOneMinuteBarsLocked(std::vecto
         if (!AppendCanonicalOneMinuteLocked(bar, &result)) {
             continue;
         }
+        if (config_.analysis_transform) {
+            bar = config_.analysis_transform->Apply(bar);
+            result.one_minute_bars.back() = bar;
+        }
         for (auto emission : timeframe_fanout_.OnOneMinuteBar(bar)) {
             if (recovery_replay) {
                 emission.bar.is_recovery_replay = true;
@@ -510,7 +526,7 @@ bool MarketBarPipeline::AppendCanonicalOneMinuteLocked(const BarSnapshot& bar,
     if (result == nullptr) {
         return false;
     }
-    const std::string key = BarKey(bar, 1);
+    const std::string key = BarKey(bar, 1) + "|source";
     const std::string fingerprint = BarFingerprint(bar);
     const auto it = canonical_bar_fingerprints_.find(key);
     if (it != canonical_bar_fingerprints_.end()) {
@@ -613,6 +629,15 @@ bool MarketBarPipeline::SaveStateLocked(PersistenceState* out, std::string* erro
     }
     out->clear();
     (*out)["version"] = "2";
+    (*out)["canonical_key_domain"] = "split_v1";
+    (*out)["analysis_transform.identity"] =
+        config_.analysis_transform ? config_.analysis_transform->Identity() : "raw_v1";
+    if (config_.analysis_transform) {
+        IBarAnalysisTransform::PersistenceState transform_state;
+        if (!config_.analysis_transform->SaveState(&transform_state, error)) return false;
+        for (const auto& [key, value] : transform_state)
+            (*out)["analysis_transform.state." + key] = value;
+    }
     (*out)["last_watermark_ns"] = std::to_string(last_watermark_ns_);
     for (const auto& [key, value] : aggregator_state) {
         (*out)["aggregator." + key] = value;
@@ -689,6 +714,25 @@ bool MarketBarPipeline::LoadStateLocked(const PersistenceState& state, std::stri
         SetError(error, "unsupported market bar pipeline checkpoint version");
         return false;
     }
+    const auto identity = state.find("analysis_transform.identity");
+    const std::string checkpoint_identity = identity == state.end() ? "raw_v1" : identity->second;
+    const std::string expected_identity =
+        config_.analysis_transform ? config_.analysis_transform->Identity() : "raw_v1";
+    if (checkpoint_identity != expected_identity) {
+        SetError(error, "market bar checkpoint analysis transform identity mismatch");
+        return false;
+    }
+    std::shared_ptr<IBarAnalysisTransform> validated_transform;
+    if (config_.analysis_transform) {
+        validated_transform = config_.analysis_transform->Clone();
+        IBarAnalysisTransform::PersistenceState transform_state;
+        for (const auto& [key, value] : state) {
+            const std::string prefix = "analysis_transform.state.";
+            if (key.rfind(prefix, 0) == 0) transform_state[key.substr(prefix.size())] = value;
+        }
+        if (!validated_transform || !validated_transform->LoadState(transform_state, error))
+            return false;
+    }
     EpochNanos loaded_watermark = 0;
     if (!ParseInteger(state, "last_watermark_ns", &loaded_watermark, error)) {
         return false;
@@ -731,7 +775,13 @@ bool MarketBarPipeline::LoadStateLocked(const PersistenceState& state, std::stri
         if (key == nullptr || key->empty() || fingerprint == nullptr) {
             return false;
         }
-        loaded_canonical[*key] = *fingerprint;
+        std::string restored_key = *key;
+        if (state.find("canonical_key_domain") == state.end()) {
+            const auto separator = restored_key.find('|');
+            if (separator != std::string::npos && restored_key.compare(separator, 3, "|1|") == 0)
+                restored_key += "|source";
+        }
+        loaded_canonical[restored_key] = *fingerprint;
     }
 
     std::unordered_map<std::string, RecoveryState> loaded_recovery;
@@ -830,6 +880,7 @@ bool MarketBarPipeline::LoadStateLocked(const PersistenceState& state, std::stri
         return false;
     }
 
+    config_.analysis_transform = std::move(validated_transform);
     last_watermark_ns_ = loaded_watermark;
     tick_fingerprint_seen_ts_ = std::move(loaded_tick_fingerprints);
     canonical_bar_fingerprints_ = std::move(loaded_canonical);

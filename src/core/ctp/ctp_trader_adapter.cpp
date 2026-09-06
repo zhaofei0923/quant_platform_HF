@@ -87,7 +87,8 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
                                    std::int64_t callback_critical_wait_ms)
     : gateway_(std::move(gateway)),
       dispatcher_(dispatcher_workers),
-      callback_dispatcher_(callback_queue_size, callback_critical_wait_ms) {
+      callback_dispatcher_(callback_queue_size, callback_critical_wait_ms),
+      durable_order_inbox_(callback_queue_size) {
     if (gateway_ == nullptr) {
         gateway_ = std::make_shared<CtpGatewayAdapter>(10);
     }
@@ -95,6 +96,10 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
     StartLoginTimeoutWorker();
 
     gateway_->RegisterOrderEventCallback([this](const OrderEvent& event) {
+        if (durable_order_events_enabled_.load(std::memory_order_acquire)) {
+            (void)durable_order_inbox_.Accept(event);
+            return;
+        }
         OrderEvent copied = event;
         if (!dispatcher_.Post(
                 [this, copied]() {
@@ -175,30 +180,88 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
             }
         });
 
-    gateway_->RegisterInvestorPositionSnapshotCallback(
-        [this](const std::vector<InvestorPositionSnapshot>& snapshots) {
-            auto copied = snapshots;
-            if (!dispatcher_.Post(
-                    [this, copied = std::move(copied)]() {
-                        InvestorPositionSnapshotCallback callback;
+    gateway_->RegisterInvestorPositionQueryCallback(
+        [this](const QueryResult<InvestorPositionSnapshot>& result) {
+            if (!callback_dispatcher_.Post(
+                    [this, result]() {
+                        if (result.metadata.generation != gateway_->GetQueryGeneration()) {
+                            return;
+                        }
+                        InvestorPositionSnapshotCallback legacy_callback;
+                        InvestorPositionQueryCallback callback;
                         {
                             std::lock_guard<std::mutex> lock(mutex_);
-                            callback = user_investor_position_callback_;
+                            callback = user_investor_position_query_callback_;
+                            legacy_callback = user_investor_position_callback_;
                         }
                         if (callback) {
-                            callback(copied);
+                            callback(result);
                         }
-                        investor_position_snapshot_generation_.fetch_add(1,
-                                                                         std::memory_order_release);
+                        if (result.metadata.complete && result.metadata.success &&
+                            result.metadata.full_account) {
+                            if (legacy_callback) {
+                                legacy_callback(result.rows);
+                            }
+                            investor_position_snapshot_generation_.fetch_add(
+                                1, std::memory_order_release);
+                        }
                     },
-                    EventPriority::kNormal)) {
-                const auto stats = dispatcher_.GetStats();
-                EmitStructuredLog(nullptr, "ctp_trader_adapter", "warn", "dispatcher_queue_full",
-                                  {{"priority", "normal"},
-                                   {"queue_depth", std::to_string(stats.pending_normal)},
-                                   {"dropped_total", std::to_string(stats.dropped_total)}});
+                    true)) {
+                std::function<void(bool)> breaker;
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    breaker = circuit_breaker_callback_;
+                }
+                EmitStructuredLog(nullptr, "ctp_trader_adapter", "error",
+                                  "position_query_delivery_failed",
+                                  {{"request_id", std::to_string(result.metadata.request_id)}});
+                if (breaker) {
+                    breaker(true);
+                }
             }
         });
+
+    gateway_->RegisterInstrumentMetaQueryCallback([this](const QueryResult<InstrumentMetaSnapshot>& result) {
+        if (!callback_dispatcher_.Post([this, result]() {
+                if (result.metadata.generation != gateway_->GetQueryGeneration()) return;
+                InstrumentMetaQueryCallback callback;
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    callback = user_instrument_meta_query_callback_;
+                }
+                if (callback) callback(result);
+            }, true)) {
+            std::function<void(bool)> breaker;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                breaker = circuit_breaker_callback_;
+            }
+            EmitStructuredLog(nullptr, "ctp_trader_adapter", "error", "accounting_query_delivery_failed",
+                {{"request_id", std::to_string(result.metadata.request_id)}});
+            if (breaker) breaker(true);
+        }
+    });
+
+    gateway_->RegisterInstrumentCommissionRateQueryCallback([this](const QueryResult<InstrumentCommissionRateSnapshot>& result) {
+        if (!callback_dispatcher_.Post([this, result]() {
+                if (result.metadata.generation != gateway_->GetQueryGeneration()) return;
+                InstrumentCommissionRateQueryCallback callback;
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    callback = user_instrument_commission_rate_query_callback_;
+                }
+                if (callback) callback(result);
+            }, true)) {
+            std::function<void(bool)> breaker;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                breaker = circuit_breaker_callback_;
+            }
+            EmitStructuredLog(nullptr, "ctp_trader_adapter", "error", "accounting_query_delivery_failed",
+                {{"request_id", std::to_string(result.metadata.request_id)}});
+            if (breaker) breaker(true);
+        }
+    });
 
     gateway_->RegisterInstrumentMetaSnapshotCallback(
         [this](const std::vector<InstrumentMetaSnapshot>& snapshots) {
@@ -351,7 +414,8 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
                 }
                 state_ = TraderSessionState::kDisconnected;
                 settlement_confirmed_ = false;
-                SetReconnectStageLocked("connection_lost");
+                if (should_reconnect || need_reconnect_.load(std::memory_order_acquire))
+                    SetReconnectStageLocked("connection_lost");
             }
             EmitStructuredLog(nullptr, "ctp_trader_adapter", "warn", "ctp_trader_connection_lost",
                               {{"previous_state", TraderSessionStateToString(previous_state)},
@@ -406,6 +470,27 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
 
     gateway_->RegisterQueryCompleteCallback(
         [this](int request_id, const std::string&, bool success) {
+            if (durable_order_events_enabled_.load(std::memory_order_acquire)) {
+                if (!durable_order_inbox_.PostBarrier([this, request_id, success]() {
+                        if (!dispatcher_.WaitUntilDrained(5'000)) {
+                            RejectPromise(request_id, "query snapshot callback drain timeout");
+                            return;
+                        }
+                        if (!callback_dispatcher_.Post(
+                                [this, request_id, success]() {
+                                    if (success)
+                                        ResolvePromise(request_id);
+                                    else
+                                        RejectPromise(request_id, "query failed");
+                                },
+                                true)) {
+                            RejectPromise(request_id, "query completion callback enqueue failed");
+                        }
+                    })) {
+                    RejectPromise(request_id, "durable query barrier enqueue failed");
+                }
+                return;
+            }
             if (!dispatcher_.WaitUntilDrained(5'000)) {
                 RejectPromise(request_id, "query callback drain timeout");
                 return;
@@ -447,6 +532,7 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
 CTPTraderAdapter::~CTPTraderAdapter() {
     Disconnect();
     UnregisterGatewayCallbacks();
+    durable_order_inbox_.Stop();
     StopLoginTimeoutWorker();
     callback_dispatcher_.Stop();
 }
@@ -466,9 +552,7 @@ bool CTPTraderAdapter::Connect(const MarketDataConnectConfig& config) {
     next_request_id_.store(kInitialAdapterRequestId, std::memory_order_relaxed);
     need_reconnect_.store(false, std::memory_order_relaxed);
     reconnect_attempts_.store(0, std::memory_order_relaxed);
-    {
-        RejectAllPromises("adapter reconnecting");
-    }
+    { RejectAllPromises("adapter reconnecting"); }
 
     dispatcher_.Start();
     if (!gateway_->IsHealthy() && !gateway_->Connect(config)) {
@@ -515,8 +599,9 @@ void CTPTraderAdapter::Disconnect() {
 }
 
 bool CTPTraderAdapter::IsReady() const {
+    if (!DurableOrderEventsHealthy()) return false;
     std::lock_guard<std::mutex> lock(mutex_);
-    return state_ == TraderSessionState::kReady;
+    return state_ == TraderSessionState::kReady && !need_reconnect_.load(std::memory_order_acquire);
 }
 
 TraderSessionState CTPTraderAdapter::SessionState() const {
@@ -533,8 +618,10 @@ CtpTraderReadinessSnapshot CTPTraderAdapter::GetReadinessSnapshot() const {
         snapshot.settlement_confirmed = settlement_confirmed_;
         snapshot.last_reconnect_stage = last_reconnect_stage_;
     }
+    snapshot.ready = snapshot.ready && DurableOrderEventsHealthy();
     snapshot.gateway_healthy = gateway_ != nullptr && gateway_->IsHealthy();
     snapshot.need_reconnect = need_reconnect_.load(std::memory_order_relaxed);
+    snapshot.ready = snapshot.ready && !snapshot.need_reconnect;
     snapshot.reconnect_attempts = reconnect_attempts_.load(std::memory_order_relaxed);
     snapshot.last_connect_diagnostic =
         gateway_ == nullptr ? "" : gateway_->GetLastConnectDiagnostic();
@@ -618,6 +705,15 @@ bool CTPTraderAdapter::PlaceOrder(const OrderIntent& intent) {
 }
 
 std::string CTPTraderAdapter::PlaceOrderWithRef(const OrderIntent& intent) {
+    const auto result = SubmitOrder(intent);
+    return result.outcome == SubmissionOutcome::kSubmitted ? result.client_order_id : "";
+}
+
+std::string CTPTraderAdapter::GetDefaultAccountId() const {
+    return GetLastUserSession().investor_id;
+}
+
+SubmissionResult CTPTraderAdapter::SubmitOrder(const OrderIntent& intent) {
     OrderIntent request = intent;
     TraderSessionState observed_state = TraderSessionState::kDisconnected;
     bool observed_settlement_confirmed = false;
@@ -626,7 +722,8 @@ std::string CTPTraderAdapter::PlaceOrderWithRef(const OrderIntent& intent) {
         std::lock_guard<std::mutex> lock(mutex_);
         observed_state = state_;
         observed_settlement_confirmed = settlement_confirmed_;
-        if (state_ != TraderSessionState::kReady) {
+        if (state_ != TraderSessionState::kReady ||
+            need_reconnect_.load(std::memory_order_acquire)) {
             reject_reason = "trader_not_ready";
         } else if (!settlement_confirmed_) {
             reject_reason = "settlement_unconfirmed";
@@ -641,14 +738,17 @@ std::string CTPTraderAdapter::PlaceOrderWithRef(const OrderIntent& intent) {
     if (!reject_reason.empty()) {
         EmitOrderSubmitRejectedDiagnostic(request, reject_reason, observed_state,
                                           observed_settlement_confirmed);
-        return "";
+        return {SubmissionOutcome::kNotSubmitted, request.client_order_id, reject_reason};
     }
     if (!gateway_->PlaceOrder(request)) {
         EmitOrderSubmitRejectedDiagnostic(request, "gateway_place_order_failed", observed_state,
                                           observed_settlement_confirmed);
-        return "";
+        // The bool gateway contract cannot prove that a transport-side failure
+        // happened before acceptance. Keep reservations until query reconciliation.
+        return {SubmissionOutcome::kUnknown, request.client_order_id,
+                "gateway submission outcome unknown"};
     }
-    return request.client_order_id;
+    return {SubmissionOutcome::kSubmitted, request.client_order_id, ""};
 }
 
 bool CTPTraderAdapter::CancelOrder(const std::string& client_order_id,
@@ -775,9 +875,11 @@ CtpRecoveryReport CTPTraderAdapter::RecoverOrdersAndTradesReport(int timeout_ms)
 }
 
 bool CTPTraderAdapter::EnqueueUserSessionQuery(int request_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (state_ < TraderSessionState::kLoggedIn) {
-        return false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (state_ < TraderSessionState::kLoggedIn) {
+            return false;
+        }
     }
     return gateway_->EnqueueUserSessionQuery(request_id);
 }
@@ -788,9 +890,11 @@ int CTPTraderAdapter::EnqueueUserSessionQuery() {
 }
 
 bool CTPTraderAdapter::EnqueueTradingAccountQuery(int request_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (state_ < TraderSessionState::kLoggedIn) {
-        return false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (state_ < TraderSessionState::kLoggedIn) {
+            return false;
+        }
     }
     return gateway_->EnqueueTradingAccountQuery(request_id);
 }
@@ -801,9 +905,11 @@ int CTPTraderAdapter::EnqueueTradingAccountQuery() {
 }
 
 bool CTPTraderAdapter::EnqueueInvestorPositionQuery(int request_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (state_ < TraderSessionState::kLoggedIn) {
-        return false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (state_ < TraderSessionState::kLoggedIn) {
+            return false;
+        }
     }
     return gateway_->EnqueueInvestorPositionQuery(request_id);
 }
@@ -818,9 +924,11 @@ bool CTPTraderAdapter::EnqueueInstrumentQuery(int request_id) {
 }
 
 bool CTPTraderAdapter::EnqueueInstrumentQuery(int request_id, const std::string& instrument_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (state_ < TraderSessionState::kLoggedIn) {
-        return false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (state_ < TraderSessionState::kLoggedIn) {
+            return false;
+        }
     }
     return gateway_->EnqueueInstrumentQuery(request_id, instrument_id);
 }
@@ -836,9 +944,11 @@ int CTPTraderAdapter::EnqueueInstrumentQuery(const std::string& instrument_id) {
 }
 
 bool CTPTraderAdapter::EnqueueDepthMarketDataQuery(int request_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (state_ < TraderSessionState::kLoggedIn) {
-        return false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (state_ < TraderSessionState::kLoggedIn) {
+            return false;
+        }
     }
     return gateway_->EnqueueDepthMarketDataQuery(request_id);
 }
@@ -850,9 +960,11 @@ int CTPTraderAdapter::EnqueueDepthMarketDataQuery() {
 
 bool CTPTraderAdapter::EnqueueInstrumentMarginRateQuery(int request_id,
                                                         const std::string& instrument_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (state_ < TraderSessionState::kLoggedIn) {
-        return false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (state_ < TraderSessionState::kLoggedIn) {
+            return false;
+        }
     }
     return gateway_->EnqueueInstrumentMarginRateQuery(request_id, instrument_id);
 }
@@ -864,9 +976,11 @@ int CTPTraderAdapter::EnqueueInstrumentMarginRateQuery(const std::string& instru
 
 bool CTPTraderAdapter::EnqueueInstrumentCommissionRateQuery(int request_id,
                                                             const std::string& instrument_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (state_ < TraderSessionState::kLoggedIn) {
-        return false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (state_ < TraderSessionState::kLoggedIn) {
+            return false;
+        }
     }
     return gateway_->EnqueueInstrumentCommissionRateQuery(request_id, instrument_id);
 }
@@ -878,9 +992,11 @@ int CTPTraderAdapter::EnqueueInstrumentCommissionRateQuery(const std::string& in
 
 bool CTPTraderAdapter::EnqueueInstrumentOrderCommRateQuery(int request_id,
                                                            const std::string& instrument_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (state_ < TraderSessionState::kLoggedIn) {
-        return false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (state_ < TraderSessionState::kLoggedIn) {
+            return false;
+        }
     }
     return gateway_->EnqueueInstrumentOrderCommRateQuery(request_id, instrument_id);
 }
@@ -891,9 +1007,11 @@ int CTPTraderAdapter::EnqueueInstrumentOrderCommRateQuery(const std::string& ins
 }
 
 bool CTPTraderAdapter::EnqueueBrokerTradingParamsQuery(int request_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (state_ < TraderSessionState::kLoggedIn) {
-        return false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (state_ < TraderSessionState::kLoggedIn) {
+            return false;
+        }
     }
     return gateway_->EnqueueBrokerTradingParamsQuery(request_id);
 }
@@ -904,9 +1022,11 @@ int CTPTraderAdapter::EnqueueBrokerTradingParamsQuery() {
 }
 
 bool CTPTraderAdapter::EnqueueOrderQuery(int request_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (state_ < TraderSessionState::kLoggedIn) {
-        return false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (state_ < TraderSessionState::kLoggedIn) {
+            return false;
+        }
     }
     return gateway_->EnqueueOrderQuery(request_id);
 }
@@ -917,9 +1037,11 @@ int CTPTraderAdapter::EnqueueOrderQuery() {
 }
 
 bool CTPTraderAdapter::EnqueueTradeQuery(int request_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (state_ < TraderSessionState::kLoggedIn) {
-        return false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (state_ < TraderSessionState::kLoggedIn) {
+            return false;
+        }
     }
     return gateway_->EnqueueTradeQuery(request_id);
 }
@@ -927,6 +1049,54 @@ bool CTPTraderAdapter::EnqueueTradeQuery(int request_id) {
 int CTPTraderAdapter::EnqueueTradeQuery() {
     const int request_id = AllocateRequestId();
     return EnqueueTradeQuery(request_id) ? request_id : -1;
+}
+
+bool CTPTraderAdapter::ConfigureDurableOrderEvents(IRegulatorySink* sink,
+                                                   DurableOrderEventInbox::Consumer callback) {
+    if (!durable_order_inbox_.Configure(sink, std::move(callback),
+                                        [this]() {
+                                            std::function<void(bool)> breaker;
+                                            {
+                                                std::lock_guard<std::mutex> lock(mutex_);
+                                                breaker = circuit_breaker_callback_;
+                                            }
+                                            if (breaker) breaker(true);
+                                        }) ||
+        !durable_order_inbox_.Start()) {
+        return false;
+    }
+    durable_order_events_enabled_.store(true, std::memory_order_release);
+    return true;
+}
+
+bool CTPTraderAdapter::RecoverDurableOrderEvents(const std::string& wal_path, int timeout_ms) {
+    return durable_order_events_enabled_.load(std::memory_order_acquire) &&
+           durable_order_inbox_.Recover(wal_path, timeout_ms);
+}
+
+bool CTPTraderAdapter::DurableOrderEventsHealthy() const {
+    return !durable_order_events_enabled_.load(std::memory_order_acquire) ||
+           durable_order_inbox_.Healthy();
+}
+
+DurableOrderEventInbox::Stats CTPTraderAdapter::GetDurableOrderEventStats() const {
+    return durable_order_inbox_.GetStats();
+}
+
+void CTPTraderAdapter::StopEventDelivery() {
+    Disconnect();
+    UnregisterGatewayCallbacks();
+    StopLoginTimeoutWorker();
+    dispatcher_.Stop();
+    callback_dispatcher_.Stop();
+    StopOrderEventDelivery();
+}
+
+void CTPTraderAdapter::StopOrderEventDelivery() {
+    durable_order_inbox_.Stop();
+    // Keep durable mode enabled: a late gateway callback must not fall back to the legacy queue.
+    std::lock_guard<std::mutex> lock(mutex_);
+    user_order_event_callback_ = nullptr;
 }
 
 void CTPTraderAdapter::RegisterOrderEventCallback(OrderEventCallback callback) {
@@ -954,6 +1124,22 @@ void CTPTraderAdapter::RegisterInvestorPositionSnapshotCallback(
     InvestorPositionSnapshotCallback callback) {
     std::lock_guard<std::mutex> lock(mutex_);
     user_investor_position_callback_ = std::move(callback);
+}
+
+void CTPTraderAdapter::RegisterInvestorPositionQueryCallback(
+    InvestorPositionQueryCallback callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    user_investor_position_query_callback_ = std::move(callback);
+}
+
+void CTPTraderAdapter::RegisterInstrumentMetaQueryCallback(InstrumentMetaQueryCallback callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    user_instrument_meta_query_callback_ = std::move(callback);
+}
+
+void CTPTraderAdapter::RegisterInstrumentCommissionRateQueryCallback(InstrumentCommissionRateQueryCallback callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    user_instrument_commission_rate_query_callback_ = std::move(callback);
 }
 
 void CTPTraderAdapter::RegisterInstrumentMetaSnapshotCallback(
@@ -1429,19 +1615,13 @@ void CTPTraderAdapter::StopLoginTimeoutWorker() {
 void CTPTraderAdapter::LoginTimeoutWorkerLoop() {
     std::unique_lock<std::mutex> lock(login_timeout_mutex_);
     while (!login_timeout_stop_) {
-        if (login_deadlines_.empty()) {
-            login_timeout_cv_.wait(
-                lock, [this]() { return login_timeout_stop_ || !login_deadlines_.empty(); });
-            continue;
+        login_timeout_cv_.wait_for(lock, std::chrono::milliseconds(10));
+        if (login_timeout_stop_) {
+            break;
         }
-        auto next = std::min_element(login_deadlines_.begin(), login_deadlines_.end(),
-                                     [](const auto& lhs, const auto& rhs) {
-                                         return lhs.second.deadline < rhs.second.deadline;
-                                     });
-        const auto deadline = next->second.deadline;
-        if (login_timeout_cv_.wait_until(lock, deadline) != std::cv_status::timeout) {
-            continue;
-        }
+        lock.unlock();
+        gateway_->PollQueries();
+        lock.lock();
 
         const auto now = std::chrono::steady_clock::now();
         std::vector<std::pair<int, std::uint64_t>> expired;
@@ -1491,6 +1671,9 @@ void CTPTraderAdapter::UnregisterGatewayCallbacks() {
     gateway_->RegisterOrderSubmitPrepareCallback(nullptr);
     gateway_->RegisterTradingAccountSnapshotCallback(nullptr);
     gateway_->RegisterInvestorPositionSnapshotCallback(nullptr);
+    gateway_->RegisterInvestorPositionQueryCallback(nullptr);
+    gateway_->RegisterInstrumentMetaQueryCallback(nullptr);
+    gateway_->RegisterInstrumentCommissionRateQueryCallback(nullptr);
     gateway_->RegisterInstrumentMetaSnapshotCallback(nullptr);
     gateway_->RegisterDepthMarketSnapshotCallback(nullptr);
     gateway_->RegisterBrokerTradingParamsSnapshotCallback(nullptr);

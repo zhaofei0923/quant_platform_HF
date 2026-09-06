@@ -43,6 +43,11 @@ class CTPMdAdapter {
     bool IsReady() const;
     MdSessionState SessionState() const;
     void RegisterTickCallback(TickCallback callback);
+    void RegisterGapCallback(
+        std::function<void(const MarketSnapshot&, const std::string&)> callback);
+    // Shared normalized input boundary for CTP and deterministic simulated market delivery.
+    bool SubmitSnapshot(const MarketSnapshot& snapshot);
+    void StopEventDelivery();
     void UpdateInstrumentMetadata(const std::vector<InstrumentMetaSnapshot>& snapshots);
     std::string GetLastConnectDiagnostic() const;
 
@@ -56,6 +61,7 @@ class CTPMdAdapter {
     EventDispatcher dispatcher_;
     CallbackDispatcher callback_dispatcher_;
     TickCallback user_tick_callback_;
+    std::function<void(const MarketSnapshot&, const std::string&)> gap_callback_;
     MdSessionState state_{MdSessionState::kDisconnected};
 };
 

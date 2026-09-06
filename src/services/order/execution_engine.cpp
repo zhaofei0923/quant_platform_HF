@@ -34,7 +34,7 @@ std::shared_ptr<MonitoringHistogram> OrderLatencyHistogram() {
 }  // namespace
 
 ExecutionEngine::ExecutionEngine(
-    std::shared_ptr<CTPTraderAdapter> adapter, std::shared_ptr<FlowController> flow_controller,
+    std::shared_ptr<IExecutionGateway> adapter, std::shared_ptr<FlowController> flow_controller,
     std::shared_ptr<CircuitBreakerManager> breaker_manager,
     std::shared_ptr<OrderManager> order_manager, std::shared_ptr<PositionManager> position_manager,
     std::shared_ptr<ITradingDomainStore> domain_store, int acquire_timeout_ms, int cancel_retry_max,
@@ -64,6 +64,22 @@ std::future<OrderResult> ExecutionEngine::PlaceOrderAsync(const OrderIntent& int
             result.message = "order intent account_id/strategy_id required";
             return result;
         }
+        std::lock_guard<std::mutex> admission_lock(admission_mutex_);
+        if (max_active_orders_ > 0) {
+            if (order_manager_ == nullptr) {
+                result.message = "active order limit requires order manager";
+                return result;
+            }
+            const auto active = order_manager_->GetActiveOrders();
+            const auto count = std::count_if(active.begin(), active.end(), [&](const Order& order) {
+                return order.account_id == intent.account_id;
+            });
+            if (count >= max_active_orders_) {
+                RiskRejectCounter()->Increment();
+                result.message = "risk reject: max active orders";
+                return result;
+            }
+        }
         if (risk_manager_ != nullptr) {
             const auto context = BuildOrderContext(intent);
             const auto risk_result = risk_manager_->CheckOrder(intent, context);
@@ -89,10 +105,41 @@ std::future<OrderResult> ExecutionEngine::PlaceOrderAsync(const OrderIntent& int
             return result;
         }
 
-        const auto order_ref = adapter_->PlaceOrderWithRef(intent);
-        if (order_ref.empty()) {
+        if (order_manager_ != nullptr && !intent.client_order_id.empty()) {
+            if (order_manager_->GetOrder(intent.client_order_id).has_value()) {
+                result.message = "client order identity already exists";
+                return result;
+            }
+            (void)order_manager_->CreateOrder(intent);
+        }
+        SubmissionResult submission;
+        try {
+            submission = adapter_->SubmitOrder(intent);
+        } catch (const std::exception& e) {
+            submission = {SubmissionOutcome::kUnknown, intent.client_order_id, e.what()};
+        }
+        result.submission_outcome = submission.outcome;
+        if (!submission.client_order_id.empty())
+            result.client_order_id = submission.client_order_id;
+        const auto& order_ref = submission.client_order_id;
+        if (submission.outcome != SubmissionOutcome::kSubmitted) {
+            if (submission.outcome == SubmissionOutcome::kNotSubmitted &&
+                order_manager_ != nullptr && !intent.client_order_id.empty()) {
+                OrderEvent rejected;
+                rejected.account_id = intent.account_id;
+                rejected.strategy_id = intent.strategy_id;
+                rejected.client_order_id = rejected.order_ref = intent.client_order_id;
+                rejected.instrument_id = intent.instrument_id;
+                rejected.total_volume = intent.volume;
+                rejected.status = OrderStatus::kRejected;
+                rejected.event_source = "LocalSubmitRejected";
+                rejected.ts_ns = NowEpochNanos();
+                std::string ignored;
+                order_manager_->OnOrderEvent(rejected, nullptr, &ignored);
+            }
             RecordBreakerFailure(intent.strategy_id, intent.account_id);
-            result.message = "ctp place order failed";
+            result.message =
+                submission.error.empty() ? "order submission failed" : submission.error;
             return result;
         }
 
@@ -130,9 +177,8 @@ std::future<bool> ExecutionEngine::CancelOrderAsync(const std::string& client_or
                 return false;
             }
         }
-        const auto account_id = default_account_id_.empty()
-                                    ? adapter_->GetLastUserSession().investor_id
-                                    : default_account_id_;
+        const auto account_id =
+            default_account_id_.empty() ? adapter_->GetDefaultAccountId() : default_account_id_;
         if (!AllowByBreaker(default_strategy_id_, account_id)) {
             return false;
         }
@@ -199,9 +245,8 @@ std::future<TradingAccountSnapshot> ExecutionEngine::QueryTradingAccountAsync() 
         if (adapter_ == nullptr || flow_controller_ == nullptr) {
             throw std::runtime_error("query dependencies are null");
         }
-        const auto account_id = default_account_id_.empty()
-                                    ? adapter_->GetLastUserSession().investor_id
-                                    : default_account_id_;
+        const auto account_id =
+            default_account_id_.empty() ? adapter_->GetDefaultAccountId() : default_account_id_;
         if (!AcquireFlowPermit(Operation{
                 account_id,
                 OperationType::kQuery,
@@ -231,9 +276,8 @@ std::future<std::vector<InvestorPositionSnapshot>> ExecutionEngine::QueryInvesto
         if (adapter_ == nullptr || flow_controller_ == nullptr) {
             throw std::runtime_error("query dependencies are null");
         }
-        const auto account_id = default_account_id_.empty()
-                                    ? adapter_->GetLastUserSession().investor_id
-                                    : default_account_id_;
+        const auto account_id =
+            default_account_id_.empty() ? adapter_->GetDefaultAccountId() : default_account_id_;
         if (!AcquireFlowPermit(Operation{
                 account_id,
                 OperationType::kQuery,
@@ -259,6 +303,11 @@ std::future<std::vector<InvestorPositionSnapshot>> ExecutionEngine::QueryInvesto
 
 void ExecutionEngine::RegisterOrderCallback(OrderCallback cb) { order_callback_ = std::move(cb); }
 
+void ExecutionEngine::SetMaxActiveOrders(int maximum) {
+    std::lock_guard<std::mutex> admission_lock(admission_mutex_);
+    max_active_orders_ = std::max(0, maximum);
+}
+
 void ExecutionEngine::SetRiskManager(std::shared_ptr<RiskManager> risk_manager) {
     risk_manager_ = std::move(risk_manager);
 }
@@ -275,31 +324,73 @@ std::string ExecutionEngine::GetTradingDay() const {
 }
 
 void ExecutionEngine::HandleOrderEvent(const OrderEvent& event) {
-    if (order_manager_ == nullptr) {
-        return;
+    (void)ProcessOrderEvent(event, {}, true);
+}
+
+TradeApplyResult ExecutionEngine::HandleOrderEventWithReceipt(const OrderEvent& event,
+                                                              const WalReceipt& receipt) {
+    return ProcessOrderEvent(event, receipt, false);
+}
+
+void ExecutionEngine::SetAccountingPolicyResolver(AccountingPolicyResolver resolver) {
+    accounting_policy_resolver_ = std::move(resolver);
+}
+
+TradeApplyResult ExecutionEngine::ProcessOrderEvent(const OrderEvent& event,
+                                                    const WalReceipt& receipt,
+                                                    bool allow_ephemeral) {
+    TradeApplyResult result;
+    if (order_manager_ == nullptr || domain_store_ == nullptr) {
+        result.error = "order manager and atomic trading domain store required";
+        return result;
+    }
+    if (!allow_ephemeral && (!receipt.durable || receipt.stream_id.empty())) {
+        result.error = "durable WAL receipt required";
+        return result;
     }
     Order order;
-    std::string ignored_error;
-    if (!order_manager_->OnOrderEvent(event, &order, &ignored_error)) {
-        return;
-    }
+    std::string lifecycle_error;
+    bool transition_rejected = false;
+    const bool lifecycle_applied =
+        order_manager_->OnOrderEvent(event, &order, &lifecycle_error, &transition_rejected);
 
     if (!event.trade_id.empty() || event.event_source == "OnRtnTrade" ||
         event.event_source == "OnRspQryTrade") {
-        Trade trade;
-        if (order_manager_->OnTradeEvent(event, &trade, &ignored_error)) {
-            if (position_manager_ != nullptr) {
-                (void)position_manager_->UpdatePosition(trade, &ignored_error);
-            }
-            if (risk_manager_ != nullptr) {
-                risk_manager_->OnTrade(trade);
-            }
+        const Trade trade = order_manager_->BuildTrade(event);
+        if (!allow_ephemeral && event.last_trade_volume <= 0) {
+            result.error = "actual per-fill volume required for durable trade";
+            return result;
         }
+        TradeApplyRequest request{trade, receipt, allow_ephemeral,
+                                  event.event_source == "OnRspQryTrade"};
+        if (accounting_policy_resolver_)
+            request.accounting_policy = accounting_policy_resolver_(trade);
+        std::string error;
+        if (!domain_store_->ApplyTrade(request, &result, &error)) {
+            result.error = error;
+            return result;
+        }
+        if (result.status == TradeApplyStatus::kConflict ||
+            result.status == TradeApplyStatus::kFailed)
+            return result;
+        if (position_manager_ != nullptr &&
+            !position_manager_->DrainOutbox(trade.account_id, &error))
+            result.error = "committed trade has pending position projection: " + error;
+        if (!lifecycle_applied && !transition_rejected)
+            result.error = "committed trade has pending order projection: " + lifecycle_error;
+    } else {
+        if (!lifecycle_applied && !transition_rejected) {
+            result.error = lifecycle_error;
+            return result;
+        }
+        if (!allow_ephemeral && !domain_store_->AcknowledgeReceipt(receipt, &result.error))
+            return result;
+        result.status = TradeApplyStatus::kDuplicate;
     }
-
-    if (order_callback_) {
+    if (lifecycle_applied && order_callback_) {
         order_callback_(order);
     }
+    return result;
 }
 
 std::vector<Order> ExecutionEngine::GetActiveOrders() const {

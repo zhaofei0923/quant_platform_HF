@@ -1105,4 +1105,35 @@ TEST(CtpConfigLoaderTest, RejectsInvalidMarketStateDetectorByProductConfig) {
 }
 
 }  // namespace
+
+TEST(CtpConfigLoaderTest, InvestorIdentityDefaultsAccountWithoutUsingTheLoginOperator) {
+    const auto path = WriteTempConfig(
+        "ctp:\n  environment: sim\n  enable_real_api: false\n"
+        "  is_production_mode: false\n  broker_id: b\n"
+        "  user_id: operator\n  investor_id: investor\n  password: fixture-only\n"
+        "  market_front: tcp://127.0.0.1:40011\n"
+        "  trader_front: tcp://127.0.0.1:40001\n");
+    CtpFileConfig config;
+    std::string error;
+    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(path.string(), &config, &error)) << error;
+    EXPECT_EQ(config.runtime.user_id, "operator");
+    EXPECT_EQ(config.runtime.investor_id, "investor");
+    EXPECT_EQ(config.account_id, "investor");
+    std::filesystem::remove(path);
+}
+
+TEST(CtpConfigLoaderTest, RealApiDoesNotInferInvestorFromTheLoginOperator) {
+    const auto path = WriteTempConfig(
+        "ctp:\n  environment: sim\n  enable_real_api: true\n"
+        "  is_production_mode: false\n  broker_id: b\n"
+        "  user_id: operator\n  password: fixture-only\n"
+        "  market_front: tcp://127.0.0.1:40011\n"
+        "  trader_front: tcp://127.0.0.1:40001\n");
+    CtpFileConfig config;
+    std::string error;
+    EXPECT_FALSE(CtpConfigLoader::LoadFromYaml(path.string(), &config, &error));
+    EXPECT_NE(error.find("investor_id"), std::string::npos) << error;
+    std::filesystem::remove(path);
+}
+
 }  // namespace quant_hft

@@ -4,6 +4,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -552,7 +553,8 @@ class DefaultRiskManager final : public RiskManager {
         const int capacity = std::max(1, static_cast<int>(std::ceil(rate)));
         auto it = limiters.find(key);
         if (it == limiters.end()) {
-            auto inserted = limiters.emplace(key, std::make_shared<TokenBucket>(rate, capacity));
+            auto inserted = limiters.emplace(
+                key, std::make_shared<TokenBucket>(rate, capacity, config_.monotonic_now));
             it = inserted.first;
         } else {
             it->second->SetRate(rate);
@@ -641,9 +643,11 @@ class DefaultRiskManager final : public RiskManager {
             namespace fs = std::filesystem;
             const int sleep_seconds = std::max(1, reload_config.reload_interval_seconds);
             while (!stop_reload_.load()) {
-                std::this_thread::sleep_for(std::chrono::seconds(sleep_seconds));
-                if (stop_reload_.load()) {
-                    break;
+                {
+                    std::unique_lock<std::mutex> wait_lock(reload_wait_mutex_);
+                    if (reload_wait_cv_.wait_for(wait_lock, std::chrono::seconds(sleep_seconds),
+                                                 [this] { return stop_reload_.load(); }))
+                        break;
                 }
                 if (!fs::exists(rule_file_path)) {
                     continue;
@@ -666,7 +670,11 @@ class DefaultRiskManager final : public RiskManager {
     }
 
     void StopReloadThread() {
-        stop_reload_.store(true);
+        {
+            std::lock_guard<std::mutex> wait_lock(reload_wait_mutex_);
+            stop_reload_.store(true);
+        }
+        reload_wait_cv_.notify_all();
         if (reload_thread_.joinable()) {
             reload_thread_.join();
         }
@@ -696,6 +704,8 @@ class DefaultRiskManager final : public RiskManager {
     double daily_commission_{0.0};
     std::unordered_map<std::string, int> daily_cancel_count_by_key_;
 
+    std::mutex reload_wait_mutex_;
+    std::condition_variable reload_wait_cv_;
     std::atomic<bool> stop_reload_{false};
     std::thread reload_thread_;
     std::filesystem::file_time_type last_rule_file_write_time_{};

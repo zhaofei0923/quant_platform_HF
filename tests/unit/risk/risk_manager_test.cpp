@@ -6,6 +6,7 @@
 #include <fstream>
 #include <memory>
 #include <string>
+#include <thread>
 #include <unordered_set>
 #include <vector>
 
@@ -401,6 +402,43 @@ TEST(RiskManagerTest, InitializeStopsExistingDynamicReloadThread) {
     EXPECT_FALSE(risk_manager->GetActiveRules().empty());
 
     fs::remove(rule_path);
+}
+
+TEST(RiskManagerTest, VirtualClockRefillsTheSameRateLimiterWithoutWallClockSleep) {
+    auto now = std::chrono::steady_clock::time_point{};
+    auto manager = CreateRiskManager(nullptr, nullptr);
+    RiskManagerConfig config;
+    config.rule_file_path.clear();
+    config.enable_dynamic_reload = false;
+    config.default_max_order_rate = 2;
+    config.default_max_cancel_rate = 0;
+    config.monotonic_now = [&] { return now; };
+    ASSERT_TRUE(manager->Initialize(config));
+    auto intent = BuildIntent("clock", Side::kBuy, 4000, 1);
+    EXPECT_TRUE(manager->CheckOrder(intent, BuildContext()).allowed);
+    EXPECT_TRUE(manager->CheckOrder(intent, BuildContext()).allowed);
+    EXPECT_FALSE(manager->CheckOrder(intent, BuildContext()).allowed);
+    now += std::chrono::milliseconds(500);
+    EXPECT_TRUE(manager->CheckOrder(intent, BuildContext()).allowed);
+    EXPECT_FALSE(manager->CheckOrder(intent, BuildContext()).allowed);
+}
+
+TEST(RiskManagerTest, DestructionInterruptsLongReloadInterval) {
+    const auto path =
+        std::filesystem::temp_directory_path() /
+        ("quant_hft_risk_stop_" +
+         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".yaml");
+    std::ofstream(path) << "global:\n  max_order_volume: 100\n";
+    auto manager = CreateRiskManager(nullptr, nullptr);
+    RiskManagerConfig config;
+    config.rule_file_path = path.string();
+    config.reload_interval_seconds = 60;
+    ASSERT_TRUE(manager->Initialize(config));
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const auto start = std::chrono::steady_clock::now();
+    manager.reset();
+    EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::seconds(1));
+    std::filesystem::remove(path);
 }
 
 }  // namespace

@@ -1,0 +1,48 @@
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+Note: Google Test filter = ExecutionEngineTest.ActiveOrderLimitIncludesUnknownAndSerializesConcurrentAdmission
+[==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from ExecutionEngineTest
+[ RUN      ] ExecutionEngineTest.ActiveOrderLimitIncludesUnknownAndSerializesConcurrentAdmission
+/home/kevin/quant_platform_HF/tests/unit/services/execution_engine_test.cpp:290: Failure
+Expected: (a.submission_outcome) != (b.submission_outcome), actual: 4-byte object <01-00 00-00> vs 4-byte object <01-00 00-00>
+
+/home/kevin/quant_platform_HF/tests/unit/services/execution_engine_test.cpp:291: Failure
+Expected equality of these values:
+  orders->GetActiveOrders().size()
+    Which is: 2
+  1U
+    Which is: 1
+
+/home/kevin/quant_platform_HF/tests/unit/services/execution_engine_test.cpp:292: Failure
+Expected equality of these values:
+  (a.submission_outcome == SubmissionOutcome::kNotSubmitted ? a : b).message
+    Which is: "submitted"
+  "risk reject: max active orders"
+
+/home/kevin/quant_platform_HF/tests/unit/services/execution_engine_test.cpp:290: Failure
+Expected: (a.submission_outcome) != (b.submission_outcome), actual: 4-byte object <02-00 00-00> vs 4-byte object <02-00 00-00>
+
+/home/kevin/quant_platform_HF/tests/unit/services/execution_engine_test.cpp:291: Failure
+Expected equality of these values:
+  orders->GetActiveOrders().size()
+    Which is: 2
+  1U
+    Which is: 1
+
+/home/kevin/quant_platform_HF/tests/unit/services/execution_engine_test.cpp:292: Failure
+Expected equality of these values:
+  (a.submission_outcome == SubmissionOutcome::kNotSubmitted ? a : b).message
+    Which is: "injected submission result"
+  "risk reject: max active orders"
+
+[  FAILED  ] ExecutionEngineTest.ActiveOrderLimitIncludesUnknownAndSerializesConcurrentAdmission (0 ms)
+[----------] 1 test from ExecutionEngineTest (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test suite ran. (0 ms total)
+[  PASSED  ] 0 tests.
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] ExecutionEngineTest.ActiveOrderLimitIncludesUnknownAndSerializesConcurrentAdmission
+
+ 1 FAILED TEST

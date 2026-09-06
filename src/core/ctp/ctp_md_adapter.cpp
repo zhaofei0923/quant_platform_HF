@@ -34,36 +34,33 @@ void CTPMdAdapter::InitializeGatewayCallbacks() {
         std::lock_guard<std::mutex> lock(mutex_);
         state_ = healthy ? MdSessionState::kReady : MdSessionState::kDisconnected;
     });
-    gateway_->RegisterMarketDataCallback([this](const MarketSnapshot& snapshot) {
-        MarketSnapshot copied = snapshot;
-        if (!dispatcher_.Post(
-                [this, copied]() {
-                    TickCallback callback;
-                    {
-                        std::lock_guard<std::mutex> lock(mutex_);
-                        callback = user_tick_callback_;
-                    }
-                    if (!callback) {
-                        return;
-                    }
-                    if (!callback_dispatcher_.Post([callback, copied]() { callback(copied); },
-                                                   false)) {
-                        const auto stats = callback_dispatcher_.GetStats();
-                        EmitStructuredLog(nullptr, "ctp_md_adapter", "warn", "callback_dropped",
-                                          {{"is_critical", "false"},
-                                           {"queue_depth", std::to_string(stats.pending)},
-                                           {"queue_capacity", std::to_string(stats.max_queue_size)},
-                                           {"dropped_total", std::to_string(stats.dropped)}});
-                    }
-                },
-                EventPriority::kHigh)) {
-            const auto stats = dispatcher_.GetStats();
-            EmitStructuredLog(nullptr, "ctp_md_adapter", "error", "dispatcher_queue_full",
-                              {{"priority", "high"},
-                               {"queue_depth", std::to_string(stats.pending_high)},
-                               {"dropped_total", std::to_string(stats.dropped_total)}});
-        }
-    });
+    gateway_->RegisterMarketDataCallback(
+        [this](const MarketSnapshot& snapshot) { (void)SubmitSnapshot(snapshot); });
+}
+
+bool CTPMdAdapter::SubmitSnapshot(const MarketSnapshot& snapshot) {
+    TickCallback callback;
+    std::function<void(const MarketSnapshot&, const std::string&)> gap;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        callback = user_tick_callback_;
+        gap = gap_callback_;
+    }
+    if (!callback) return false;
+    if (callback_dispatcher_.Post(
+            [callback, gap, snapshot]() {
+                try {
+                    callback(snapshot);
+                } catch (...) {
+                    if (gap) gap(snapshot, "market_consumer_failed");
+                }
+            },
+            false))
+        return true;
+    if (gap) gap(snapshot, "market_queue_full");
+    EmitStructuredLog(nullptr, "ctp_md_adapter", "error", "market_delivery_gap",
+                      {{"instrument_id", snapshot.instrument_id}});
+    return false;
 }
 
 CTPMdAdapter::~CTPMdAdapter() {
@@ -71,7 +68,7 @@ CTPMdAdapter::~CTPMdAdapter() {
     if (gateway_ != nullptr) {
         gateway_->RemoveConnectionStateListener(connection_listener_token_);
     }
-    callback_dispatcher_.Stop();
+    StopEventDelivery();
 }
 
 bool CTPMdAdapter::Connect(const MarketDataConnectConfig& config) {
@@ -132,6 +129,22 @@ MdSessionState CTPMdAdapter::SessionState() const {
 void CTPMdAdapter::RegisterTickCallback(TickCallback callback) {
     std::lock_guard<std::mutex> lock(mutex_);
     user_tick_callback_ = std::move(callback);
+}
+
+void CTPMdAdapter::RegisterGapCallback(
+    std::function<void(const MarketSnapshot&, const std::string&)> callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    gap_callback_ = std::move(callback);
+}
+
+void CTPMdAdapter::StopEventDelivery() {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        user_tick_callback_ = nullptr;
+    }
+    callback_dispatcher_.Stop();
+    std::lock_guard<std::mutex> lock(mutex_);
+    gap_callback_ = nullptr;
 }
 
 std::string CTPMdAdapter::GetLastConnectDiagnostic() const {

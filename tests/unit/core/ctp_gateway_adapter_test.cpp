@@ -10,9 +10,71 @@
 #include <string>
 #include <thread>
 
+#include "quant_hft/core/ctp_account_identity.h"
 #include "quant_hft/core/ctp_text.h"
 
 namespace quant_hft {
+
+class CtpGatewayAdapterTestPeer {
+   public:
+    static bool BeginInstrument(CtpGatewayAdapter& adapter, int id,
+                                const std::string& instrument = "") {
+        QueryResultMetadata metadata;
+        metadata.request_id = id;
+        metadata.generation = adapter.GetQueryGeneration();
+        metadata.query_name = "Instrument";
+        metadata.instrument_id = instrument;
+        return adapter.instrument_meta_queries_.Begin(std::move(metadata));
+    }
+
+    static void InstrumentPacket(CtpGatewayAdapter& adapter, int id, std::uint64_t generation,
+                                 const InstrumentMetaSnapshot* row, int error, bool last) {
+        adapter.PublishSnapshotQueryResponse(adapter.instrument_meta_queries_, id, generation, row,
+                                             error, error == 0 ? "" : "intermediate failure", last,
+                                             adapter.instrument_meta_snapshots_,
+                                             adapter.instrument_meta_snapshot_callback_);
+    }
+};
+
+TEST(CtpGatewayAdapterTest, FailedQueryBatchDoesNotExposePartialOrMixedCache) {
+    CtpGatewayAdapter adapter;
+    InstrumentMetaSnapshot previous;
+    previous.instrument_id = "ag2609";
+    previous.volume_multiple = 15;
+    adapter.UpdateInstrumentMetadata({previous});
+    int published = 0;
+    bool success = true;
+    adapter.RegisterInstrumentMetaSnapshotCallback([&](const auto&) { ++published; });
+    adapter.RegisterQueryCompleteCallback([&](int, const auto&, bool ok) { success = ok; });
+    ASSERT_TRUE(CtpGatewayAdapterTestPeer::BeginInstrument(adapter, 1));
+    auto replacement = previous;
+    replacement.volume_multiple = 100;
+    const auto generation = adapter.GetQueryGeneration();
+    CtpGatewayAdapterTestPeer::InstrumentPacket(adapter, 1, generation, &replacement, 0, false);
+    EXPECT_EQ(adapter.GetLastInstrumentMetaSnapshots().front().volume_multiple, 15);
+    CtpGatewayAdapterTestPeer::InstrumentPacket(adapter, 1, generation, nullptr, 42, false);
+    CtpGatewayAdapterTestPeer::InstrumentPacket(adapter, 1, generation, nullptr, 0, true);
+    EXPECT_FALSE(success);
+    EXPECT_EQ(published, 0);
+    EXPECT_EQ(adapter.GetLastInstrumentMetaSnapshots().front().volume_multiple, 15);
+}
+
+TEST(CtpGatewayAdapterTest, EmptyFilteredBatchRemovesOnlyItsScopeAndRejectsOldGeneration) {
+    CtpGatewayAdapter adapter;
+    InstrumentMetaSnapshot first;
+    first.instrument_id = "ag2609";
+    InstrumentMetaSnapshot second;
+    second.instrument_id = "au2609";
+    adapter.UpdateInstrumentMetadata({first, second});
+    const auto generation = adapter.GetQueryGeneration();
+    ASSERT_TRUE(CtpGatewayAdapterTestPeer::BeginInstrument(adapter, 1, first.instrument_id));
+    CtpGatewayAdapterTestPeer::InstrumentPacket(adapter, 1, generation + 1, nullptr, 0, true);
+    EXPECT_EQ(adapter.GetLastInstrumentMetaSnapshots().size(), 2U);
+    CtpGatewayAdapterTestPeer::InstrumentPacket(adapter, 1, generation, nullptr, 0, true);
+    const auto remaining = adapter.GetLastInstrumentMetaSnapshots();
+    ASSERT_EQ(remaining.size(), 1U);
+    EXPECT_EQ(remaining.front().instrument_id, second.instrument_id);
+}
 
 TEST(CtpTextTest, DecodesGbkErrorMessageAndKnownPlaceholder) {
     const std::string gb18030_settlement_unconfirmed =
@@ -488,6 +550,104 @@ TEST(CtpGatewayAdapterTest, ParsesExchangeTimestampAsAsiaShanghaiWithMillisecond
     EXPECT_EQ(actual, 1782869465500000000LL);
     EXPECT_EQ(CtpGatewayAdapter::ParseMarketExchangeTimestamp("", "09:31:05", 500), 0);
     EXPECT_EQ(CtpGatewayAdapter::ParseMarketExchangeTimestamp("20260701", "25:31:05", 500), 0);
+}
+
+TEST(CtpGatewayAdapterTest, AccountIdentityUsesInvestorAcrossSimulatedSnapshotsAndMappings) {
+    CtpGatewayAdapter adapter(100);
+    MarketDataConnectConfig config;
+    config.market_front_address = "tcp://sim-md";
+    config.trader_front_address = "tcp://sim-td";
+    config.broker_id = "9999";
+    config.user_id = "operator";
+    config.investor_id = "investor";
+    config.password = "fixture-only";
+    ASSERT_TRUE(adapter.Connect(config));
+    ASSERT_TRUE(adapter.EnqueueTradingAccountQuery(1));
+    ASSERT_TRUE(adapter.EnqueueBrokerTradingParamsQuery(2));
+    ASSERT_TRUE(adapter.EnqueueInstrumentMarginRateQuery(3, "rb"));
+    ASSERT_TRUE(adapter.EnqueueInstrumentCommissionRateQuery(4, "rb"));
+    ASSERT_TRUE(adapter.EnqueueInstrumentOrderCommRateQuery(5, "rb"));
+    EXPECT_EQ(adapter.GetLastTradingAccountSnapshot().account_id, "investor");
+    EXPECT_EQ(adapter.GetLastBrokerTradingParamsSnapshot().account_id, "investor");
+    ASSERT_EQ(adapter.GetLastInstrumentMarginRateSnapshots().size(), 1U);
+    EXPECT_EQ(adapter.GetLastInstrumentMarginRateSnapshots()[0].account_id, "investor");
+    EXPECT_EQ(adapter.GetLastInstrumentCommissionRateSnapshots()[0].account_id, "investor");
+    EXPECT_EQ(adapter.GetLastInstrumentOrderCommRateSnapshots()[0].account_id, "investor");
+    CtpOrderSubmitMapping mapping;
+    OrderEvent accepted;
+    adapter.RegisterOrderSubmitMappingCallback([&](const auto& value) { mapping = value; });
+    adapter.RegisterOrderEventCallback([&](const auto& value) { accepted = value; });
+    OrderIntent intent;
+    intent.client_order_id = "investor-order";
+    intent.instrument_id = "rb";
+    intent.price = 100;
+    intent.volume = 1;
+    ASSERT_TRUE(adapter.PlaceOrder(intent));
+    EXPECT_EQ(mapping.account_id, "investor");
+    EXPECT_EQ(accepted.account_id, "investor");
+    ASSERT_TRUE(adapter.CancelOrder(intent.client_order_id, "cancel"));
+    EXPECT_EQ(accepted.account_id, "investor");
+}
+
+TEST(CtpGatewayAdapterTest, RealConnectionRejectsAnUnconfirmedInvestorBeforeSdkAccess) {
+    CtpGatewayAdapter adapter(10);
+    MarketDataConnectConfig config;
+    config.market_front_address = "tcp://127.0.0.1:40011";
+    config.trader_front_address = "tcp://127.0.0.1:40001";
+    config.broker_id = "9999";
+    config.user_id = "operator";
+    config.password = "fixture-only";
+    config.enable_real_api = true;
+    EXPECT_FALSE(adapter.Connect(config));
+    EXPECT_NE(adapter.GetLastConnectDiagnostic().find("investor_id"), std::string::npos);
+}
+
+TEST(CtpGatewayAdapterTest, RawInvestorIdentityHasPriorityAndUnknownIdentityStaysUnknown) {
+    EXPECT_EQ(ResolveCtpInvestorId("reported", "configured"), "reported");
+    EXPECT_EQ(ResolveCtpInvestorId("", "configured"), "configured");
+    EXPECT_TRUE(ResolveCtpInvestorId("", "").empty());
+}
+
+TEST(CtpGatewayAdapterTest, SimulatedTradingDayIsExplicitAndCopiedIntoPositionQueryMetadata) {
+    struct ScopedDay {
+        std::string previous;
+        bool existed;
+        ScopedDay() : existed(std::getenv("QUANT_HFT_SIMULATED_TRADING_DAY") != nullptr) {
+            if (existed) previous = std::getenv("QUANT_HFT_SIMULATED_TRADING_DAY");
+            ::setenv("QUANT_HFT_SIMULATED_TRADING_DAY", "20240102", 1);
+        }
+        ~ScopedDay() {
+            if (existed)
+                ::setenv("QUANT_HFT_SIMULATED_TRADING_DAY", previous.c_str(), 1);
+            else
+                ::unsetenv("QUANT_HFT_SIMULATED_TRADING_DAY");
+        }
+    } day;
+    CtpGatewayAdapter adapter(100);
+    MarketDataConnectConfig config;
+    config.market_front_address = "tcp://sim-md";
+    config.trader_front_address = "tcp://sim-td";
+    config.broker_id = "b";
+    config.user_id = "operator";
+    config.investor_id = "investor";
+    config.password = "fixture-only";
+    ASSERT_TRUE(adapter.Connect(config));
+    EXPECT_EQ(adapter.GetLastUserSession().trading_day, "20240102");
+    QueryResultMetadata observed;
+    adapter.RegisterInvestorPositionQueryCallback(
+        [&](const auto& result) { observed = result.metadata; });
+    ASSERT_TRUE(adapter.EnqueueInvestorPositionQuery(1));
+    EXPECT_TRUE(observed.success);
+    EXPECT_TRUE(observed.complete);
+    EXPECT_EQ(observed.trading_day, "20240102");
+    EXPECT_EQ(observed.account_id, "investor");
+    EXPECT_EQ(observed.source, "simulated");
+    ASSERT_TRUE(adapter.EnqueueTradingAccountQuery(2));
+    EXPECT_EQ(adapter.GetLastTradingAccountSnapshot().trading_day, "20240102");
+    adapter.Disconnect();
+    ::setenv("QUANT_HFT_SIMULATED_TRADING_DAY", "20240230", 1);
+    EXPECT_FALSE(adapter.Connect(config));
+    EXPECT_NE(adapter.GetLastConnectDiagnostic().find("SIMULATED_TRADING_DAY"), std::string::npos);
 }
 
 }  // namespace quant_hft

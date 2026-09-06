@@ -4,6 +4,8 @@ Quantitative trading platform bootstrap using a pure C++ execution and strategy 
 
 本次 CTP 修复的提交、验证和剩余验收事项见
 [研究与 SimNow 候选版本交付](docs/results/ctp_remediation_20260906/delivery.md)。
+另一台 Ubuntu 服务器的拉取、SDK 配置和交易时段启动命令见
+[Ubuntu SimNow 部署](docs/ops/ubuntu_simnow_handoff.md)。
 
 ## Quick start
 

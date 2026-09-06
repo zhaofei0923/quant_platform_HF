@@ -1,0 +1,50 @@
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 19 tests from 2 test suites.
+[----------] Global test environment set-up.
+[----------] 18 tests from CtpGatewayAdapterTest
+[ RUN      ] CtpGatewayAdapterTest.FailedQueryBatchDoesNotExposePartialOrMixedCache
+[       OK ] CtpGatewayAdapterTest.FailedQueryBatchDoesNotExposePartialOrMixedCache (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.EmptyFilteredBatchRemovesOnlyItsScopeAndRejectsOldGeneration
+[       OK ] CtpGatewayAdapterTest.EmptyFilteredBatchRemovesOnlyItsScopeAndRejectsOldGeneration (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.ConnectSubscribeAndOrderFlow
+[       OK ] CtpGatewayAdapterTest.ConnectSubscribeAndOrderFlow (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.PlaceOrderEmitsSubmitMappingBeforeOrderCallback
+[       OK ] CtpGatewayAdapterTest.PlaceOrderEmitsSubmitMappingBeforeOrderCallback (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.DurablePrepareFailureProducesNoSubmissionOrOrderCallback
+[       OK ] CtpGatewayAdapterTest.DurablePrepareFailureProducesNoSubmissionOrOrderCallback (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.ConnectionStateListenersAreIndependentAndRemovable
+[       OK ] CtpGatewayAdapterTest.ConnectionStateListenersAreIndependentAndRemovable (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.QueryAndOffsetApplySrc
+[       OK ] CtpGatewayAdapterTest.QueryAndOffsetApplySrc (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.QuerySnapshotsInSimulatedMode
+[       OK ] CtpGatewayAdapterTest.QuerySnapshotsInSimulatedMode (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.CallbackCanReenterCancelOrderWithoutLockContention
+[       OK ] CtpGatewayAdapterTest.CallbackCanReenterCancelOrderWithoutLockContention (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.ConnectFailureExposesDiagnostic
+[       OK ] CtpGatewayAdapterTest.ConnectFailureExposesDiagnostic (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.SuccessfulConnectClearsDiagnostic
+[       OK ] CtpGatewayAdapterTest.SuccessfulConnectClearsDiagnostic (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.NormalizeMarketSnapshotCleansInvalidValuesAndFallbacks
+[       OK ] CtpGatewayAdapterTest.NormalizeMarketSnapshotCleansInvalidValuesAndFallbacks (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.NormalizeMarketSnapshotKeepsValidValues
+[       OK ] CtpGatewayAdapterTest.NormalizeMarketSnapshotKeepsValidValues (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.ParsesExchangeTimestampAsAsiaShanghaiWithMilliseconds
+[       OK ] CtpGatewayAdapterTest.ParsesExchangeTimestampAsAsiaShanghaiWithMilliseconds (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.AccountIdentityUsesInvestorAcrossSimulatedSnapshotsAndMappings
+[       OK ] CtpGatewayAdapterTest.AccountIdentityUsesInvestorAcrossSimulatedSnapshotsAndMappings (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.RealConnectionRejectsAnUnconfirmedInvestorBeforeSdkAccess
+[       OK ] CtpGatewayAdapterTest.RealConnectionRejectsAnUnconfirmedInvestorBeforeSdkAccess (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.RawInvestorIdentityHasPriorityAndUnknownIdentityStaysUnknown
+[       OK ] CtpGatewayAdapterTest.RawInvestorIdentityHasPriorityAndUnknownIdentityStaysUnknown (0 ms)
+[ RUN      ] CtpGatewayAdapterTest.SimulatedTradingDayIsExplicitAndCopiedIntoPositionQueryMetadata
+[       OK ] CtpGatewayAdapterTest.SimulatedTradingDayIsExplicitAndCopiedIntoPositionQueryMetadata (0 ms)
+[----------] 18 tests from CtpGatewayAdapterTest (0 ms total)
+
+[----------] 1 test from CtpTextTest
+[ RUN      ] CtpTextTest.DecodesGbkErrorMessageAndKnownPlaceholder
+[       OK ] CtpTextTest.DecodesGbkErrorMessageAndKnownPlaceholder (0 ms)
+[----------] 1 test from CtpTextTest (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 19 tests from 2 test suites ran. (1 ms total)
+[  PASSED  ] 19 tests.

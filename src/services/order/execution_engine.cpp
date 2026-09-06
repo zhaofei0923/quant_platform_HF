@@ -336,6 +336,14 @@ void ExecutionEngine::SetAccountingPolicyResolver(AccountingPolicyResolver resol
     accounting_policy_resolver_ = std::move(resolver);
 }
 
+void ExecutionEngine::SetDurableAccountingPolicyResolver(DurableAccountingPolicyResolver resolver) {
+    durable_accounting_policy_resolver_ = std::move(resolver);
+}
+
+void ExecutionEngine::SetRequireVerifiedAccounting(bool required) {
+    require_verified_accounting_ = required;
+}
+
 TradeApplyResult ExecutionEngine::ProcessOrderEvent(const OrderEvent& event,
                                                     const WalReceipt& receipt,
                                                     bool allow_ephemeral) {
@@ -363,8 +371,11 @@ TradeApplyResult ExecutionEngine::ProcessOrderEvent(const OrderEvent& event,
         }
         TradeApplyRequest request{trade, receipt, allow_ephemeral,
                                   event.event_source == "OnRspQryTrade"};
-        if (accounting_policy_resolver_)
+        if (durable_accounting_policy_resolver_)
+            request.accounting_policy = durable_accounting_policy_resolver_(trade, receipt);
+        else if (accounting_policy_resolver_)
             request.accounting_policy = accounting_policy_resolver_(trade);
+        request.require_verified_accounting = require_verified_accounting_;
         std::string error;
         if (!domain_store_->ApplyTrade(request, &result, &error)) {
             result.error = error;

@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "environment": "simnow",
+  "broker_id": "TEST_BROKER",
+  "account_id": "TEST_ACCOUNT",
+  "records": [
+    {
+      "verified": false,
+      "instrument_id": "REPLACE_EXACT_CONTRACT",
+      "exchange_id": "REPLACE_EXCHANGE",
+      "hedge_flag": 0,
+      "trading_day": "REPLACE_YYYYMMDD",
+      "commission_instrument_id": "REPLACE_EXACT_QUERY_ROW_ID",
+      "policy_source": "REPLACE_REVIEW_RECORD",
+      "policy_version": "REPLACE_VERSION",
+      "sample_sha256": "REPLACE_64_HEX_SAMPLE_DIGEST",
+      "contract_multiplier": 0,
+      "multiplier_source": "REPLACE_INSTRUMENT_QUERY_EVIDENCE",
+      "commission_source": "REPLACE_COMMISSION_QUERY_EVIDENCE",
+      "profit_basis": "opening_lot_v1",
+      "profit_source": "REPLACE_VERIFIED_OPENING_LOT_BASIS",
+      "fee_model": "money_plus_volume_v1",
+      "fee_date_basis": "close_allocation_v1",
+      "fee_allocation_source": "REPLACE_VERIFIED_FEE_DATE_BASIS",
+      "fee_allocation_version": "REPLACE_VERSION",
+      "generic_close_priority": "REPLACE_VERIFIED_PRIORITY",
+      "close_priority_source": "REPLACE_VERIFIED_CLOSE_RULE",
+      "close_priority_version": "REPLACE_VERSION",
+      "order_fee_policy": "verified_zero_v1",
+      "order_fee_source": "REPLACE_ZERO_ORDER_AND_CANCEL_FEE_EVIDENCE",
+      "open_fee": {"by_money": 0, "by_volume": 0},
+      "close_fee": {"by_money": 0, "by_volume": 0},
+      "close_today_fee": {"by_money": 0, "by_volume": 0}
+    }
+  ]
+}

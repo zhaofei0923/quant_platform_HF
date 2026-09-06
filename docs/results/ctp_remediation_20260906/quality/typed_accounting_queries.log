@@ -1,0 +1,72 @@
+Internal ctest changing into directory: /tmp/quant-hft-runtime-build
+Test project /tmp/quant-hft-runtime-build
+      Start 102: CtpGatewayAdapterTest.FailedQueryBatchDoesNotExposePartialOrMixedCache
+ 1/33 Test #102: CtpGatewayAdapterTest.FailedQueryBatchDoesNotExposePartialOrMixedCache ..................   Passed    0.00 sec
+      Start 103: CtpGatewayAdapterTest.EmptyFilteredBatchRemovesOnlyItsScopeAndRejectsOldGeneration
+ 2/33 Test #103: CtpGatewayAdapterTest.EmptyFilteredBatchRemovesOnlyItsScopeAndRejectsOldGeneration ......   Passed    0.00 sec
+      Start 104: CtpGatewayAdapterTest.ConnectSubscribeAndOrderFlow
+ 3/33 Test #104: CtpGatewayAdapterTest.ConnectSubscribeAndOrderFlow ......................................   Passed    0.00 sec
+      Start 105: CtpGatewayAdapterTest.PlaceOrderEmitsSubmitMappingBeforeOrderCallback
+ 4/33 Test #105: CtpGatewayAdapterTest.PlaceOrderEmitsSubmitMappingBeforeOrderCallback ...................   Passed    0.00 sec
+      Start 106: CtpGatewayAdapterTest.DurablePrepareFailureProducesNoSubmissionOrOrderCallback
+ 5/33 Test #106: CtpGatewayAdapterTest.DurablePrepareFailureProducesNoSubmissionOrOrderCallback ..........   Passed    0.00 sec
+      Start 107: CtpGatewayAdapterTest.ConnectionStateListenersAreIndependentAndRemovable
+ 6/33 Test #107: CtpGatewayAdapterTest.ConnectionStateListenersAreIndependentAndRemovable ................   Passed    0.00 sec
+      Start 108: CtpGatewayAdapterTest.QueryAndOffsetApplySrc
+ 7/33 Test #108: CtpGatewayAdapterTest.QueryAndOffsetApplySrc ............................................   Passed    0.00 sec
+      Start 109: CtpGatewayAdapterTest.QuerySnapshotsInSimulatedMode
+ 8/33 Test #109: CtpGatewayAdapterTest.QuerySnapshotsInSimulatedMode .....................................   Passed    0.00 sec
+      Start 110: CtpGatewayAdapterTest.CallbackCanReenterCancelOrderWithoutLockContention
+ 9/33 Test #110: CtpGatewayAdapterTest.CallbackCanReenterCancelOrderWithoutLockContention ................   Passed    0.00 sec
+      Start 111: CtpGatewayAdapterTest.ConnectFailureExposesDiagnostic
+10/33 Test #111: CtpGatewayAdapterTest.ConnectFailureExposesDiagnostic ...................................   Passed    0.00 sec
+      Start 112: CtpGatewayAdapterTest.SuccessfulConnectClearsDiagnostic
+11/33 Test #112: CtpGatewayAdapterTest.SuccessfulConnectClearsDiagnostic .................................   Passed    0.00 sec
+      Start 113: CtpGatewayAdapterTest.NormalizeMarketSnapshotCleansInvalidValuesAndFallbacks
+12/33 Test #113: CtpGatewayAdapterTest.NormalizeMarketSnapshotCleansInvalidValuesAndFallbacks ............   Passed    0.00 sec
+      Start 114: CtpGatewayAdapterTest.NormalizeMarketSnapshotKeepsValidValues
+13/33 Test #114: CtpGatewayAdapterTest.NormalizeMarketSnapshotKeepsValidValues ...........................   Passed    0.00 sec
+      Start 115: CtpGatewayAdapterTest.ParsesExchangeTimestampAsAsiaShanghaiWithMilliseconds
+14/33 Test #115: CtpGatewayAdapterTest.ParsesExchangeTimestampAsAsiaShanghaiWithMilliseconds .............   Passed    0.00 sec
+      Start 116: CtpGatewayAdapterTest.AccountIdentityUsesInvestorAcrossSimulatedSnapshotsAndMappings
+15/33 Test #116: CtpGatewayAdapterTest.AccountIdentityUsesInvestorAcrossSimulatedSnapshotsAndMappings ....   Passed    0.00 sec
+      Start 117: CtpGatewayAdapterTest.RealConnectionRejectsAnUnconfirmedInvestorBeforeSdkAccess
+16/33 Test #117: CtpGatewayAdapterTest.RealConnectionRejectsAnUnconfirmedInvestorBeforeSdkAccess .........   Passed    0.00 sec
+      Start 118: CtpGatewayAdapterTest.RawInvestorIdentityHasPriorityAndUnknownIdentityStaysUnknown
+17/33 Test #118: CtpGatewayAdapterTest.RawInvestorIdentityHasPriorityAndUnknownIdentityStaysUnknown ......   Passed    0.00 sec
+      Start 119: CtpGatewayAdapterTest.SimulatedTradingDayIsExplicitAndCopiedIntoPositionQueryMetadata
+18/33 Test #119: CtpGatewayAdapterTest.SimulatedTradingDayIsExplicitAndCopiedIntoPositionQueryMetadata ...   Passed    0.00 sec
+      Start 121: CTPTraderAdapterTest.DisconnectTriggersReconnectScheduling
+19/33 Test #121: CTPTraderAdapterTest.DisconnectTriggersReconnectScheduling ..............................   Passed    0.52 sec
+      Start 122: CTPTraderAdapterTest.ReadinessSnapshotReflectsDisconnectedRecoveryState
+20/33 Test #122: CTPTraderAdapterTest.ReadinessSnapshotReflectsDisconnectedRecoveryState .................   Passed    0.00 sec
+      Start 123: CTPTraderAdapterTest.ReconnectPerformsLoginAndConfirmSettlement
+21/33 Test #123: CTPTraderAdapterTest.ReconnectPerformsLoginAndConfirmSettlement .........................   Passed    0.52 sec
+      Start 124: CTPTraderAdapterTest.ReconnectAttemptLimitUsesConnectConfig
+22/33 Test #124: CTPTraderAdapterTest.ReconnectAttemptLimitUsesConnectConfig .............................   Passed    0.01 sec
+      Start 125: CTPTraderAdapterTest.GatewayHealthyAfterExhaustionRestoresReadyState
+23/33 Test #125: CTPTraderAdapterTest.GatewayHealthyAfterExhaustionRestoresReadyState ....................   Passed    0.02 sec
+      Start 126: CTPTraderAdapterTest.GatewayOwnedLoginIsNotRepeatedDuringRecoveryCycles
+24/33 Test #126: CTPTraderAdapterTest.GatewayOwnedLoginIsNotRepeatedDuringRecoveryCycles .................   Passed    0.01 sec
+      Start 127: CTPTraderAdapterTest.DisconnectCancelsPendingReconnectTimer
+25/33 Test #127: CTPTraderAdapterTest.DisconnectCancelsPendingReconnectTimer .............................   Passed    1.40 sec
+      Start 128: CTPTraderAdapterTest.RecoverOrdersAndTradesQueriesCtp
+26/33 Test #128: CTPTraderAdapterTest.RecoverOrdersAndTradesQueriesCtp ...................................   Passed    0.00 sec
+      Start 129: CTPTraderAdapterTest.DisconnectRejectsPendingLoginPromise
+27/33 Test #129: CTPTraderAdapterTest.DisconnectRejectsPendingLoginPromise ...............................   Passed    0.00 sec
+      Start 130: CTPTraderAdapterTest.LoginAsyncReturnsFutureAndResolvesOnSuccess
+28/33 Test #130: CTPTraderAdapterTest.LoginAsyncReturnsFutureAndResolvesOnSuccess ........................   Passed    0.00 sec
+      Start 131: CTPTraderAdapterTest.LoginAsyncTimesOut
+29/33 Test #131: CTPTraderAdapterTest.LoginAsyncTimesOut .................................................   Passed    0.09 sec
+      Start 132: CTPTraderAdapterTest.PlaceOrderWithRefReturnsNonEmptyString
+30/33 Test #132: CTPTraderAdapterTest.PlaceOrderWithRefReturnsNonEmptyString .............................   Passed    0.00 sec
+      Start 133: CTPTraderAdapterTest.FinalDeliveryStopJoinsCallbackBeforeCapturedStateCanDie
+31/33 Test #133: CTPTraderAdapterTest.FinalDeliveryStopJoinsCallbackBeforeCapturedStateCanDie ............   Passed    0.04 sec
+      Start 134: CTPTraderAdapterTest.CriticalDispatchTimeoutTriggersCircuitBreakerCallback
+32/33 Test #134: CTPTraderAdapterTest.CriticalDispatchTimeoutTriggersCircuitBreakerCallback ..............   Passed    0.13 sec
+      Start 135: CTPTraderAdapterTest.AccountingQueryMetadataSurvivesReliableCallbackDelivery
+33/33 Test #135: CTPTraderAdapterTest.AccountingQueryMetadataSurvivesReliableCallbackDelivery ............   Passed    0.00 sec
+
+100% tests passed, 0 tests failed out of 33
+
+Total Test time (real) =   2.84 sec

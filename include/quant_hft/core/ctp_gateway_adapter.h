@@ -50,8 +50,12 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
         std::function<void(const std::vector<InvestorPositionSnapshot>&)>;
     using InvestorPositionQueryCallback =
         std::function<void(const QueryResult<InvestorPositionSnapshot>&)>;
-    using InstrumentMetaQueryCallback = std::function<void(const QueryResult<InstrumentMetaSnapshot>&)>;
-    using InstrumentCommissionRateQueryCallback = std::function<void(const QueryResult<InstrumentCommissionRateSnapshot>&)>;
+    using InstrumentMetaQueryCallback =
+        std::function<void(const QueryResult<InstrumentMetaSnapshot>&)>;
+    using InstrumentCommissionRateQueryCallback =
+        std::function<void(const QueryResult<InstrumentCommissionRateSnapshot>&)>;
+    using InstrumentOrderCommRateQueryCallback =
+        std::function<void(const QueryResult<InstrumentOrderCommRateSnapshot>&)>;
     using InstrumentMetaSnapshotCallback =
         std::function<void(const std::vector<InstrumentMetaSnapshot>&)>;
     using DepthMarketSnapshotCallback = std::function<void(const std::vector<MarketSnapshot>&)>;
@@ -116,7 +120,10 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
     void RegisterInvestorPositionSnapshotCallback(InvestorPositionSnapshotCallback callback);
     void RegisterInvestorPositionQueryCallback(InvestorPositionQueryCallback callback);
     void RegisterInstrumentMetaQueryCallback(InstrumentMetaQueryCallback callback);
-    void RegisterInstrumentCommissionRateQueryCallback(InstrumentCommissionRateQueryCallback callback);
+    void RegisterInstrumentCommissionRateQueryCallback(
+        InstrumentCommissionRateQueryCallback callback);
+    void RegisterInstrumentOrderCommRateQueryCallback(
+        InstrumentOrderCommRateQueryCallback callback);
     void RegisterInstrumentMetaSnapshotCallback(InstrumentMetaSnapshotCallback callback);
     void RegisterDepthMarketSnapshotCallback(DepthMarketSnapshotCallback callback);
     void RegisterBrokerTradingParamsSnapshotCallback(BrokerTradingParamsSnapshotCallback callback);
@@ -223,6 +230,8 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
                 query_callback = instrument_meta_query_callback_;
             if constexpr (std::is_same_v<Row, InstrumentCommissionRateSnapshot>)
                 query_callback = instrument_commission_rate_query_callback_;
+            if constexpr (std::is_same_v<Row, InstrumentOrderCommRateSnapshot>)
+                query_callback = instrument_order_comm_rate_query_callback_;
             complete = query_complete_callback_;
         }
         if (query_callback) query_callback(*result);
@@ -280,6 +289,7 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
     InvestorPositionQueryCallback investor_position_query_callback_;
     InstrumentMetaQueryCallback instrument_meta_query_callback_;
     InstrumentCommissionRateQueryCallback instrument_commission_rate_query_callback_;
+    InstrumentOrderCommRateQueryCallback instrument_order_comm_rate_query_callback_;
     InstrumentMetaSnapshotCallback instrument_meta_snapshot_callback_;
     DepthMarketSnapshotCallback depth_market_snapshot_callback_;
     BrokerTradingParamsSnapshotCallback broker_trading_params_snapshot_callback_;

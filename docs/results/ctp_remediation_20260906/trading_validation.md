@@ -77,3 +77,41 @@ PostgreSQL 使用专用临时数据库与 Unix socket，未监听 TCP；已应�
 - 内存领域 store 在重启后从 WAL 恢复；真实外部领域 store 的事务正确性由独立 PostgreSQL 集成测试覆盖。本轮没有联网交易验证。
 - 完整 Bar 预热采用缺口后的有效 Bar；不宣称已从外部历史服务即时回填缺口，也不以不完整 Bar 解锁。
 - 截至此冻结点，真实 API 的已验证 accounting policy 装配仍属于后续增量；没有柜台样本的费用、非 SHFE 平今平昨顺序和费用日期分配不得当作已确认事实。本记录不授予自动交易放行结论。
+
+## 后续增量：已核验政策入口与费用事务
+
+上述 136/180/PG 5 和重启结果保留其原冻结点含义。本节单列随后完成的政策入口，不把旧测试结果替换为新代码的全量证明。
+
+| 新增验证 | 实际结果 | 证据 |
+|---|---|---|
+| 政策注册表、领域 adapter、实际 ExecutionEngine 窄集 | 61/61 通过（19 + 23 + 19） | [窄集](trading_artifacts/policy_focused_61.log) |
+| 会话代际用例追加后的最终政策注册表 | 20/20 通过 | [最终政策测试](trading_artifacts/policy_final_20.log) |
+| PostgreSQL 14 同连接真实事务，含混合平仓费用 | 6/6 通过 | [真实 PG](trading_artifacts/policy_postgres_6.log) |
+| 新 main 最后短离线 smoke | 退出 0，stopped cleanly | [日志](trading_artifacts/policy_smoke.log)、[结果](trading_artifacts/policy_smoke_outcome.txt) |
+
+新增领域红测试先确认旧实现会提交缺证据的新成交，并未按 mixed CloseAllocation 计算费用，随后修复；见 [红测试](trading_artifacts/policy_domain_red.log)。现领域在相同事务中按实际今昨分配计算费用，记录模型、日期分配依据及来源版本。回归实测平昨 2 手、平今 1 手得到佣金 13.8、逐笔开仓成本盈亏 600；这些是人工测试夹具数值，不是柜台费率结论。同原始载荷重投时不重新比较派生佣金，已提交 Duplicate 可在当前政策缺失时重投原 outbox。实际 ExecutionEngine 测试也确认 require_verified 会阻止新入账，随后证据齐全可重试成功，重复时只保留一条历史事实。
+
+最终政策测试增加同日新会话清空当前证据、拒绝旧代查询和混代查询、三查询新代齐全才 ready；历史证据不能代替新会话准入。当前主入口仅在完整匹配证据耐久保存后清除 `trade_semantics_unverified`。缺失、过期或数值不匹配的新真实成交停留在 WAL；历史未提交且没有当时持久证据的恢复继续失败，不自动采用今日费率。完整格式和使用边界见 [政策入口说明](../../ops/verified_accounting_policy.md)。本轮没有真实柜台登录或自动交易验证。
+
+新增实际命令：
+
+```bash
+cmake --build /tmp/quant-hft-trading-build --target core_engine \
+  verified_trade_accounting_policy_test trading_domain_store_client_adapter_test \
+  execution_engine_test -j6
+ctest --test-dir /tmp/quant-hft-trading-build \
+  -R '^(VerifiedTradeAccountingPolicyTest|TradingDomainStoreClientAdapterTest|ExecutionEngineTest)\.' \
+  --output-on-failure
+# 追加会话用例后只补编并运行政策目标：
+cmake --build /tmp/quant-hft-trading-build --target verified_trade_accounting_policy_test -j6
+/tmp/quant-hft-trading-build/verified_trade_accounting_policy_test
+
+LD_LIBRARY_PATH=/home/kevin/.cache/quant-hft-deps/postgres/usr/lib/x86_64-linux-gnu \
+  /home/kevin/.cache/quant-hft-deps/postgres/usr/lib/postgresql/14/bin/psql \
+  -h /tmp/quant-hft-postgres-socket -p 55439 -U kevin -d codex_trade_atomic_final \
+  -v ON_ERROR_STOP=1 -f infra/timescale/init/008_verified_trade_fees.sql
+# 然后用本页前述 g++ 命令重新编译、运行同一个实际 PostgreSQL 测试二进制。
+bash --noprofile --norc /tmp/codex-policy-smoke.sh
+```
+
+最后 smoke 使用新的 `/tmp/codex-policy-smoke-20260906` 目录、`env -i` 与 TEST 身份，`enable_real_api=false`，运行 2 秒后正常停止。完整命令、配置和退出状态分别保存在 [脚本](trading_artifacts/policy_smoke_run.sh)、[配置](trading_artifacts/policy_smoke_config.yaml)、[readiness](trading_artifacts/policy_smoke_readiness.json)。新二进制摘要见 [policy_binary_hashes.txt](trading_artifacts/policy_binary_hashes.txt)。新增证据与旧证据一并纳入本目录 SHA-256 清单。

@@ -221,47 +221,79 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
             }
         });
 
-    gateway_->RegisterInstrumentMetaQueryCallback([this](const QueryResult<InstrumentMetaSnapshot>& result) {
-        if (!callback_dispatcher_.Post([this, result]() {
-                if (result.metadata.generation != gateway_->GetQueryGeneration()) return;
-                InstrumentMetaQueryCallback callback;
+    gateway_->RegisterInstrumentMetaQueryCallback(
+        [this](const QueryResult<InstrumentMetaSnapshot>& result) {
+            if (!callback_dispatcher_.Post(
+                    [this, result]() {
+                        if (result.metadata.generation != gateway_->GetQueryGeneration()) return;
+                        InstrumentMetaQueryCallback callback;
+                        {
+                            std::lock_guard<std::mutex> lock(mutex_);
+                            callback = user_instrument_meta_query_callback_;
+                        }
+                        if (callback) callback(result);
+                    },
+                    true)) {
+                std::function<void(bool)> breaker;
                 {
                     std::lock_guard<std::mutex> lock(mutex_);
-                    callback = user_instrument_meta_query_callback_;
+                    breaker = circuit_breaker_callback_;
                 }
-                if (callback) callback(result);
-            }, true)) {
-            std::function<void(bool)> breaker;
-            {
-                std::lock_guard<std::mutex> lock(mutex_);
-                breaker = circuit_breaker_callback_;
+                EmitStructuredLog(nullptr, "ctp_trader_adapter", "error",
+                                  "accounting_query_delivery_failed",
+                                  {{"request_id", std::to_string(result.metadata.request_id)}});
+                if (breaker) breaker(true);
             }
-            EmitStructuredLog(nullptr, "ctp_trader_adapter", "error", "accounting_query_delivery_failed",
-                {{"request_id", std::to_string(result.metadata.request_id)}});
-            if (breaker) breaker(true);
-        }
-    });
+        });
 
-    gateway_->RegisterInstrumentCommissionRateQueryCallback([this](const QueryResult<InstrumentCommissionRateSnapshot>& result) {
-        if (!callback_dispatcher_.Post([this, result]() {
-                if (result.metadata.generation != gateway_->GetQueryGeneration()) return;
-                InstrumentCommissionRateQueryCallback callback;
+    gateway_->RegisterInstrumentCommissionRateQueryCallback(
+        [this](const QueryResult<InstrumentCommissionRateSnapshot>& result) {
+            if (!callback_dispatcher_.Post(
+                    [this, result]() {
+                        if (result.metadata.generation != gateway_->GetQueryGeneration()) return;
+                        InstrumentCommissionRateQueryCallback callback;
+                        {
+                            std::lock_guard<std::mutex> lock(mutex_);
+                            callback = user_instrument_commission_rate_query_callback_;
+                        }
+                        if (callback) callback(result);
+                    },
+                    true)) {
+                std::function<void(bool)> breaker;
                 {
                     std::lock_guard<std::mutex> lock(mutex_);
-                    callback = user_instrument_commission_rate_query_callback_;
+                    breaker = circuit_breaker_callback_;
                 }
-                if (callback) callback(result);
-            }, true)) {
-            std::function<void(bool)> breaker;
-            {
-                std::lock_guard<std::mutex> lock(mutex_);
-                breaker = circuit_breaker_callback_;
+                EmitStructuredLog(nullptr, "ctp_trader_adapter", "error",
+                                  "accounting_query_delivery_failed",
+                                  {{"request_id", std::to_string(result.metadata.request_id)}});
+                if (breaker) breaker(true);
             }
-            EmitStructuredLog(nullptr, "ctp_trader_adapter", "error", "accounting_query_delivery_failed",
-                {{"request_id", std::to_string(result.metadata.request_id)}});
-            if (breaker) breaker(true);
-        }
-    });
+        });
+    gateway_->RegisterInstrumentOrderCommRateQueryCallback(
+        [this](const QueryResult<InstrumentOrderCommRateSnapshot>& result) {
+            if (!callback_dispatcher_.Post(
+                    [this, result]() {
+                        if (result.metadata.generation != gateway_->GetQueryGeneration()) return;
+                        InstrumentOrderCommRateQueryCallback callback;
+                        {
+                            std::lock_guard<std::mutex> lock(mutex_);
+                            callback = user_instrument_order_comm_rate_query_callback_;
+                        }
+                        if (callback) callback(result);
+                    },
+                    true)) {
+                std::function<void(bool)> breaker;
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    breaker = circuit_breaker_callback_;
+                }
+                EmitStructuredLog(nullptr, "ctp_trader_adapter", "error",
+                                  "accounting_query_delivery_failed",
+                                  {{"request_id", std::to_string(result.metadata.request_id)}});
+                if (breaker) breaker(true);
+            }
+        });
 
     gateway_->RegisterInstrumentMetaSnapshotCallback(
         [this](const std::vector<InstrumentMetaSnapshot>& snapshots) {
@@ -1137,9 +1169,15 @@ void CTPTraderAdapter::RegisterInstrumentMetaQueryCallback(InstrumentMetaQueryCa
     user_instrument_meta_query_callback_ = std::move(callback);
 }
 
-void CTPTraderAdapter::RegisterInstrumentCommissionRateQueryCallback(InstrumentCommissionRateQueryCallback callback) {
+void CTPTraderAdapter::RegisterInstrumentCommissionRateQueryCallback(
+    InstrumentCommissionRateQueryCallback callback) {
     std::lock_guard<std::mutex> lock(mutex_);
     user_instrument_commission_rate_query_callback_ = std::move(callback);
+}
+void CTPTraderAdapter::RegisterInstrumentOrderCommRateQueryCallback(
+    InstrumentOrderCommRateQueryCallback callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    user_instrument_order_comm_rate_query_callback_ = std::move(callback);
 }
 
 void CTPTraderAdapter::RegisterInstrumentMetaSnapshotCallback(
@@ -1674,6 +1712,7 @@ void CTPTraderAdapter::UnregisterGatewayCallbacks() {
     gateway_->RegisterInvestorPositionQueryCallback(nullptr);
     gateway_->RegisterInstrumentMetaQueryCallback(nullptr);
     gateway_->RegisterInstrumentCommissionRateQueryCallback(nullptr);
+    gateway_->RegisterInstrumentOrderCommRateQueryCallback(nullptr);
     gateway_->RegisterInstrumentMetaSnapshotCallback(nullptr);
     gateway_->RegisterDepthMarketSnapshotCallback(nullptr);
     gateway_->RegisterBrokerTradingParamsSnapshotCallback(nullptr);

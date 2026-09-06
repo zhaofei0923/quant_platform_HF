@@ -75,6 +75,7 @@
 #include "quant_hft/services/timeout_cancel_tracker.h"
 #include "quant_hft/services/trading_permission_controller.h"
 #include "quant_hft/services/trading_session_calendar.h"
+#include "quant_hft/services/verified_trade_accounting_policy.h"
 #include "quant_hft/strategy/composite_config_loader.h"
 #include "quant_hft/strategy/composite_strategy.h"
 #include "quant_hft/strategy/demo_live_strategy.h"
@@ -1820,9 +1821,68 @@ int main(int argc, char** argv) {
     CtpOrderMappingStore ctp_order_mapping_store;
     TradingPermissionController trading_permission_controller(
         static_cast<EpochNanos>(file_config.execution.open_reenable_stability_ms) * 1'000'000);
-    if (config.enable_real_api) {
+    if (config.enable_real_api)
         trading_permission_controller.SetBlocked("trade_semantics_unverified");
+    VerifiedTradeAccountingPolicyRegistry accounting_policy_registry;
+    std::mutex accounting_policy_mutex;
+    const auto accounting_policy_file = GetEnvOrDefault("QUANT_HFT_ACCOUNTING_POLICY_FILE", "");
+    const auto accounting_evidence_dir = runtime_directory.Path("state/accounting_policy_evidence");
+    FileStrategyStatePersistence accounting_evidence_store(accounting_evidence_dir,
+                                                           "accounting_policy", 0);
+    StrategyState durable_accounting_evidence;
+    std::string accounting_policy_error;
+    const bool accounting_policy_loaded =
+        config.enable_real_api && !accounting_policy_file.empty() &&
+        accounting_policy_registry.LoadFromFile(
+            accounting_policy_file,
+            {runtime_identity.environment, runtime_identity.broker_id, account_id},
+            &accounting_policy_error);
+    if (accounting_policy_loaded) {
+        if (!runtime_directory.BindArtifact(accounting_evidence_dir, true, &error)) return 7;
+        StrategyState restored;
+        if (accounting_evidence_store.LoadStrategyState(account_id, "verified", &restored,
+                                                        &error) &&
+            !restored.empty() &&
+            !accounting_policy_registry.RestoreValidatedEvidence(restored, &error)) {
+            EmitStructuredLog(&config, "core_engine", "warn", "accounting_evidence_rejected",
+                              {{"error", error}});
+        }
+    } else if (config.enable_real_api) {
+        EmitStructuredLog(&config, "core_engine", "warn", "trade_semantics_unverified",
+                          {{"error", accounting_policy_file.empty()
+                                         ? "QUANT_HFT_ACCOUNTING_POLICY_FILE is not configured"
+                                         : accounting_policy_error}});
     }
+    // Callers hold accounting_policy_mutex across matching and durable evidence publication.
+    auto persist_accounting_evidence = [&](std::string* policy_error) {
+        StrategyState evidence;
+        if (!accounting_policy_registry.ExportValidatedEvidence(&evidence, policy_error))
+            return false;
+        if (evidence == durable_accounting_evidence) return true;
+        if (!accounting_evidence_store.SaveStrategyState(account_id, "verified", evidence,
+                                                         policy_error))
+            return false;
+        if (!accounting_policy_registry.RestoreValidatedEvidence(evidence, policy_error))
+            return false;
+        durable_accounting_evidence = std::move(evidence);
+        return true;
+    };
+    auto accounting_scope = [&](const std::string& instrument, HedgeFlag hedge) {
+        AccountingPolicyInstrument scope{instrument, "", hedge};
+        std::lock_guard<std::mutex> lock(instrument_meta_mutex);
+        const auto it = instrument_meta_by_id.find(instrument);
+        if (it != instrument_meta_by_id.end()) scope.exchange_id = it->second.exchange_id;
+        return scope;
+    };
+    auto accounting_ready_for = [&](const std::vector<AccountingPolicyInstrument>& scopes,
+                                    std::string* policy_error) {
+        if (!config.enable_real_api) return true;
+        std::lock_guard<std::mutex> lock(accounting_policy_mutex);
+        accounting_policy_registry.BeginSession(ctp_gateway->GetQueryGeneration());
+        return accounting_policy_registry.ReadyFor(
+                   scopes, ctp_trader->GetLastUserSession().trading_day, policy_error) &&
+               persist_accounting_evidence(policy_error);
+    };
     TradingSessionCalendar trading_session_calendar;
     MarketBarPipelineConfig market_bar_pipeline_config;
     market_bar_pipeline_config.bar_aggregator.allowed_lateness_ms =
@@ -2016,6 +2076,7 @@ int main(int argc, char** argv) {
         config.cancel_retry_max_delay_ms, config.cancel_wait_ack_timeout_ms);
     execution_engine.SetContractMultiplierResolver(resolve_contract_multiplier);
     execution_engine.SetMaxActiveOrders(runtime_semantics.risk_default_max_active_orders);
+    execution_engine.SetRequireVerifiedAccounting(config.enable_real_api);
     ctp_trader->SetCircuitBreaker([breaker_manager, &config](bool opened) {
         if (!opened) {
             return;
@@ -2133,6 +2194,23 @@ int main(int argc, char** argv) {
                           {{"error", replay_stats.error},
                            {"parse_errors", std::to_string(replay_stats.parse_errors)}});
         return 7;
+    }
+    if (config.enable_real_api) {
+        execution_engine.SetDurableAccountingPolicyResolver(
+            [&](const Trade& trade, const WalReceipt& receipt) {
+                std::lock_guard<std::mutex> lock(accounting_policy_mutex);
+                if (receipt.durable && receipt.stream_id == replay_stats.stream_id &&
+                    receipt.sequence < replay_stats.next_sequence) {
+                    auto historical = accounting_policy_registry.ResolveHistorical(trade);
+                    if (historical.valuation_inputs_verified) return historical;
+                }
+                accounting_policy_registry.BeginSession(ctp_gateway->GetQueryGeneration());
+                auto policy = accounting_policy_registry.Resolve(trade);
+                if (trade.trading_day != ctp_trader->GetLastUserSession().trading_day ||
+                    !policy.valuation_inputs_verified || !persist_accounting_evidence(nullptr))
+                    return TradeAccountingPolicy{};
+                return policy;
+            });
     }
     if (replay_stats.lines_total > 0 || replay_stats.parse_errors > 0) {
         std::cout << "WAL replay lines=" << replay_stats.lines_total
@@ -3126,6 +3204,17 @@ int main(int argc, char** argv) {
                 }
 
                 const auto& intent = planned.intent;
+                std::string policy_error;
+                if (!accounting_ready_for(
+                        {accounting_scope(intent.instrument_id, intent.hedge_flag)},
+                        &policy_error)) {
+                    trading_permission_controller.SetBlocked("trade_semantics_unverified");
+                    if (IsCloseLikeSignal(signal))
+                        (void)persist_pending_exit(signal, "trade_semantics_unverified");
+                    else
+                        EmitSignalPlanRejectedLog(config, signal, "trade_semantics_unverified");
+                    return;
+                }
                 if (dominant_contract_mode) {
                     SignalIntent order_validation_signal;
                     order_validation_signal.strategy_id = intent.strategy_id;
@@ -3272,6 +3361,16 @@ int main(int argc, char** argv) {
                                         commission_it->second.close_ratio_by_money;
                                     fund_inputs.commission_ratio_by_volume =
                                         commission_it->second.close_ratio_by_volume;
+                                    if (intent.offset == OffsetFlag::kClose) {
+                                        // Reserve the upper bound without guessing the eventual
+                                        // mixed-date allocation. Only ApplyTrade books exact fees.
+                                        fund_inputs.commission_ratio_by_money = std::max(
+                                            fund_inputs.commission_ratio_by_money,
+                                            commission_it->second.close_today_ratio_by_money);
+                                        fund_inputs.commission_ratio_by_volume = std::max(
+                                            fund_inputs.commission_ratio_by_volume,
+                                            commission_it->second.close_today_ratio_by_volume);
+                                    }
                                 }
                             }
                             const auto order_comm_it =
@@ -3595,6 +3694,53 @@ int main(int argc, char** argv) {
         std::lock_guard<std::mutex> lock(active_instrument_state_mutex);
         return instruments;
     };
+
+    auto refresh_accounting_permission = [&]() {
+        if (!config.enable_real_api) return;
+        std::vector<AccountingPolicyInstrument> scopes;
+        for (const auto& instrument : get_active_instruments_snapshot())
+            scopes.push_back(accounting_scope(instrument, HedgeFlag::kSpeculation));
+        std::string policy_error;
+        if (accounting_ready_for(scopes, &policy_error))
+            trading_permission_controller.ClearReason("trade_semantics_unverified");
+        else
+            trading_permission_controller.SetBlocked("trade_semantics_unverified");
+    };
+    ctp_trader->RegisterInstrumentMetaQueryCallback([&](const auto& result) {
+        {
+            std::lock_guard<std::mutex> lock(accounting_policy_mutex);
+            accounting_policy_registry.BeginSession(ctp_gateway->GetQueryGeneration());
+            accounting_policy_registry.ObserveInstrumentQuery(result);
+        }
+        refresh_accounting_permission();
+    });
+    ctp_trader->RegisterInstrumentCommissionRateQueryCallback([&](const auto& result) {
+        {
+            std::lock_guard<std::mutex> lock(accounting_policy_mutex);
+            accounting_policy_registry.BeginSession(ctp_gateway->GetQueryGeneration());
+            accounting_policy_registry.ObserveCommissionQuery(result);
+        }
+        // Some brokers return a product ID for an exact-contract commission query.
+        // This is a request-scoped reservation cache; raw rows remain in the audit callback,
+        // and the policy registry must independently validate the declared mapping.
+        if (result.metadata.success && result.metadata.complete &&
+            result.metadata.error_code == 0 && result.metadata.account_id == account_id &&
+            !result.metadata.instrument_id.empty() && result.rows.size() == 1) {
+            auto projected = result.rows.front();
+            projected.instrument_id = result.metadata.instrument_id;
+            std::lock_guard<std::mutex> lock(fee_rate_mutex);
+            commission_rate_by_instrument[projected.instrument_id] = std::move(projected);
+        }
+        refresh_accounting_permission();
+    });
+    ctp_trader->RegisterInstrumentOrderCommRateQueryCallback([&](const auto& result) {
+        {
+            std::lock_guard<std::mutex> lock(accounting_policy_mutex);
+            accounting_policy_registry.BeginSession(ctp_gateway->GetQueryGeneration());
+            accounting_policy_registry.ObserveOrderCommissionQuery(result);
+        }
+        refresh_accounting_permission();
+    });
 
     auto is_active_instrument = [&](const std::string& instrument_id) {
         std::lock_guard<std::mutex> lock(active_instrument_state_mutex);
@@ -4902,6 +5048,14 @@ int main(int argc, char** argv) {
                         need_order_comm = order_comm_rate_by_instrument.find(instrument_id) ==
                                           order_comm_rate_by_instrument.end();
                     }
+                    if (accounting_policy_loaded &&
+                        !accounting_ready_for(
+                            {accounting_scope(instrument_id, HedgeFlag::kSpeculation)}, nullptr)) {
+                        (void)ctp_trader->EnqueueInstrumentQuery(next_query_request_id(),
+                                                                 instrument_id);
+                        need_commission = true;
+                        need_order_comm = true;
+                    }
                     if (need_margin) {
                         (void)ctp_trader->EnqueueInstrumentMarginRateQuery(next_query_request_id(),
                                                                            instrument_id);
@@ -5986,6 +6140,7 @@ int main(int argc, char** argv) {
         }
         if (std::chrono::steady_clock::now() >= next_readiness_heartbeat) {
             const EpochNanos now_ns = NowEpochNanos();
+            refresh_accounting_permission();
             const auto strategy_health = strategy_engine->GetHealth();
             if (strategy_health.overloaded ||
                 (strategy_health.callback_in_progress &&

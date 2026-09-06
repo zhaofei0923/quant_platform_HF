@@ -1,0 +1,52 @@
+Consolidate compiler generated dependencies of target gtest
+[  6%] Built target gtest
+Consolidate compiler generated dependencies of target quant_hft_common
+Consolidate compiler generated dependencies of target gtest_main
+[ 31%] Built target quant_hft_common
+[ 31%] Built target gtest_main
+Consolidate compiler generated dependencies of target quant_hft_storage
+[ 37%] Building CXX object CMakeFiles/quant_hft_storage.dir/src/core/storage/redis_hash_client.cpp.o
+[ 43%] Building CXX object CMakeFiles/quant_hft_storage.dir/src/core/storage/trading_domain_store_client_adapter.cpp.o
+[ 43%] Linking CXX static library libquant_hft_storage.a
+[ 56%] Built target quant_hft_storage
+Consolidate compiler generated dependencies of target quant_hft_services
+[ 62%] Building CXX object CMakeFiles/quant_hft_services.dir/src/risk/risk_rule_registry.cpp.o
+[ 62%] Building CXX object CMakeFiles/quant_hft_services.dir/src/risk/risk_manager.cpp.o
+/home/kevin/quant_platform_HF/src/risk/risk_rule_registry.cpp:11:6: warning: ‘bool quant_hft::{anonymous}::IsOpenOrder(const quant_hft::OrderIntent&)’ defined but not used [-Wunused-function]
+   11 | bool IsOpenOrder(const OrderIntent& intent) { return intent.offset == OffsetFlag::kOpen; }
+      |      ^~~~~~~~~~~
+[ 62%] Building CXX object CMakeFiles/quant_hft_services.dir/src/services/order/execution_engine.cpp.o
+/home/kevin/quant_platform_HF/src/services/order/execution_engine.cpp: In member function ‘quant_hft::TradeApplyResult quant_hft::ExecutionEngine::ProcessOrderEvent(const quant_hft::OrderEvent&, const quant_hft::WalReceipt&, bool)’:
+/home/kevin/quant_platform_HF/src/services/order/execution_engine.cpp:373:72: warning: missing initializer for member ‘quant_hft::TradeApplyRequest::accounting_policy’ [-Wmissing-field-initializers]
+  373 |                                   event.event_source == "OnRspQryTrade"};
+      |                                                                        ^
+[ 62%] Building CXX object CMakeFiles/quant_hft_services.dir/src/services/order/order_manager.cpp.o
+[ 68%] Building CXX object CMakeFiles/quant_hft_services.dir/src/services/order/verified_trade_accounting_policy.cpp.o
+[ 75%] Building CXX object CMakeFiles/quant_hft_services.dir/src/services/order/pending_exit_store.cpp.o
+[ 75%] Building CXX object CMakeFiles/quant_hft_services.dir/src/services/portfolio/position_manager.cpp.o
+[ 75%] Linking CXX static library libquant_hft_services.a
+[100%] Built target quant_hft_services
+[100%] Building CXX object CMakeFiles/verified_trade_accounting_policy_test.dir/tests/unit/services/verified_trade_accounting_policy_test.cpp.o
+[100%] Linking CXX executable verified_trade_accounting_policy_test
+[100%] Built target verified_trade_accounting_policy_test
+[ 11%] Built target gtest
+[ 55%] Built target quant_hft_common
+[ 55%] Built target gtest_main
+Consolidate compiler generated dependencies of target quant_hft_storage
+[100%] Built target quant_hft_storage
+[100%] Building CXX object CMakeFiles/trading_domain_store_client_adapter_test.dir/tests/unit/core/trading_domain_store_client_adapter_test.cpp.o
+[100%] Linking CXX executable trading_domain_store_client_adapter_test
+[100%] Built target trading_domain_store_client_adapter_test
+[  5%] Built target gtest
+[ 26%] Built target quant_hft_common
+[ 26%] Built target gtest_main
+[ 47%] Built target quant_hft_storage
+Consolidate compiler generated dependencies of target quant_hft_wal_io
+[ 52%] Built target quant_hft_wal_io
+Consolidate compiler generated dependencies of target quant_hft_services
+Consolidate compiler generated dependencies of target quant_hft_ctp
+[ 89%] Built target quant_hft_services
+[ 94%] Built target quant_hft_ctp
+[100%] Building CXX object CMakeFiles/execution_engine_test.dir/tests/unit/services/execution_engine_test.cpp.o
+[100%] Linking CXX executable execution_engine_test
+[100%] Built target execution_engine_test

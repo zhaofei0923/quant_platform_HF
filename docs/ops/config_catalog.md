@@ -16,6 +16,7 @@
 ## 覆盖清单
 
 - `configs/dev/ctp.yaml`
+- `configs/accounting_policy.example.json`
 - `configs/prod/ctp.yaml`
 - `configs/sim/ctp.yaml`
 - `configs/sim/ctp_sim_trade_candidates.yaml`
@@ -212,6 +213,16 @@
 ---
 
 ## 文件级说明
+
+## `configs/accounting_policy.example.json`
+
+- Purpose: 真实 CTP 成交核算规则的未核验模板，按环境、经纪商、账户、交易日、
+  完整合约、交易所与套保类型限定适用范围。
+- 使用方式: 复制为本地私有文件，填写已核验事实及来源，通过
+  `QUANT_HFT_ACCOUNTING_POLICY_FILE` 设置绝对路径，重启载入。
+- 示例默认 `verified=false`；占位值不能直接用于交易。新会话还需三类当日柜台
+  查询匹配及证据可靠保存才能解除对应阻断。
+- 完整字段、支持的费用模型和历史恢复边界见[核算规则说明](verified_accounting_policy.md)。
 
 ## `configs/dev/ctp.yaml`
 

@@ -1,20 +1,18 @@
+#include <gtest/gtest.h>
+
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
 
-#include <gtest/gtest.h>
-
 namespace {
 
-int RunCommand(const std::string& command) {
-    return std::system(command.c_str());
-}
+int RunCommand(const std::string& command) { return std::system(command.c_str()); }
 
 std::filesystem::path MakeTempDir(const std::string& suffix) {
-    const auto path = std::filesystem::temp_directory_path() /
-                      ("quant_hft_consistency_gate_test_" + suffix);
+    const auto path =
+        std::filesystem::temp_directory_path() / ("quant_hft_consistency_gate_test_" + suffix);
     std::filesystem::remove_all(path);
     std::filesystem::create_directories(path);
     return path;
@@ -58,16 +56,19 @@ std::string BuildDirForTest() {
 }
 
 TEST(ConsistencyGateScriptTest, GeneratesConsistencyReports) {
+#if !QUANT_HFT_ENABLE_ARROW_PARQUET
+    GTEST_SKIP() << "Consistency CLIs require native Arrow/Parquet support";
+#endif
     const auto temp_root = MakeTempDir("generate");
     const auto results_dir = temp_root / "results";
     const auto csv_path = temp_root / "sample.csv";
     const auto dataset_root = temp_root / "parquet_v2";
 
-    const std::string command =
-        "bash scripts/build/run_consistency_gates.sh --build-dir '" + BuildDirForTest() + "' " +
-                                std::string("--csv-path '") + EscapePathForShell(csv_path) +
-                                "' --dataset-root '" + EscapePathForShell(dataset_root) +
-                                "' --results-dir '" + EscapePathForShell(results_dir) + "'";
+    const std::string command = "bash scripts/build/run_consistency_gates.sh --build-dir '" +
+                                BuildDirForTest() + "' " + std::string("--csv-path '") +
+                                EscapePathForShell(csv_path) + "' --dataset-root '" +
+                                EscapePathForShell(dataset_root) + "' --results-dir '" +
+                                EscapePathForShell(results_dir) + "'";
     const int rc = RunCommand(command);
     EXPECT_EQ(rc, 0);
 
@@ -98,9 +99,8 @@ TEST(ConsistencyGateScriptTest, FailsWhenBaselineIsMissing) {
     const std::string command =
         "bash scripts/build/run_consistency_gates.sh --build-dir '" + BuildDirForTest() + "' " +
         std::string("--csv-path '") + EscapePathForShell(csv_path) + "' --results-dir '" +
-        EscapePathForShell(results_dir) + "' --dataset-root '" +
-        EscapePathForShell(dataset_root) + "' --baseline-json '" +
-        EscapePathForShell(missing_baseline) + "' --provenance-json '" +
+        EscapePathForShell(results_dir) + "' --dataset-root '" + EscapePathForShell(dataset_root) +
+        "' --baseline-json '" + EscapePathForShell(missing_baseline) + "' --provenance-json '" +
         EscapePathForShell(missing_provenance) + "'";
     const int rc = RunCommand(command);
     EXPECT_NE(rc, 0);
@@ -116,22 +116,20 @@ TEST(ConsistencyGateScriptTest, FailsWhenConsistencyExceedsTolerance) {
     const auto results_dir = temp_root / "results";
     const auto csv_path = temp_root / "diff.csv";
     const auto dataset_root = temp_root / "parquet_v2";
-    WriteFile(
-        csv_path,
-        "symbol,exchange,ts_ns,last_price,last_volume,bid_price1,bid_volume1,ask_price1,ask_volume1,"
-        "volume,turnover,open_interest\n"
-        "rb2405,SHFE,1704067200000000000,100.0,1,99.9,5,100.1,5,10,1000,100\n"
-        "rb2405,SHFE,1704067201000000000,101.0,1,100.9,5,101.1,5,11,1111,100\n"
-        "rb2405,SHFE,1704067260000000000,98.0,1,97.9,5,98.1,5,12,1176,100\n"
-        "rb2405,SHFE,1704067261000000000,97.0,1,96.9,5,97.1,5,13,1261,100\n");
+    WriteFile(csv_path,
+              "symbol,exchange,ts_ns,last_price,last_volume,bid_price1,bid_volume1,ask_price1,ask_"
+              "volume1,"
+              "volume,turnover,open_interest\n"
+              "rb2405,SHFE,1704067200000000000,100.0,1,99.9,5,100.1,5,10,1000,100\n"
+              "rb2405,SHFE,1704067201000000000,101.0,1,100.9,5,101.1,5,11,1111,100\n"
+              "rb2405,SHFE,1704067260000000000,98.0,1,97.9,5,98.1,5,12,1176,100\n"
+              "rb2405,SHFE,1704067261000000000,97.0,1,96.9,5,97.1,5,13,1261,100\n");
 
-    const std::string command =
-                                "bash scripts/build/run_consistency_gates.sh --build-dir '" +
-                                BuildDirForTest() + "' " +
-                                std::string("--csv-path '") + EscapePathForShell(csv_path) +
-                                "' --dataset-root '" + EscapePathForShell(dataset_root) +
-                                "' --results-dir '" + EscapePathForShell(results_dir) +
-                                "' --abs-tol 1e-8 --rel-tol 1e-6";
+    const std::string command = "bash scripts/build/run_consistency_gates.sh --build-dir '" +
+                                BuildDirForTest() + "' " + std::string("--csv-path '") +
+                                EscapePathForShell(csv_path) + "' --dataset-root '" +
+                                EscapePathForShell(dataset_root) + "' --results-dir '" +
+                                EscapePathForShell(results_dir) + "' --abs-tol 1e-8 --rel-tol 1e-6";
     const int rc = RunCommand(command);
     EXPECT_NE(rc, 0);
 

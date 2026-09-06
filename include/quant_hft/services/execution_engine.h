@@ -44,6 +44,10 @@ class ExecutionEngine {
     void SetContractMultiplierResolver(ContractMultiplierResolver resolver);
     using AccountingPolicyResolver = std::function<TradeAccountingPolicy(const Trade&)>;
     void SetAccountingPolicyResolver(AccountingPolicyResolver resolver);
+    using DurableAccountingPolicyResolver =
+        std::function<TradeAccountingPolicy(const Trade&, const WalReceipt&)>;
+    void SetDurableAccountingPolicyResolver(DurableAccountingPolicyResolver resolver);
+    void SetRequireVerifiedAccounting(bool required);
     std::future<TradingAccountSnapshot> QueryTradingAccountAsync();
     std::future<std::vector<InvestorPositionSnapshot>> QueryInvestorPositionAsync(
         const std::string& instrument_id = "");
@@ -94,6 +98,8 @@ class ExecutionEngine {
     std::shared_ptr<RiskManager> risk_manager_;
     ContractMultiplierResolver contract_multiplier_resolver_;
     AccountingPolicyResolver accounting_policy_resolver_;
+    DurableAccountingPolicyResolver durable_accounting_policy_resolver_;
+    bool require_verified_accounting_{false};
     OrderCallback order_callback_;
     std::string default_account_id_;
     std::string default_strategy_id_;

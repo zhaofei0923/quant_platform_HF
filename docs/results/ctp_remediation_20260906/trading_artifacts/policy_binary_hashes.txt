@@ -1,0 +1,5 @@
+ea6ec6ae24084acfcd0d457d0c0dcaa10afc01fb91ac2c27f2fbb30146709c70  /tmp/quant-hft-trading-build/core_engine
+44e883a12ab3f9003c708042696433f62c8b24d11b1382cd74b197f2ab95cc82  /tmp/quant-hft-trading-build/verified_trade_accounting_policy_test
+6422d2b440ce64749f2bf8228ca7bef3f794c0790422a304e3efffae09cbf689  /tmp/quant-hft-trading-build/trading_domain_store_client_adapter_test
+af0f43bdf6e768aa446685e5b75125bd133bcd15d11f35cd548cf5dac6453b9e  /tmp/quant-hft-trading-build/execution_engine_test
+49b15c7d548fbb8ab255a572dbb9e01636aa76ba4dd3037dc9315fa8a39fd82a  /tmp/codex-trade-atomic-postgres-test

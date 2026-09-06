@@ -2,6 +2,9 @@
 
 Quantitative trading platform bootstrap using a pure C++ execution and strategy stack.
 
+本次 CTP 修复的提交、验证和剩余验收事项见
+[研究与 SimNow 候选版本交付](docs/results/ctp_remediation_20260906/delivery.md)。
+
 ## Quick start
 
 ```bash
@@ -33,7 +36,7 @@ bash scripts/build/run_preprod_rehearsal_gate.sh --build-dir build --results-dir
 
 ## SimNow profiles
 
-- `configs/sim/ctp.yaml`: env-selected SimNow runtime profile; `.env.example` defaults to 7x24 (`182.254.243.31:40011/40001`)
+- `configs/sim/ctp.yaml`: env-selected SimNow runtime profile; `.env.example` defaults to trading-hours fronts (`182.254.243.31:30011/30001`)
 - `configs/sim/ctp_trading_hours.yaml`: trading-hours-aligned SimNow (`182.254.243.31:30011/30001`)
 - `configs/sim/ctp_trading_hours_group2.yaml`: trading-hours group2 (`182.254.243.31:30012/30002`)
 - `configs/sim/ctp_trading_hours_group3.yaml`: trading-hours group3 (`182.254.243.31:30013/30003`)
@@ -48,9 +51,9 @@ bash scripts/build/run_preprod_rehearsal_gate.sh --build-dir build --results-dir
 
 真实账号密码放在本地 `.env`，不要写入 YAML。`.env` 已被 git 忽略，仓库只保留 `.env.example` 模板。
 
-1) 创建本地环境文件并填写账号：
+1) 首次创建本地环境文件并填写账号（已有 `.env` 时保留原文件）：
 ```bash
-cp .env.example .env
+cp -n .env.example .env
 ```
 2) 加载到当前 shell：
 ```bash
@@ -58,10 +61,16 @@ set -a && source .env && set +a
 ```
 3) 启动前快速检查：
 ```bash
-env | grep '^CTP_SIM_'
+for key in CTP_SIM_USER_ID CTP_SIM_INVESTOR_ID CTP_SIM_PASSWORD; do
+  if [[ -n "${!key:-}" ]]; then
+    printf '%s=set\n' "$key"
+  else
+    printf '%s=missing\n' "$key"
+  fi
+done
 ```
 
-默认 `.env.example` 使用 7x24 前置（40001/40011）和 `CTP_SIM_IS_PRODUCTION_MODE=false`。若切换到交易时段前置（30001/30011、30002/30012、30003/30013），需要同时设置 `CTP_SIM_IS_PRODUCTION_MODE=true`，或直接使用对应的 `configs/sim/ctp_trading_hours*.yaml`。
+默认 `.env.example` 使用交易时段前置（30001/30011）和 `CTP_SIM_IS_PRODUCTION_MODE=true`。其他交易时段组为 30002/30012、30003/30013。仅做 7x24 API 测试时，可按模板注释切换 40001/40011 并设置 `CTP_SIM_IS_PRODUCTION_MODE=false`。
 
 也可直接通过系统环境变量注入（CI/systemd/k8s），YAML 中 `${CTP_SIM_*}` 会在加载时自动替换；主 SimNow 配置通过 `password_env: "CTP_SIM_PASSWORD"` 读取密码。
 
@@ -112,6 +121,14 @@ ctest --test-dir build -R "(StrategyRegistryTest|StrategyEngineTest|DemoLiveStra
 ```
 
 ## Real CTP probe (optional)
+
+6.7.11 Linux SDK 的来源、版本和文件校验见
+[SDK 验证记录](docs/results/ctp_remediation_20260906/baseline.md)。
+新版本的账户隔离、旧状态处理与五日 SimNow 验收要求见
+[恢复与验收](docs/ops/ctp_recovery_and_acceptance.md)。
+回测默认 `online_parity`，原研究换月协议需显式选择 `research`，详见
+[回测运行语义](docs/backtest_runtime_semantics.md)。
+构建目标和运行时边界见 [模块说明](docs/runtime_build_targets.md)。
 
 ```bash
 cmake -S . -B build-real -DQUANT_HFT_BUILD_TESTS=ON -DQUANT_HFT_ENABLE_CTP_REAL_API=ON

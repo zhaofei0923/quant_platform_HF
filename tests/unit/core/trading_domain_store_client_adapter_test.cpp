@@ -409,6 +409,82 @@ TEST(TradingDomainStoreClientAdapterTest,
     EXPECT_DOUBLE_EQ(history.back().trade.commission, 3);
 }
 
+TEST(TradingDomainStoreClientAdapterTest,
+     VerifiedMixedCloseFeesUseCommittedAllocationAndReplayRawPayload) {
+    auto sql = std::make_shared<InMemoryTimescaleSqlClient>();
+    TradingDomainStoreClientAdapter store(sql, {}, "trading_core");
+    TradeAccountingPolicy policy;
+    policy.valuation_inputs_verified = true;
+    policy.contract_multiplier = 10;
+    policy.valuation_source = "sample:manual-v1";
+    policy.generic_close_priority = GenericClosePriority::kYesterdayFirst;
+    policy.close_rule_source = "sample";
+    policy.close_rule_version = "v1";
+    policy.fee_model = TradeFeeModel::kMoneyPlusVolumeV1;
+    policy.open_fee = {0, 1};
+    policy.close_fee = {0.001, 2};
+    policy.close_today_fee = {0.002, 5};
+    policy.fee_date_basis = "close_allocation_v1";
+    policy.fee_allocation_source = "broker-sample";
+    policy.fee_allocation_version = "v1";
+    auto open = Fill("fee-yd");
+    open.trade.price = 100;
+    open.trade.exchange = "DCE";
+    open.accounting_policy = policy;
+    open.require_verified_accounting = true;
+    TradeApplyResult result;
+    std::string error;
+    ASSERT_TRUE(store.ApplyTrade(open, &result, &error)) << error;
+    auto today = open;
+    today.trade.raw_trade_id = today.trade.trade_id = "fee-td";
+    today.trade.trading_day = "20260908";
+    today.receipt.sequence = 1;
+    ASSERT_TRUE(store.ApplyTrade(today, &result, &error)) << error;
+    auto close = today;
+    close.trade.raw_trade_id = close.trade.trade_id = "fee-close";
+    close.trade.side = Side::kSell;
+    close.trade.offset = OffsetFlag::kClose;
+    close.trade.quantity = 3;
+    close.trade.price = 120;
+    close.receipt.sequence = 2;
+    ASSERT_TRUE(store.ApplyTrade(close, &result, &error)) << error;
+    ASSERT_EQ(result.status, TradeApplyStatus::kApplied);
+    EXPECT_EQ(result.close_allocation.yesterday, 2);
+    EXPECT_EQ(result.close_allocation.today, 1);
+    std::vector<TradeOutboxRecord> history;
+    ASSERT_TRUE(store.LoadTradeHistory("acc", "", &history, &error));
+    ASSERT_EQ(history.size(), 3U);
+    EXPECT_NEAR(history.back().trade.commission, 13.8, 1e-12);
+    EXPECT_DOUBLE_EQ(history.back().trade.profit, 600);
+    EXPECT_EQ(history.back().fee_date_basis, "close_allocation_v1");
+    EXPECT_EQ(history.back().fee_allocation_version, "v1");
+    close.accounting_policy = {};  // Lost live evidence cannot prevent an already committed retry.
+    ASSERT_TRUE(store.ApplyTrade(close, &result, &error)) << error;
+    EXPECT_EQ(result.status, TradeApplyStatus::kDuplicate);
+    EXPECT_EQ(result.close_allocation.yesterday, 2);
+}
+
+TEST(TradingDomainStoreClientAdapterTest,
+     RequiredValuationLeavesUnknownNewFillAndWatermarkPending) {
+    auto sql = std::make_shared<InMemoryTimescaleSqlClient>();
+    TradingDomainStoreClientAdapter store(sql, {}, "trading_core");
+    auto request = Fill("pending-valuation");
+    request.require_verified_accounting = true;
+    TradeApplyResult result;
+    std::string error;
+    EXPECT_FALSE(store.ApplyTrade(request, &result, &error));
+    EXPECT_TRUE(sql->QueryAllRows("trading_core.trade_applications", &error).empty());
+    EXPECT_TRUE(sql->QueryAllRows("trading_core.domain_receipts", &error).empty());
+    request.accounting_policy.valuation_inputs_verified = true;
+    request.accounting_policy.contract_multiplier = 10;
+    request.accounting_policy.valuation_source = "verified-test";
+    ASSERT_TRUE(store.ApplyTrade(request, &result, &error)) << error;
+    EXPECT_EQ(result.status, TradeApplyStatus::kApplied);
+    request.accounting_policy = {};
+    ASSERT_TRUE(store.ApplyTrade(request, &result, &error));
+    EXPECT_EQ(result.status, TradeApplyStatus::kDuplicate);
+}
+
 TEST(TradingDomainStoreClientAdapterTest, InMemoryTransactionRollsBackOnFalseAndException) {
     InMemoryTimescaleSqlClient sql;
     std::string error;

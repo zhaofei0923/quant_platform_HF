@@ -1,0 +1,26 @@
+Consolidate compiler generated dependencies of target quant_hft_common
+[ 18%] Built target quant_hft_common
+Consolidate compiler generated dependencies of target quant_hft_wal_io
+Consolidate compiler generated dependencies of target quant_hft_storage
+[ 22%] Built target quant_hft_wal_io
+[ 40%] Built target quant_hft_storage
+Consolidate compiler generated dependencies of target quant_hft_ctp
+[ 45%] Built target quant_hft_ctp
+Consolidate compiler generated dependencies of target quant_hft_services
+[ 77%] Built target quant_hft_services
+Consolidate compiler generated dependencies of target quant_hft_online_runtime
+Consolidate compiler generated dependencies of target quant_hft_strategy
+[ 86%] Built target quant_hft_online_runtime
+[100%] Built target quant_hft_strategy
+Consolidate compiler generated dependencies of target core_engine
+[100%] Built target core_engine
+Consolidate compiler generated dependencies of target gtest
+[  6%] Built target gtest
+[ 31%] Built target quant_hft_common
+Consolidate compiler generated dependencies of target gtest_main
+[ 31%] Built target gtest_main
+[ 56%] Built target quant_hft_storage
+[100%] Built target quant_hft_services
+[100%] Building CXX object CMakeFiles/verified_trade_accounting_policy_test.dir/tests/unit/services/verified_trade_accounting_policy_test.cpp.o
+[100%] Linking CXX executable verified_trade_accounting_policy_test
+[100%] Built target verified_trade_accounting_policy_test

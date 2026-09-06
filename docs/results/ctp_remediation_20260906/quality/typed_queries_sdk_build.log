@@ -1,0 +1,28 @@
+Consolidate compiler generated dependencies of target quant_hft_common
+[ 66%] Built target quant_hft_common
+[ 66%] Built target quant_hft_wal_io
+[ 83%] Building CXX object CMakeFiles/quant_hft_ctp.dir/src/core/ctp/ctp_trader_adapter.cpp.o
+[ 83%] Building CXX object CMakeFiles/quant_hft_ctp.dir/src/core/ctp/ctp_md_adapter.cpp.o
+[ 83%] Building CXX object CMakeFiles/quant_hft_ctp.dir/src/core/ctp/ctp_gateway_adapter.cpp.o
+/home/kevin/quant_platform_HF/src/core/ctp/ctp_gateway_adapter.cpp: In member function ‘virtual void quant_hft::CtpTdSpi::OnRspAuthenticate(CThostFtdcRspAuthenticateField*, CThostFtdcRspInfoField*, int, bool)’:
+/home/kevin/quant_platform_HF/src/core/ctp/ctp_gateway_adapter.cpp:857:32: warning: unused parameter ‘n_request_id’ [-Wunused-parameter]
+  857 |                            int n_request_id, bool b_is_last) override {
+      |                            ~~~~^~~~~~~~~~~~
+/home/kevin/quant_platform_HF/src/core/ctp/ctp_gateway_adapter.cpp: In member function ‘virtual void quant_hft::CtpTdSpi::OnRspQryUserSession(CThostFtdcUserSessionField*, CThostFtdcRspInfoField*, int, bool)’:
+/home/kevin/quant_platform_HF/src/core/ctp/ctp_gateway_adapter.cpp:956:70: warning: unused parameter ‘n_request_id’ [-Wunused-parameter]
+  956 |                              CThostFtdcRspInfoField* p_rsp_info, int n_request_id, bool b_is_last) {
+      |                                                                  ~~~~^~~~~~~~~~~~
+/home/kevin/quant_platform_HF/src/core/ctp/ctp_gateway_adapter.cpp: In member function ‘virtual void quant_hft::CtpTdSpi::OnRspQryOffsetSetting(CThostFtdcOffsetSettingField*, CThostFtdcRspInfoField*, int, bool)’:
+/home/kevin/quant_platform_HF/src/core/ctp/ctp_gateway_adapter.cpp:1015:72: warning: unused parameter ‘n_request_id’ [-Wunused-parameter]
+ 1015 |                                CThostFtdcRspInfoField* p_rsp_info, int n_request_id,
+      |                                                                    ~~~~^~~~~~~~~~~~
+/home/kevin/quant_platform_HF/src/core/ctp/ctp_gateway_adapter.cpp: In member function ‘virtual void quant_hft::CtpTdSpi::OnRspOrderInsert(CThostFtdcInputOrderField*, CThostFtdcRspInfoField*, int, bool)’:
+/home/kevin/quant_platform_HF/src/core/ctp/ctp_gateway_adapter.cpp:1690:67: warning: unused parameter ‘n_request_id’ [-Wunused-parameter]
+ 1690 |                           CThostFtdcRspInfoField* p_rsp_info, int n_request_id,
+      |                                                               ~~~~^~~~~~~~~~~~
+/home/kevin/quant_platform_HF/src/core/ctp/ctp_gateway_adapter.cpp: In member function ‘virtual void quant_hft::CtpTdSpi::OnRspOrderAction(CThostFtdcInputOrderActionField*, CThostFtdcRspInfoField*, int, bool)’:
+/home/kevin/quant_platform_HF/src/core/ctp/ctp_gateway_adapter.cpp:1783:67: warning: unused parameter ‘n_request_id’ [-Wunused-parameter]
+ 1783 |                           CThostFtdcRspInfoField* p_rsp_info, int n_request_id,
+      |                                                               ~~~~^~~~~~~~~~~~
+[ 83%] Linking CXX static library libquant_hft_ctp.a
+[100%] Built target quant_hft_ctp

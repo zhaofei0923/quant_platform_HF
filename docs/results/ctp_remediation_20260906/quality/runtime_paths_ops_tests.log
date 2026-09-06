@@ -1,0 +1,48 @@
+Internal ctest changing into directory: /tmp/quant-hft-runtime-build
+Test project /tmp/quant-hft-runtime-build
+      Start  35: RuntimePathsTest.ResolutionHasNoSideEffectsAndKeepsRunArtifactsOutsideRecovery
+ 1/21 Test  #35: RuntimePathsTest.ResolutionHasNoSideEffectsAndKeepsRunArtifactsOutsideRecovery ....................   Passed    0.00 sec
+      Start  36: RuntimePathsTest.ExplicitLegacyArtifactsRemainUnclaimedAndKeepTheirPaths
+ 2/21 Test  #36: RuntimePathsTest.ExplicitLegacyArtifactsRemainUnclaimedAndKeepTheirPaths ..........................   Passed    0.02 sec
+      Start  37: RuntimePathsTest.ConflictingOverridesAndUnsafeIdentityFailBeforeCreatingDirectories
+ 3/21 Test  #37: RuntimePathsTest.ConflictingOverridesAndUnsafeIdentityFailBeforeCreatingDirectories ...............   Passed    0.00 sec
+      Start 852: SimnowSupervisorScriptTest.FridayNightMapsToNextAllowedTradingDay
+ 4/21 Test #852: SimnowSupervisorScriptTest.FridayNightMapsToNextAllowedTradingDay .................................   Passed    0.06 sec
+      Start 853: SimnowSupervisorScriptTest.SaturdayEarlyMorningContinuesFridayNightSession
+ 5/21 Test #853: SimnowSupervisorScriptTest.SaturdayEarlyMorningContinuesFridayNightSession ........................   Passed    0.06 sec
+      Start 854: SimnowSupervisorScriptTest.WeekendNightDoesNotStartANewSession
+ 6/21 Test #854: SimnowSupervisorScriptTest.WeekendNightDoesNotStartANewSession ....................................   Passed    0.04 sec
+      Start 855: SimnowSupervisorScriptTest.SignalMonitorHeartbeatIsSessionAwareWhenCoreIsStopped
+ 7/21 Test #855: SimnowSupervisorScriptTest.SignalMonitorHeartbeatIsSessionAwareWhenCoreIsStopped ..................   Passed    0.59 sec
+      Start 856: SimnowSupervisorScriptTest.PipelineMonitorTreatsWeekendAsInactive
+ 8/21 Test #856: SimnowSupervisorScriptTest.PipelineMonitorTreatsWeekendAsInactive .................................   Passed    0.44 sec
+      Start 857: SimnowSupervisorScriptTest.PipelineMonitorTreatsPostEndpointLunchAsInactive
+ 9/21 Test #857: SimnowSupervisorScriptTest.PipelineMonitorTreatsPostEndpointLunchAsInactive .......................   Passed    0.55 sec
+      Start 858: SimnowSupervisorScriptTest.PipelineMonitorMarksActiveSessionWithoutCoreUnhealthy
+10/21 Test #858: SimnowSupervisorScriptTest.PipelineMonitorMarksActiveSessionWithoutCoreUnhealthy ..................   Passed    0.49 sec
+      Start 859: SimnowSupervisorScriptTest.PipelineMonitorAcceptsCompleteBarsAndNoCandidate
+11/21 Test #859: SimnowSupervisorScriptTest.PipelineMonitorAcceptsCompleteBarsAndNoCandidate .......................   Passed    0.58 sec
+      Start 860: SimnowSupervisorScriptTest.PipelineMonitorCorrelatesAllowedTraceAndLatencies
+12/21 Test #860: SimnowSupervisorScriptTest.PipelineMonitorCorrelatesAllowedTraceAndLatencies ......................   Passed    0.91 sec
+      Start 861: SimnowSupervisorScriptTest.PipelineMonitorRejectsOldGenerationSubmission
+13/21 Test #861: SimnowSupervisorScriptTest.PipelineMonitorRejectsOldGenerationSubmission ..........................   Passed    0.94 sec
+      Start 862: SimnowSupervisorScriptTest.PipelineMonitorDefersHalfLineAndResumesFromCheckpoint
+14/21 Test #862: SimnowSupervisorScriptTest.PipelineMonitorDefersHalfLineAndResumesFromCheckpoint ..................   Passed    1.19 sec
+      Start 863: SimnowSupervisorScriptTest.PipelineMonitorIgnoresCorruptCheckpointAndRewritesV3
+15/21 Test #863: SimnowSupervisorScriptTest.PipelineMonitorIgnoresCorruptCheckpointAndRewritesV3 ...................   Passed    0.58 sec
+      Start 864: SimnowSupervisorScriptTest.PipelineMonitorRejectsIncompleteFiveMinuteBar
+16/21 Test #864: SimnowSupervisorScriptTest.PipelineMonitorRejectsIncompleteFiveMinuteBar ..........................   Passed    0.58 sec
+      Start 865: SimnowSupervisorScriptTest.SettlementDryRunDoesNotFabricateEvidence
+17/21 Test #865: SimnowSupervisorScriptTest.SettlementDryRunDoesNotFabricateEvidence ...............................   Passed    0.01 sec
+      Start 866: SimnowSupervisorScriptTest.IndependentSignalMonitorUnitRestartsAlways
+18/21 Test #866: SimnowSupervisorScriptTest.IndependentSignalMonitorUnitRestartsAlways .............................   Passed    0.00 sec
+      Start 867: SimnowSupervisorScriptTest.IdentityDefaultsSurviveRunIdsAndSeparateAccountsWithoutClaimingState
+19/21 Test #867: SimnowSupervisorScriptTest.IdentityDefaultsSurviveRunIdsAndSeparateAccountsWithoutClaimingState ...   Passed    0.55 sec
+      Start 868: SimnowPreflightScriptTest.PrestartLocalChecksPassWithoutRealProbe
+20/21 Test #868: SimnowPreflightScriptTest.PrestartLocalChecksPassWithoutRealProbe .................................   Passed    0.34 sec
+      Start 869: SimnowPreflightScriptTest.EodChecksRequireMarkerAndArtifacts
+21/21 Test #869: SimnowPreflightScriptTest.EodChecksRequireMarkerAndArtifacts ......................................   Passed    0.03 sec
+
+100% tests passed, 0 tests failed out of 21
+
+Total Test time (real) =   8.00 sec

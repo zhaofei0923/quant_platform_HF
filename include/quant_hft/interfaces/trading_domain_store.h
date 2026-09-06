@@ -12,6 +12,12 @@ enum class TradeApplyStatus { kApplied, kDuplicate, kCoveredByBaseline, kConflic
 
 enum class GenericClosePriority { kUnspecified, kTodayFirst, kYesterdayFirst };
 
+enum class TradeFeeModel { kExplicitCommission, kMoneyPlusVolumeV1 };
+struct TradeFeeRate {
+    double by_money{0.0};
+    double by_volume{0.0};
+};
+
 struct TradeAccountingPolicy {
     GenericClosePriority generic_close_priority{GenericClosePriority::kUnspecified};
     std::string close_rule_source;
@@ -22,6 +28,15 @@ struct TradeAccountingPolicy {
     double contract_multiplier{0.0};
     double commission{0.0};
     std::string valuation_source;
+    // Only an explicitly verified fee-date convention may reuse CloseAllocation.
+    // The domain computes mixed-bucket fees after allocation inside ApplyTrade.
+    TradeFeeModel fee_model{TradeFeeModel::kExplicitCommission};
+    TradeFeeRate open_fee;
+    TradeFeeRate close_fee;
+    TradeFeeRate close_today_fee;
+    std::string fee_date_basis;
+    std::string fee_allocation_source;
+    std::string fee_allocation_version;
 };
 
 struct TradeApplyRequest {
@@ -31,6 +46,8 @@ struct TradeApplyRequest {
     bool allow_ephemeral{false};
     bool historical{false};
     TradeAccountingPolicy accounting_policy;
+    // Enforced only after raw-identity duplicate detection, before any new fact is committed.
+    bool require_verified_accounting{false};
 };
 
 struct TradeApplyResult {
@@ -70,6 +87,11 @@ struct TradeOutboxRecord {
     CloseAllocation close_allocation;
     std::string close_rule_source;
     std::string close_rule_version;
+    std::string valuation_source;
+    std::string fee_model;
+    std::string fee_date_basis;
+    std::string fee_allocation_source;
+    std::string fee_allocation_version;
 };
 
 struct DomainWatermark {

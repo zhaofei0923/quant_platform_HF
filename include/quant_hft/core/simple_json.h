@@ -76,7 +76,8 @@ inline std::string Trim(const std::string& input) {
 
 class Parser {
    public:
-    explicit Parser(const std::string& text) : text_(text) {}
+    explicit Parser(const std::string& text, bool reject_duplicate_keys = false)
+        : text_(text), reject_duplicate_keys_(reject_duplicate_keys) {}
 
     bool Parse(Value* out, std::string* error) {
         if (out == nullptr) {
@@ -173,6 +174,10 @@ class Parser {
             }
             Value value;
             if (!ParseValue(&value, error)) {
+                return false;
+            }
+            if (reject_duplicate_keys_ && out->object_value.count(key)) {
+                if (error != nullptr) *error = "duplicate JSON object key: " + key;
                 return false;
             }
             out->object_value[key] = std::move(value);
@@ -381,12 +386,18 @@ class Parser {
 
     const std::string& text_;
     std::size_t pos_{0};
+    bool reject_duplicate_keys_{false};
 };
 
 }  // namespace detail
 
 inline bool Parse(const std::string& text, Value* out, std::string* error) {
     detail::Parser parser(text);
+    return parser.Parse(out, error);
+}
+
+inline bool ParseStrict(const std::string& text, Value* out, std::string* error) {
+    detail::Parser parser(text, true);
     return parser.Parse(out, error);
 }
 

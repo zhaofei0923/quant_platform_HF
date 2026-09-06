@@ -1,0 +1,167 @@
+name: Runtime Reliability
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      run_ctp_sdk:
+        description: "Build using a provisioned official Linux CTP SDK"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  cpp17:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: cpp17
+            compiler: g++
+            sanitizer: none
+          - name: asan-ubsan
+            compiler: clang++
+            sanitizer: address-undefined
+    env:
+      ASAN_OPTIONS: "detect_leaks=1:halt_on_error=1"
+      UBSAN_OPTIONS: "halt_on_error=1:print_stacktrace=1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ clang libssl-dev
+      - name: Configure
+        run: >-
+          cmake -S . -B build -DQUANT_HFT_BUILD_TESTS=ON
+          -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
+          -DQUANT_HFT_ENABLE_ARROW_PARQUET=OFF
+          -DQUANT_HFT_SANITIZER=${{ matrix.sanitizer }}
+      - name: Build
+        run: cmake --build build -j2
+      - name: Test
+        run: ctest --test-dir build --output-on-failure --timeout 120 -j2
+      - name: Audit
+        run: bash scripts/build/dependency_audit.sh --build-dir build
+      - name: Evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}-tests
+          path: build/Testing/Temporary/
+
+  tsan:
+    runs-on: ubuntu-22.04
+    env:
+      TSAN_OPTIONS: "halt_on_error=1:second_deadlock_stack=1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ libssl-dev
+      - name: Configure Hosted Runner TSan Address Space
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - name: Configure
+        run: cmake -S . -B build -DQUANT_HFT_BUILD_TESTS=ON -DQUANT_HFT_SANITIZER=thread
+      - name: Build Concurrent Components
+        run: >-
+          cmake --build build -j2 --target strategy_engine_test query_scheduler_test
+          query_batch_collector_test account_execution_scheduler_test
+          durable_order_event_inbox_test execution_engine_test
+      - name: Test Concurrent Components
+        run: >-
+          ctest --test-dir build --output-on-failure --timeout 120
+          -R '^(StrategyEngineTest|QuerySchedulerTest|QueryBatchCollectorTest|AccountExecutionSchedulerTest|DurableOrderEventInboxTest|ExecutionEngineTest)\.'
+      - name: Evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tsan-tests
+          path: build/Testing/Temporary/
+
+  postgres:
+    runs-on: ubuntu-22.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: quant_ci
+          POSTGRES_PASSWORD: disposable_ci_only
+          POSTGRES_DB: quant_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U quant_ci -d quant_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      QUANT_HFT_TEST_POSTGRES_DSN: "host=127.0.0.1 port=5432 dbname=quant_test user=quant_ci password=disposable_ci_only"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ libssl-dev libpq-dev postgresql-client pkg-config
+      - name: Disposable Schema
+        run: |
+          psql "$QUANT_HFT_TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f infra/timescale/init/004_trading_core_domain_tables.sql
+          psql "$QUANT_HFT_TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f infra/timescale/init/007_atomic_trade_ledger.sql
+          psql "$QUANT_HFT_TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f infra/timescale/init/008_verified_trade_fees.sql
+          psql "$QUANT_HFT_TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE TABLE trading_core.orders_default PARTITION OF trading_core.orders DEFAULT;
+          CREATE TABLE trading_core.trades_default PARTITION OF trading_core.trades DEFAULT;
+          CREATE TABLE trading_core.position_detail_default PARTITION OF trading_core.position_detail DEFAULT;
+          SQL
+      - name: Build
+        run: |
+          cmake -S . -B build -DQUANT_HFT_BUILD_TESTS=ON -DQUANT_HFT_ENABLE_TIMESCALE_EXTERNAL=ON
+          cmake --build build -j2 --target atomic_trade_postgres_test
+          bash scripts/build/dependency_audit.sh --build-dir build
+      - name: Test Transactions
+        run: ctest --test-dir build -R '^AtomicTradePostgresTest\.' --output-on-failure --timeout 120
+      - name: Evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-tests
+          path: build/Testing/Temporary/
+
+  ctp-sdk:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_ctp_sdk
+    runs-on: [self-hosted, linux, x64, ctp-sdk]
+    environment: ctp-sdk
+    env:
+      CTP_SDK_DIR: ${{ vars.CTP_SDK_DIR }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require Official SDK
+        run: |
+          test -n "$CTP_SDK_DIR"
+          test -f "$CTP_SDK_DIR/ThostFtdcTraderApi.h"
+          test -f "$CTP_SDK_DIR/ThostFtdcMdApi.h"
+          test -f "$CTP_SDK_DIR/thosttraderapi_se.so"
+          test -f "$CTP_SDK_DIR/thostmduserapi_se.so"
+      - name: Compile and Link Without Connecting
+        run: |
+          cmake -S . -B build -DQUANT_HFT_BUILD_TESTS=ON -DQUANT_HFT_ENABLE_CTP_REAL_API=ON -DCTP_V6711_DIR="$CTP_SDK_DIR"
+          cmake --build build -j2
+          ldd build/core_engine
+          ! ldd build/core_engine | grep 'not found'
+      - name: Evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctp-sdk-build
+          path: build/CMakeCache.txt
+
+  capabilities:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Verification Boundaries
+        run: |
+          {
+            echo "CI/ci.yml runs C++20 with native Arrow/Parquet and rehearsal gates."
+            echo "This matrix runs C++17, ASan/UBSan, targeted TSan, and isolated PostgreSQL."
+            echo "Arrow-only tests skip in C++17; private research dataset tests skip when data is absent."
+            echo "CTP SDK build is opt-in and requires an official Linux SDK on a ctp-sdk runner with CTP_SDK_DIR configured."
+            echo "SDK build does not connect to a broker or establish SimNow acceptance."
+          } >> "$GITHUB_STEP_SUMMARY"

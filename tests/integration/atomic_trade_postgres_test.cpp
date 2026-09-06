@@ -13,7 +13,7 @@
 namespace quant_hft {
 namespace {
 
-// The caller provisions a disposable database with migrations 004 and 007 plus
+// The caller provisions a disposable database with migrations 004, 007 and 008 plus
 // default order/trade/position_detail partitions. No production connection default.
 class AtomicTradePostgresTest : public ::testing::Test {
    protected:
@@ -154,6 +154,59 @@ TEST_F(AtomicTradePostgresTest, SeparateConnectionsSerializeAccountAndPreserveEv
     DomainWatermark watermark;
     ASSERT_TRUE(store->LoadWatermark(account, &watermark, &error));
     EXPECT_EQ(watermark.next_sequence, 8U);
+}
+
+TEST_F(AtomicTradePostgresTest, VerifiedFeesAndTheirEvidenceCommitWithExactMixedCloseAllocation) {
+    auto open = Fill("verified-yesterday", 0);
+    open.trade.exchange = "DCE";
+    open.trade.symbol = "m2701";
+    open.trade.price = 100;
+    open.require_verified_accounting = true;
+    auto& policy = open.accounting_policy;
+    policy.valuation_inputs_verified = true;
+    policy.contract_multiplier = 10;
+    policy.valuation_source = "isolated-pg-fixture-v1";
+    policy.fee_model = TradeFeeModel::kMoneyPlusVolumeV1;
+    policy.close_fee = {0.001, 2};
+    policy.close_today_fee = {0.002, 5};
+    policy.fee_date_basis = "close_allocation_v1";
+    policy.fee_allocation_source = "isolated-pg-fixture";
+    policy.fee_allocation_version = "v1";
+    policy.generic_close_priority = GenericClosePriority::kYesterdayFirst;
+    policy.close_rule_source = "isolated-pg-fixture";
+    policy.close_rule_version = "v1";
+    std::string error;
+    TradeApplyResult result;
+    ASSERT_TRUE(store->ApplyTrade(open, &result, &error)) << error;
+    auto today = open;
+    today.trade.trade_id = today.trade.raw_trade_id = "verified-today";
+    today.trade.trading_day = "20260908";
+    today.receipt.sequence = 1;
+    today.receipt.checksum = 2;
+    ASSERT_TRUE(store->ApplyTrade(today, &result, &error)) << error;
+    auto close = today;
+    close.trade.trade_id = close.trade.raw_trade_id = "verified-close";
+    close.trade.side = Side::kSell;
+    close.trade.offset = OffsetFlag::kClose;
+    close.trade.price = 120;
+    close.trade.quantity = 3;
+    close.receipt.sequence = 2;
+    close.receipt.checksum = 3;
+    ASSERT_TRUE(store->ApplyTrade(close, &result, &error)) << error;
+    EXPECT_EQ(result.close_allocation.today, 1);
+    EXPECT_EQ(result.close_allocation.yesterday, 2);
+    close.accounting_policy = {};
+    ASSERT_TRUE(store->ApplyTrade(close, &result, &error)) << error;
+    EXPECT_EQ(result.status, TradeApplyStatus::kDuplicate);
+    std::vector<TradeOutboxRecord> history;
+    ASSERT_TRUE(store->LoadTradeHistory(account, "", &history, &error)) << error;
+    ASSERT_EQ(history.size(), 3U);
+    EXPECT_NEAR(history.back().trade.commission, 13.8, 1e-9);
+    EXPECT_DOUBLE_EQ(history.back().trade.profit, 600);
+    EXPECT_TRUE(history.back().trade.valuation_complete);
+    EXPECT_EQ(history.back().fee_model, "money_plus_volume_v1");
+    EXPECT_EQ(history.back().fee_date_basis, "close_allocation_v1");
+    EXPECT_EQ(history.back().fee_allocation_version, "v1");
 }
 
 TEST_F(AtomicTradePostgresTest, TradingDayRolloverAndIndependentOutboxConsumersPersist) {

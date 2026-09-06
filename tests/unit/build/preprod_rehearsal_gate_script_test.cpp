@@ -43,9 +43,9 @@ TEST(PreprodRehearsalGateScriptTest, GeneratesPreprodAndRollbackEvidence) {
     const auto temp_root = MakeTempDir("generate");
     const auto results_dir = temp_root / "results";
 
-    const std::string command =
-        "bash scripts/build/run_preprod_rehearsal_gate.sh --build-dir build --results-dir '" +
-        EscapePathForShell(results_dir) + "'";
+    const std::string command = "bash scripts/build/run_preprod_rehearsal_gate.sh --build-dir '" +
+                                EscapePathForShell(QUANT_HFT_BUILD_DIR) + "' --results-dir '" +
+                                EscapePathForShell(results_dir) + "'";
     const int rc = RunCommand(command);
     EXPECT_EQ(rc, 0);
 

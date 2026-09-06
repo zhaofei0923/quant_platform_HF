@@ -1,0 +1,49 @@
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 20 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 20 tests from VerifiedTradeAccountingPolicyTest
+[ RUN      ] VerifiedTradeAccountingPolicyTest.MissingFileAndMalformedJsonNeverBecomeReady
+[       OK ] VerifiedTradeAccountingPolicyTest.MissingFileAndMalformedJsonNeverBecomeReady (1 ms)
+[ RUN      ] VerifiedTradeAccountingPolicyTest.UnknownAndDuplicateJsonKeysAreRejectedAtEveryLevel
+[       OK ] VerifiedTradeAccountingPolicyTest.UnknownAndDuplicateJsonKeysAreRejectedAtEveryLevel (0 ms)
+[ RUN      ] VerifiedTradeAccountingPolicyTest.UnverifiedInvalidDatesAndUnsupportedConventionsFailClosed
+[       OK ] VerifiedTradeAccountingPolicyTest.UnverifiedInvalidDatesAndUnsupportedConventionsFailClosed (0 ms)
+[ RUN      ] VerifiedTradeAccountingPolicyTest.DuplicateInstrumentDayScopeIsRejected
+[       OK ] VerifiedTradeAccountingPolicyTest.DuplicateInstrumentDayScopeIsRejected (0 ms)
+[ RUN      ] VerifiedTradeAccountingPolicyTest.RuntimeEnvelopeMustMatchEnvironmentBrokerAndAccount
+[       OK ] VerifiedTradeAccountingPolicyTest.RuntimeEnvelopeMustMatchEnvironmentBrokerAndAccount (0 ms)
+[ RUN      ] VerifiedTradeAccountingPolicyTest.ExactSameDayEvidenceReturnsExplicitFeeAndClosePolicy
+[       OK ] VerifiedTradeAccountingPolicyTest.ExactSameDayEvidenceReturnsExplicitFeeAndClosePolicy (0 ms)
+[ RUN      ] VerifiedTradeAccountingPolicyTest.ResolveRejectsEveryMismatchedTradeScopeAndExpiredDay
+[       OK ] VerifiedTradeAccountingPolicyTest.ResolveRejectsEveryMismatchedTradeScopeAndExpiredDay (0 ms)
+[ RUN      ] VerifiedTradeAccountingPolicyTest.EachOfTheThreeCompletedQueriesIsRequired
+[       OK ] VerifiedTradeAccountingPolicyTest.EachOfTheThreeCompletedQueriesIsRequired (0 ms)
+[ RUN      ] VerifiedTradeAccountingPolicyTest.FailedIncompleteForeignOrUncorrelatedQueryIsNotEvidence
+[       OK ] VerifiedTradeAccountingPolicyTest.FailedIncompleteForeignOrUncorrelatedQueryIsNotEvidence (3 ms)
+[ RUN      ] VerifiedTradeAccountingPolicyTest.WrongRowIdentityOrSourceCannotAuthorizeValuation
+[       OK ] VerifiedTradeAccountingPolicyTest.WrongRowIdentityOrSourceCannotAuthorizeValuation (1 ms)
+[ RUN      ] VerifiedTradeAccountingPolicyTest.EveryQueriedFeeLegAndMultiplierMustMatchTheVerifiedRecord
+[       OK ] VerifiedTradeAccountingPolicyTest.EveryQueriedFeeLegAndMultiplierMustMatchTheVerifiedRecord (1 ms)
+[ RUN      ] VerifiedTradeAccountingPolicyTest.NonzeroOrderOrCancellationFeeIsUnsupported
+[       OK ] VerifiedTradeAccountingPolicyTest.NonzeroOrderOrCancellationFeeIsUnsupported (1 ms)
+[ RUN      ] VerifiedTradeAccountingPolicyTest.MissingAndConflictingDuplicateQueryRowsAreRejected
+[       OK ] VerifiedTradeAccountingPolicyTest.MissingAndConflictingDuplicateQueryRowsAreRejected (1 ms)
+[ RUN      ] VerifiedTradeAccountingPolicyTest.ExplicitProductCommissionMappingRequiresAFilteredQuery
+[       OK ] VerifiedTradeAccountingPolicyTest.ExplicitProductCommissionMappingRequiresAFilteredQuery (0 ms)
+[ RUN      ] VerifiedTradeAccountingPolicyTest.FailedLatestQueryRevokesPreviousReadiness
+[       OK ] VerifiedTradeAccountingPolicyTest.FailedLatestQueryRevokesPreviousReadiness (0 ms)
+[ RUN      ] VerifiedTradeAccountingPolicyTest.YesterdayFirstMustBeAnExplicitVerifiedChoice
+[       OK ] VerifiedTradeAccountingPolicyTest.YesterdayFirstMustBeAnExplicitVerifiedChoice (0 ms)
+[ RUN      ] VerifiedTradeAccountingPolicyTest.ShfeAndIneRequireExchangeExplicitCloseConvention
+[       OK ] VerifiedTradeAccountingPolicyTest.ShfeAndIneRequireExchangeExplicitCloseConvention (0 ms)
+[ RUN      ] VerifiedTradeAccountingPolicyTest.SimulatedEvidenceOnlyMatchesTheSimulationEnvironment
+[       OK ] VerifiedTradeAccountingPolicyTest.SimulatedEvidenceOnlyMatchesTheSimulationEnvironment (0 ms)
+[ RUN      ] VerifiedTradeAccountingPolicyTest.RestoredEvidenceOnlyAuthorizesIdenticalHistoricalPolicy
+[       OK ] VerifiedTradeAccountingPolicyTest.RestoredEvidenceOnlyAuthorizesIdenticalHistoricalPolicy (1 ms)
+[ RUN      ] VerifiedTradeAccountingPolicyTest.NewSessionRequiresMatchingFreshQueryGeneration
+[       OK ] VerifiedTradeAccountingPolicyTest.NewSessionRequiresMatchingFreshQueryGeneration (1 ms)
+[----------] 20 tests from VerifiedTradeAccountingPolicyTest (19 ms total)
+
+[----------] Global test environment tear-down
+[==========] 20 tests from 1 test suite ran. (19 ms total)
+[  PASSED  ] 20 tests.

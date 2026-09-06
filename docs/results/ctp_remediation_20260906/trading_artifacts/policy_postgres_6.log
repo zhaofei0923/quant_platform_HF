@@ -1,0 +1,21 @@
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 6 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 6 tests from AtomicTradePostgresTest
+[ RUN      ] AtomicTradePostgresTest.SameConnectionRollbackIncludesEveryCallbackWrite
+[       OK ] AtomicTradePostgresTest.SameConnectionRollbackIncludesEveryCallbackWrite (15 ms)
+[ RUN      ] AtomicTradePostgresTest.LifecycleUpsertUpdatesExistingPartitionedOrder
+[       OK ] AtomicTradePostgresTest.LifecycleUpsertUpdatesExistingPartitionedOrder (16 ms)
+[ RUN      ] AtomicTradePostgresTest.ApplyDuplicateCloseAndReceiptConflictAreAtomic
+[       OK ] AtomicTradePostgresTest.ApplyDuplicateCloseAndReceiptConflictAreAtomic (44 ms)
+[ RUN      ] AtomicTradePostgresTest.SeparateConnectionsSerializeAccountAndPreserveEveryFill
+[       OK ] AtomicTradePostgresTest.SeparateConnectionsSerializeAccountAndPreserveEveryFill (57 ms)
+[ RUN      ] AtomicTradePostgresTest.VerifiedFeesAndTheirEvidenceCommitWithExactMixedCloseAllocation
+[       OK ] AtomicTradePostgresTest.VerifiedFeesAndTheirEvidenceCommitWithExactMixedCloseAllocation (35 ms)
+[ RUN      ] AtomicTradePostgresTest.TradingDayRolloverAndIndependentOutboxConsumersPersist
+[       OK ] AtomicTradePostgresTest.TradingDayRolloverAndIndependentOutboxConsumersPersist (38 ms)
+[----------] 6 tests from AtomicTradePostgresTest (207 ms total)
+
+[----------] Global test environment tear-down
+[==========] 6 tests from 1 test suite ran. (207 ms total)
+[  PASSED  ] 6 tests.

@@ -15,7 +15,7 @@ namespace {
 
 std::filesystem::path BuildDir() { return std::filesystem::path(QUANT_HFT_BUILD_DIR); }
 
-std::filesystem::path RepoRoot() { return BuildDir().parent_path(); }
+std::filesystem::path RepoRoot() { return std::filesystem::path(QUANT_HFT_SOURCE_DIR); }
 
 std::filesystem::path BinaryPath(const std::string& name) { return BuildDir() / name; }
 
@@ -407,6 +407,9 @@ TEST(OpsCli, CsvToParquetCliResumeWithFingerprintSkipsRebuild) {
 }
 
 TEST(OpsCli, CsvParquetCompareIncludesScanMetrics) {
+#if !QUANT_HFT_ENABLE_ARROW_PARQUET
+    GTEST_SKIP() << "This CLI enforces the native Arrow/Parquet capability policy";
+#endif
     const auto dir = MakeTempDir("csv_parquet_metrics");
     const auto input_csv = dir / "rb_sample.csv";
     const auto output_root = dir / "parquet_v2";
@@ -444,6 +447,9 @@ TEST(OpsCli, CsvParquetCompareIncludesScanMetrics) {
 }
 
 TEST(OpsCli, CsvParquetCompareSupportsSymbolsFilter) {
+#if !QUANT_HFT_ENABLE_ARROW_PARQUET
+    GTEST_SKIP() << "This CLI enforces the native Arrow/Parquet capability policy";
+#endif
     const auto dir = MakeTempDir("csv_parquet_symbols");
     const auto input_csv = dir / "rb_sample.csv";
     const auto output_root = dir / "parquet_v2";
@@ -479,6 +485,9 @@ TEST(OpsCli, CsvParquetCompareSupportsSymbolsFilter) {
 }
 
 TEST(OpsCli, BacktestCliExportsCsvArtifactsWithDetailFlags) {
+#if !QUANT_HFT_ENABLE_ARROW_PARQUET
+    GTEST_SKIP() << "This CLI enforces the native Arrow/Parquet capability policy";
+#endif
     const auto dir = MakeTempDir("backtest_csv_export");
     const auto input_csv = dir / "rb_sample.csv";
     const auto dataset_root = dir / "parquet_v2";
@@ -534,6 +543,9 @@ TEST(OpsCli, BacktestCliExportsCsvArtifactsWithDetailFlags) {
 }
 
 TEST(OpsCli, FactorEvalCliIncludesDetectorConfigInOutputJson) {
+#if !QUANT_HFT_ENABLE_ARROW_PARQUET
+    GTEST_SKIP() << "This CLI enforces the native Arrow/Parquet capability policy";
+#endif
     const auto dir = MakeTempDir("factor_eval_detector");
     const auto input_csv = dir / "rb_sample.csv";
     const auto dataset_root = dir / "parquet_v2";

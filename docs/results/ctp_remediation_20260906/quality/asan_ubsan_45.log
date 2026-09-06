@@ -1,0 +1,96 @@
+Internal ctest changing into directory: /tmp/quant-hft-runtime-sanitize-build
+Test project /tmp/quant-hft-runtime-sanitize-build
+      Start  1: DurableOrderEventInboxTest.FullQueuePersistsSuffixAndReplaysBarrierAtItsFifoPosition
+ 1/45 Test  #1: DurableOrderEventInboxTest.FullQueuePersistsSuffixAndReplaysBarrierAtItsFifoPosition ...   Passed    0.04 sec
+      Start  2: DurableOrderEventInboxTest.ConsumerFailureBlocksLaterEventsUntilSuccessfulReplay
+ 2/45 Test  #2: DurableOrderEventInboxTest.ConsumerFailureBlocksLaterEventsUntilSuccessfulReplay .......   Passed    0.03 sec
+      Start  3: DurableOrderEventInboxTest.DamagedRecoverySnapshotInvokesNoConsumer
+ 3/45 Test  #3: DurableOrderEventInboxTest.DamagedRecoverySnapshotInvokesNoConsumer ....................   Passed    0.02 sec
+      Start  6: QuerySchedulerTest.RespectsRateLimit
+ 4/45 Test  #6: QuerySchedulerTest.RespectsRateLimit ...................................................   Passed    1.12 sec
+      Start  7: QuerySchedulerTest.PriorityOrdering
+ 5/45 Test  #7: QuerySchedulerTest.PriorityOrdering ....................................................   Passed    0.02 sec
+      Start  8: QuerySchedulerTest.DeferredTaskOwnsStateUntilDrainedAfterCompletion
+ 6/45 Test  #8: QuerySchedulerTest.DeferredTaskOwnsStateUntilDrainedAfterCompletion ....................   Passed    0.02 sec
+      Start  9: QuerySchedulerTest.CompletionMustMatchTheActiveRequestAndGeneration
+ 7/45 Test  #9: QuerySchedulerTest.CompletionMustMatchTheActiveRequestAndGeneration ....................   Passed    0.02 sec
+      Start 10: QuerySchedulerTest.IntermediateResponseErrorPersistsUntilCompletion
+ 8/45 Test #10: QuerySchedulerTest.IntermediateResponseErrorPersistsUntilCompletion ....................   Passed    0.01 sec
+      Start 11: QuerySchedulerTest.TimeoutDoesNotLetLateCompletionReleaseNextRequest
+ 9/45 Test #11: QuerySchedulerTest.TimeoutDoesNotLetLateCompletionReleaseNextRequest ...................   Passed    0.01 sec
+      Start 12: QuerySchedulerTest.ResetWaitsForExecutingRequestBeforeApiCanBeReleased
+10/45 Test #12: QuerySchedulerTest.ResetWaitsForExecutingRequestBeforeApiCanBeReleased .................   Passed    0.04 sec
+      Start 13: QuerySchedulerTest.ThrowingRequestAndFailureHandlerDoNotEscapePoller
+11/45 Test #13: QuerySchedulerTest.ThrowingRequestAndFailureHandlerDoNotEscapePoller ...................   Passed    0.02 sec
+      Start 14: QueryBatchCollectorTest.NextRequestCannotClearCompletedRows
+12/45 Test #14: QueryBatchCollectorTest.NextRequestCannotClearCompletedRows ............................   Passed    0.02 sec
+      Start 15: QueryBatchCollectorTest.ErrorOnAnIntermediatePacketCannotBecomeSuccessfulEmptyTruth
+13/45 Test #15: QueryBatchCollectorTest.ErrorOnAnIntermediatePacketCannotBecomeSuccessfulEmptyTruth ....   Passed    0.02 sec
+      Start 16: QueryBatchCollectorTest.OldGenerationCannotCompleteReusedRequestNumber
+14/45 Test #16: QueryBatchCollectorTest.OldGenerationCannotCompleteReusedRequestNumber .................   Passed    0.01 sec
+      Start 17: QueryBatchCollectorTest.SuccessfulEmptyFullBatchIsExplicit
+15/45 Test #17: QueryBatchCollectorTest.SuccessfulEmptyFullBatchIsExplicit .............................   Passed    0.02 sec
+      Start 18: QueryBatchCollectorTest.CapacityFailureRemainsFailureUntilLastPacket
+16/45 Test #18: QueryBatchCollectorTest.CapacityFailureRemainsFailureUntilLastPacket ...................   Passed    0.02 sec
+      Start 20: AccountExecutionSchedulerTest.SerializesSameAccountWhileOtherAccountCanProgress
+17/45 Test #20: AccountExecutionSchedulerTest.SerializesSameAccountWhileOtherAccountCanProgress ........   Passed    0.02 sec
+      Start 21: AccountExecutionSchedulerTest.HonorsDeadlineAndExplicitCapacityAndCancellation
+18/45 Test #21: AccountExecutionSchedulerTest.HonorsDeadlineAndExplicitCapacityAndCancellation .........   Passed    0.02 sec
+      Start 22: AccountExecutionSchedulerTest.StopCancelsFutureTasksAndExceptionsAreObservable
+19/45 Test #22: AccountExecutionSchedulerTest.StopCancelsFutureTasksAndExceptionsAreObservable .........   Passed    0.02 sec
+      Start 29: CTPTraderAdapterTest.DisconnectTriggersReconnectScheduling
+20/45 Test #29: CTPTraderAdapterTest.DisconnectTriggersReconnectScheduling .............................   Passed    0.59 sec
+      Start 30: CTPTraderAdapterTest.ReadinessSnapshotReflectsDisconnectedRecoveryState
+21/45 Test #30: CTPTraderAdapterTest.ReadinessSnapshotReflectsDisconnectedRecoveryState ................   Passed    0.03 sec
+      Start 31: CTPTraderAdapterTest.ReconnectPerformsLoginAndConfirmSettlement
+22/45 Test #31: CTPTraderAdapterTest.ReconnectPerformsLoginAndConfirmSettlement ........................   Passed    0.54 sec
+      Start 32: CTPTraderAdapterTest.ReconnectAttemptLimitUsesConnectConfig
+23/45 Test #32: CTPTraderAdapterTest.ReconnectAttemptLimitUsesConnectConfig ............................   Passed    0.04 sec
+      Start 33: CTPTraderAdapterTest.GatewayHealthyAfterExhaustionRestoresReadyState
+24/45 Test #33: CTPTraderAdapterTest.GatewayHealthyAfterExhaustionRestoresReadyState ...................   Passed    0.05 sec
+      Start 34: CTPTraderAdapterTest.GatewayOwnedLoginIsNotRepeatedDuringRecoveryCycles
+25/45 Test #34: CTPTraderAdapterTest.GatewayOwnedLoginIsNotRepeatedDuringRecoveryCycles ................   Passed    0.04 sec
+      Start 35: CTPTraderAdapterTest.DisconnectCancelsPendingReconnectTimer
+26/45 Test #35: CTPTraderAdapterTest.DisconnectCancelsPendingReconnectTimer ............................   Passed    1.44 sec
+      Start 36: CTPTraderAdapterTest.RecoverOrdersAndTradesQueriesCtp
+27/45 Test #36: CTPTraderAdapterTest.RecoverOrdersAndTradesQueriesCtp ..................................   Passed    0.03 sec
+      Start 37: CTPTraderAdapterTest.DisconnectRejectsPendingLoginPromise
+28/45 Test #37: CTPTraderAdapterTest.DisconnectRejectsPendingLoginPromise ..............................   Passed    0.02 sec
+      Start 38: CTPTraderAdapterTest.LoginAsyncReturnsFutureAndResolvesOnSuccess
+29/45 Test #38: CTPTraderAdapterTest.LoginAsyncReturnsFutureAndResolvesOnSuccess .......................   Passed    0.03 sec
+      Start 39: CTPTraderAdapterTest.LoginAsyncTimesOut
+30/45 Test #39: CTPTraderAdapterTest.LoginAsyncTimesOut ................................................   Passed    0.11 sec
+      Start 40: CTPTraderAdapterTest.PlaceOrderWithRefReturnsNonEmptyString
+31/45 Test #40: CTPTraderAdapterTest.PlaceOrderWithRefReturnsNonEmptyString ............................   Passed    0.03 sec
+      Start 41: CTPTraderAdapterTest.FinalDeliveryStopJoinsCallbackBeforeCapturedStateCanDie
+32/45 Test #41: CTPTraderAdapterTest.FinalDeliveryStopJoinsCallbackBeforeCapturedStateCanDie ...........   Passed    0.06 sec
+      Start 42: CTPTraderAdapterTest.CriticalDispatchTimeoutTriggersCircuitBreakerCallback
+33/45 Test #42: CTPTraderAdapterTest.CriticalDispatchTimeoutTriggersCircuitBreakerCallback .............   Passed    0.15 sec
+      Start 44: WalReplayLoaderTest.RebuildsOrderStateAndLedgerFromWal
+34/45 Test #44: WalReplayLoaderTest.RebuildsOrderStateAndLedgerFromWal .................................   Passed    0.05 sec
+      Start 45: WalReplayLoaderTest.ReplaysLegacyTradeKindWithoutEventType
+35/45 Test #45: WalReplayLoaderTest.ReplaysLegacyTradeKindWithoutEventType .............................   Passed    0.02 sec
+      Start 46: WalReplayLoaderTest.SupportsLegacyWalWithoutExtendedFields
+36/45 Test #46: WalReplayLoaderTest.SupportsLegacyWalWithoutExtendedFields .............................   Passed    0.02 sec
+      Start 47: WalReplayLoaderTest.ReplaysCtpSubmitMappingForOrphanOrderResolution
+37/45 Test #47: WalReplayLoaderTest.ReplaysCtpSubmitMappingForOrphanOrderResolution ....................   Passed    0.03 sec
+      Start 48: WalReplayLoaderTest.IgnoresRolloverLinesWithoutParseErrors
+38/45 Test #48: WalReplayLoaderTest.IgnoresRolloverLinesWithoutParseErrors .............................   Passed    0.03 sec
+      Start 49: WalReplayLoaderTest.DurableReceiptSurvivesAbruptProcessExitAndKeepsStreamOnReopen
+39/45 Test #49: WalReplayLoaderTest.DurableReceiptSurvivesAbruptProcessExitAndKeepsStreamOnReopen ......   Passed    0.03 sec
+      Start 50: WalReplayLoaderTest.PreservesPricePrecisionAndRejectsNonFiniteRecordsBeforeWrite
+40/45 Test #50: WalReplayLoaderTest.PreservesPricePrecisionAndRejectsNonFiniteRecordsBeforeWrite .......   Passed    0.03 sec
+      Start 51: WalReplayLoaderTest.ValidatedVisitorIncludesMappingsTradesAndTheirExactReceipts
+41/45 Test #51: WalReplayLoaderTest.ValidatedVisitorIncludesMappingsTradesAndTheirExactReceipts ........   Passed    0.03 sec
+      Start 52: WalReplayLoaderTest.RejectsChecksumCorruptionBeforeApplyingAnyProjection
+42/45 Test #52: WalReplayLoaderTest.RejectsChecksumCorruptionBeforeApplyingAnyProjection ...............   Passed    0.03 sec
+      Start 53: WalReplayLoaderTest.IncompleteTailRequiresExplicitRepairAndIsNeverSilentlyAppended
+43/45 Test #53: WalReplayLoaderTest.IncompleteTailRequiresExplicitRepairAndIsNeverSilentlyAppended .....   Passed    0.02 sec
+      Start 54: WalReplayLoaderTest.RejectsConcurrentWriterAndLegacySequenceGap
+44/45 Test #54: WalReplayLoaderTest.RejectsConcurrentWriterAndLegacySequenceGap ........................   Passed    0.02 sec
+      Start 55: WalReplayLoaderTest.ContinuesLegacyStreamWithVersionedReceiptAndStableFirstSequence
+45/45 Test #55: WalReplayLoaderTest.ContinuesLegacyStreamWithVersionedReceiptAndStableFirstSequence ....   Passed    0.03 sec
+
+100% tests passed, 0 tests failed out of 45
+
+Total Test time (real) =   4.97 sec

@@ -936,8 +936,8 @@ bool TradingDomainStoreClientAdapter::ApplyTrade(const TradeApplyRequest& reques
                                        ? TradeApplyStatus::kCoveredByBaseline
                                        : TradeApplyStatus::kDuplicate;
                 if (committed.status == TradeApplyStatus::kDuplicate) {
-                    const auto projection = tx.QueryRows(TableName("trade_outbox"), "outbox_id", key,
-                                                         tx_error);
+                    const auto projection =
+                        tx.QueryRows(TableName("trade_outbox"), "outbox_id", key, tx_error);
                     if (!tx_error->empty()) return false;
                     if (projection.size() != 1) {
                         *tx_error = "applied trade is missing its committed projection";
@@ -947,7 +947,8 @@ bool TradingDomainStoreClientAdapter::ApplyTrade(const TradeApplyRequest& reques
                     committed.close_allocation = {
                         ParseIntOrDefault(projection.front(), "close_today", 0),
                         ParseIntOrDefault(projection.front(), "close_yesterday", 0)};
-                    committed.commit_sequence = std::stoull(Field(projection.front(), "commit_sequence"));
+                    committed.commit_sequence =
+                        std::stoull(Field(projection.front(), "commit_sequence"));
                     committed.close_rule_source = Field(projection.front(), "close_rule_source");
                     committed.close_rule_version = Field(projection.front(), "close_rule_version");
                 }
@@ -987,10 +988,27 @@ bool TradingDomainStoreClientAdapter::ApplyTrade(const TradeApplyRequest& reques
             }
             position.trading_day = trade.trading_day;
             const auto& policy = request.accounting_policy;
+            const auto valid_rate = [](const TradeFeeRate& rate) {
+                return std::isfinite(rate.by_money) && rate.by_money >= 0 &&
+                       std::isfinite(rate.by_volume) && rate.by_volume >= 0;
+            };
+            const bool fee_verified =
+                policy.fee_model == TradeFeeModel::kExplicitCommission
+                    ? std::isfinite(policy.commission) && policy.commission >= 0
+                    : (policy.fee_model == TradeFeeModel::kMoneyPlusVolumeV1 &&
+                       valid_rate(policy.open_fee) && valid_rate(policy.close_fee) &&
+                       valid_rate(policy.close_today_fee) &&
+                       policy.fee_date_basis == "close_allocation_v1" &&
+                       !policy.fee_allocation_source.empty() &&
+                       !policy.fee_allocation_version.empty());
             const bool valuation_verified =
                 policy.valuation_inputs_verified && std::isfinite(policy.contract_multiplier) &&
-                policy.contract_multiplier > 0 && std::isfinite(policy.commission) &&
-                policy.commission >= 0 && !policy.valuation_source.empty();
+                policy.contract_multiplier > 0 && fee_verified && !policy.valuation_source.empty();
+            if (request.require_verified_accounting && !valuation_verified) {
+                *tx_error =
+                    "new trade requires verified accounting policy evidence; WAL remains pending";
+                return false;
+            }
             trade.valuation_complete = false;
             if (valuation_verified) {
                 trade.commission = policy.commission;
@@ -1142,6 +1160,26 @@ bool TradingDomainStoreClientAdapter::ApplyTrade(const TradeApplyRequest& reques
                                                : position.avg_short_price) = 0;
                 committed.close_allocation = {td, yd};
             }
+            if (valuation_verified && policy.fee_model == TradeFeeModel::kMoneyPlusVolumeV1) {
+                const auto cost = [&](const TradeFeeRate& rate, int quantity) {
+                    return static_cast<long double>(trade.price) * policy.contract_multiplier *
+                               quantity * rate.by_money +
+                           static_cast<long double>(quantity) * rate.by_volume;
+                };
+                const long double commission =
+                    trade.offset == OffsetFlag::kOpen
+                        ? cost(policy.open_fee, trade.quantity)
+                        : cost(policy.close_today_fee, committed.close_allocation.today) +
+                              cost(policy.close_fee, committed.close_allocation.yesterday);
+                trade.commission = static_cast<double>(commission);
+                if (!std::isfinite(trade.commission) || trade.commission < 0)
+                    trade.valuation_complete = false;
+            }
+            if (!std::isfinite(trade.profit)) trade.valuation_complete = false;
+            if (request.require_verified_accounting && !trade.valuation_complete) {
+                *tx_error = "verified trade valuation is incomplete; WAL remains pending";
+                return false;
+            }
             ++position.version;
             position.update_time_ns = trade.trade_ts_ns;
             if (!store.UpsertPosition(position, tx_error)) return false;
@@ -1210,6 +1248,16 @@ bool TradingDomainStoreClientAdapter::ApplyTrade(const TradeApplyRequest& reques
                      {"close_rule_source", committed.close_rule_source},
                      {"close_rule_version", committed.close_rule_version},
                      {"valuation_source", valuation_verified ? policy.valuation_source : ""},
+                     {"fee_model", valuation_verified
+                                       ? (policy.fee_model == TradeFeeModel::kMoneyPlusVolumeV1
+                                              ? "money_plus_volume_v1"
+                                              : "explicit_commission")
+                                       : ""},
+                     {"fee_date_basis", valuation_verified ? policy.fee_date_basis : ""},
+                     {"fee_allocation_source",
+                      valuation_verified ? policy.fee_allocation_source : ""},
+                     {"fee_allocation_version",
+                      valuation_verified ? policy.fee_allocation_version : ""},
                      {"long_qty", std::to_string(position.long_qty)},
                      {"short_qty", std::to_string(position.short_qty)},
                      {"long_today_qty", std::to_string(position.long_today_qty)},
@@ -1459,6 +1507,11 @@ bool TradingDomainStoreClientAdapter::LoadPendingOutboxForConsumer(
                                    ParseIntOrDefault(row, "close_yesterday", 0)};
         record.close_rule_source = Field(row, "close_rule_source");
         record.close_rule_version = Field(row, "close_rule_version");
+        record.valuation_source = Field(row, "valuation_source");
+        record.fee_model = Field(row, "fee_model");
+        record.fee_date_basis = Field(row, "fee_date_basis");
+        record.fee_allocation_source = Field(row, "fee_allocation_source");
+        record.fee_allocation_version = Field(row, "fee_allocation_version");
         auto& trade = record.trade;
         trade.trade_id = record.identity_key;
         trade.account_id = record.account_id;

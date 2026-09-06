@@ -642,6 +642,57 @@ TEST(ExecutionEngineTest, PositionUpdateAfterTradeRedisAndPgConsistent) {
     EXPECT_EQ(hash["long_volume"], "1");
 }
 
+TEST(ExecutionEngineTest, DurableAccountingEvidenceGatesNewFillButNotCommittedDuplicate) {
+    auto bundle = BuildEngineBundle();
+    bundle.engine->SetRequireVerifiedAccounting(true);
+    bool verified = false;
+    bundle.engine->SetDurableAccountingPolicyResolver([&](const Trade&, const WalReceipt& receipt) {
+        EXPECT_EQ(receipt.stream_id, "policy-test");
+        TradeAccountingPolicy policy;
+        policy.valuation_inputs_verified = verified;
+        policy.contract_multiplier = 10;
+        policy.valuation_source = "verified-test-v1";
+        policy.commission = 2;
+        return policy;
+    });
+    OrderEvent fill;
+    fill.account_id = "acc1";
+    fill.broker_id = "test-broker";
+    fill.strategy_id = "strat1";
+    fill.client_order_id = fill.order_ref = "durable-policy-order";
+    fill.instrument_id = "rb2701";
+    fill.exchange_id = "SHFE";
+    fill.trading_day = "20260906";
+    fill.trade_id = "policy-fill";
+    fill.event_source = "OnRtnTrade";
+    fill.status = OrderStatus::kFilled;
+    fill.side = Side::kBuy;
+    fill.offset = OffsetFlag::kOpen;
+    fill.total_volume = fill.filled_volume = fill.last_trade_volume = 1;
+    fill.avg_fill_price = 4000;
+    fill.ts_ns = 100;
+    WalReceipt receipt;
+    receipt.durable = true;
+    receipt.stream_id = "policy-test";
+    receipt.checksum = 1;
+    EXPECT_EQ(bundle.engine->HandleOrderEventWithReceipt(fill, receipt).status,
+              TradeApplyStatus::kFailed);
+    EXPECT_TRUE(
+        bundle.sql->QueryRows("trading_core.trade_applications", "account_id", "acc1", nullptr)
+            .empty());
+    verified = true;
+    EXPECT_EQ(bundle.engine->HandleOrderEventWithReceipt(fill, receipt).status,
+              TradeApplyStatus::kApplied);
+    verified = false;
+    EXPECT_EQ(bundle.engine->HandleOrderEventWithReceipt(fill, receipt).status,
+              TradeApplyStatus::kDuplicate);
+    std::vector<TradeOutboxRecord> history;
+    std::string error;
+    ASSERT_TRUE(bundle.store->LoadTradeHistory("acc1", "", &history, &error)) << error;
+    ASSERT_EQ(history.size(), 1U);
+    EXPECT_DOUBLE_EQ(history.front().trade.commission, 2);
+}
+
 TEST(ExecutionEngineTest, QueryTradingAccountAsyncReturnsSnapshot) {
     auto bundle = BuildEngineBundle();
     auto snapshot = bundle.engine->QueryTradingAccountAsync().get();

@@ -1,0 +1,46 @@
+Internal ctest changing into directory: /tmp/quant-hft-runtime-build
+Test project /tmp/quant-hft-runtime-build
+      Start 10: VerifiedTradeAccountingPolicyTest.MissingFileAndMalformedJsonNeverBecomeReady
+ 1/20 Test #10: VerifiedTradeAccountingPolicyTest.MissingFileAndMalformedJsonNeverBecomeReady .................   Passed    0.00 sec
+      Start 11: VerifiedTradeAccountingPolicyTest.UnknownAndDuplicateJsonKeysAreRejectedAtEveryLevel
+ 2/20 Test #11: VerifiedTradeAccountingPolicyTest.UnknownAndDuplicateJsonKeysAreRejectedAtEveryLevel ..........   Passed    0.00 sec
+      Start 12: VerifiedTradeAccountingPolicyTest.UnverifiedInvalidDatesAndUnsupportedConventionsFailClosed
+ 3/20 Test #12: VerifiedTradeAccountingPolicyTest.UnverifiedInvalidDatesAndUnsupportedConventionsFailClosed ...   Passed    0.00 sec
+      Start 13: VerifiedTradeAccountingPolicyTest.DuplicateInstrumentDayScopeIsRejected
+ 4/20 Test #13: VerifiedTradeAccountingPolicyTest.DuplicateInstrumentDayScopeIsRejected .......................   Passed    0.00 sec
+      Start 14: VerifiedTradeAccountingPolicyTest.RuntimeEnvelopeMustMatchEnvironmentBrokerAndAccount
+ 5/20 Test #14: VerifiedTradeAccountingPolicyTest.RuntimeEnvelopeMustMatchEnvironmentBrokerAndAccount .........   Passed    0.00 sec
+      Start 15: VerifiedTradeAccountingPolicyTest.ExactSameDayEvidenceReturnsExplicitFeeAndClosePolicy
+ 6/20 Test #15: VerifiedTradeAccountingPolicyTest.ExactSameDayEvidenceReturnsExplicitFeeAndClosePolicy ........   Passed    0.00 sec
+      Start 16: VerifiedTradeAccountingPolicyTest.ResolveRejectsEveryMismatchedTradeScopeAndExpiredDay
+ 7/20 Test #16: VerifiedTradeAccountingPolicyTest.ResolveRejectsEveryMismatchedTradeScopeAndExpiredDay ........   Passed    0.00 sec
+      Start 17: VerifiedTradeAccountingPolicyTest.EachOfTheThreeCompletedQueriesIsRequired
+ 8/20 Test #17: VerifiedTradeAccountingPolicyTest.EachOfTheThreeCompletedQueriesIsRequired ....................   Passed    0.00 sec
+      Start 18: VerifiedTradeAccountingPolicyTest.FailedIncompleteForeignOrUncorrelatedQueryIsNotEvidence
+ 9/20 Test #18: VerifiedTradeAccountingPolicyTest.FailedIncompleteForeignOrUncorrelatedQueryIsNotEvidence .....   Passed    0.01 sec
+      Start 19: VerifiedTradeAccountingPolicyTest.WrongRowIdentityOrSourceCannotAuthorizeValuation
+10/20 Test #19: VerifiedTradeAccountingPolicyTest.WrongRowIdentityOrSourceCannotAuthorizeValuation ............   Passed    0.00 sec
+      Start 20: VerifiedTradeAccountingPolicyTest.EveryQueriedFeeLegAndMultiplierMustMatchTheVerifiedRecord
+11/20 Test #20: VerifiedTradeAccountingPolicyTest.EveryQueriedFeeLegAndMultiplierMustMatchTheVerifiedRecord ...   Passed    0.00 sec
+      Start 21: VerifiedTradeAccountingPolicyTest.NonzeroOrderOrCancellationFeeIsUnsupported
+12/20 Test #21: VerifiedTradeAccountingPolicyTest.NonzeroOrderOrCancellationFeeIsUnsupported ..................   Passed    0.00 sec
+      Start 22: VerifiedTradeAccountingPolicyTest.MissingAndConflictingDuplicateQueryRowsAreRejected
+13/20 Test #22: VerifiedTradeAccountingPolicyTest.MissingAndConflictingDuplicateQueryRowsAreRejected ..........   Passed    0.00 sec
+      Start 23: VerifiedTradeAccountingPolicyTest.ExplicitProductCommissionMappingRequiresAFilteredQuery
+14/20 Test #23: VerifiedTradeAccountingPolicyTest.ExplicitProductCommissionMappingRequiresAFilteredQuery ......   Passed    0.00 sec
+      Start 24: VerifiedTradeAccountingPolicyTest.FailedLatestQueryRevokesPreviousReadiness
+15/20 Test #24: VerifiedTradeAccountingPolicyTest.FailedLatestQueryRevokesPreviousReadiness ...................   Passed    0.00 sec
+      Start 25: VerifiedTradeAccountingPolicyTest.YesterdayFirstMustBeAnExplicitVerifiedChoice
+16/20 Test #25: VerifiedTradeAccountingPolicyTest.YesterdayFirstMustBeAnExplicitVerifiedChoice ................   Passed    0.00 sec
+      Start 26: VerifiedTradeAccountingPolicyTest.ShfeAndIneRequireExchangeExplicitCloseConvention
+17/20 Test #26: VerifiedTradeAccountingPolicyTest.ShfeAndIneRequireExchangeExplicitCloseConvention ............   Passed    0.00 sec
+      Start 27: VerifiedTradeAccountingPolicyTest.SimulatedEvidenceOnlyMatchesTheSimulationEnvironment
+18/20 Test #27: VerifiedTradeAccountingPolicyTest.SimulatedEvidenceOnlyMatchesTheSimulationEnvironment ........   Passed    0.00 sec
+      Start 28: VerifiedTradeAccountingPolicyTest.RestoredEvidenceOnlyAuthorizesIdenticalHistoricalPolicy
+19/20 Test #28: VerifiedTradeAccountingPolicyTest.RestoredEvidenceOnlyAuthorizesIdenticalHistoricalPolicy .....   Passed    0.00 sec
+      Start 29: VerifiedTradeAccountingPolicyTest.NewSessionRequiresMatchingFreshQueryGeneration
+20/20 Test #29: VerifiedTradeAccountingPolicyTest.NewSessionRequiresMatchingFreshQueryGeneration ..............   Passed    0.00 sec
+
+100% tests passed, 0 tests failed out of 20
+
+Total Test time (real) =   0.09 sec

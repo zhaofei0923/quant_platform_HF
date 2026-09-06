@@ -75,7 +75,10 @@ class CTPTraderAdapter : public IExecutionGateway {
     using InvestorPositionSnapshotCallback = CtpGatewayAdapter::InvestorPositionSnapshotCallback;
     using InvestorPositionQueryCallback = CtpGatewayAdapter::InvestorPositionQueryCallback;
     using InstrumentMetaQueryCallback = CtpGatewayAdapter::InstrumentMetaQueryCallback;
-    using InstrumentCommissionRateQueryCallback = CtpGatewayAdapter::InstrumentCommissionRateQueryCallback;
+    using InstrumentCommissionRateQueryCallback =
+        CtpGatewayAdapter::InstrumentCommissionRateQueryCallback;
+    using InstrumentOrderCommRateQueryCallback =
+        CtpGatewayAdapter::InstrumentOrderCommRateQueryCallback;
     using InstrumentMetaSnapshotCallback = CtpGatewayAdapter::InstrumentMetaSnapshotCallback;
     using DepthMarketSnapshotCallback = CtpGatewayAdapter::DepthMarketSnapshotCallback;
     using BrokerTradingParamsSnapshotCallback =
@@ -159,7 +162,10 @@ class CTPTraderAdapter : public IExecutionGateway {
     void RegisterInvestorPositionSnapshotCallback(InvestorPositionSnapshotCallback callback);
     void RegisterInvestorPositionQueryCallback(InvestorPositionQueryCallback callback);
     void RegisterInstrumentMetaQueryCallback(InstrumentMetaQueryCallback callback);
-    void RegisterInstrumentCommissionRateQueryCallback(InstrumentCommissionRateQueryCallback callback);
+    void RegisterInstrumentCommissionRateQueryCallback(
+        InstrumentCommissionRateQueryCallback callback);
+    void RegisterInstrumentOrderCommRateQueryCallback(
+        InstrumentOrderCommRateQueryCallback callback);
     void RegisterInstrumentMetaSnapshotCallback(InstrumentMetaSnapshotCallback callback);
     void RegisterDepthMarketSnapshotCallback(DepthMarketSnapshotCallback callback);
     void RegisterBrokerTradingParamsSnapshotCallback(BrokerTradingParamsSnapshotCallback callback);
@@ -218,6 +224,7 @@ class CTPTraderAdapter : public IExecutionGateway {
     InvestorPositionQueryCallback user_investor_position_query_callback_;
     InstrumentMetaQueryCallback user_instrument_meta_query_callback_;
     InstrumentCommissionRateQueryCallback user_instrument_commission_rate_query_callback_;
+    InstrumentOrderCommRateQueryCallback user_instrument_order_comm_rate_query_callback_;
     InstrumentMetaSnapshotCallback user_instrument_meta_callback_;
     DepthMarketSnapshotCallback user_depth_market_callback_;
     BrokerTradingParamsSnapshotCallback user_broker_trading_params_callback_;

@@ -3709,12 +3709,14 @@ bool CtpGatewayAdapter::EnqueueInstrumentQuery(int request_id, const std::string
             } else if (!runtime.enable_real_api) {
                 for (const auto& snapshot : state->instrument_meta_snapshots) {
                     if (!instrument_id.empty() && snapshot.instrument_id != instrument_id) continue;
-                    PublishSnapshotQueryResponse(instrument_meta_queries_, request_id, generation,
-                        &snapshot, 0, "", false, instrument_meta_snapshots_, instrument_meta_snapshot_callback_);
+                    PublishSnapshotQueryResponse(
+                        instrument_meta_queries_, request_id, generation, &snapshot, 0, "", false,
+                        instrument_meta_snapshots_, instrument_meta_snapshot_callback_);
                 }
                 PublishSnapshotQueryResponse(instrument_meta_queries_, request_id, generation,
-                    static_cast<const InstrumentMetaSnapshot*>(nullptr), 0, "", true,
-                    instrument_meta_snapshots_, instrument_meta_snapshot_callback_);
+                                             static_cast<const InstrumentMetaSnapshot*>(nullptr), 0,
+                                             "", true, instrument_meta_snapshots_,
+                                             instrument_meta_snapshot_callback_);
                 CompleteScheduledQuery(request_id, generation);
             }
         });
@@ -4062,12 +4064,16 @@ bool CtpGatewayAdapter::EnqueueInstrumentCommissionRateQuery(int request_id,
             } else if (!runtime.enable_real_api) {
                 for (const auto& snapshot : state->instrument_commission_rate_snapshots) {
                     if (!instrument_id.empty() && snapshot.instrument_id != instrument_id) continue;
-                    PublishSnapshotQueryResponse(instrument_commission_rate_queries_, request_id, generation,
-                        &snapshot, 0, "", false, instrument_commission_rate_snapshots_, instrument_commission_rate_snapshot_callback_);
+                    PublishSnapshotQueryResponse(instrument_commission_rate_queries_, request_id,
+                                                 generation, &snapshot, 0, "", false,
+                                                 instrument_commission_rate_snapshots_,
+                                                 instrument_commission_rate_snapshot_callback_);
                 }
-                PublishSnapshotQueryResponse(instrument_commission_rate_queries_, request_id, generation,
+                PublishSnapshotQueryResponse(
+                    instrument_commission_rate_queries_, request_id, generation,
                     static_cast<const InstrumentCommissionRateSnapshot*>(nullptr), 0, "", true,
-                    instrument_commission_rate_snapshots_, instrument_commission_rate_snapshot_callback_);
+                    instrument_commission_rate_snapshots_,
+                    instrument_commission_rate_snapshot_callback_);
                 CompleteScheduledQuery(request_id, generation);
             }
         });
@@ -4187,10 +4193,18 @@ bool CtpGatewayAdapter::EnqueueInstrumentOrderCommRateQuery(int request_id,
                           "query submission failed");
                 CompleteScheduledQuery(request_id, generation);
             } else if (!runtime.enable_real_api) {
-                if (state->instrument_order_comm_rate_callback) {
-                    state->instrument_order_comm_rate_callback(
-                        state->instrument_order_comm_rate_snapshots);
+                for (const auto& snapshot : state->instrument_order_comm_rate_snapshots) {
+                    if (!instrument_id.empty() && snapshot.instrument_id != instrument_id) continue;
+                    PublishSnapshotQueryResponse(instrument_order_comm_rate_queries_, request_id,
+                                                 generation, &snapshot, 0, "", false,
+                                                 instrument_order_comm_rate_snapshots_,
+                                                 instrument_order_comm_rate_snapshot_callback_);
                 }
+                PublishSnapshotQueryResponse(
+                    instrument_order_comm_rate_queries_, request_id, generation,
+                    static_cast<const InstrumentOrderCommRateSnapshot*>(nullptr), 0, "", true,
+                    instrument_order_comm_rate_snapshots_,
+                    instrument_order_comm_rate_snapshot_callback_);
                 CompleteScheduledQuery(request_id, generation);
             }
         });
@@ -4204,7 +4218,7 @@ bool CtpGatewayAdapter::EnqueueInstrumentOrderCommRateQuery(int request_id,
                 return;
             }
             runtime = runtime_config_;
-            if (runtime.enable_real_api) {
+            {
                 QueryResultMetadata metadata;
                 metadata.request_id = request_id;
                 metadata.generation = generation;
@@ -4547,9 +4561,16 @@ void CtpGatewayAdapter::RegisterInstrumentMetaQueryCallback(InstrumentMetaQueryC
     std::lock_guard<std::mutex> lock(mutex_);
     instrument_meta_query_callback_ = std::move(callback);
 }
-void CtpGatewayAdapter::RegisterInstrumentCommissionRateQueryCallback(InstrumentCommissionRateQueryCallback callback) {
+void CtpGatewayAdapter::RegisterInstrumentCommissionRateQueryCallback(
+    InstrumentCommissionRateQueryCallback callback) {
     std::lock_guard<std::mutex> lock(mutex_);
     instrument_commission_rate_query_callback_ = std::move(callback);
+}
+
+void CtpGatewayAdapter::RegisterInstrumentOrderCommRateQueryCallback(
+    InstrumentOrderCommRateQueryCallback callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    instrument_order_comm_rate_query_callback_ = std::move(callback);
 }
 
 void CtpGatewayAdapter::RegisterInstrumentMetaSnapshotCallback(
@@ -4752,13 +4773,16 @@ void CtpGatewayAdapter::FailQuery(int request_id, std::uint64_t generation, cons
         PublishInvestorPositionQueryResponse(request_id, generation, nullptr, -1, error, true);
     }
     (void)trading_account_queries_.Accept(request_id, generation, nullptr, -1, error, true);
-    auto meta_result = instrument_meta_queries_.Accept(request_id, generation, nullptr, -1, error, true);
+    auto meta_result =
+        instrument_meta_queries_.Accept(request_id, generation, nullptr, -1, error, true);
     (void)depth_market_queries_.Accept(request_id, generation, nullptr, -1, error, true);
     (void)broker_trading_params_queries_.Accept(request_id, generation, nullptr, -1, error, true);
     (void)instrument_margin_rate_queries_.Accept(request_id, generation, nullptr, -1, error, true);
-    auto fee_result = instrument_commission_rate_queries_.Accept(request_id, generation, nullptr, -1, error, true);
-    (void)instrument_order_comm_rate_queries_.Accept(request_id, generation, nullptr, -1, error,
-                                                     true);
+    auto fee_result = instrument_commission_rate_queries_.Accept(request_id, generation, nullptr,
+                                                                 -1, error, true);
+    auto order_fee_result = instrument_order_comm_rate_queries_.Accept(request_id, generation,
+                                                                       nullptr, -1, error, true);
+    InstrumentOrderCommRateQueryCallback order_fee_callback;
     QueryCompleteCallback callback;
     InstrumentMetaQueryCallback meta_callback;
     InstrumentCommissionRateQueryCallback fee_callback;
@@ -4768,11 +4792,13 @@ void CtpGatewayAdapter::FailQuery(int request_id, std::uint64_t generation, cons
             return;
         }
         callback = query_complete_callback_;
+        order_fee_callback = instrument_order_comm_rate_query_callback_;
         meta_callback = instrument_meta_query_callback_;
         fee_callback = instrument_commission_rate_query_callback_;
     }
     if (meta_result && meta_callback) meta_callback(*meta_result);
     if (fee_result && fee_callback) fee_callback(*fee_result);
+    if (order_fee_result && order_fee_callback) order_fee_callback(*order_fee_result);
     if (callback) {
         callback(request_id, query_name, false);
     }

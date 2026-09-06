@@ -1,0 +1,59 @@
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+Note: Google Test filter = *VerifiedMixedCloseFees*:*RequiredValuation*
+[==========] Running 2 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 2 tests from TradingDomainStoreClientAdapterTest
+[ RUN      ] TradingDomainStoreClientAdapterTest.VerifiedMixedCloseFeesUseCommittedAllocationAndReplayRawPayload
+/home/kevin/quant_platform_HF/tests/unit/core/trading_domain_store_client_adapter_test.cpp:456: Failure
+The difference between history.back().trade.commission and 13.8 is 13.800000000000001, which exceeds 1e-12, where
+history.back().trade.commission evaluates to 0,
+13.8 evaluates to 13.800000000000001, and
+1e-12 evaluates to 9.9999999999999998e-13.
+
+/home/kevin/quant_platform_HF/tests/unit/core/trading_domain_store_client_adapter_test.cpp:458: Failure
+Expected equality of these values:
+  history.back().fee_date_basis
+    Which is: ""
+  "close_allocation_v1"
+
+/home/kevin/quant_platform_HF/tests/unit/core/trading_domain_store_client_adapter_test.cpp:459: Failure
+Expected equality of these values:
+  history.back().fee_allocation_version
+    Which is: ""
+  "v1"
+
+[  FAILED  ] TradingDomainStoreClientAdapterTest.VerifiedMixedCloseFeesUseCommittedAllocationAndReplayRawPayload (0 ms)
+[ RUN      ] TradingDomainStoreClientAdapterTest.RequiredValuationLeavesUnknownNewFillAndWatermarkPending
+/home/kevin/quant_platform_HF/tests/unit/core/trading_domain_store_client_adapter_test.cpp:473: Failure
+Value of: store.ApplyTrade(request, &result, &error)
+  Actual: true
+Expected: false
+
+/home/kevin/quant_platform_HF/tests/unit/core/trading_domain_store_client_adapter_test.cpp:474: Failure
+Value of: sql->QueryAllRows("trading_core.trade_applications", &error).empty()
+  Actual: false
+Expected: true
+
+/home/kevin/quant_platform_HF/tests/unit/core/trading_domain_store_client_adapter_test.cpp:475: Failure
+Value of: sql->QueryAllRows("trading_core.domain_receipts", &error).empty()
+  Actual: false
+Expected: true
+
+/home/kevin/quant_platform_HF/tests/unit/core/trading_domain_store_client_adapter_test.cpp:480: Failure
+Expected equality of these values:
+  result.status
+    Which is: 4-byte object <01-00 00-00>
+  TradeApplyStatus::kApplied
+    Which is: 4-byte object <00-00 00-00>
+
+[  FAILED  ] TradingDomainStoreClientAdapterTest.RequiredValuationLeavesUnknownNewFillAndWatermarkPending (0 ms)
+[----------] 2 tests from TradingDomainStoreClientAdapterTest (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 2 tests from 1 test suite ran. (0 ms total)
+[  PASSED  ] 0 tests.
+[  FAILED  ] 2 tests, listed below:
+[  FAILED  ] TradingDomainStoreClientAdapterTest.VerifiedMixedCloseFeesUseCommittedAllocationAndReplayRawPayload
+[  FAILED  ] TradingDomainStoreClientAdapterTest.RequiredValuationLeavesUnknownNewFillAndWatermarkPending
+
+ 2 FAILED TESTS

@@ -57,7 +57,8 @@ TEST(QualityGateScriptsTest, RepoPurityCheckFailsWhenPythonAssetExists) {
 }
 
 TEST(QualityGateScriptsTest, DependencyAuditPassesCurrentBuild) {
-    const int rc = RunCommand("bash scripts/build/dependency_audit.sh --build-dir build");
+    const int rc = RunCommand("bash scripts/build/dependency_audit.sh --build-dir '" +
+                              EscapePathForShell(QUANT_HFT_BUILD_DIR) + "'");
     EXPECT_EQ(rc, 0);
 }
 

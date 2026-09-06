@@ -630,4 +630,42 @@ TEST(CTPTraderAdapterTest, CriticalDispatchTimeoutTriggersCircuitBreakerCallback
     EXPECT_TRUE(WaitUntil([&breaker_triggered]() { return breaker_triggered.load(); }, 2000));
 }
 
+TEST(CTPTraderAdapterTest, AccountingQueryMetadataSurvivesReliableCallbackDelivery) {
+    std::mutex results_mutex;
+    std::vector<QueryResultMetadata> results;
+    auto gateway = std::make_shared<CtpGatewayAdapter>(100);
+    CTPTraderAdapter adapter(gateway, 1);
+    auto config = BuildSimConfig();
+    config.user_id = "operator";
+    config.investor_id = "investor";
+    ASSERT_TRUE(adapter.Connect(config));
+    const auto trading_day = adapter.GetLastUserSession().trading_day;
+    const auto record = [&, trading_day](const auto& result) {
+        EXPECT_TRUE(result.metadata.complete && result.metadata.success);
+        EXPECT_EQ(result.metadata.account_id, "investor");
+        EXPECT_EQ(result.metadata.trading_day, trading_day);
+        EXPECT_EQ(result.metadata.source, "simulated");
+        EXPECT_EQ(result.metadata.instrument_id, "rb");
+        ASSERT_EQ(result.rows.size(), 1U);
+        std::lock_guard<std::mutex> lock(results_mutex);
+        results.push_back(result.metadata);
+    };
+    adapter.RegisterInstrumentMetaQueryCallback(record);
+    adapter.RegisterInstrumentCommissionRateQueryCallback(record);
+    adapter.RegisterInstrumentOrderCommRateQueryCallback(record);
+    ASSERT_TRUE(adapter.EnqueueInstrumentQuery(1001, "rb"));
+    ASSERT_TRUE(adapter.EnqueueInstrumentCommissionRateQuery(1002, "rb"));
+    ASSERT_TRUE(adapter.EnqueueInstrumentOrderCommRateQuery(1003, "rb"));
+    ASSERT_TRUE(WaitUntil(
+        [&]() {
+            std::lock_guard<std::mutex> lock(results_mutex);
+            return results.size() == 3;
+        },
+        1000));
+    adapter.StopEventDelivery();
+    EXPECT_EQ(results[0].request_id, 1001);
+    EXPECT_EQ(results[1].request_id, 1002);
+    EXPECT_EQ(results[2].request_id, 1003);
+}
+
 }  // namespace quant_hft

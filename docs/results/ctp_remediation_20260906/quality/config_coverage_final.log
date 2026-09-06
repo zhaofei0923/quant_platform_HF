@@ -1,0 +1,8 @@
+Internal ctest changing into directory: /tmp/quant-hft-runtime-build
+Test project /tmp/quant-hft-runtime-build
+    Start 895: QualityGateScriptsTest.ConfigDocsCoverageCheckPassesCurrentRepository
+1/1 Test #895: QualityGateScriptsTest.ConfigDocsCoverageCheckPassesCurrentRepository ...   Passed    0.03 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   0.04 sec

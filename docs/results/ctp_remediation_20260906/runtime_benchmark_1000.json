@@ -1,0 +1,1 @@
+{"records":1000,"scheduler_workers":1,"same_deadline_burst":true,"commit_throughput_per_second":474.34,"wal_commit_p99_us":3081.79,"queue_high_water":1000,"deadline_lateness_p99_us":2.11649e+06,"validated_scan_ms":59.1496,"domain_recovery_measured":false,"peak_rss_kib":5560,"wal_bytes":786780}

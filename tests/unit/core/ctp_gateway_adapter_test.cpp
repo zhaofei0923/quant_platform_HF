@@ -644,6 +644,37 @@ TEST(CtpGatewayAdapterTest, SimulatedTradingDayIsExplicitAndCopiedIntoPositionQu
     EXPECT_EQ(observed.source, "simulated");
     ASSERT_TRUE(adapter.EnqueueTradingAccountQuery(2));
     EXPECT_EQ(adapter.GetLastTradingAccountSnapshot().trading_day, "20240102");
+    QueryResult<InstrumentMetaSnapshot> meta_result;
+    QueryResult<InstrumentCommissionRateSnapshot> fee_result;
+    adapter.RegisterInstrumentMetaQueryCallback([&](const auto& result) { meta_result = result; });
+    adapter.RegisterInstrumentCommissionRateQueryCallback(
+        [&](const auto& result) { fee_result = result; });
+    ASSERT_TRUE(adapter.EnqueueInstrumentQuery(3, "rb"));
+    ASSERT_TRUE(adapter.EnqueueInstrumentCommissionRateQuery(4, "rb"));
+    ASSERT_TRUE(meta_result.metadata.success && meta_result.metadata.complete);
+    ASSERT_TRUE(fee_result.metadata.success && fee_result.metadata.complete);
+    EXPECT_EQ(meta_result.metadata.trading_day, "20240102");
+    EXPECT_EQ(fee_result.metadata.trading_day, "20240102");
+    EXPECT_EQ(fee_result.metadata.account_id, "investor");
+    EXPECT_EQ(fee_result.metadata.source, "simulated");
+    EXPECT_EQ(fee_result.metadata.request_id, 4);
+    ASSERT_EQ(meta_result.rows.size(), 1U);
+    ASSERT_EQ(fee_result.rows.size(), 1U);
+    EXPECT_EQ(meta_result.rows.front().instrument_id, "rb");
+    ASSERT_TRUE(adapter.EnqueueInstrumentQuery(5, "ag"));
+    EXPECT_EQ(meta_result.metadata.instrument_id, "ag");
+    ASSERT_EQ(meta_result.rows.size(), 1U);
+    EXPECT_EQ(meta_result.rows.front().instrument_id, "ag");
+    QueryResult<InstrumentOrderCommRateSnapshot> order_fee_result;
+    adapter.RegisterInstrumentOrderCommRateQueryCallback(
+        [&](const auto& result) { order_fee_result = result; });
+    ASSERT_TRUE(adapter.EnqueueInstrumentOrderCommRateQuery(6, "rb"));
+    EXPECT_TRUE(order_fee_result.metadata.success && order_fee_result.metadata.complete);
+    EXPECT_EQ(order_fee_result.metadata.trading_day, "20240102");
+    EXPECT_EQ(order_fee_result.metadata.account_id, "investor");
+    EXPECT_EQ(order_fee_result.metadata.source, "simulated");
+    ASSERT_EQ(order_fee_result.rows.size(), 1U);
+    EXPECT_DOUBLE_EQ(order_fee_result.rows.front().order_comm_by_volume, 0.0);
     adapter.Disconnect();
     ::setenv("QUANT_HFT_SIMULATED_TRADING_DAY", "20240230", 1);
     EXPECT_FALSE(adapter.Connect(config));

@@ -1,26 +1,29 @@
 # Ubuntu 服务器部署与首次 SimNow 联调
 
-本指南用于把 `codex/ctp-correctness-runtime-parity` 分支部署到另一台 Ubuntu 服务器。
+本指南用于把默认 `main` 分支部署到另一台 Ubuntu 服务器。
 首次交易时段先确认登录、结算确认与行情，再观察引擎恢复和预热。填写 `.env` 并不
 自动满足交易条件；已核验核算规则与当日查询证据仍是自动委托的必要输入。
 
 ## 1. 拉取代码
 
-已有仓库时，在该仓库根目录执行；若有本地改动，先保留自己的改动，不使用强制重置：
+已有仓库时，在该仓库根目录确认当前分支为 `main`，直接拉取。若有本地改动，先保留
+自己的改动，不使用强制重置；若拉取提示分叉，也不要强制覆盖服务器上的提交：
 
 ```bash
 git status --short
-git fetch origin
-git switch codex/ctp-correctness-runtime-parity
-git pull --ff-only origin codex/ctp-correctness-runtime-parity
+git branch --show-current
+git pull --ff-only origin main
 git log -1 --oneline
 ```
 
-第一次拉取可使用下面的 SSH 地址；服务器需要已配置该 GitHub 仓库的读取权限：
+如果服务器先前已经切到 `codex/ctp-correctness-runtime-parity`，可继续从该分支拉取；
+也可在保留本地改动后执行一次 `git switch main`，以后使用上面的默认分支命令。
+其它开发分支不要直接执行 `pull origin main`，先确认需要部署的分支。
+
+第一次拉取使用公开仓库 HTTPS 地址，默认检出 `main`，无需另行切换分支：
 
 ```bash
-git clone --branch codex/ctp-correctness-runtime-parity --single-branch \
-  git@github.com:zhaofei0923/quant_platform_HF.git
+git clone https://github.com/zhaofei0923/quant_platform_HF.git
 cd quant_platform_HF
 ```
 

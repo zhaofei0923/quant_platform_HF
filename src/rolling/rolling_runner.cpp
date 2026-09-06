@@ -3,8 +3,8 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <csignal>
 #include <cmath>
+#include <csignal>
 #include <ctime>
 #include <filesystem>
 #include <future>
@@ -19,10 +19,10 @@
 #include <variant>
 #include <vector>
 
-#include "quant_hft/apps/cli_support.h"
+#include "quant_hft/common/cli_support.h"
 #include "quant_hft/optim/grid_search.h"
-#include "quant_hft/optim/random_search.h"
 #include "quant_hft/optim/parameter_space.h"
+#include "quant_hft/optim/random_search.h"
 #include "quant_hft/optim/result_analyzer.h"
 #include "quant_hft/optim/task_scheduler.h"
 #include "quant_hft/optim/temp_config_generator.h"
@@ -31,13 +31,14 @@
 namespace quant_hft::rolling {
 namespace {
 
-using quant_hft::apps::BacktestCliResult;
-using quant_hft::apps::BacktestCliSpec;
-using quant_hft::apps::RenderBacktestJson;
-using quant_hft::apps::RunBacktestSpec;
-using quant_hft::apps::SummarizeBacktest;
-using quant_hft::apps::UnixEpochMillisNow;
-using quant_hft::apps::WriteTextFile;
+using quant_hft::backtest::BacktestCliResult;
+using quant_hft::backtest::BacktestCliSpec;
+using quant_hft::backtest::RenderBacktestJson;
+using quant_hft::backtest::RunBacktestSpec;
+using quant_hft::backtest::SummarizeBacktest;
+using quant_hft::cli::UnixEpochMillisNow;
+using quant_hft::cli::WriteTextFile;
+using quant_hft::optim::GenerateTrialConfig;
 using quant_hft::optim::GridSearch;
 using quant_hft::optim::IOptimizationAlgorithm;
 using quant_hft::optim::LoadParameterSpace;
@@ -48,10 +49,9 @@ using quant_hft::optim::RandomSearch;
 using quant_hft::optim::ResultAnalyzer;
 using quant_hft::optim::TaskScheduler;
 using quant_hft::optim::Trial;
-using quant_hft::optim::TrialMetricsSnapshot;
 using quant_hft::optim::TrialConfigArtifacts;
 using quant_hft::optim::TrialConfigRequest;
-using quant_hft::optim::GenerateTrialConfig;
+using quant_hft::optim::TrialMetricsSnapshot;
 
 std::atomic<bool> g_interrupted{false};
 
@@ -76,7 +76,7 @@ class TempArtifactManager {
     void Cleanup() {
         std::sort(cleanup_paths_.begin(), cleanup_paths_.end());
         cleanup_paths_.erase(std::unique(cleanup_paths_.begin(), cleanup_paths_.end()),
-                            cleanup_paths_.end());
+                             cleanup_paths_.end());
         std::sort(keep_paths_.begin(), keep_paths_.end());
         keep_paths_.erase(std::unique(keep_paths_.begin(), keep_paths_.end()), keep_paths_.end());
 
@@ -144,13 +144,18 @@ BacktestRunFn DefaultRunFn() {
     };
 }
 
-BacktestCliSpec BuildSpec(const RollingConfig& config,
-                          const std::string& start_date,
-                          const std::string& end_date,
-                          const std::string& run_id,
+BacktestCliSpec BuildSpec(const RollingConfig& config, const std::string& start_date,
+                          const std::string& end_date, const std::string& run_id,
                           const std::string& strategy_composite_config_override = "") {
     BacktestCliSpec spec;
     spec.engine_mode = "parquet";
+    spec.behavior_profile = config.backtest_base.behavior_profile;
+    spec.parameter_profile = config.backtest_base.parameter_profile;
+    spec.online_runtime_config_path = config.backtest_base.online_runtime_config_path;
+    spec.initialization_policy = config.backtest_base.initialization_policy;
+    spec.input_timestamp_basis = config.backtest_base.input_timestamp_basis;
+    spec.product_series_mode = config.backtest_base.product_series_mode;
+    spec.streaming = config.backtest_base.streaming;
     spec.dataset_root = config.backtest_base.dataset_root;
     spec.dataset_manifest = config.backtest_base.dataset_manifest;
     spec.start_date = start_date;
@@ -181,9 +186,7 @@ BacktestCliSpec BuildSpec(const RollingConfig& config,
     return spec;
 }
 
-std::string BuildRunId(const std::string& mode,
-                       int window_index,
-                       const std::string& stage,
+std::string BuildRunId(const std::string& mode, int window_index, const std::string& stage,
                        int seq) {
     std::ostringstream oss;
     oss << "rolling-" << mode << "-w" << window_index << "-" << stage << "-" << seq << "-"
@@ -235,8 +238,7 @@ std::filesystem::path WindowTrainReportMdPath(const RollingConfig& config, int w
 }
 
 bool CopyDirectoryRecursive(const std::filesystem::path& source,
-                           const std::filesystem::path& destination,
-                           std::string* error) {
+                            const std::filesystem::path& destination, std::string* error) {
     std::error_code ec;
     if (!std::filesystem::exists(source, ec) || !std::filesystem::is_directory(source, ec)) {
         if (error != nullptr) {
@@ -248,8 +250,9 @@ bool CopyDirectoryRecursive(const std::filesystem::path& source,
     std::filesystem::create_directories(destination.parent_path(), ec);
     if (ec) {
         if (error != nullptr) {
-            *error = "failed to create archive parent directory: " + destination.parent_path().string() +
-                     ", error=" + ec.message();
+            *error =
+                "failed to create archive parent directory: " + destination.parent_path().string() +
+                ", error=" + ec.message();
         }
         return false;
     }
@@ -272,19 +275,19 @@ bool CopyDirectoryRecursive(const std::filesystem::path& source,
 }
 
 bool PersistBacktestResultJson(const BacktestCliResult& result,
-                               const std::filesystem::path& output_path,
-                               std::string* error) {
+                               const std::filesystem::path& output_path, std::string* error) {
     return WriteTextFile(output_path.string(), RenderBacktestJson(result), error);
 }
 
 void AppendDerivedMetrics(const BacktestCliResult& result,
-                         std::unordered_map<std::string, double>* metrics) {
+                          std::unordered_map<std::string, double>* metrics) {
     if (metrics == nullptr) {
         return;
     }
     TrialMetricsSnapshot derived;
     std::string error;
-    if (!ResultAnalyzer::ExtractTrialMetricsFromJsonText(RenderBacktestJson(result), &derived, &error)) {
+    if (!ResultAnalyzer::ExtractTrialMetricsFromJsonText(RenderBacktestJson(result), &derived,
+                                                         &error)) {
         return;
     }
     if (derived.max_drawdown_pct.has_value()) {
@@ -302,13 +305,8 @@ void AppendDerivedMetrics(const BacktestCliResult& result,
     }
 }
 
-bool ArchiveTopKTrials(const RollingConfig& config,
-                       const std::vector<Trial>& trials,
-                       bool maximize,
-                       int window_index,
-                       int top_k,
-                       std::string* archived_dir,
-                       std::string* error) {
+bool ArchiveTopKTrials(const RollingConfig& config, const std::vector<Trial>& trials, bool maximize,
+                       int window_index, int top_k, std::string* archived_dir, std::string* error) {
     if (top_k <= 0) {
         return true;
     }
@@ -324,25 +322,27 @@ bool ArchiveTopKTrials(const RollingConfig& config,
         return true;
     }
 
-    std::stable_sort(completed.begin(), completed.end(), [&](const Trial* left, const Trial* right) {
-        return maximize ? (left->objective > right->objective) : (left->objective < right->objective);
-    });
+    std::stable_sort(completed.begin(), completed.end(),
+                     [&](const Trial* left, const Trial* right) {
+                         return maximize ? (left->objective > right->objective)
+                                         : (left->objective < right->objective);
+                     });
 
     const std::filesystem::path archive_root = WindowTopTrialsDir(config, window_index);
     std::error_code ec;
     std::filesystem::remove_all(archive_root, ec);
     if (ec) {
         if (error != nullptr) {
-            *error = "failed to reset top_trials directory: " + archive_root.string() + ", error=" +
-                     ec.message();
+            *error = "failed to reset top_trials directory: " + archive_root.string() +
+                     ", error=" + ec.message();
         }
         return false;
     }
     std::filesystem::create_directories(archive_root, ec);
     if (ec) {
         if (error != nullptr) {
-            *error = "failed to create top_trials directory: " + archive_root.string() + ", error=" +
-                     ec.message();
+            *error = "failed to create top_trials directory: " + archive_root.string() +
+                     ", error=" + ec.message();
         }
         return false;
     }
@@ -406,10 +406,8 @@ void FinalizeReportStats(RollingReport* report) {
 
     const double sum = std::accumulate(report->objectives.begin(), report->objectives.end(), 0.0);
     report->mean_objective = sum / static_cast<double>(report->objectives.size());
-    report->max_objective =
-        *std::max_element(report->objectives.begin(), report->objectives.end());
-    report->min_objective =
-        *std::min_element(report->objectives.begin(), report->objectives.end());
+    report->max_objective = *std::max_element(report->objectives.begin(), report->objectives.end());
+    report->min_objective = *std::min_element(report->objectives.begin(), report->objectives.end());
 
     double variance = 0.0;
     for (double objective : report->objectives) {
@@ -420,8 +418,7 @@ void FinalizeReportStats(RollingReport* report) {
     report->std_objective = std::sqrt(variance);
 }
 
-bool LoadAndValidateParamSpace(const RollingConfig& config,
-                               ParameterSpace* out,
+bool LoadAndValidateParamSpace(const RollingConfig& config, ParameterSpace* out,
                                std::string* error) {
     if (out == nullptr) {
         if (error != nullptr) {
@@ -442,25 +439,30 @@ bool LoadAndValidateParamSpace(const RollingConfig& config,
         ResolvePath(param_space_dir, std::filesystem::path(out->composite_config_path));
     if (!config.backtest_base.strategy_composite_config.empty()) {
         const auto expected =
-            std::filesystem::absolute(config.backtest_base.strategy_composite_config).lexically_normal();
+            std::filesystem::absolute(config.backtest_base.strategy_composite_config)
+                .lexically_normal();
         if (space_composite != expected) {
             if (error != nullptr) {
-                *error = "optimization.param_space composite_config_path does not match "
-                         "backtest_base.strategy_composite_config";
+                *error =
+                    "optimization.param_space composite_config_path does not match "
+                    "backtest_base.strategy_composite_config";
             }
             return false;
         }
     }
 
-    std::filesystem::path selected_target =
-        ResolvePath(space_composite.parent_path(), std::filesystem::path(out->target_sub_config_path));
+    std::filesystem::path selected_target = ResolvePath(
+        space_composite.parent_path(), std::filesystem::path(out->target_sub_config_path));
 
     if (!config.optimization.target_sub_config_path.empty()) {
         const std::filesystem::path rolling_target =
-            std::filesystem::absolute(config.optimization.target_sub_config_path).lexically_normal();
+            std::filesystem::absolute(config.optimization.target_sub_config_path)
+                .lexically_normal();
         if (rolling_target != selected_target) {
             if (error != nullptr) {
-                *error = "optimization.target_sub_config_path does not match param_space target_sub_config_path";
+                *error =
+                    "optimization.target_sub_config_path does not match param_space "
+                    "target_sub_config_path";
             }
             return false;
         }
@@ -477,17 +479,17 @@ bool LoadAndValidateParamSpace(const RollingConfig& config,
         out->optimization.random_seed = config.optimization.random_seed;
     }
     out->optimization.batch_size = config.optimization.parallel;
+    out->optimization.max_parallel = config.optimization.max_parallel;
+    out->optimization.memory_budget_mb = config.optimization.memory_budget_mb;
+    out->optimization.per_task_memory_mb = config.optimization.per_task_memory_mb;
     if (config.optimization.preserve_top_k_trials.has_value()) {
         out->optimization.preserve_top_k_trials = *config.optimization.preserve_top_k_trials;
     }
     return true;
 }
 
-WindowResult RunFixedWindow(const RollingConfig& config,
-                            const Window& window,
-                            const BacktestRunFn& run_fn,
-                            int seq,
-                            const std::string& metric_path) {
+WindowResult RunFixedWindow(const RollingConfig& config, const Window& window,
+                            const BacktestRunFn& run_fn, int seq, const std::string& metric_path) {
     WindowResult out;
     out.index = window.index;
     out.train_start = window.train_start;
@@ -497,9 +499,8 @@ WindowResult RunFixedWindow(const RollingConfig& config,
 
     BacktestCliResult result;
     std::string run_error;
-    const BacktestCliSpec spec =
-        BuildSpec(config, window.test_start, window.test_end,
-                  BuildRunId(config.mode, window.index, "fixed", seq));
+    const BacktestCliSpec spec = BuildSpec(config, window.test_start, window.test_end,
+                                           BuildRunId(config.mode, window.index, "fixed", seq));
 
     if (!run_fn(spec, &result, &run_error)) {
         out.success = false;
@@ -520,12 +521,9 @@ WindowResult RunFixedWindow(const RollingConfig& config,
     return out;
 }
 
-WindowResult RunOptimizedWindow(const RollingConfig& config,
-                                const Window& window,
-                                const ParameterSpace& base_space,
-                                const BacktestRunFn& run_fn,
-                                int base_seq,
-                                std::string* error) {
+WindowResult RunOptimizedWindow(const RollingConfig& config, const Window& window,
+                                const ParameterSpace& base_space, const BacktestRunFn& run_fn,
+                                int base_seq, std::string* error) {
     WindowResult out;
     out.index = window.index;
     out.train_start = window.train_start;
@@ -560,15 +558,20 @@ WindowResult RunOptimizedWindow(const RollingConfig& config,
         return out;
     }
 
-    TaskScheduler scheduler(SafeMaxConcurrent(opt_config.batch_size));
+    TaskScheduler scheduler(
+        SafeMaxConcurrent(opt_config.max_parallel > 0
+                              ? std::min(opt_config.max_parallel, opt_config.batch_size)
+                              : opt_config.batch_size),
+        opt_config.memory_budget_mb, opt_config.per_task_memory_mb);
+    opt_config.effective_parallel = scheduler.max_concurrent();
     TempArtifactManager artifact_manager;
     std::atomic<int> trial_counter{0};
 
     auto trial_task = [&](const ParamValueMap& params) -> Trial {
         Trial trial;
         const int trial_index = trial_counter.fetch_add(1);
-        trial.trial_id = "window_" + std::to_string(window.index) + "_trial_" +
-                         std::to_string(trial_index + 1);
+        trial.trial_id =
+            "window_" + std::to_string(window.index) + "_trial_" + std::to_string(trial_index + 1);
         trial.params = params;
 
         TrialConfigRequest request;
@@ -576,6 +579,7 @@ WindowResult RunOptimizedWindow(const RollingConfig& config,
         request.target_sub_config_path = space.target_sub_config_path;
         request.param_overrides = params.values;
         request.trial_id = trial.trial_id;
+        request.parameter_profile = config.backtest_base.parameter_profile;
 
         TrialConfigArtifacts artifacts;
         std::string local_error;
@@ -599,7 +603,9 @@ WindowResult RunOptimizedWindow(const RollingConfig& config,
         }
 
         double objective = 0.0;
-        if (!ExtractMetricFromResult(train_result, opt_config.metric_path, &objective, &local_error)) {
+        objective = ResultAnalyzer::ComputeObjectiveFromJsonText(RenderBacktestJson(train_result),
+                                                                 opt_config, &local_error);
+        if (!local_error.empty()) {
             trial.status = "failed";
             trial.error_msg = local_error;
             return trial;
@@ -626,9 +632,8 @@ WindowResult RunOptimizedWindow(const RollingConfig& config,
 
         std::vector<std::string> constraint_violations;
         std::string constraint_error;
-        if (!ResultAnalyzer::EvaluateConstraintsFromJson(trial.result_json_path, opt_config,
-                                                         &constraint_violations,
-                                                         &constraint_error)) {
+        if (!ResultAnalyzer::EvaluateConstraintsFromJson(
+                trial.result_json_path, opt_config, &constraint_violations, &constraint_error)) {
             trial.status = "failed";
             trial.error_msg = constraint_error;
             return trial;
@@ -664,8 +669,10 @@ WindowResult RunOptimizedWindow(const RollingConfig& config,
 
     const std::vector<Trial> trials = algorithm->GetAllTrials();
     out.train_trial_count = static_cast<int>(trials.size());
-    out.completed_train_trial_count = static_cast<int>(std::count_if(
-        trials.begin(), trials.end(), [](const Trial& trial) { return trial.status == "completed"; }));
+    out.completed_train_trial_count =
+        static_cast<int>(std::count_if(trials.begin(), trials.end(), [](const Trial& trial) {
+            return trial.status == "completed";
+        }));
 
     const auto task_finished_system = std::chrono::system_clock::now();
     auto train_report = ResultAnalyzer::Analyze(trials, opt_config, g_interrupted.load());
@@ -696,11 +703,13 @@ WindowResult RunOptimizedWindow(const RollingConfig& config,
     }
 
     if (opt_config.export_heatmap) {
-        std::filesystem::path heatmap_dir = std::filesystem::path(out.train_report_json).parent_path();
+        std::filesystem::path heatmap_dir =
+            std::filesystem::path(out.train_report_json).parent_path();
         if (heatmap_dir.empty()) {
             heatmap_dir = std::filesystem::current_path();
         }
-        if (!ResultAnalyzer::WriteHeatmaps(train_report, space, heatmap_dir.string(), &report_error)) {
+        if (!ResultAnalyzer::WriteHeatmaps(train_report, space, heatmap_dir.string(),
+                                           &report_error)) {
             out.success = false;
             out.error_msg = "failed to write train heatmap data: " + report_error;
             artifact_manager.Cleanup();
@@ -719,11 +728,13 @@ WindowResult RunOptimizedWindow(const RollingConfig& config,
     const Trial best = algorithm->GetBestTrial();
     if (best.status != "completed") {
         out.success = false;
-        out.error_msg = best.error_msg.empty() ? "no successful trial in optimization" : best.error_msg;
+        out.error_msg =
+            best.error_msg.empty() ? "no successful trial in optimization" : best.error_msg;
         if (out.error_msg == "no completed trial") {
-            const auto failed_it = std::find_if(trials.begin(), trials.end(), [](const Trial& trial) {
-                return trial.status == "failed" && !trial.error_msg.empty();
-            });
+            const auto failed_it =
+                std::find_if(trials.begin(), trials.end(), [](const Trial& trial) {
+                    return trial.status == "failed" && !trial.error_msg.empty();
+                });
             if (failed_it != trials.end()) {
                 out.error_msg = "no completed trial; first failed trial " + failed_it->trial_id +
                                 ": " + failed_it->error_msg;
@@ -771,6 +782,7 @@ WindowResult RunOptimizedWindow(const RollingConfig& config,
     best_request.composite_config_path = space.composite_config_path;
     best_request.target_sub_config_path = space.target_sub_config_path;
     best_request.param_overrides = best.params.values;
+    best_request.parameter_profile = config.backtest_base.parameter_profile;
     best_request.trial_id = "window_" + std::to_string(window.index) + "_best_eval";
 
     TrialConfigArtifacts best_artifacts;
@@ -803,7 +815,9 @@ WindowResult RunOptimizedWindow(const RollingConfig& config,
     }
 
     double objective = 0.0;
-    if (!ExtractMetricFromResult(test_result, opt_config.metric_path, &objective, &eval_error)) {
+    objective = ResultAnalyzer::ComputeObjectiveFromJsonText(RenderBacktestJson(test_result),
+                                                             opt_config, &eval_error);
+    if (!eval_error.empty()) {
         out.success = false;
         out.error_msg = eval_error;
         artifact_manager.MarkKeep(best_artifacts.working_dir);
@@ -832,9 +846,7 @@ WindowResult RunOptimizedWindow(const RollingConfig& config,
 
 }  // namespace
 
-bool RunRollingBacktest(const RollingConfig& config,
-                        RollingReport* report,
-                        std::string* error,
+bool RunRollingBacktest(const RollingConfig& config, RollingReport* report, std::string* error,
                         BacktestRunFn run_fn) {
     if (report == nullptr) {
         if (error != nullptr) {
@@ -863,11 +875,19 @@ bool RunRollingBacktest(const RollingConfig& config,
 
     RollingReport local;
     local.mode = config.mode;
+    local.memory_budget_mb = config.optimization.memory_budget_mb;
+    local.per_task_memory_mb = config.optimization.per_task_memory_mb;
     local.windows.resize(windows.size());
 
     if (config.mode == "fixed_params") {
-        const std::size_t max_parallel =
-            static_cast<std::size_t>(SafeMaxConcurrent(config.output.window_parallel));
+        TaskScheduler resource_budget(
+            SafeMaxConcurrent(
+                config.optimization.max_parallel > 0
+                    ? std::min(config.output.window_parallel, config.optimization.max_parallel)
+                    : config.output.window_parallel),
+            config.optimization.memory_budget_mb, config.optimization.per_task_memory_mb);
+        local.effective_parallel = resource_budget.max_concurrent();
+        const std::size_t max_parallel = static_cast<std::size_t>(local.effective_parallel);
         std::vector<std::future<WindowResult>> active;
         std::vector<std::size_t> active_index;
         active.reserve(max_parallel);
@@ -878,13 +898,11 @@ bool RunRollingBacktest(const RollingConfig& config,
             while (!g_interrupted.load() && next_index < windows.size() &&
                    active.size() < max_parallel) {
                 const std::size_t launch_index = next_index++;
-                active.emplace_back(std::async(std::launch::async,
-                                               [&, launch_index]() {
-                                                   return RunFixedWindow(
-                                                       config, windows[launch_index], run_fn,
-                                                       static_cast<int>(launch_index) + 1,
-                                                       config.optimization.metric);
-                                               }));
+                active.emplace_back(std::async(std::launch::async, [&, launch_index]() {
+                    return RunFixedWindow(config, windows[launch_index], run_fn,
+                                          static_cast<int>(launch_index) + 1,
+                                          config.optimization.metric);
+                }));
                 active_index.push_back(launch_index);
             }
 
@@ -915,6 +933,13 @@ bool RunRollingBacktest(const RollingConfig& config,
         if (!LoadAndValidateParamSpace(config, &space, error)) {
             return false;
         }
+        const auto& budgets = space.optimization;
+        TaskScheduler resource_budget(
+            SafeMaxConcurrent(budgets.max_parallel > 0
+                                  ? std::min(budgets.max_parallel, budgets.batch_size)
+                                  : budgets.batch_size),
+            budgets.memory_budget_mb, budgets.per_task_memory_mb);
+        local.effective_parallel = resource_budget.max_concurrent();
 
         for (std::size_t i = 0; i < windows.size(); ++i) {
             if (g_interrupted.load()) {

@@ -20,7 +20,14 @@ struct RollingBacktestBase {
     std::optional<std::int64_t> max_ticks;
     bool deterministic_fills{true};
     bool strict_parquet{true};
-    std::string rollover_mode{"strict"};
+    std::string behavior_profile{"online_parity"};
+    std::string parameter_profile{"sim"};
+    std::string online_runtime_config_path{"configs/sim/ctp.yaml"};
+    std::string initialization_policy{"cold_start"};
+    std::string input_timestamp_basis{"legacy_exchange_local"};
+    std::string product_series_mode{"raw"};
+    bool streaming{true};
+    std::string rollover_mode{"flat_only"};
     std::string rollover_price_mode{"bbo"};
     double rollover_slippage_bps{0.0};
     double initial_equity{1'000'000.0};
@@ -47,6 +54,9 @@ struct RollingOptimizationSpec {
     int max_trials{100};
     std::optional<std::uint64_t> random_seed;
     int parallel{1};
+    int max_parallel{0};
+    std::int64_t memory_budget_mb{0};
+    std::int64_t per_task_memory_mb{0};
     std::optional<int> preserve_top_k_trials;
     std::string param_space;
     std::string target_sub_config_path;

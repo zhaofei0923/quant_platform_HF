@@ -1,5 +1,3 @@
-#include "quant_hft/apps/backtest_metrics.h"
-
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -15,7 +13,9 @@
 #include <utility>
 #include <vector>
 
-namespace quant_hft::apps {
+#include "quant_hft/backtest/metrics.h"
+
+namespace quant_hft::backtest {
 
 namespace {
 
@@ -109,8 +109,7 @@ std::string ToLower(std::string text) {
 bool IsTrendRegime(const std::string& regime) {
     const std::string normalized = ToLower(regime);
     return normalized.find("strongtrend") != std::string::npos ||
-           normalized.find("weaktrend") != std::string::npos ||
-           normalized == "trend";
+           normalized.find("weaktrend") != std::string::npos || normalized == "trend";
 }
 
 bool IsRangeRegime(const std::string& regime) {
@@ -284,7 +283,8 @@ RiskMetrics ComputeRiskMetrics(const std::vector<DailyPerformance>& daily) {
         }
     }
     if (es_count > 0) {
-        metrics.expected_shortfall_95 = std::max(0.0, -(es_sum / static_cast<double>(es_count)) * 100.0);
+        metrics.expected_shortfall_95 =
+            std::max(0.0, -(es_sum / static_cast<double>(es_count)) * 100.0);
     }
 
     double dd_sq_sum = 0.0;
@@ -327,13 +327,15 @@ ExecutionQuality ComputeExecutionQuality(const std::vector<OrderRecord>& orders,
             ++canceled;
         }
         if (order.last_update_ns >= order.created_at_ns) {
-            wait_sum_ms += static_cast<double>(order.last_update_ns - order.created_at_ns) / 1'000'000.0;
+            wait_sum_ms +=
+                static_cast<double>(order.last_update_ns - order.created_at_ns) / 1'000'000.0;
             ++waited;
         }
     }
 
     if (!orders.empty()) {
-        quality.limit_order_fill_rate = static_cast<double>(filled) / static_cast<double>(orders.size());
+        quality.limit_order_fill_rate =
+            static_cast<double>(filled) / static_cast<double>(orders.size());
         quality.cancel_rate = static_cast<double>(canceled) / static_cast<double>(orders.size());
     }
     if (waited > 0) {
@@ -398,8 +400,9 @@ RollingMetrics ComputeRollingMetrics(const std::vector<DailyPerformance>& daily,
         }
         metrics.rolling_sharpe_3m.push_back(sharpe);
 
-        std::vector<double> window_capitals(capitals.begin() + static_cast<std::ptrdiff_t>(begin),
-                                            capitals.begin() + static_cast<std::ptrdiff_t>(end + 1));
+        std::vector<double> window_capitals(
+            capitals.begin() + static_cast<std::ptrdiff_t>(begin),
+            capitals.begin() + static_cast<std::ptrdiff_t>(end + 1));
         metrics.rolling_max_dd_3m.push_back(MaxDrawdownPct(window_capitals));
     }
 
@@ -448,8 +451,9 @@ std::vector<RegimePerformance> ComputeRegimePerformance(const std::vector<TradeR
         agg.days.insert(NormalizeTradingDay(trade.trading_day).empty()
                             ? TradingDayFromEpochNs(trade.timestamp_ns)
                             : NormalizeTradingDay(trade.trading_day));
-        const double cumulative = agg.cumulative_pnl.empty() ? trade.realized_pnl
-                                                             : agg.cumulative_pnl.back() + trade.realized_pnl;
+        const double cumulative = agg.cumulative_pnl.empty()
+                                      ? trade.realized_pnl
+                                      : agg.cumulative_pnl.back() + trade.realized_pnl;
         agg.cumulative_pnl.push_back(cumulative);
     }
 
@@ -481,8 +485,7 @@ std::vector<RegimePerformance> ComputeRegimePerformance(const std::vector<TradeR
 }
 
 MonteCarloResult ComputeMonteCarloResult(const std::vector<DailyPerformance>& daily,
-                                         double initial_capital,
-                                         int simulations,
+                                         double initial_capital, int simulations,
                                          std::uint32_t seed) {
     MonteCarloResult result;
     if (daily.empty() || simulations <= 0) {
@@ -683,4 +686,4 @@ AdvancedSummary ComputeAdvancedSummary(const std::vector<DailyPerformance>& dail
     return summary;
 }
 
-}  // namespace quant_hft::apps
+}  // namespace quant_hft::backtest

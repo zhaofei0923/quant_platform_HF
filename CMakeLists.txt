@@ -38,6 +38,8 @@ if(QUANT_HFT_ENABLE_ARROW_PARQUET OR QUANT_HFT_ENABLE_REDIS_EXTERNAL OR
 endif()
 
 add_library(quant_hft_core STATIC
+    src/backtest/replay_runtime.cpp
+    src/backtest/replay_helpers.cpp
     src/core/config/runtime_semantics_loader.cpp
     src/core/regulatory/wal_projection_replay.cpp
     src/core/runtime/account_execution_scheduler.cpp
@@ -860,4 +862,11 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(position_reconciliation_test tests/unit/services/position_reconciliation_test.cpp)
     target_link_libraries(position_reconciliation_test PRIVATE quant_hft_core GTest::gtest_main)
     gtest_discover_tests(position_reconciliation_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+endif()
+
+# Phase 3 shared market/risk and deterministic replay regression.
+if(QUANT_HFT_BUILD_TESTS)
+    add_executable(replay_market_parity_test tests/unit/apps/replay_market_parity_test.cpp)
+    target_link_libraries(replay_market_parity_test PRIVATE quant_hft_core GTest::gtest_main)
+    gtest_discover_tests(replay_market_parity_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 endif()

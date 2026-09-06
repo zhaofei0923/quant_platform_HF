@@ -81,6 +81,10 @@ struct OptimizationConfig {
     int max_trials{100};
     std::optional<std::uint64_t> random_seed;
     int batch_size{1};
+    int max_parallel{0};
+    std::int64_t memory_budget_mb{0};
+    std::int64_t per_task_memory_mb{0};
+    int effective_parallel{1};
     int preserve_top_k_trials{0};
     bool export_heatmap{false};
     std::vector<OptimizationConstraint> constraints;

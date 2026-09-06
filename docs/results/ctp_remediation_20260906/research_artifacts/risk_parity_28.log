@@ -1,0 +1,62 @@
+Internal ctest changing into directory: /tmp/quant-hft-research-build
+Test project /tmp/quant-hft-research-build
+      Start 316: RiskManagerTest.InitializeStopsExistingDynamicReloadThread
+      Start  30: ReplayMarketParityTest.DefaultRuntimeUsesUtcCompleteBarsTickOrderAndSimParameters
+      Start  34: ReplayMarketParityTest.OrderNotionalUsesSharedLiveUnitsWithoutExtraMultiplier
+      Start  33: ReplayMarketParityTest.DefaultRiskFileOverridesCtpVolumeLimitExactlyAsLive
+ 1/28 Test #316: RiskManagerTest.InitializeStopsExistingDynamicReloadThread ......................................   Passed    0.01 sec
+      Start 318: RiskManagerTest.DestructionInterruptsLongReloadInterval
+ 2/28 Test #318: RiskManagerTest.DestructionInterruptsLongReloadInterval .........................................   Passed    0.02 sec
+      Start  29: ReplayMarketParityTest.ResearchTransformCheckpointPreservesOffsetsAndRejectsRawRestore
+ 3/28 Test  #34: ReplayMarketParityTest.OrderNotionalUsesSharedLiveUnitsWithoutExtraMultiplier ...................   Passed    0.03 sec
+      Start  31: ReplayMarketParityTest.RuntimeConfigIgnoresConnectionSecretsAndRejectsEnvironmentForDecisions
+ 4/28 Test  #33: ReplayMarketParityTest.DefaultRiskFileOverridesCtpVolumeLimitExactlyAsLive ......................   Passed    0.03 sec
+      Start  32: ReplayMarketParityTest.SharedRuntimeDefaultsMatchLiveLoaderAndRejectDecisionDrift
+ 5/28 Test  #32: ReplayMarketParityTest.SharedRuntimeDefaultsMatchLiveLoaderAndRejectDecisionDrift ...............   Passed    0.01 sec
+      Start  26: ReplayMarketParityTest.MissingMinuteCannotAdvanceStrategyOrDetector
+ 6/28 Test  #31: ReplayMarketParityTest.RuntimeConfigIgnoresConnectionSecretsAndRejectsEnvironmentForDecisions ...   Passed    0.01 sec
+      Start  25: ReplayMarketParityTest.AdditionalTimeframeCannotContaminateFiveMinuteDetector
+ 7/28 Test  #29: ReplayMarketParityTest.ResearchTransformCheckpointPreservesOffsetsAndRejectsRawRestore ..........   Passed    0.02 sec
+      Start  28: ReplayMarketParityTest.ParameterProfileDoesNotChangeBacktestBehaviorMode
+ 8/28 Test  #30: ReplayMarketParityTest.DefaultRuntimeUsesUtcCompleteBarsTickOrderAndSimParameters ...............   Passed    0.05 sec
+      Start  27: ReplayMarketParityTest.ShutdownPartialBucketIsAuditOnly
+ 9/28 Test  #28: ReplayMarketParityTest.ParameterProfileDoesNotChangeBacktestBehaviorMode ........................   Passed    0.01 sec
+      Start 305: RiskManagerTest.CheckOrderMaxVolumeExceededRejects
+10/28 Test  #26: ReplayMarketParityTest.MissingMinuteCannotAdvanceStrategyOrDetector .............................   Passed    0.01 sec
+      Start 313: RiskManagerTest.CheckCancelDailyCancelCountExceededRejects
+11/28 Test  #25: ReplayMarketParityTest.AdditionalTimeframeCannotContaminateFiveMinuteDetector ...................   Passed    0.01 sec
+      Start 314: RiskManagerTest.RiskRuleLoadFromYamlSuccess
+12/28 Test  #27: ReplayMarketParityTest.ShutdownPartialBucketIsAuditOnly .........................................   Passed    0.01 sec
+      Start 308: RiskManagerTest.CheckOrderSelfTradePreventionRejectsAcrossStrategiesInSameAccount
+13/28 Test #305: RiskManagerTest.CheckOrderMaxVolumeExceededRejects ..............................................   Passed    0.00 sec
+      Start 312: RiskManagerTest.CheckCancelCancelRateExceededRejects
+14/28 Test #313: RiskManagerTest.CheckCancelDailyCancelCountExceededRejects ......................................   Passed    0.00 sec
+      Start 311: RiskManagerTest.CheckOrderSimSubaccountUsesContextContractMultiplier
+15/28 Test #314: RiskManagerTest.RiskRuleLoadFromYamlSuccess .....................................................   Passed    0.00 sec
+      Start 307: RiskManagerTest.SelfTradePreventionCoversEveryOpenCloseCombination
+16/28 Test #308: RiskManagerTest.CheckOrderSelfTradePreventionRejectsAcrossStrategiesInSameAccount ...............   Passed    0.00 sec
+      Start 309: RiskManagerTest.CheckOrderOrderRateExceededRejects
+17/28 Test #312: RiskManagerTest.CheckCancelCancelRateExceededRejects ............................................   Passed    0.00 sec
+      Start 310: RiskManagerTest.CheckOrderSimSubaccountCapitalExceededRejects
+18/28 Test #311: RiskManagerTest.CheckOrderSimSubaccountUsesContextContractMultiplier ............................   Passed    0.00 sec
+      Start 315: RiskManagerTest.RiskManagerReloadRulesDynamicUpdate
+19/28 Test #307: RiskManagerTest.SelfTradePreventionCoversEveryOpenCloseCombination ..............................   Passed    0.00 sec
+      Start 304: RiskManagerTest.CommittedTradeStatisticsRestoreAndDeduplicateByDay
+20/28 Test #309: RiskManagerTest.CheckOrderOrderRateExceededRejects ..............................................   Passed    0.00 sec
+      Start 306: RiskManagerTest.CheckOrderSelfTradePreventionCrossPriceRejects
+21/28 Test #310: RiskManagerTest.CheckOrderSimSubaccountCapitalExceededRejects ...................................   Passed    0.00 sec
+      Start 317: RiskManagerTest.VirtualClockRefillsTheSameRateLimiterWithoutWallClockSleep
+22/28 Test #315: RiskManagerTest.RiskManagerReloadRulesDynamicUpdate .............................................   Passed    0.00 sec
+      Start  35: ReplayMarketParityTest.SharedRiskSeesPendingOppositeOrderForSelfTradePrevention
+23/28 Test #304: RiskManagerTest.CommittedTradeStatisticsRestoreAndDeduplicateByDay ..............................   Passed    0.00 sec
+      Start  36: ReplayMarketParityTest.RuleMutationDuringReplayCannotSilentlyChangeSnapshotSemantics
+24/28 Test #306: RiskManagerTest.CheckOrderSelfTradePreventionCrossPriceRejects ..................................   Passed    0.00 sec
+      Start  37: ReplayMarketParityTest.EnabledSimBudgetFailsBeforeInputAndRuleContentChangesSignature
+25/28 Test #317: RiskManagerTest.VirtualClockRefillsTheSameRateLimiterWithoutWallClockSleep ......................   Passed    0.00 sec
+26/28 Test  #37: ReplayMarketParityTest.EnabledSimBudgetFailsBeforeInputAndRuleContentChangesSignature ...........   Passed    0.01 sec
+27/28 Test  #36: ReplayMarketParityTest.RuleMutationDuringReplayCannotSilentlyChangeSnapshotSemantics ............   Passed    0.03 sec
+28/28 Test  #35: ReplayMarketParityTest.SharedRiskSeesPendingOppositeOrderForSelfTradePrevention .................   Passed    0.03 sec
+
+100% tests passed, 0 tests failed out of 28
+
+Total Test time (real) =   0.12 sec

@@ -1,7 +1,5 @@
 #include "quant_hft/optim/parameter_space.h"
 
-#include "quant_hft/optim/result_analyzer.h"
-
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -13,6 +11,8 @@
 #include <thread>
 #include <utility>
 #include <vector>
+
+#include "quant_hft/optim/result_analyzer.h"
 
 namespace quant_hft::optim {
 namespace {
@@ -47,9 +47,8 @@ std::string Trim(const std::string& text) {
 }
 
 std::string ToLower(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     return value;
 }
 
@@ -238,8 +237,8 @@ bool ParseParameterType(const std::string& text, ParameterType* out) {
     return false;
 }
 
-bool ParseParamValue(const std::string& token, ParameterType type, ParamValue* out, std::string* error,
-                     int line_no, const std::string& key) {
+bool ParseParamValue(const std::string& token, ParameterType type, ParamValue* out,
+                     std::string* error, int line_no, const std::string& key) {
     if (out == nullptr) {
         if (error != nullptr) {
             *error = "line " + std::to_string(line_no) + ": internal null output for " + key;
@@ -304,8 +303,8 @@ bool FinalizeParameterDraft(const ParameterDraft& draft, ParameterDef* out, std:
     ParameterType type = ParameterType::kString;
     if (!ParseParameterType(draft.type_text, &type)) {
         if (error != nullptr) {
-            *error = "line " + std::to_string(draft.line_no) + ": unsupported parameter type: " +
-                     draft.type_text;
+            *error = "line " + std::to_string(draft.line_no) +
+                     ": unsupported parameter type: " + draft.type_text;
         }
         return false;
     }
@@ -319,8 +318,8 @@ bool FinalizeParameterDraft(const ParameterDraft& draft, ParameterDef* out, std:
     }
     if (draft.values.empty() && draft.range.empty()) {
         if (error != nullptr) {
-            *error = "line " + std::to_string(draft.line_no) +
-                     ": parameter must define values or range";
+            *error =
+                "line " + std::to_string(draft.line_no) + ": parameter must define values or range";
         }
         return false;
     }
@@ -332,8 +331,8 @@ bool FinalizeParameterDraft(const ParameterDraft& draft, ParameterDef* out, std:
     if (!draft.values.empty()) {
         if (draft.step.has_value()) {
             if (error != nullptr) {
-                *error = "line " + std::to_string(draft.line_no) +
-                         ": step is only allowed with range";
+                *error =
+                    "line " + std::to_string(draft.line_no) + ": step is only allowed with range";
             }
             return false;
         }
@@ -417,9 +416,8 @@ bool FinalizeParameterDraft(const ParameterDraft& draft, ParameterDef* out, std:
     return true;
 }
 
-bool FinalizeObjectiveDraft(const ObjectiveDraft& draft,
-                           OptimizationObjective* out,
-                           std::string* error) {
+bool FinalizeObjectiveDraft(const ObjectiveDraft& draft, OptimizationObjective* out,
+                            std::string* error) {
     if (out == nullptr) {
         if (error != nullptr) {
             *error = "line " + std::to_string(draft.line_no) + ": internal null objective output";
@@ -458,10 +456,8 @@ std::string FormatLineError(int line_no, const std::string& message) {
     return "line " + std::to_string(line_no) + ": " + message;
 }
 
-bool AppendOptimizationConstraint(const std::string& expression,
-                                  OptimizationConfig* config,
-                                  std::string* error,
-                                  int line_no) {
+bool AppendOptimizationConstraint(const std::string& expression, OptimizationConfig* config,
+                                  std::string* error, int line_no) {
     if (config == nullptr) {
         if (error != nullptr) {
             *error = FormatLineError(line_no, "internal null optimization config");
@@ -489,11 +485,8 @@ bool AppendOptimizationConstraint(const std::string& expression,
     return true;
 }
 
-bool SetOptimizationField(const std::string& key,
-                          const std::string& value,
-                          OptimizationConfig* config,
-                          std::string* error,
-                          int line_no) {
+bool SetOptimizationField(const std::string& key, const std::string& value,
+                          OptimizationConfig* config, std::string* error, int line_no) {
     if (config == nullptr) {
         if (error != nullptr) {
             *error = FormatLineError(line_no, "internal null optimization config");
@@ -539,6 +532,21 @@ bool SetOptimizationField(const std::string& key,
             return false;
         }
         config->random_seed = parsed;
+        return true;
+    }
+    if (key == "max_parallel" || key == "memory_budget_mb" || key == "per_task_memory_mb") {
+        int parsed = 0;
+        if (!ParseInt(value, &parsed) || parsed < 0) {
+            if (error)
+                *error = FormatLineError(line_no, "invalid non-negative resource budget: " + key);
+            return false;
+        }
+        if (key == "max_parallel")
+            config->max_parallel = parsed;
+        else if (key == "memory_budget_mb")
+            config->memory_budget_mb = parsed;
+        else
+            config->per_task_memory_mb = parsed;
         return true;
     }
     if (key == "parallel" || key == "batch_size") {
@@ -608,11 +616,8 @@ bool SetOptimizationField(const std::string& key,
     return false;
 }
 
-bool SetParameterDraftField(ParameterDraft* draft,
-                            const std::string& key,
-                            const std::string& value,
-                            int line_no,
-                            std::string* error) {
+bool SetParameterDraftField(ParameterDraft* draft, const std::string& key, const std::string& value,
+                            int line_no, std::string* error) {
     if (draft == nullptr) {
         if (error != nullptr) {
             *error = FormatLineError(line_no, "internal null parameter draft");
@@ -668,11 +673,8 @@ bool SetParameterDraftField(ParameterDraft* draft,
     return false;
 }
 
-bool SetObjectiveDraftField(ObjectiveDraft* draft,
-                            const std::string& key,
-                            const std::string& value,
-                            int line_no,
-                            std::string* error) {
+bool SetObjectiveDraftField(ObjectiveDraft* draft, const std::string& key, const std::string& value,
+                            int line_no, std::string* error) {
     if (draft == nullptr) {
         if (error != nullptr) {
             *error = FormatLineError(line_no, "internal null objective draft");
@@ -989,7 +991,7 @@ bool LoadParameterSpace(const std::string& yaml_path, ParameterSpace* out, std::
                         return false;
                     }
                     if (!AppendOptimizationConstraint(remainder, &space.optimization, error,
-                                                     line_no)) {
+                                                      line_no)) {
                         return false;
                     }
                     continue;
@@ -1092,7 +1094,8 @@ bool LoadParameterSpace(const std::string& yaml_path, ParameterSpace* out, std::
         return false;
     }
 
-    const std::filesystem::path config_path = std::filesystem::absolute(yaml_path).lexically_normal();
+    const std::filesystem::path config_path =
+        std::filesystem::absolute(yaml_path).lexically_normal();
     const std::filesystem::path config_dir = config_path.parent_path();
     const std::filesystem::path composite_path =
         ResolveConfigPath(config_dir, space.composite_config_path);
@@ -1129,6 +1132,12 @@ bool LoadParameterSpace(const std::string& yaml_path, ParameterSpace* out, std::
         if (error != nullptr) {
             *error = "optimization.parallel must be > 0";
         }
+        return false;
+    }
+    if (space.optimization.memory_budget_mb > 0 &&
+        (space.optimization.per_task_memory_mb <= 0 ||
+         space.optimization.per_task_memory_mb > space.optimization.memory_budget_mb)) {
+        if (error) *error = "memory_budget_mb requires per_task_memory_mb > 0 and <= budget";
         return false;
     }
     if (space.optimization.preserve_top_k_trials < 0) {

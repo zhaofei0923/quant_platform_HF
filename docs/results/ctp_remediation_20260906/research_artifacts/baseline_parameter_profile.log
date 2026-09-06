@@ -1,0 +1,22 @@
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+Note: Google Test filter = *TrialValuesOverrideSelectedParameterProfileOnly
+[==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from TempConfigGeneratorTest
+[ RUN      ] TempConfigGeneratorTest.TrialValuesOverrideSelectedParameterProfileOnly
+/home/kevin/quant_platform_HF/tests/unit/optim/temp_config_generator_test.cpp:63: Failure
+Expected equality of these values:
+  generated.sub_strategies.front().overrides.sim_params.at("default_volume")
+    Which is: "2"
+  "9"
+
+[  FAILED  ] TempConfigGeneratorTest.TrialValuesOverrideSelectedParameterProfileOnly (2 ms)
+[----------] 1 test from TempConfigGeneratorTest (2 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test suite ran. (2 ms total)
+[  PASSED  ] 0 tests.
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] TempConfigGeneratorTest.TrialValuesOverrideSelectedParameterProfileOnly
+
+ 1 FAILED TEST

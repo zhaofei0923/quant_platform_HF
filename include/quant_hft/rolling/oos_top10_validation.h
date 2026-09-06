@@ -5,14 +5,13 @@
 #include <string>
 #include <vector>
 
-#include "quant_hft/apps/backtest_replay_support.h"
+#include "quant_hft/backtest/replay_runtime.h"
 #include "quant_hft/optim/optimization_algorithm.h"
 
 namespace quant_hft::rolling {
 
-using OosBacktestRunFn = std::function<bool(const quant_hft::apps::BacktestCliSpec&,
-                                            quant_hft::apps::BacktestCliResult*,
-                                            std::string*)>;
+using OosBacktestRunFn = std::function<bool(const quant_hft::backtest::BacktestCliSpec&,
+                                            quant_hft::backtest::BacktestCliResult*, std::string*)>;
 
 struct OosTop10ValidationRequest {
     std::string train_report_json;
@@ -31,6 +30,7 @@ struct OosTop10ValidationRow {
     std::optional<double> in_sample_max_drawdown_pct;
     std::optional<double> in_sample_sharpe;
     std::optional<double> oos_calmar;
+    std::optional<double> oos_objective;
     std::optional<double> oos_max_drawdown_pct;
     std::optional<double> oos_sharpe;
     std::optional<double> oos_profit_factor;
@@ -42,10 +42,17 @@ struct OosTop10ValidationRow {
     std::string status;
     std::string error_msg;
     std::string result_json_path;
+    std::string cache_identity;
+    std::string cache_note;
 };
 
 struct OosTop10ValidationReport {
     std::string train_report_json;
+    std::string evaluation_role{"validation_selection"};
+    std::string metric_path;
+    bool maximize{true};
+    std::string oos_start_date;
+    std::string oos_end_date;
     std::string top_trials_dir;
     std::string output_dir;
     std::string output_csv;
@@ -59,8 +66,7 @@ struct OosTop10ValidationReport {
 };
 
 bool RunOosTop10Validation(const OosTop10ValidationRequest& request,
-                           OosTop10ValidationReport* report,
-                           std::string* error,
+                           OosTop10ValidationReport* report, std::string* error,
                            OosBacktestRunFn run_fn = OosBacktestRunFn{});
 
 }  // namespace quant_hft::rolling

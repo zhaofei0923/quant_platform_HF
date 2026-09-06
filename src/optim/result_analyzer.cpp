@@ -1,8 +1,8 @@
 #include "quant_hft/optim/result_analyzer.h"
 
 #include <algorithm>
-#include <cmath>
 #include <cctype>
+#include <cmath>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -14,15 +14,15 @@
 #include <utility>
 #include <vector>
 
-#include "quant_hft/apps/cli_support.h"
+#include "quant_hft/common/cli_support.h"
 #include "quant_hft/core/simple_json.h"
 #include "quant_hft/optim/parameter_space.h"
 
 namespace quant_hft::optim {
 namespace {
 
-using quant_hft::apps::JsonEscape;
-using quant_hft::apps::WriteTextFile;
+using quant_hft::cli::JsonEscape;
+using quant_hft::cli::WriteTextFile;
 using quant_hft::simple_json::Value;
 
 struct OpenLotRecord {
@@ -64,17 +64,13 @@ struct RoundTripStats {
     double profit_factor{0.0};
 };
 
-bool TryExtractOptionalMetric(const Value& root,
-                              const std::string& metric_path,
-                              std::optional<double>* out,
-                              std::vector<std::string>* warnings);
+bool TryExtractOptionalMetric(const Value& root, const std::string& metric_path,
+                              std::optional<double>* out, std::vector<std::string>* warnings);
 
-bool ExtractDailyDerivedMetrics(const Value& root,
-                                TrialMetricsSnapshot* metrics,
+bool ExtractDailyDerivedMetrics(const Value& root, TrialMetricsSnapshot* metrics,
                                 std::vector<std::string>* warnings);
 
-bool ExtractTradeDerivedMetrics(const Value& root,
-                                TrialMetricsSnapshot* metrics,
+bool ExtractTradeDerivedMetrics(const Value& root, TrialMetricsSnapshot* metrics,
                                 std::vector<std::string>* warnings);
 
 std::string FormatDouble(double value) {
@@ -152,7 +148,8 @@ std::vector<ParamValue> BuildGridValuesForParam(const ParameterDef& param) {
         const double max_value = std::get<double>(param.max.value());
         constexpr double kEps = 1e-9;
         for (double value = min_value; value <= max_value + kEps; value += step) {
-            const double clamped = (value > max_value && value < max_value + kEps) ? max_value : value;
+            const double clamped =
+                (value > max_value && value < max_value + kEps) ? max_value : value;
             values.emplace_back(clamped);
             if (value > max_value - step) {
                 break;
@@ -195,9 +192,9 @@ std::vector<HeatmapPair> BuildHeatmapPairs(const ParameterSpace& space) {
     }
 
     const auto find_named_param = [&](const std::string& name) {
-        return std::find_if(numeric_params.begin(), numeric_params.end(), [&name](const ParameterDef* param) {
-            return param != nullptr && param->name == name;
-        });
+        return std::find_if(
+            numeric_params.begin(), numeric_params.end(),
+            [&name](const ParameterDef* param) { return param != nullptr && param->name == name; });
     };
 
     const auto kama_it = find_named_param("kama_filter");
@@ -210,7 +207,8 @@ std::vector<HeatmapPair> BuildHeatmapPairs(const ParameterSpace& space) {
         for (std::size_t j = i + 1; j < numeric_params.size(); ++j) {
             const ParameterDef* x_param = numeric_params[i];
             const ParameterDef* y_param = numeric_params[j];
-            if (!pairs.empty() && pairs.front().x_param == x_param && pairs.front().y_param == y_param) {
+            if (!pairs.empty() && pairs.front().x_param == x_param &&
+                pairs.front().y_param == y_param) {
                 continue;
             }
             pairs.push_back({x_param, y_param});
@@ -276,9 +274,8 @@ bool ParseDoubleStrict(const std::string& text, double* out) {
 }
 
 std::string ToLower(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     return value;
 }
 
@@ -377,9 +374,8 @@ std::string ConstraintOperatorToString(const ConstraintOperator op) {
     return "?";
 }
 
-bool CompareConstraintValue(const double actual,
-                           const ConstraintOperator op,
-                           const double threshold) {
+bool CompareConstraintValue(const double actual, const ConstraintOperator op,
+                            const double threshold) {
     constexpr double kEps = 1e-9;
     switch (op) {
         case ConstraintOperator::kLess:
@@ -398,8 +394,7 @@ bool CompareConstraintValue(const double actual,
     return false;
 }
 
-bool ResolveConstraintMetricSpec(const std::string& metric_token,
-                                 std::string* metric_name,
+bool ResolveConstraintMetricSpec(const std::string& metric_token, std::string* metric_name,
                                  std::string* metric_path) {
     if (metric_name == nullptr || metric_path == nullptr) {
         return false;
@@ -472,9 +467,8 @@ std::vector<std::pair<std::string, ParamValue>> SortedParams(const ParamValueMap
     for (const auto& [key, value] : params.values) {
         sorted.emplace_back(key, value);
     }
-    std::sort(sorted.begin(), sorted.end(), [](const auto& left, const auto& right) {
-        return left.first < right.first;
-    });
+    std::sort(sorted.begin(), sorted.end(),
+              [](const auto& left, const auto& right) { return left.first < right.first; });
     return sorted;
 }
 
@@ -547,8 +541,7 @@ bool TryReadInt(const Value& value, int* out) {
 }
 
 bool TryExtractMetricFromSnapshot(const TrialMetricsSnapshot& metrics,
-                                  const std::string& resolved_metric_path,
-                                  double* out) {
+                                  const std::string& resolved_metric_path, double* out) {
     if (out == nullptr) {
         return false;
     }
@@ -586,9 +579,8 @@ bool TryExtractMetricFromSnapshot(const TrialMetricsSnapshot& metrics,
     return false;
 }
 
-bool ExtractTrialMetricsFromValueTree(const Value& root,
-                                     TrialMetricsSnapshot* out_metrics,
-                                     std::string* error) {
+bool ExtractTrialMetricsFromValueTree(const Value& root, TrialMetricsSnapshot* out_metrics,
+                                      std::string* error) {
     if (out_metrics == nullptr) {
         if (error != nullptr) {
             *error = "trial metrics output is null";
@@ -612,9 +604,7 @@ bool ExtractTrialMetricsFromValueTree(const Value& root,
     return true;
 }
 
-bool TryExtractDerivedMetric(const Value& root,
-                             const std::string& metric_path,
-                             double* out,
+bool TryExtractDerivedMetric(const Value& root, const std::string& metric_path, double* out,
                              std::string* error) {
     TrialMetricsSnapshot metrics;
     std::string metrics_error;
@@ -645,8 +635,7 @@ bool TryExtractDerivedMetric(const Value& root,
     return false;
 }
 
-double ExtractMetricFromValueTree(const Value& root,
-                                  const std::string& metric_path,
+double ExtractMetricFromValueTree(const Value& root, const std::string& metric_path,
                                   std::string* error) {
     std::string path_error;
     const Value* current = ResolvePath(root, metric_path, &path_error);
@@ -680,10 +669,8 @@ double ExtractMetricFromValueTree(const Value& root,
     return 0.0;
 }
 
-bool TryExtractOptionalMetric(const Value& root,
-                              const std::string& metric_path,
-                              std::optional<double>* out,
-                              std::vector<std::string>* warnings) {
+bool TryExtractOptionalMetric(const Value& root, const std::string& metric_path,
+                              std::optional<double>* out, std::vector<std::string>* warnings) {
     if (out == nullptr) {
         return false;
     }
@@ -706,17 +693,15 @@ bool TryExtractOptionalMetric(const Value& root,
     return true;
 }
 
-double ComputeObjectiveFromValueTree(const Value& root,
-                                     const OptimizationConfig& config,
+double ComputeObjectiveFromValueTree(const Value& root, const OptimizationConfig& config,
                                      std::string* error) {
     if (config.objectives.empty()) {
         return ExtractMetricFromValueTree(root, config.metric_path, error);
     }
 
     const bool needs_initial_equity =
-        std::any_of(config.objectives.begin(), config.objectives.end(), [](const auto& objective) {
-            return objective.scale_by_initial_equity;
-        });
+        std::any_of(config.objectives.begin(), config.objectives.end(),
+                    [](const auto& objective) { return objective.scale_by_initial_equity; });
 
     double initial_equity = 0.0;
     if (needs_initial_equity) {
@@ -770,8 +755,7 @@ std::string SideBucketForClose(const JsonTradeRecord& trade) {
     return ToLower(trade.side) == "sell" ? "long" : "short";
 }
 
-bool ParseTradesArray(const Value& trades_value,
-                      std::vector<JsonTradeRecord>* out_trades,
+bool ParseTradesArray(const Value& trades_value, std::vector<JsonTradeRecord>* out_trades,
                       std::string* error) {
     if (out_trades == nullptr) {
         if (error != nullptr) {
@@ -843,10 +827,10 @@ bool ParseTradesArray(const Value& trades_value,
         out_trades->push_back(std::move(trade));
     }
 
-    std::stable_sort(out_trades->begin(), out_trades->end(), [](const JsonTradeRecord& left,
-                                                                const JsonTradeRecord& right) {
-        return left.fill_seq < right.fill_seq;
-    });
+    std::stable_sort(out_trades->begin(), out_trades->end(),
+                     [](const JsonTradeRecord& left, const JsonTradeRecord& right) {
+                         return left.fill_seq < right.fill_seq;
+                     });
     return true;
 }
 
@@ -884,9 +868,7 @@ std::map<std::string, int> ExtractFinalPositions(const Value& root, bool* has_po
 
 bool BuildRoundTripStats(const std::vector<JsonTradeRecord>& trades,
                          const std::map<std::string, int>& final_positions,
-                         bool has_final_positions,
-                         RoundTripStats* out_stats,
-                         std::string* error) {
+                         bool has_final_positions, RoundTripStats* out_stats, std::string* error) {
     if (out_stats == nullptr) {
         if (error != nullptr) {
             *error = "round trip stats output is null";
@@ -928,8 +910,8 @@ bool BuildRoundTripStats(const std::vector<JsonTradeRecord>& trades,
         }
         if (queue.empty()) {
             if (error != nullptr) {
-                *error = "unmatched close trade: trade_id=" + trade.trade_id + ", symbol=" +
-                         trade.symbol;
+                *error = "unmatched close trade: trade_id=" + trade.trade_id +
+                         ", symbol=" + trade.symbol;
             }
             return false;
         }
@@ -973,8 +955,8 @@ bool BuildRoundTripStats(const std::vector<JsonTradeRecord>& trades,
                 if (lot.remaining_volume <= 0) {
                     continue;
                 }
-                const int signed_position = lot.side == "long" ? lot.remaining_volume
-                                                                 : -lot.remaining_volume;
+                const int signed_position =
+                    lot.side == "long" ? lot.remaining_volume : -lot.remaining_volume;
                 expected_by_symbol[lot.symbol] += signed_position;
             }
         }
@@ -1003,8 +985,8 @@ bool BuildRoundTripStats(const std::vector<JsonTradeRecord>& trades,
         if (trip.entry_volume <= 0 || trip.matched_volume != trip.entry_volume) {
             continue;
         }
-        const double net_pnl =
-            trip.gross_realized_pnl - trip.allocated_entry_commission - trip.allocated_exit_commission;
+        const double net_pnl = trip.gross_realized_pnl - trip.allocated_entry_commission -
+                               trip.allocated_exit_commission;
         round_trip_net.push_back(net_pnl);
         if (net_pnl > 0.0) {
             total_wins += net_pnl;
@@ -1018,8 +1000,9 @@ bool BuildRoundTripStats(const std::vector<JsonTradeRecord>& trades,
 
     out_stats->total_trades = static_cast<int>(round_trip_net.size());
     if (!round_trip_net.empty()) {
-        const int wins = static_cast<int>(std::count_if(round_trip_net.begin(), round_trip_net.end(),
-                                                        [](double value) { return value > 0.0; }));
+        const int wins =
+            static_cast<int>(std::count_if(round_trip_net.begin(), round_trip_net.end(),
+                                           [](double value) { return value > 0.0; }));
         out_stats->win_rate_pct =
             100.0 * static_cast<double>(wins) / static_cast<double>(round_trip_net.size());
     }
@@ -1046,8 +1029,7 @@ double ComputeAnnualizedSharpeRatio(const std::vector<double>& daily_returns_pct
     return Mean(returns) / volatility * std::sqrt(252.0);
 }
 
-bool ExtractDailyDerivedMetrics(const Value& root,
-                                TrialMetricsSnapshot* metrics,
+bool ExtractDailyDerivedMetrics(const Value& root, TrialMetricsSnapshot* metrics,
                                 std::vector<std::string>* warnings) {
     if (metrics == nullptr) {
         return false;
@@ -1116,8 +1098,8 @@ bool ExtractDailyDerivedMetrics(const Value& root,
         return true;
     }
 
-    metrics->max_drawdown_pct = has_drawdown ? std::optional<double>(max_drawdown_pct)
-                                             : std::optional<double>{};
+    metrics->max_drawdown_pct =
+        has_drawdown ? std::optional<double>(max_drawdown_pct) : std::optional<double>{};
     const int trading_days = static_cast<int>(daily->array_value.size());
     const double cumulative_ratio = 1.0 + cumulative_return_pct / 100.0;
     if (trading_days > 0 && cumulative_ratio > 0.0) {
@@ -1140,8 +1122,7 @@ bool ExtractDailyDerivedMetrics(const Value& root,
     return true;
 }
 
-bool ExtractTradeDerivedMetrics(const Value& root,
-                                TrialMetricsSnapshot* metrics,
+bool ExtractTradeDerivedMetrics(const Value& root, TrialMetricsSnapshot* metrics,
                                 std::vector<std::string>* warnings) {
     if (metrics == nullptr) {
         return false;
@@ -1177,7 +1158,8 @@ bool ExtractTradeDerivedMetrics(const Value& root,
     }
 
     bool has_final_positions = false;
-    const std::map<std::string, int> final_positions = ExtractFinalPositions(root, &has_final_positions);
+    const std::map<std::string, int> final_positions =
+        ExtractFinalPositions(root, &has_final_positions);
     RoundTripStats stats;
     std::string stats_error;
     if (!BuildRoundTripStats(parsed_trades, final_positions, has_final_positions, &stats,
@@ -1205,10 +1187,11 @@ std::vector<const Trial*> SortedCompletedTrials(const OptimizationReport& report
             completed.push_back(&trial);
         }
     }
-    std::stable_sort(completed.begin(), completed.end(), [&](const Trial* left, const Trial* right) {
-        return report.maximize ? (left->objective > right->objective)
-                               : (left->objective < right->objective);
-    });
+    std::stable_sort(completed.begin(), completed.end(),
+                     [&](const Trial* left, const Trial* right) {
+                         return report.maximize ? (left->objective > right->objective)
+                                                : (left->objective < right->objective);
+                     });
     return completed;
 }
 
@@ -1217,16 +1200,14 @@ void AppendTrialJsonObject(std::ostringstream& json, const Trial& trial, int ind
     const std::string inner(static_cast<std::size_t>(indent_spaces + 2), ' ');
 
     json << "{\n"
+
          << inner << "\"trial_id\": \"" << JsonEscape(trial.trial_id) << "\",\n"
          << inner << "\"status\": \"" << JsonEscape(trial.status) << "\",\n"
          << inner << "\"objective\": " << FormatDouble(trial.objective) << ",\n"
          << inner << "\"elapsed_sec\": " << FormatDouble(trial.elapsed_sec) << ",\n"
-         << inner << "\"result_json_path\": \"" << JsonEscape(trial.result_json_path)
-         << "\",\n"
-         << inner << "\"stdout_log_path\": \"" << JsonEscape(trial.stdout_log_path)
-         << "\",\n"
-         << inner << "\"stderr_log_path\": \"" << JsonEscape(trial.stderr_log_path)
-         << "\",\n"
+         << inner << "\"result_json_path\": \"" << JsonEscape(trial.result_json_path) << "\",\n"
+         << inner << "\"stdout_log_path\": \"" << JsonEscape(trial.stdout_log_path) << "\",\n"
+         << inner << "\"stderr_log_path\": \"" << JsonEscape(trial.stderr_log_path) << "\",\n"
          << inner << "\"working_dir\": \"" << JsonEscape(trial.working_dir) << "\",\n"
          << inner << "\"archived_artifact_dir\": \"" << JsonEscape(trial.archived_artifact_dir)
          << "\",\n"
@@ -1247,22 +1228,23 @@ void AppendTrialJsonObject(std::ostringstream& json, const Trial& trial, int ind
          << inner << "  \"total_pnl\": " << OptionalDoubleToJson(trial.metrics.total_pnl) << ",\n"
          << inner << "  \"max_drawdown\": " << OptionalDoubleToJson(trial.metrics.max_drawdown)
          << ",\n"
-         << inner << "  \"max_drawdown_pct\": "
-         << OptionalDoubleToJson(trial.metrics.max_drawdown_pct) << ",\n"
+         << inner
+         << "  \"max_drawdown_pct\": " << OptionalDoubleToJson(trial.metrics.max_drawdown_pct)
+         << ",\n"
          << inner << "  \"annualized_return_pct\": "
          << OptionalDoubleToJson(trial.metrics.annualized_return_pct) << ",\n"
-         << inner << "  \"sharpe_ratio\": "
-         << OptionalDoubleToJson(trial.metrics.sharpe_ratio) << ",\n"
-         << inner << "  \"calmar_ratio\": "
-         << OptionalDoubleToJson(trial.metrics.calmar_ratio) << ",\n"
-         << inner << "  \"profit_factor\": "
-         << OptionalDoubleToJson(trial.metrics.profit_factor) << ",\n"
-         << inner << "  \"win_rate_pct\": "
-         << OptionalDoubleToJson(trial.metrics.win_rate_pct) << ",\n"
-         << inner << "  \"total_trades\": "
-         << OptionalIntToJson(trial.metrics.total_trades) << ",\n"
-         << inner << "  \"expectancy_r\": "
-         << OptionalDoubleToJson(trial.metrics.expectancy_r) << "\n"
+         << inner << "  \"sharpe_ratio\": " << OptionalDoubleToJson(trial.metrics.sharpe_ratio)
+         << ",\n"
+         << inner << "  \"calmar_ratio\": " << OptionalDoubleToJson(trial.metrics.calmar_ratio)
+         << ",\n"
+         << inner << "  \"profit_factor\": " << OptionalDoubleToJson(trial.metrics.profit_factor)
+         << ",\n"
+         << inner << "  \"win_rate_pct\": " << OptionalDoubleToJson(trial.metrics.win_rate_pct)
+         << ",\n"
+         << inner << "  \"total_trades\": " << OptionalIntToJson(trial.metrics.total_trades)
+         << ",\n"
+         << inner << "  \"expectancy_r\": " << OptionalDoubleToJson(trial.metrics.expectancy_r)
+         << "\n"
          << inner << "}\n"
          << indent << "}";
 }
@@ -1292,12 +1274,9 @@ bool ResultAnalyzer::ParseOptimizationConstraint(const std::string& expression,
         ConstraintOperator op;
     };
     static const std::vector<OperatorSpec> kOperators = {
-        {"<=", ConstraintOperator::kLessEqual},
-        {">=", ConstraintOperator::kGreaterEqual},
-        {"==", ConstraintOperator::kEqual},
-        {"!=", ConstraintOperator::kNotEqual},
-        {"<", ConstraintOperator::kLess},
-        {">", ConstraintOperator::kGreater},
+        {"<=", ConstraintOperator::kLessEqual}, {">=", ConstraintOperator::kGreaterEqual},
+        {"==", ConstraintOperator::kEqual},     {"!=", ConstraintOperator::kNotEqual},
+        {"<", ConstraintOperator::kLess},       {">", ConstraintOperator::kGreater},
     };
 
     std::size_t operator_pos = std::string::npos;
@@ -1380,8 +1359,7 @@ double ResultAnalyzer::ExtractMetricFromJsonText(const std::string& json_text,
 }
 
 double ResultAnalyzer::ExtractMetricFromJson(const std::string& json_path,
-                                             const std::string& metric_path,
-                                             std::string* error) {
+                                             const std::string& metric_path, std::string* error) {
     std::ifstream input(json_path);
     if (!input.is_open()) {
         if (error != nullptr) {
@@ -1530,8 +1508,8 @@ bool ResultAnalyzer::EvaluateConstraintsFromJsonText(const std::string& json_tex
         if (!CompareConstraintValue(actual_value, constraint.op, constraint.threshold)) {
             violations->push_back(constraint.metric_name + " " +
                                   ConstraintOperatorToString(constraint.op) + " " +
-                                  FormatDouble(constraint.threshold) + " (actual=" +
-                                  FormatDouble(actual_value) + ")");
+                                  FormatDouble(constraint.threshold) +
+                                  " (actual=" + FormatDouble(actual_value) + ")");
         }
     }
 
@@ -1566,10 +1544,12 @@ bool ResultAnalyzer::EvaluateConstraintsFromJson(const std::string& json_path,
 }
 
 OptimizationReport ResultAnalyzer::Analyze(const std::vector<Trial>& trials,
-                                           const OptimizationConfig& config,
-                                           bool interrupted) {
+                                           const OptimizationConfig& config, bool interrupted) {
     OptimizationReport report;
     report.algorithm = config.algorithm;
+    report.effective_parallel = config.effective_parallel;
+    report.memory_budget_mb = config.memory_budget_mb;
+    report.per_task_memory_mb = config.per_task_memory_mb;
     if (config.objectives.empty()) {
         report.metric_path = ResolveMetricPathAlias(config.metric_path);
     } else {
@@ -1596,9 +1576,8 @@ OptimizationReport ResultAnalyzer::Analyze(const std::vector<Trial>& trials,
             ++report.completed_trials;
             report.all_objectives.push_back(trial.objective);
 
-            const bool better = !has_best ||
-                                (config.maximize ? (trial.objective > best.objective)
-                                                 : (trial.objective < best.objective));
+            const bool better = !has_best || (config.maximize ? (trial.objective > best.objective)
+                                                              : (trial.objective < best.objective));
             if (better) {
                 best = trial;
                 has_best = true;
@@ -1646,14 +1625,17 @@ std::string ResultAnalyzer::DefaultTop10InSamplePath(const std::string& json_pat
     return (base_dir / "top10_in_sample.md").string();
 }
 
-bool ResultAnalyzer::WriteReport(const OptimizationReport& report,
-                                 const std::string& json_path,
-                                 const std::string& md_path,
-                                 std::string* error) {
+bool ResultAnalyzer::WriteReport(const OptimizationReport& report, const std::string& json_path,
+                                 const std::string& md_path, std::string* error) {
     const std::string top10_path = DefaultTop10InSamplePath(json_path, md_path);
 
     std::ostringstream json;
     json << "{\n"
+         << "  \"resource_budget\": {\"effective_parallel\":" << report.effective_parallel
+         << ",\"memory_budget_mb\":" << report.memory_budget_mb
+         << ",\"per_task_memory_mb\":" << report.per_task_memory_mb
+         << ",\"scope\":\"declared_input_working_set; retained output and trace memory "
+            "separate\"},\n"
          << "  \"task_id\": \"" << JsonEscape(report.task_id) << "\",\n"
          << "  \"started_at\": \"" << JsonEscape(report.started_at) << "\",\n"
          << "  \"finished_at\": \"" << JsonEscape(report.finished_at) << "\",\n"
@@ -1686,8 +1668,7 @@ bool ResultAnalyzer::WriteReport(const OptimizationReport& report,
             json << "    {\n"
                  << "      \"path\": \"" << JsonEscape(objective.metric_path) << "\",\n"
                  << "      \"weight\": " << FormatDouble(objective.weight) << ",\n"
-                 << "      \"maximize\": " << (objective.maximize ? "true" : "false")
-                 << ",\n"
+                 << "      \"maximize\": " << (objective.maximize ? "true" : "false") << ",\n"
                  << "      \"scale_by_initial_equity\": "
                  << (objective.scale_by_initial_equity ? "true" : "false") << "\n"
                  << "    }";
@@ -1761,7 +1742,8 @@ bool ResultAnalyzer::WriteReport(const OptimizationReport& report,
         md << "- violated_trials: `-`\n\n";
     } else {
         md << "- violated_trials: `";
-        for (std::size_t index = 0; index < report.constraint_stats.violated_trials.size(); ++index) {
+        for (std::size_t index = 0; index < report.constraint_stats.violated_trials.size();
+             ++index) {
             if (index > 0) {
                 md << ", ";
             }
@@ -1775,8 +1757,7 @@ bool ResultAnalyzer::WriteReport(const OptimizationReport& report,
         for (const OptimizationObjective& objective : report.objectives) {
             md << "- path: `" << objective.metric_path << "`, weight: `"
                << FormatDouble(objective.weight) << "`, direction: `"
-               << (objective.maximize ? "maximize" : "minimize")
-               << "`, scale_by_initial_equity: `"
+               << (objective.maximize ? "maximize" : "minimize") << "`, scale_by_initial_equity: `"
                << (objective.scale_by_initial_equity ? "true" : "false") << "`\n";
         }
         md << "\n";
@@ -1806,18 +1787,18 @@ bool ResultAnalyzer::WriteReport(const OptimizationReport& report,
        << FormatOptionalMetric(report.best_trial.metrics.max_drawdown_pct, 2) << "`\n"
        << "- annualized_return_pct: `"
        << FormatOptionalMetric(report.best_trial.metrics.annualized_return_pct, 2) << "`\n"
-       << "- sharpe_ratio: `"
-       << FormatOptionalMetric(report.best_trial.metrics.sharpe_ratio, 2) << "`\n"
-       << "- calmar_ratio: `"
-       << FormatOptionalMetric(report.best_trial.metrics.calmar_ratio, 2) << "`\n"
-       << "- profit_factor: `"
-       << FormatOptionalMetric(report.best_trial.metrics.profit_factor, 2) << "`\n"
-       << "- win_rate_pct: `"
-       << FormatOptionalMetric(report.best_trial.metrics.win_rate_pct, 2) << "`\n"
-       << "- total_trades: `"
-       << FormatOptionalInteger(report.best_trial.metrics.total_trades) << "`\n"
-       << "- expectancy_r: `"
-       << FormatOptionalMetric(report.best_trial.metrics.expectancy_r, 2) << "`\n";
+       << "- sharpe_ratio: `" << FormatOptionalMetric(report.best_trial.metrics.sharpe_ratio, 2)
+       << "`\n"
+       << "- calmar_ratio: `" << FormatOptionalMetric(report.best_trial.metrics.calmar_ratio, 2)
+       << "`\n"
+       << "- profit_factor: `" << FormatOptionalMetric(report.best_trial.metrics.profit_factor, 2)
+       << "`\n"
+       << "- win_rate_pct: `" << FormatOptionalMetric(report.best_trial.metrics.win_rate_pct, 2)
+       << "`\n"
+       << "- total_trades: `" << FormatOptionalInteger(report.best_trial.metrics.total_trades)
+       << "`\n"
+       << "- expectancy_r: `" << FormatOptionalMetric(report.best_trial.metrics.expectancy_r, 2)
+       << "`\n";
 
     md << "\n## 失败样本\n\n";
     for (const Trial& trial : report.trials) {
@@ -1840,10 +1821,8 @@ bool ResultAnalyzer::WriteReport(const OptimizationReport& report,
     return WriteTop10InSampleMarkdown(report, top10_path, error);
 }
 
-bool ResultAnalyzer::WriteHeatmaps(const OptimizationReport& report,
-                                   const ParameterSpace& space,
-                                   const std::string& output_dir,
-                                   std::string* error) {
+bool ResultAnalyzer::WriteHeatmaps(const OptimizationReport& report, const ParameterSpace& space,
+                                   const std::string& output_dir, std::string* error) {
     const std::vector<HeatmapPair> pairs = BuildHeatmapPairs(space);
     if (pairs.empty()) {
         return true;
@@ -1969,7 +1948,8 @@ bool ResultAnalyzer::WriteTop10InSampleMarkdown(const OptimizationReport& report
         return WriteTextFile(output_path, md.str(), error);
     }
 
-    md << "| Rank | Trial | Objective | Total PnL | MaxDD (%) | Annualized (%) | Sharpe | Calmar | Win Rate (%) | Profit Factor | Trades | Params |\n"
+    md << "| Rank | Trial | Objective | Total PnL | MaxDD (%) | Annualized (%) | Sharpe | Calmar | "
+          "Win Rate (%) | Profit Factor | Trades | Params |\n"
        << "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n";
 
     const std::size_t top_n = std::min<std::size_t>(10U, completed.size());
@@ -1992,8 +1972,7 @@ bool ResultAnalyzer::WriteTop10InSampleMarkdown(const OptimizationReport& report
 }
 
 bool ResultAnalyzer::WriteBestParamsYaml(const ParamValueMap& best_params,
-                                         const std::string& output_path,
-                                         std::string* error) {
+                                         const std::string& output_path, std::string* error) {
     std::ostringstream yaml;
     yaml << "params:\n";
     const auto sorted = SortedParams(best_params);

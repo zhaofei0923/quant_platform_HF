@@ -7,8 +7,8 @@
 namespace quant_hft::rolling {
 namespace {
 
-quant_hft::apps::BacktestCliResult BuildResult() {
-    quant_hft::apps::BacktestCliResult result;
+quant_hft::backtest::BacktestCliResult BuildResult() {
+    quant_hft::backtest::BacktestCliResult result;
     result.run_id = "metric-test";
     result.mode = "backtest";
     result.engine_mode = "parquet";
@@ -64,8 +64,8 @@ TEST(MetricExtractorTest, SupportsDerivedCalmarMetric) {
 
     double value = 0.0;
     std::string error;
-    ASSERT_TRUE(ExtractMetricFromResult(result, "hf_standard.risk_metrics.calmar_ratio", &value,
-                                        &error))
+    ASSERT_TRUE(
+        ExtractMetricFromResult(result, "hf_standard.risk_metrics.calmar_ratio", &value, &error))
         << error;
 
     const double expected_annualized = (std::pow(1.0008, 126.0) - 1.0) * 100.0;
@@ -83,4 +83,3 @@ TEST(MetricExtractorTest, ReportsErrorForMissingMetricPath) {
 
 }  // namespace
 }  // namespace quant_hft::rolling
-

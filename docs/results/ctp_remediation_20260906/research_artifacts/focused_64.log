@@ -1,0 +1,134 @@
+Internal ctest changing into directory: /tmp/quant-hft-research-build
+Test project /tmp/quant-hft-research-build
+      Start 322: RiskManagerTest.InitializeStopsExistingDynamicReloadThread
+      Start 487: ParquetDataFeedTest.StreamingMergeUsesStablePartitionOrdinalAndLazyFuturePartitions
+      Start 783: OosTop10ValidationTest.CacheIdentityIncludesDatesAndContentEvenWithSameSizeAndMtime
+      Start 802: TaskSchedulerTest.RespectsMaxConcurrency
+ 1/64 Test #322: RiskManagerTest.InitializeStopsExistingDynamicReloadThread ......................................   Passed    0.01 sec
+      Start 485: ParquetDataFeedTest.CursorBoundsResidentBatchAndStopsWithoutScanningWholePartition
+ 2/64 Test #485: ParquetDataFeedTest.CursorBoundsResidentBatchAndStopsWithoutScanningWholePartition ..............   Passed    0.07 sec
+      Start 782: OosTop10ValidationTest.RanksByCalmarThenSharpeAndReusesExistingResults
+ 3/64 Test #802: TaskSchedulerTest.RespectsMaxConcurrency ........................................................   Passed    0.10 sec
+      Start  30: ReplayMarketParityTest.DefaultRuntimeUsesUtcCompleteBarsTickOrderAndSimParameters
+ 4/64 Test #783: OosTop10ValidationTest.CacheIdentityIncludesDatesAndContentEvenWithSameSizeAndMtime .............   Passed    0.10 sec
+      Start 784: OosTop10ValidationTest.UsesTrainingObjectiveDirectionForCandidateRankingAndValidation
+ 5/64 Test #782: OosTop10ValidationTest.RanksByCalmarThenSharpeAndReusesExistingResults ..........................   Passed    0.05 sec
+      Start 785: OosTop10ValidationTest.ContinuesAfterBacktestFailureAndRecordsError
+ 6/64 Test #784: OosTop10ValidationTest.UsesTrainingObjectiveDirectionForCandidateRankingAndValidation ...........   Passed    0.04 sec
+      Start  35: ReplayMarketParityTest.SharedRiskSeesPendingOppositeOrderForSelfTradePrevention
+ 7/64 Test  #30: ReplayMarketParityTest.DefaultRuntimeUsesUtcCompleteBarsTickOrderAndSimParameters ...............   Passed    0.05 sec
+      Start  36: ReplayMarketParityTest.RuleMutationDuringReplayCannotSilentlyChangeSnapshotSemantics
+ 8/64 Test #785: OosTop10ValidationTest.ContinuesAfterBacktestFailureAndRecordsError .............................   Passed    0.04 sec
+      Start  34: ReplayMarketParityTest.OrderNotionalUsesSharedLiveUnitsWithoutExtraMultiplier
+ 9/64 Test  #35: ReplayMarketParityTest.SharedRiskSeesPendingOppositeOrderForSelfTradePrevention .................   Passed    0.03 sec
+      Start  33: ReplayMarketParityTest.DefaultRiskFileOverridesCtpVolumeLimitExactlyAsLive
+10/64 Test  #36: ReplayMarketParityTest.RuleMutationDuringReplayCannotSilentlyChangeSnapshotSemantics ............   Passed    0.03 sec
+      Start 324: RiskManagerTest.DestructionInterruptsLongReloadInterval
+11/64 Test  #34: ReplayMarketParityTest.OrderNotionalUsesSharedLiveUnitsWithoutExtraMultiplier ...................   Passed    0.03 sec
+      Start 488: ParquetDataFeedTest.TradingDaySelectionKeepsPreviousFridayNight
+12/64 Test #324: RiskManagerTest.DestructionInterruptsLongReloadInterval .........................................   Passed    0.02 sec
+      Start 803: TaskSchedulerTest.RunsSequentiallyWhenConcurrencyIsOne
+13/64 Test  #33: ReplayMarketParityTest.DefaultRiskFileOverridesCtpVolumeLimitExactlyAsLive ......................   Passed    0.03 sec
+      Start 486: ParquetDataFeedTest.CursorRejectsNonMonotonicPartition
+14/64 Test #488: ParquetDataFeedTest.TradingDaySelectionKeepsPreviousFridayNight .................................   Passed    0.02 sec
+      Start  37: ReplayMarketParityTest.EnabledSimBudgetFailsBeforeInputAndRuleContentChangesSignature
+15/64 Test #486: ParquetDataFeedTest.CursorRejectsNonMonotonicPartition ..........................................   Passed    0.02 sec
+      Start 484: ParquetDataFeedTest.DiscoverFromDirectoryParsesPartitionAndMeta
+16/64 Test #803: TaskSchedulerTest.RunsSequentiallyWhenConcurrencyIsOne ..........................................   Passed    0.02 sec
+      Start  29: ReplayMarketParityTest.ResearchTransformCheckpointPreservesOffsetsAndRejectsRawRestore
+17/64 Test  #29: ReplayMarketParityTest.ResearchTransformCheckpointPreservesOffsetsAndRejectsRawRestore ..........   Passed    0.01 sec
+      Start 351: MarketBarPipelineTest.AtomicCheckpointRoundTripPreservesPendingState
+18/64 Test  #37: ReplayMarketParityTest.EnabledSimBudgetFailsBeforeInputAndRuleContentChangesSignature ...........   Passed    0.02 sec
+      Start  31: ReplayMarketParityTest.RuntimeConfigIgnoresConnectionSecretsAndRejectsEnvironmentForDecisions
+19/64 Test #484: ParquetDataFeedTest.DiscoverFromDirectoryParsesPartitionAndMeta .................................   Passed    0.02 sec
+      Start  26: ReplayMarketParityTest.MissingMinuteCannotAdvanceStrategyOrDetector
+20/64 Test #351: MarketBarPipelineTest.AtomicCheckpointRoundTripPreservesPendingState ............................   Passed    0.01 sec
+      Start  25: ReplayMarketParityTest.AdditionalTimeframeCannotContaminateFiveMinuteDetector
+21/64 Test  #26: ReplayMarketParityTest.MissingMinuteCannotAdvanceStrategyOrDetector .............................   Passed    0.01 sec
+      Start  28: ReplayMarketParityTest.ParameterProfileDoesNotChangeBacktestBehaviorMode
+22/64 Test  #31: ReplayMarketParityTest.RuntimeConfigIgnoresConnectionSecretsAndRejectsEnvironmentForDecisions ...   Passed    0.01 sec
+      Start  32: ReplayMarketParityTest.SharedRuntimeDefaultsMatchLiveLoaderAndRejectDecisionDrift
+23/64 Test  #32: ReplayMarketParityTest.SharedRuntimeDefaultsMatchLiveLoaderAndRejectDecisionDrift ...............   Passed    0.01 sec
+      Start 483: ParquetDataFeedTest.RegisterAndQueryByWindowAndInstrument
+24/64 Test  #25: ReplayMarketParityTest.AdditionalTimeframeCannotContaminateFiveMinuteDetector ...................   Passed    0.01 sec
+      Start  27: ReplayMarketParityTest.ShutdownPartialBucketIsAuditOnly
+25/64 Test  #28: ReplayMarketParityTest.ParameterProfileDoesNotChangeBacktestBehaviorMode ........................   Passed    0.01 sec
+      Start 791: ParameterSpaceTest.UsesDefaultsWhenOptimizationMissing
+26/64 Test #791: ParameterSpaceTest.UsesDefaultsWhenOptimizationMissing ..........................................   Passed    0.01 sec
+      Start 764: RollingConfigTest.LoadsValidConfigAndResolvesPaths
+27/64 Test #483: ParquetDataFeedTest.RegisterAndQueryByWindowAndInstrument .......................................   Passed    0.01 sec
+      Start 787: ParameterSpaceTest.LoadsValidConfig
+28/64 Test  #27: ReplayMarketParityTest.ShutdownPartialBucketIsAuditOnly .........................................   Passed    0.01 sec
+      Start 768: RollingConfigTest.LoadsRollingOptimizeRandomConfigWithSeed
+29/64 Test #764: RollingConfigTest.LoadsValidConfigAndResolvesPaths ..............................................   Passed    0.01 sec
+      Start 354: MarketBarPipelineTest.GapResetCannotRecoverThroughIncompleteBars
+30/64 Test #787: ParameterSpaceTest.LoadsValidConfig .............................................................   Passed    0.01 sec
+      Start 818: TempConfigGeneratorTest.RewritesTargetSubConfigAndAbsolutizesOtherPaths
+31/64 Test #768: RollingConfigTest.LoadsRollingOptimizeRandomConfigWithSeed ......................................   Passed    0.00 sec
+      Start 314: RiskManagerTest.CheckOrderSelfTradePreventionRejectsAcrossStrategiesInSameAccount
+32/64 Test #354: MarketBarPipelineTest.GapResetCannotRecoverThroughIncompleteBars ................................   Passed    0.00 sec
+      Start 792: ParameterSpaceTest.LoadsWeightedObjectivesConfig
+33/64 Test #314: RiskManagerTest.CheckOrderSelfTradePreventionRejectsAcrossStrategiesInSameAccount ...............   Passed    0.00 sec
+      Start 789: ParameterSpaceTest.RejectsInvalidConstraintExpression
+34/64 Test #818: TempConfigGeneratorTest.RewritesTargetSubConfigAndAbsolutizesOtherPaths .........................   Passed    0.01 sec
+      Start 319: RiskManagerTest.CheckCancelDailyCancelCountExceededRejects
+35/64 Test #792: ParameterSpaceTest.LoadsWeightedObjectivesConfig ................................................   Passed    0.00 sec
+      Start 311: RiskManagerTest.CheckOrderMaxVolumeExceededRejects
+36/64 Test #789: ParameterSpaceTest.RejectsInvalidConstraintExpression ...........................................   Passed    0.00 sec
+      Start 323: RiskManagerTest.VirtualClockRefillsTheSameRateLimiterWithoutWallClockSleep
+37/64 Test #319: RiskManagerTest.CheckCancelDailyCancelCountExceededRejects ......................................   Passed    0.00 sec
+      Start 790: ParameterSpaceTest.LoadsRandomSearchConfigWithSeed
+38/64 Test #311: RiskManagerTest.CheckOrderMaxVolumeExceededRejects ..............................................   Passed    0.00 sec
+      Start 320: RiskManagerTest.RiskRuleLoadFromYamlSuccess
+39/64 Test #323: RiskManagerTest.VirtualClockRefillsTheSameRateLimiterWithoutWallClockSleep ......................   Passed    0.00 sec
+      Start 318: RiskManagerTest.CheckCancelCancelRateExceededRejects
+40/64 Test #320: RiskManagerTest.RiskRuleLoadFromYamlSuccess .....................................................   Passed    0.00 sec
+      Start 347: MarketBarPipelineTest.CheckpointRestartMatchesContinuousPendingAggregation
+41/64 Test #318: RiskManagerTest.CheckCancelCancelRateExceededRejects ............................................   Passed    0.00 sec
+      Start 348: MarketBarPipelineTest.RecentCanonicalFiveMinuteStatesSurviveCheckpoint
+42/64 Test #790: ParameterSpaceTest.LoadsRandomSearchConfigWithSeed ..............................................   Passed    0.01 sec
+      Start 817: TempConfigGeneratorTest.TrialValuesOverrideSelectedParameterProfileOnly
+43/64 Test #347: MarketBarPipelineTest.CheckpointRestartMatchesContinuousPendingAggregation ......................   Passed    0.00 sec
+      Start 315: RiskManagerTest.CheckOrderOrderRateExceededRejects
+44/64 Test #348: MarketBarPipelineTest.RecentCanonicalFiveMinuteStatesSurviveCheckpoint ..........................   Passed    0.00 sec
+      Start 317: RiskManagerTest.CheckOrderSimSubaccountUsesContextContractMultiplier
+45/64 Test #817: TempConfigGeneratorTest.TrialValuesOverrideSelectedParameterProfileOnly .........................   Passed    0.01 sec
+      Start 316: RiskManagerTest.CheckOrderSimSubaccountCapitalExceededRejects
+46/64 Test #315: RiskManagerTest.CheckOrderOrderRateExceededRejects ..............................................   Passed    0.00 sec
+      Start 321: RiskManagerTest.RiskManagerReloadRulesDynamicUpdate
+47/64 Test #317: RiskManagerTest.CheckOrderSimSubaccountUsesContextContractMultiplier ............................   Passed    0.00 sec
+      Start 313: RiskManagerTest.SelfTradePreventionCoversEveryOpenCloseCombination
+48/64 Test #316: RiskManagerTest.CheckOrderSimSubaccountCapitalExceededRejects ...................................   Passed    0.00 sec
+      Start 310: RiskManagerTest.CommittedTradeStatisticsRestoreAndDeduplicateByDay
+49/64 Test #321: RiskManagerTest.RiskManagerReloadRulesDynamicUpdate .............................................   Passed    0.00 sec
+      Start 765: RollingConfigTest.RejectsNonParquetEngineMode
+50/64 Test #313: RiskManagerTest.SelfTradePreventionCoversEveryOpenCloseCombination ..............................   Passed    0.00 sec
+      Start 349: MarketBarPipelineTest.RecoveryTailNeverProducesTradableEmission
+51/64 Test #310: RiskManagerTest.CommittedTradeStatisticsRestoreAndDeduplicateByDay ..............................   Passed    0.00 sec
+      Start 766: RollingConfigTest.RejectsMissingManifest
+52/64 Test #765: RollingConfigTest.RejectsNonParquetEngineMode ...................................................   Passed    0.00 sec
+      Start 312: RiskManagerTest.CheckOrderSelfTradePreventionCrossPriceRejects
+53/64 Test #349: MarketBarPipelineTest.RecoveryTailNeverProducesTradableEmission .................................   Passed    0.00 sec
+      Start 788: ParameterSpaceTest.RejectsInvalidSchema
+54/64 Test #766: RollingConfigTest.RejectsMissingManifest ........................................................   Passed    0.00 sec
+      Start 793: ParameterSpaceTest.LoadsRepoOpsParameterOptimConfig
+55/64 Test #312: RiskManagerTest.CheckOrderSelfTradePreventionCrossPriceRejects ..................................   Passed    0.00 sec
+      Start 352: MarketBarPipelineTest.CorruptNestedCheckpointDoesNotPartiallyMutateLiveState
+56/64 Test #788: ParameterSpaceTest.RejectsInvalidSchema .........................................................   Passed    0.00 sec
+      Start 353: MarketBarPipelineTest.OneMinuteSourceAndStrategyEmissionHaveDistinctDeduplicationKeys
+57/64 Test #793: ParameterSpaceTest.LoadsRepoOpsParameterOptimConfig .............................................   Passed    0.00 sec
+      Start 350: MarketBarPipelineTest.LateTickSuppressesOpeningUntilTwoCompleteFiveMinuteBars
+58/64 Test #352: MarketBarPipelineTest.CorruptNestedCheckpointDoesNotPartiallyMutateLiveState ....................   Passed    0.00 sec
+      Start 346: MarketBarPipelineTest.ExactPayloadDuplicateIsIdempotent
+59/64 Test #353: MarketBarPipelineTest.OneMinuteSourceAndStrategyEmissionHaveDistinctDeduplicationKeys ...........   Passed    0.00 sec
+      Start 801: TaskSchedulerTest.ExplicitInputMemoryBudgetCapsParallelism
+60/64 Test #350: MarketBarPipelineTest.LateTickSuppressesOpeningUntilTwoCompleteFiveMinuteBars ...................   Passed    0.00 sec
+      Start 804: TaskSchedulerTest.CapturesTaskExceptionsAsFailedTrials
+61/64 Test #346: MarketBarPipelineTest.ExactPayloadDuplicateIsIdempotent .........................................   Passed    0.00 sec
+62/64 Test #801: TaskSchedulerTest.ExplicitInputMemoryBudgetCapsParallelism ......................................   Passed    0.00 sec
+63/64 Test #804: TaskSchedulerTest.CapturesTaskExceptionsAsFailedTrials ..........................................   Passed    0.00 sec
+64/64 Test #487: ParquetDataFeedTest.StreamingMergeUsesStablePartitionOrdinalAndLazyFuturePartitions .............   Passed    0.31 sec
+
+100% tests passed, 0 tests failed out of 64
+
+Total Test time (real) =   0.33 sec

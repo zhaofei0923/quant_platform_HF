@@ -76,8 +76,8 @@ std::string StripInlineComment(const std::string& line) {
     return line;
 }
 
-bool LoadYamlScalarMapLocal(const std::filesystem::path& path, std::map<std::string, std::string>* out,
-                            std::string* error) {
+bool LoadYamlScalarMapLocal(const std::filesystem::path& path,
+                            std::map<std::string, std::string>* out, std::string* error) {
     if (out == nullptr) {
         if (error != nullptr) {
             *error = "yaml output is null";
@@ -155,7 +155,8 @@ bool NeedsYamlQuote(const std::string& value) {
     }
     for (char ch : value) {
         if (ch == ':' || ch == '#' || ch == '[' || ch == ']' || ch == '{' || ch == '}' ||
-            ch == ',' || ch == '"' || ch == '\'' || std::isspace(static_cast<unsigned char>(ch)) != 0) {
+            ch == ',' || ch == '"' || ch == '\'' ||
+            std::isspace(static_cast<unsigned char>(ch)) != 0) {
             return true;
         }
     }
@@ -300,12 +301,9 @@ bool WriteSubStrategyYaml(const std::filesystem::path& path, const AtomicParams&
     return true;
 }
 
-bool WriteCompositeYaml(const std::filesystem::path& path,
-                        const StrategyMainConfig& main_config,
-                        std::size_t target_index,
-                        const std::filesystem::path& target_sub_yaml,
-                        const std::filesystem::path& composite_base_dir,
-                        std::string* error) {
+bool WriteCompositeYaml(const std::filesystem::path& path, const StrategyMainConfig& main_config,
+                        std::size_t target_index, const std::filesystem::path& target_sub_yaml,
+                        const std::filesystem::path& composite_base_dir, std::string* error) {
     std::ofstream out(path, std::ios::out | std::ios::trunc);
     if (!out.is_open()) {
         if (error != nullptr) {
@@ -358,21 +356,27 @@ bool WriteCompositeYaml(const std::filesystem::path& path,
 }
 
 std::string MakeUniqueSuffix() {
-    const auto now_ns =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
-            .count();
+    const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch())
+                            .count();
     return std::to_string(now_ns);
 }
 
 }  // namespace
 
-bool GenerateTrialConfig(const TrialConfigRequest& request,
-                         TrialConfigArtifacts* out,
+bool GenerateTrialConfig(const TrialConfigRequest& request, TrialConfigArtifacts* out,
                          std::string* error) {
     if (out == nullptr) {
         if (error != nullptr) {
             *error = "trial config output is null";
         }
+        return false;
+    }
+
+    if (request.parameter_profile != "sim" && request.parameter_profile != "backtest" &&
+        request.parameter_profile != "live") {
+        if (error != nullptr)
+            *error = "invalid trial parameter_profile: " + request.parameter_profile;
         return false;
     }
 
@@ -396,7 +400,8 @@ bool GenerateTrialConfig(const TrialConfigRequest& request,
             continue;
         }
         const std::filesystem::path strategy_path =
-            AbsolutePathFrom(composite_base_dir, std::filesystem::path(strategy.config_path)).lexically_normal();
+            AbsolutePathFrom(composite_base_dir, std::filesystem::path(strategy.config_path))
+                .lexically_normal();
         if (strategy_path == target_sub_abs) {
             target_index = i;
             break;
@@ -419,6 +424,14 @@ bool GenerateTrialConfig(const TrialConfigRequest& request,
     }
     for (const auto& [key, value] : request.param_overrides) {
         target_params[key] = ToScalarString(value);
+        // Selected-profile values take precedence over base parameters in CompositeStrategy.
+        // Keep the other profiles intact while ensuring the tested trial actually uses its values.
+        auto& overrides = main_config.composite.sub_strategies[target_index].overrides;
+        auto& selected = request.parameter_profile == "sim"
+                             ? overrides.sim_params
+                             : (request.parameter_profile == "live" ? overrides.live_params
+                                                                    : overrides.backtest_params);
+        selected[key] = ToScalarString(value);
     }
 
     const std::string trial_id = request.trial_id.empty() ? "trial" : request.trial_id;
@@ -440,8 +453,8 @@ bool GenerateTrialConfig(const TrialConfigRequest& request,
     }
 
     const std::filesystem::path composite_yaml = work_dir / "composite.yaml";
-    if (!WriteCompositeYaml(composite_yaml, main_config, target_index, sub_yaml,
-                            composite_base_dir, error)) {
+    if (!WriteCompositeYaml(composite_yaml, main_config, target_index, sub_yaml, composite_base_dir,
+                            error)) {
         return false;
     }
 

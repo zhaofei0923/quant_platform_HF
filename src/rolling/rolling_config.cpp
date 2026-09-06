@@ -26,9 +26,8 @@ std::string Trim(std::string text) {
 }
 
 std::string ToLower(std::string text) {
-    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     return text;
 }
 
@@ -170,15 +169,13 @@ std::optional<std::string> GetString(const std::map<std::string, std::string>& v
     return Unquote(it->second);
 }
 
-std::string GetStringOr(const std::map<std::string, std::string>& values,
-                        const std::string& key,
+std::string GetStringOr(const std::map<std::string, std::string>& values, const std::string& key,
                         const std::string& fallback) {
     const auto value = GetString(values, key);
     return value.has_value() ? value.value() : fallback;
 }
 
-bool LoadYamlScalarMap(const std::filesystem::path& path,
-                       std::map<std::string, std::string>* out,
+bool LoadYamlScalarMap(const std::filesystem::path& path, std::map<std::string, std::string>* out,
                        std::string* error) {
     if (out == nullptr) {
         if (error != nullptr) {
@@ -296,8 +293,7 @@ std::string NormalizeTradingDay(const std::string& raw) {
     return digits;
 }
 
-std::filesystem::path ResolvePath(const std::filesystem::path& config_dir,
-                                  const std::string& raw,
+std::filesystem::path ResolvePath(const std::filesystem::path& config_dir, const std::string& raw,
                                   bool prefer_existing_raw = true) {
     if (raw.empty()) {
         return {};
@@ -337,7 +333,8 @@ bool LoadRollingConfig(const std::string& yaml_path, RollingConfig* out, std::st
         return false;
     }
 
-    const std::filesystem::path config_path = std::filesystem::absolute(yaml_path).lexically_normal();
+    const std::filesystem::path config_path =
+        std::filesystem::absolute(yaml_path).lexically_normal();
     const std::filesystem::path config_dir = config_path.parent_path();
 
     std::map<std::string, std::string> values;
@@ -351,13 +348,13 @@ bool LoadRollingConfig(const std::string& yaml_path, RollingConfig* out, std::st
 
     config.mode = ToLower(GetStringOr(values, "mode", config.mode));
 
-    config.backtest_base.engine_mode = ToLower(GetStringOr(values, "backtest_base.engine_mode",
-                                                           config.backtest_base.engine_mode));
+    config.backtest_base.engine_mode =
+        ToLower(GetStringOr(values, "backtest_base.engine_mode", config.backtest_base.engine_mode));
     config.backtest_base.dataset_root = GetStringOr(values, "backtest_base.dataset_root", "");
     config.backtest_base.dataset_manifest =
         GetStringOr(values, "backtest_base.dataset_manifest", "");
-    config.backtest_base.strategy_factory =
-        ToLower(GetStringOr(values, "backtest_base.strategy_factory", config.backtest_base.strategy_factory));
+    config.backtest_base.strategy_factory = ToLower(GetStringOr(
+        values, "backtest_base.strategy_factory", config.backtest_base.strategy_factory));
     config.backtest_base.strategy_composite_config =
         GetStringOr(values, "backtest_base.strategy_composite_config", "");
     config.backtest_base.product_config_path =
@@ -365,16 +362,33 @@ bool LoadRollingConfig(const std::string& yaml_path, RollingConfig* out, std::st
     config.backtest_base.contract_expiry_calendar_path =
         GetStringOr(values, "backtest_base.contract_expiry_calendar_path", "");
 
-    config.backtest_base.rollover_mode =
-        ToLower(GetStringOr(values, "backtest_base.rollover_mode", config.backtest_base.rollover_mode));
+    config.backtest_base.behavior_profile =
+        ToLower(GetStringOr(values, "backtest_base.behavior_profile", "online_parity"));
+    config.backtest_base.parameter_profile = ToLower(
+        GetStringOr(values, "backtest_base.parameter_profile",
+                    config.backtest_base.behavior_profile == "research" ? "backtest" : "sim"));
+    config.backtest_base.online_runtime_config_path =
+        GetStringOr(values, "backtest_base.online_runtime_config_path", "configs/sim/ctp.yaml");
+    config.backtest_base.input_timestamp_basis =
+        GetStringOr(values, "backtest_base.input_timestamp_basis", "legacy_exchange_local");
+    config.backtest_base.initialization_policy =
+        GetStringOr(values, "backtest_base.initialization_policy", "cold_start");
+    config.backtest_base.product_series_mode =
+        GetStringOr(values, "backtest_base.product_series_mode", "raw");
+    if (config.backtest_base.behavior_profile == "research")
+        config.backtest_base.rollover_mode = "strict";
+    config.backtest_base.rollover_mode = ToLower(
+        GetStringOr(values, "backtest_base.rollover_mode", config.backtest_base.rollover_mode));
     config.backtest_base.rollover_price_mode = ToLower(GetStringOr(
         values, "backtest_base.rollover_price_mode", config.backtest_base.rollover_price_mode));
 
-    if (const auto symbols_raw = GetString(values, "backtest_base.symbols"); symbols_raw.has_value()) {
+    if (const auto symbols_raw = GetString(values, "backtest_base.symbols");
+        symbols_raw.has_value()) {
         config.backtest_base.symbols = ParseInlineList(symbols_raw.value());
     }
 
-    if (const auto raw = GetString(values, "backtest_base.max_ticks"); raw.has_value() && !raw->empty()) {
+    if (const auto raw = GetString(values, "backtest_base.max_ticks");
+        raw.has_value() && !raw->empty()) {
         std::int64_t parsed = 0;
         if (!ParseInt64(*raw, &parsed) || parsed <= 0) {
             if (error != nullptr) {
@@ -390,6 +404,12 @@ bool LoadRollingConfig(const std::string& yaml_path, RollingConfig* out, std::st
             if (error != nullptr) {
                 *error = "invalid backtest_base.deterministic_fills";
             }
+            return false;
+        }
+    }
+    if (const auto raw = GetString(values, "backtest_base.streaming"); raw.has_value()) {
+        if (!ParseBool(*raw, &config.backtest_base.streaming)) {
+            if (error != nullptr) *error = "invalid backtest_base.streaming";
             return false;
         }
     }
@@ -417,7 +437,8 @@ bool LoadRollingConfig(const std::string& yaml_path, RollingConfig* out, std::st
             return false;
         }
     }
-    if (const auto raw = GetString(values, "backtest_base.emit_position_history"); raw.has_value()) {
+    if (const auto raw = GetString(values, "backtest_base.emit_position_history");
+        raw.has_value()) {
         if (!ParseBool(*raw, &config.backtest_base.emit_position_history)) {
             if (error != nullptr) {
                 *error = "invalid backtest_base.emit_position_history";
@@ -425,7 +446,8 @@ bool LoadRollingConfig(const std::string& yaml_path, RollingConfig* out, std::st
             return false;
         }
     }
-    if (const auto raw = GetString(values, "backtest_base.rollover_slippage_bps"); raw.has_value()) {
+    if (const auto raw = GetString(values, "backtest_base.rollover_slippage_bps");
+        raw.has_value()) {
         if (!ParseDouble(*raw, &config.backtest_base.rollover_slippage_bps)) {
             if (error != nullptr) {
                 *error = "invalid backtest_base.rollover_slippage_bps";
@@ -478,7 +500,8 @@ bool LoadRollingConfig(const std::string& yaml_path, RollingConfig* out, std::st
             return false;
         }
     }
-    if (const auto raw = GetString(values, "window.require_single_contract_test"); raw.has_value()) {
+    if (const auto raw = GetString(values, "window.require_single_contract_test");
+        raw.has_value()) {
         if (!ParseBool(*raw, &config.window.require_single_contract_test)) {
             if (error != nullptr) {
                 *error = "invalid window.require_single_contract_test";
@@ -489,9 +512,9 @@ bool LoadRollingConfig(const std::string& yaml_path, RollingConfig* out, std::st
 
     config.optimization.algorithm =
         ToLower(GetStringOr(values, "optimization.algorithm", config.optimization.algorithm));
-    config.optimization.metric = GetStringOr(
-        values, "optimization.metric",
-        GetStringOr(values, "optimization.objective.path", config.optimization.metric));
+    config.optimization.metric =
+        GetStringOr(values, "optimization.metric",
+                    GetStringOr(values, "optimization.objective.path", config.optimization.metric));
     config.optimization.param_space = GetStringOr(values, "optimization.param_space", "");
     config.optimization.target_sub_config_path =
         GetStringOr(values, "optimization.target_sub_config_path", "");
@@ -511,6 +534,28 @@ bool LoadRollingConfig(const std::string& yaml_path, RollingConfig* out, std::st
             }
             return false;
         }
+    }
+    for (const auto& key : {"max_parallel", "memory_budget_mb", "per_task_memory_mb"}) {
+        if (const auto raw = GetString(values, std::string("optimization.") + key);
+            raw.has_value()) {
+            std::int64_t parsed = 0;
+            if (!ParseInt64(*raw, &parsed) || parsed < 0 || parsed > 2147483647) {
+                if (error) *error = std::string("invalid optimization.") + key;
+                return false;
+            }
+            if (std::string(key) == "max_parallel")
+                config.optimization.max_parallel = static_cast<int>(parsed);
+            else if (std::string(key) == "memory_budget_mb")
+                config.optimization.memory_budget_mb = parsed;
+            else
+                config.optimization.per_task_memory_mb = parsed;
+        }
+    }
+    if (config.optimization.memory_budget_mb > 0 &&
+        (config.optimization.per_task_memory_mb <= 0 ||
+         config.optimization.per_task_memory_mb > config.optimization.memory_budget_mb)) {
+        if (error) *error = "memory_budget_mb requires per_task_memory_mb > 0 and <= budget";
+        return false;
     }
     if (const auto raw = GetString(values, "optimization.max_trials"); raw.has_value()) {
         if (!ParseInt(*raw, &config.optimization.max_trials)) {
@@ -538,8 +583,7 @@ bool LoadRollingConfig(const std::string& yaml_path, RollingConfig* out, std::st
             return false;
         }
     }
-    if (const auto raw = GetString(values, "optimization.preserve_top_k_trials");
-        raw.has_value()) {
+    if (const auto raw = GetString(values, "optimization.preserve_top_k_trials"); raw.has_value()) {
         int parsed = 0;
         if (!ParseInt(*raw, &parsed) || parsed < 0) {
             if (error != nullptr) {
@@ -617,7 +661,9 @@ bool LoadRollingConfig(const std::string& yaml_path, RollingConfig* out, std::st
     if (config.backtest_base.strategy_factory == "composite") {
         if (config.backtest_base.strategy_composite_config.empty()) {
             if (error != nullptr) {
-                *error = "backtest_base.strategy_composite_config is required when strategy_factory=composite";
+                *error =
+                    "backtest_base.strategy_composite_config is required when "
+                    "strategy_factory=composite";
             }
             return false;
         }
@@ -656,7 +702,9 @@ bool LoadRollingConfig(const std::string& yaml_path, RollingConfig* out, std::st
         }
     } else if (config.backtest_base.rollover_mode == "expiry_close") {
         if (error != nullptr) {
-            *error = "backtest_base.contract_expiry_calendar_path is required when rollover_mode=expiry_close";
+            *error =
+                "backtest_base.contract_expiry_calendar_path is required when "
+                "rollover_mode=expiry_close";
         }
         return false;
     }
@@ -733,7 +781,8 @@ bool LoadRollingConfig(const std::string& yaml_path, RollingConfig* out, std::st
     config.output.report_json = ResolvePath(config_dir, config.output.report_json).string();
     config.output.report_md = ResolvePath(config_dir, config.output.report_md).string();
     if (!config.output.best_params_dir.empty()) {
-        config.output.best_params_dir = ResolvePath(config_dir, config.output.best_params_dir).string();
+        config.output.best_params_dir =
+            ResolvePath(config_dir, config.output.best_params_dir).string();
     }
 
     if (config.mode == "rolling_optimize") {
@@ -747,10 +796,12 @@ bool LoadRollingConfig(const std::string& yaml_path, RollingConfig* out, std::st
             }
             return false;
         }
-        config.optimization.param_space = ResolvePath(config_dir, config.optimization.param_space).string();
+        config.optimization.param_space =
+            ResolvePath(config_dir, config.optimization.param_space).string();
         if (!std::filesystem::exists(config.optimization.param_space)) {
             if (error != nullptr) {
-                *error = "optimization.param_space does not exist: " + config.optimization.param_space;
+                *error =
+                    "optimization.param_space does not exist: " + config.optimization.param_space;
             }
             return false;
         }

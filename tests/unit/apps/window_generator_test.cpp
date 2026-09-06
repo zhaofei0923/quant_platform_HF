@@ -1,4 +1,3 @@
-#include "quant_hft/rolling/rolling_config.h"
 #include "quant_hft/rolling/window_generator.h"
 
 #include <gtest/gtest.h>
@@ -9,13 +8,14 @@
 #include <string>
 #include <vector>
 
+#include "quant_hft/rolling/rolling_config.h"
+
 namespace quant_hft::rolling {
 namespace {
 
 std::filesystem::path MakeTempDir(const std::string& stem) {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    const auto dir = std::filesystem::temp_directory_path() /
-                     (stem + "_" + std::to_string(stamp));
+    const auto dir = std::filesystem::temp_directory_path() / (stem + "_" + std::to_string(stamp));
     std::filesystem::create_directories(dir);
     return dir;
 }
@@ -27,8 +27,8 @@ std::filesystem::path WriteManifest(const std::filesystem::path& dataset_root,
     std::ofstream out(manifest);
     int file_index = 0;
     for (const std::string& day : trading_days) {
-        out << "{\"file_path\":\"source=rb/trading_day=" << day
-            << "/instrument_id=rb2405/part-" << file_index++ << ".parquet\",";
+        out << "{\"file_path\":\"source=rb/trading_day=" << day << "/instrument_id=rb2405/part-"
+            << file_index++ << ".parquet\",";
         out << "\"source\":\"rb\",\"trading_day\":\"" << day
             << "\",\"instrument_id\":\"rb2405\",\"min_ts_ns\":1,\"max_ts_ns\":2,\"row_count\":1}\n";
     }
@@ -44,19 +44,17 @@ std::filesystem::path WriteManifestWithContracts(
     std::ofstream out(manifest);
     int file_index = 0;
     for (const auto& [day, instrument_id] : day_contracts) {
-        out << "{\"file_path\":\"source=rb/trading_day=" << day << "/instrument_id="
-            << instrument_id << "/part-" << file_index++ << ".parquet\",";
-        out << "\"source\":\"rb\",\"trading_day\":\"" << day
-            << "\",\"instrument_id\":\"" << instrument_id
-            << "\",\"min_ts_ns\":1,\"max_ts_ns\":2,\"row_count\":1}\n";
+        out << "{\"file_path\":\"source=rb/trading_day=" << day
+            << "/instrument_id=" << instrument_id << "/part-" << file_index++ << ".parquet\",";
+        out << "\"source\":\"rb\",\"trading_day\":\"" << day << "\",\"instrument_id\":\""
+            << instrument_id << "\",\"min_ts_ns\":1,\"max_ts_ns\":2,\"row_count\":1}\n";
     }
     out.close();
     return manifest;
 }
 
 RollingConfig BuildConfig(const std::filesystem::path& dataset_root,
-                          const std::filesystem::path& manifest,
-                          const std::string& type) {
+                          const std::filesystem::path& manifest, const std::string& type) {
     RollingConfig config;
     config.mode = "fixed_params";
     config.backtest_base.engine_mode = "parquet";
@@ -76,7 +74,8 @@ RollingConfig BuildConfig(const std::filesystem::path& dataset_root,
 TEST(WindowGeneratorTest, BuildsTradingDayCalendarFromManifest) {
     const auto dir = MakeTempDir("window_generator_calendar");
     const auto dataset_root = dir / "data";
-    const auto manifest = WriteManifest(dataset_root, {"20230103", "20230101", "20230103", "20230102"});
+    const auto manifest =
+        WriteManifest(dataset_root, {"20230103", "20230101", "20230103", "20230102"});
 
     RollingConfig config = BuildConfig(dataset_root, manifest, "rolling");
 
@@ -95,9 +94,9 @@ TEST(WindowGeneratorTest, BuildsTradingDayCalendarFromManifest) {
 TEST(WindowGeneratorTest, GeneratesRollingWindowsAndDropsTail) {
     const auto dir = MakeTempDir("window_generator_rolling");
     const auto dataset_root = dir / "data";
-    const auto manifest = WriteManifest(dataset_root,
-                                        {"20230101", "20230102", "20230103", "20230104",
-                                         "20230105", "20230106", "20230107"});
+    const auto manifest = WriteManifest(
+        dataset_root,
+        {"20230101", "20230102", "20230103", "20230104", "20230105", "20230106", "20230107"});
 
     RollingConfig config = BuildConfig(dataset_root, manifest, "rolling");
 
@@ -125,16 +124,14 @@ TEST(WindowGeneratorTest, GeneratesRollingWindowsAndDropsTail) {
 TEST(WindowGeneratorTest, FiltersRollingWindowsWhoseTestRangeCrossesContracts) {
     const auto dir = MakeTempDir("window_generator_single_contract_test");
     const auto dataset_root = dir / "data";
-    const auto manifest = WriteManifestWithContracts(
-        dataset_root,
-        {{"20230101", "rb2305"},
-         {"20230102", "rb2305"},
-         {"20230103", "rb2305"},
-         {"20230104", "rb2310"},
-         {"20230105", "rb2310"},
-         {"20230106", "rb2310"},
-         {"20230107", "rb2310"},
-         {"20230108", "rb2401"}});
+    const auto manifest = WriteManifestWithContracts(dataset_root, {{"20230101", "rb2305"},
+                                                                    {"20230102", "rb2305"},
+                                                                    {"20230103", "rb2305"},
+                                                                    {"20230104", "rb2310"},
+                                                                    {"20230105", "rb2310"},
+                                                                    {"20230106", "rb2310"},
+                                                                    {"20230107", "rb2310"},
+                                                                    {"20230108", "rb2401"}});
 
     RollingConfig config = BuildConfig(dataset_root, manifest, "rolling");
     config.backtest_base.symbols = {"rb"};
@@ -160,9 +157,9 @@ TEST(WindowGeneratorTest, FiltersRollingWindowsWhoseTestRangeCrossesContracts) {
 TEST(WindowGeneratorTest, GeneratesExpandingWindows) {
     const auto dir = MakeTempDir("window_generator_expanding");
     const auto dataset_root = dir / "data";
-    const auto manifest = WriteManifest(dataset_root,
-                                        {"20230101", "20230102", "20230103", "20230104",
-                                         "20230105", "20230106", "20230107"});
+    const auto manifest = WriteManifest(
+        dataset_root,
+        {"20230101", "20230102", "20230103", "20230104", "20230105", "20230106", "20230107"});
 
     RollingConfig config = BuildConfig(dataset_root, manifest, "expanding");
 
@@ -189,12 +186,13 @@ TEST(WindowGeneratorTest, GeneratesExpandingWindows) {
 }
 
 TEST(WindowGeneratorTest, GeneratesMultipleWindowsForRepoRollingOptimizeConfig) {
-    const auto repo_root = std::filesystem::path(__FILE__)
-                               .parent_path()
-                               .parent_path()
-                               .parent_path()
-                               .parent_path();
+    const auto repo_root =
+        std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path();
     const auto path = repo_root / "configs" / "ops" / "rolling_optimize_kama.yaml";
+    if (!std::filesystem::exists(repo_root / "backtest_data/parquet_v2")) {
+        GTEST_SKIP() << "Repository research dataset is not installed; synthetic config/window "
+                        "tests still run";
+    }
 
     RollingConfig config;
     std::string error;
@@ -230,4 +228,3 @@ TEST(WindowGeneratorTest, GeneratesMultipleWindowsForRepoRollingOptimizeConfig) 
 
 }  // namespace
 }  // namespace quant_hft::rolling
-

@@ -1,0 +1,4 @@
+f8f90cf87d465893318129cddebd57799168e728f6b07317d37ed519860c7f02  /tmp/codex-research-cursor-benchmark/small.parquet
+5f4af552aa22344e2cf358283bf0efca58afea5ae6fad0ef731fdce56ceebfeb  /tmp/codex-research-cursor-benchmark/large.parquet
+d993026bcaebd97f5d34c953732af85114089ce88354fac60b033cd88e1d1e9e  /tmp/codex-research-cursor-benchmark/cursor_benchmark
+67992b48fcddccfce3f82acd2ae1389aca7fc23aadb004f2dec8abb8e3396e9b  /tmp/codex-research-cursor-benchmark/kama_tick_benchmark

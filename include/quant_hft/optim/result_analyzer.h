@@ -8,6 +8,9 @@
 namespace quant_hft::optim {
 
 struct OptimizationReport {
+    int effective_parallel{1};
+    std::int64_t memory_budget_mb{0};
+    std::int64_t per_task_memory_mb{0};
     std::string task_id;
     std::string started_at;
     std::string finished_at;
@@ -36,24 +39,20 @@ class ResultAnalyzer {
     static std::string ResolveMetricPathAlias(const std::string& metric_path);
 
     static double ExtractMetricFromJsonText(const std::string& json_text,
-                                            const std::string& metric_path,
-                                            std::string* error);
+                                            const std::string& metric_path, std::string* error);
 
     static double ExtractMetricFromJson(const std::string& json_path,
-                                        const std::string& metric_path,
-                                        std::string* error);
+                                        const std::string& metric_path, std::string* error);
 
     static double ComputeObjectiveFromJsonText(const std::string& json_text,
                                                const OptimizationConfig& config,
                                                std::string* error);
 
     static double ComputeObjectiveFromJson(const std::string& json_path,
-                                           const OptimizationConfig& config,
-                                           std::string* error);
+                                           const OptimizationConfig& config, std::string* error);
 
     static bool ExtractTrialMetricsFromJson(const std::string& json_path,
-                                            TrialMetricsSnapshot* out_metrics,
-                                            std::string* error);
+                                            TrialMetricsSnapshot* out_metrics, std::string* error);
 
     static bool ExtractTrialMetricsFromJsonText(const std::string& json_text,
                                                 TrialMetricsSnapshot* out_metrics,
@@ -70,29 +69,22 @@ class ResultAnalyzer {
                                                 std::string* error);
 
     static OptimizationReport Analyze(const std::vector<Trial>& trials,
-                                      const OptimizationConfig& config,
-                                      bool interrupted);
+                                      const OptimizationConfig& config, bool interrupted);
 
     static std::string DefaultTop10InSamplePath(const std::string& json_path,
                                                 const std::string& md_path);
 
-    static bool WriteReport(const OptimizationReport& report,
-                            const std::string& json_path,
-                            const std::string& md_path,
-                            std::string* error);
+    static bool WriteReport(const OptimizationReport& report, const std::string& json_path,
+                            const std::string& md_path, std::string* error);
 
-    static bool WriteHeatmaps(const OptimizationReport& report,
-                              const ParameterSpace& space,
-                              const std::string& output_dir,
-                              std::string* error);
+    static bool WriteHeatmaps(const OptimizationReport& report, const ParameterSpace& space,
+                              const std::string& output_dir, std::string* error);
 
     static bool WriteTop10InSampleMarkdown(const OptimizationReport& report,
-                                           const std::string& output_path,
-                                           std::string* error);
+                                           const std::string& output_path, std::string* error);
 
     static bool WriteBestParamsYaml(const ParamValueMap& best_params,
-                                    const std::string& output_path,
-                                    std::string* error);
+                                    const std::string& output_path, std::string* error);
 };
 
 }  // namespace quant_hft::optim

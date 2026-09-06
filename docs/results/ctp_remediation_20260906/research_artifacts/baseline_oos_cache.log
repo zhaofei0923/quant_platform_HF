@@ -1,0 +1,51 @@
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+Note: Google Test filter = OosTop10ValidationTest.CacheIdentityIncludesDatesAndContentEvenWithSameSizeAndMtime
+[==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from OosTop10ValidationTest
+[ RUN      ] OosTop10ValidationTest.CacheIdentityIncludesDatesAndContentEvenWithSameSizeAndMtime
+tests/unit/apps/oos_top10_validation_test.cpp:335: Failure
+Expected equality of these values:
+  runs
+    Which is: 1
+  2
+
+tests/unit/apps/oos_top10_validation_test.cpp:336: Failure
+Expected: (first_result) != (report.rows[0].result_json_path), actual: "/tmp/oos_cache_content_9228733532911/runtime/rolling/oos_validation/window_0000/01_trial_beta/result.json" vs "/tmp/oos_cache_content_9228733532911/runtime/rolling/oos_validation/window_0000/01_trial_beta/result.json"
+
+tests/unit/apps/oos_top10_validation_test.cpp:346: Failure
+Value of: report.rows[0].reused_existing
+  Actual: true
+Expected: false
+
+tests/unit/apps/oos_top10_validation_test.cpp:346: Failure
+Value of: report.rows[0].reused_existing
+  Actual: true
+Expected: false
+
+tests/unit/apps/oos_top10_validation_test.cpp:346: Failure
+Value of: report.rows[0].reused_existing
+  Actual: true
+Expected: false
+
+tests/unit/apps/oos_top10_validation_test.cpp:348: Failure
+Expected equality of these values:
+  runs
+    Which is: 1
+  5
+
+tests/unit/apps/oos_top10_validation_test.cpp:350: Failure
+Value of: RunOosTop10Validation(request, &report, &error, run)
+  Actual: true
+Expected: false
+
+[  FAILED  ] OosTop10ValidationTest.CacheIdentityIncludesDatesAndContentEvenWithSameSizeAndMtime (13 ms)
+[----------] 1 test from OosTop10ValidationTest (13 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test suite ran. (13 ms total)
+[  PASSED  ] 0 tests.
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] OosTop10ValidationTest.CacheIdentityIncludesDatesAndContentEvenWithSameSizeAndMtime
+
+ 1 FAILED TEST

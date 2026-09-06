@@ -10,6 +10,14 @@
 namespace quant_hft::optim {
 namespace {
 
+TEST(TaskSchedulerTest, ExplicitInputMemoryBudgetCapsParallelism) {
+    TaskScheduler scheduler(8, 700, 300);
+    EXPECT_EQ(scheduler.max_concurrent(), 2);
+    EXPECT_EQ(TaskScheduler(1, 700, 300).max_concurrent(), 1);
+    EXPECT_THROW(TaskScheduler(8, 100, 300), std::invalid_argument);
+    EXPECT_THROW(TaskScheduler(8, 100, 0), std::invalid_argument);
+}
+
 TEST(TaskSchedulerTest, RespectsMaxConcurrency) {
     TaskScheduler scheduler(2);
 

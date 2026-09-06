@@ -13,6 +13,7 @@ struct TrialConfigRequest {
     std::filesystem::path target_sub_config_path;
     std::unordered_map<std::string, ParamValue> param_overrides;
     std::string trial_id;
+    std::string parameter_profile = "sim";
 };
 
 struct TrialConfigArtifacts {
@@ -21,8 +22,7 @@ struct TrialConfigArtifacts {
     std::filesystem::path sub_config_path;
 };
 
-bool GenerateTrialConfig(const TrialConfigRequest& request,
-                         TrialConfigArtifacts* out,
+bool GenerateTrialConfig(const TrialConfigRequest& request, TrialConfigArtifacts* out,
                          std::string* error);
 
 }  // namespace quant_hft::optim

@@ -1,0 +1,485 @@
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /tmp/quant-hft-research-build
+Consolidate compiler generated dependencies of target gtest
+Consolidate compiler generated dependencies of target quant_hft_common
+[  0%] Built target gtest
+[  1%] Building CXX object CMakeFiles/quant_hft_common.dir/src/core/config/runtime_semantics_loader.cpp.o
+Consolidate compiler generated dependencies of target gtest_main
+Consolidate compiler generated dependencies of target gmock
+[  2%] Built target gtest_main
+[  2%] Built target gmock
+Consolidate compiler generated dependencies of target consistency_gate_script_test
+Consolidate compiler generated dependencies of target simnow_preflight_script_test
+Consolidate compiler generated dependencies of target quality_gate_scripts_test
+Consolidate compiler generated dependencies of target run_backtest_with_validation_script_test
+Consolidate compiler generated dependencies of target simnow_dashboard_cli_test
+Consolidate compiler generated dependencies of target run_backtest_from_config_script_test
+Consolidate compiler generated dependencies of target preprod_rehearsal_gate_script_test
+[  3%] Built target run_backtest_from_config_script_test
+[  3%] Built target quality_gate_scripts_test
+[  3%] Built target consistency_gate_script_test
+[  3%] Built target simnow_preflight_script_test
+[  3%] Built target simnow_dashboard_cli_test
+[  3%] Built target preprod_rehearsal_gate_script_test
+[  3%] Built target run_backtest_with_validation_script_test
+Consolidate compiler generated dependencies of target gmock_main
+Consolidate compiler generated dependencies of target run_rolling_backtest_script_test
+[  3%] Built target gmock_main
+[  4%] Built target run_rolling_backtest_script_test
+[  4%] Linking CXX static library libquant_hft_common.a
+[  7%] Built target quant_hft_common
+Consolidate compiler generated dependencies of target quant_hft_wal_io
+Consolidate compiler generated dependencies of target quant_hft_storage
+[  7%] Built target quant_hft_wal_io
+[ 10%] Built target quant_hft_storage
+Consolidate compiler generated dependencies of target quant_hft_ctp
+[ 12%] Built target quant_hft_ctp
+Consolidate compiler generated dependencies of target query_scheduler_test
+Consolidate compiler generated dependencies of target durable_order_event_inbox_test
+Consolidate compiler generated dependencies of target ctp_trader_adapter_test
+Consolidate compiler generated dependencies of target quant_hft_services
+Consolidate compiler generated dependencies of target query_batch_collector_test
+Consolidate compiler generated dependencies of target ctp_gateway_adapter_test
+[ 13%] Linking CXX executable query_batch_collector_test
+[ 13%] Linking CXX executable ctp_trader_adapter_test
+[ 13%] Linking CXX executable query_scheduler_test
+[ 13%] Linking CXX executable durable_order_event_inbox_test
+[ 13%] Linking CXX executable ctp_gateway_adapter_test
+[ 20%] Built target quant_hft_services
+Consolidate compiler generated dependencies of target quant_hft_online_runtime
+Consolidate compiler generated dependencies of target quant_hft_strategy
+[ 20%] Building CXX object CMakeFiles/quant_hft_online_runtime.dir/src/core/runtime/runtime_paths.cpp.o
+[ 24%] Built target quant_hft_strategy
+Consolidate compiler generated dependencies of target quant_hft_backtest
+[ 24%] Building CXX object CMakeFiles/quant_hft_backtest.dir/src/backtest/replay_runtime.cpp.o
+[ 25%] Built target query_batch_collector_test
+[ 25%] Built target query_scheduler_test
+[ 25%] Built target durable_order_event_inbox_test
+[ 25%] Built target ctp_gateway_adapter_test
+[ 25%] Built target ctp_trader_adapter_test
+[ 26%] Linking CXX static library libquant_hft_online_runtime.a
+[ 27%] Built target quant_hft_online_runtime
+Consolidate compiler generated dependencies of target wal_replay_tool
+Consolidate compiler generated dependencies of target account_execution_scheduler_test
+Consolidate compiler generated dependencies of target simnow_probe
+Consolidate compiler generated dependencies of target simnow_flatten_positions
+Consolidate compiler generated dependencies of target runtime_paths_cli
+Consolidate compiler generated dependencies of target daily_settlement
+Consolidate compiler generated dependencies of target core_engine
+[ 27%] Building CXX object CMakeFiles/core_engine.dir/src/apps/core_engine_main.cpp.o
+[ 27%] Linking CXX executable account_execution_scheduler_test
+[ 27%] Linking CXX executable simnow_flatten_positions
+[ 27%] Linking CXX executable daily_settlement
+[ 27%] Linking CXX executable simnow_probe
+[ 28%] Linking CXX executable wal_replay_tool
+[ 28%] Building CXX object CMakeFiles/runtime_paths_cli.dir/src/apps/runtime_paths_cli_main.cpp.o
+[ 29%] Built target simnow_probe
+[ 29%] Building CXX object CMakeFiles/runtime_paths_test.dir/tests/unit/core/runtime_paths_test.cpp.o
+[ 29%] Built target wal_replay_tool
+Consolidate compiler generated dependencies of target runtime_identity_test
+[ 29%] Linking CXX executable runtime_identity_test
+[ 29%] Built target account_execution_scheduler_test
+Consolidate compiler generated dependencies of target wal_replay_loader_test
+[ 30%] Linking CXX executable wal_replay_loader_test
+[ 31%] Built target simnow_flatten_positions
+[ 32%] Built target daily_settlement
+[ 32%] Built target runtime_identity_test
+[ 32%] Built target wal_replay_loader_test
+[ 32%] Linking CXX executable runtime_paths_cli
+[ 32%] Built target runtime_paths_cli
+Consolidate compiler generated dependencies of target simnow_supervisor_script_test
+[ 32%] Building CXX object CMakeFiles/simnow_supervisor_script_test.dir/tests/unit/build/simnow_supervisor_script_test.cpp.o
+[ 32%] Linking CXX executable runtime_paths_test
+[ 32%] Built target runtime_paths_test
+[ 32%] Linking CXX executable simnow_supervisor_script_test
+[ 32%] Built target simnow_supervisor_script_test
+[ 32%] Linking CXX static library libquant_hft_backtest.a
+[ 36%] Built target quant_hft_backtest
+Consolidate compiler generated dependencies of target csv_parquet_compare_cli
+Consolidate compiler generated dependencies of target backtest_consistency_cli
+Consolidate compiler generated dependencies of target backtest_cli
+Consolidate compiler generated dependencies of target csv_to_parquet_cli
+Consolidate compiler generated dependencies of target factor_eval_cli
+Consolidate compiler generated dependencies of target backtest_benchmark_cli
+Consolidate compiler generated dependencies of target quant_hft_optim
+[ 36%] Linking CXX executable backtest_benchmark_cli
+[ 36%] Linking CXX executable backtest_consistency_cli
+[ 36%] Linking CXX executable factor_eval_cli
+[ 36%] Linking CXX executable csv_parquet_compare_cli
+[ 37%] Linking CXX executable backtest_cli
+[ 37%] Linking CXX executable csv_to_parquet_cli
+[ 38%] Built target quant_hft_optim
+Consolidate compiler generated dependencies of target simnow_compare_cli
+[ 39%] Linking CXX executable simnow_compare_cli
+[ 39%] Built target factor_eval_cli
+[ 40%] Built target csv_parquet_compare_cli
+Consolidate compiler generated dependencies of target parquet_data_feed_test
+Consolidate compiler generated dependencies of target replay_market_parity_test
+[ 40%] Building CXX object CMakeFiles/replay_market_parity_test.dir/tests/unit/apps/replay_market_parity_test.cpp.o
+[ 40%] Linking CXX executable parquet_data_feed_test
+[ 40%] Built target backtest_cli
+Consolidate compiler generated dependencies of target backtest_data_feed_test
+[ 40%] Built target backtest_consistency_cli
+[ 40%] Built target backtest_benchmark_cli
+[ 41%] Linking CXX executable backtest_data_feed_test
+Consolidate compiler generated dependencies of target backtest_replay_support_test
+Consolidate compiler generated dependencies of target backtest_result_export_test
+[ 41%] Built target csv_to_parquet_cli
+[ 41%] Linking CXX executable backtest_result_export_test
+[ 41%] Building CXX object CMakeFiles/backtest_replay_support_test.dir/tests/unit/apps/backtest_replay_support_test.cpp.o
+Consolidate compiler generated dependencies of target parameter_space_test
+[ 41%] Linking CXX executable parameter_space_test
+[ 41%] Built target simnow_compare_cli
+Consolidate compiler generated dependencies of target grid_search_test
+[ 42%] Linking CXX executable grid_search_test
+[ 42%] Built target backtest_data_feed_test
+Consolidate compiler generated dependencies of target random_search_test
+[ 42%] Built target parameter_space_test
+[ 43%] Linking CXX executable random_search_test
+Consolidate compiler generated dependencies of target task_scheduler_test
+[ 43%] Linking CXX executable task_scheduler_test
+[ 43%] Built target grid_search_test
+Consolidate compiler generated dependencies of target result_analyzer_test
+[ 43%] Linking CXX executable result_analyzer_test
+[ 44%] Built target parquet_data_feed_test
+Consolidate compiler generated dependencies of target temp_config_generator_test
+[ 44%] Linking CXX executable temp_config_generator_test
+[ 44%] Built target random_search_test
+[ 44%] Built target task_scheduler_test
+Consolidate compiler generated dependencies of target quant_hft_rolling
+Consolidate compiler generated dependencies of target parameter_optim_cli
+[ 45%] Built target backtest_result_export_test
+[ 46%] Linking CXX executable parameter_optim_cli
+[ 47%] Built target quant_hft_rolling
+Consolidate compiler generated dependencies of target hotpath_hybrid
+Consolidate compiler generated dependencies of target hotpath_benchmark
+[ 47%] Linking CXX executable hotpath_hybrid
+[ 47%] Linking CXX executable hotpath_benchmark
+[ 47%] Built target result_analyzer_test
+Consolidate compiler generated dependencies of target rolling_backtest_cli
+[ 47%] Linking CXX executable rolling_backtest_cli
+[ 48%] Built target hotpath_benchmark
+Consolidate compiler generated dependencies of target oos_top10_validation_cli
+[ 49%] Linking CXX executable oos_top10_validation_cli
+[ 49%] Built target hotpath_hybrid
+Consolidate compiler generated dependencies of target simnow_wal_export_cli
+[ 49%] Linking CXX executable simnow_wal_export_cli
+[ 50%] Built target parameter_optim_cli
+Consolidate compiler generated dependencies of target market_data_repair_cli
+[ 50%] Linking CXX executable market_data_repair_cli
+[ 50%] Built target temp_config_generator_test
+Consolidate compiler generated dependencies of target simnow_dashboard_cli
+[ 50%] Linking CXX executable simnow_dashboard_cli
+[ 51%] Built target simnow_wal_export_cli
+Consolidate compiler generated dependencies of target simnow_weekly_stress_cli
+[ 52%] Linking CXX executable simnow_weekly_stress_cli
+[ 52%] Built target simnow_dashboard_cli
+Consolidate compiler generated dependencies of target reconnect_evidence_cli
+[ 53%] Linking CXX executable reconnect_evidence_cli
+[ 53%] Built target market_data_repair_cli
+Consolidate compiler generated dependencies of target ops_health_report_cli
+[ 53%] Built target rolling_backtest_cli
+[ 53%] Linking CXX executable ops_health_report_cli
+Consolidate compiler generated dependencies of target ops_alert_report_cli
+[ 54%] Linking CXX executable ops_alert_report_cli
+[ 54%] Built target reconnect_evidence_cli
+Consolidate compiler generated dependencies of target ctp_cutover_orchestrator_cli
+[ 55%] Linking CXX executable ctp_cutover_orchestrator_cli
+[ 55%] Built target oos_top10_validation_cli
+Consolidate compiler generated dependencies of target verify_contract_sync_cli
+[ 56%] Linking CXX executable verify_contract_sync_cli
+[ 56%] Built target ops_alert_report_cli
+[ 56%] Built target ops_health_report_cli
+Consolidate compiler generated dependencies of target verify_develop_requirements_cli
+Consolidate compiler generated dependencies of target atomic_trade_postgres_test
+[ 56%] Linking CXX executable verify_develop_requirements_cli
+[ 56%] Linking CXX executable atomic_trade_postgres_test
+[ 56%] Built target ctp_cutover_orchestrator_cli
+Consolidate compiler generated dependencies of target position_reconciliation_test
+[ 57%] Linking CXX executable position_reconciliation_test
+[ 57%] Linking CXX executable core_engine
+[ 57%] Built target simnow_weekly_stress_cli
+[ 57%] Built target verify_contract_sync_cli
+Consolidate compiler generated dependencies of target ctp_config_test
+[ 57%] Linking CXX executable ctp_config_test
+Consolidate compiler generated dependencies of target ctp_config_loader_test
+[ 58%] Linking CXX executable ctp_config_loader_test
+[ 58%] Built target verify_develop_requirements_cli
+Consolidate compiler generated dependencies of target instrument_meta_cache_test
+[ 58%] Linking CXX executable instrument_meta_cache_test
+[ 58%] Built target atomic_trade_postgres_test
+Consolidate compiler generated dependencies of target ctp_md_adapter_test
+[ 58%] Linking CXX executable ctp_md_adapter_test
+[ 58%] Built target position_reconciliation_test
+Consolidate compiler generated dependencies of target redis_realtime_store_test
+[ 59%] Linking CXX executable redis_realtime_store_test
+[ 59%] Built target ctp_config_test
+Consolidate compiler generated dependencies of target timescale_event_store_test
+[ 59%] Linking CXX executable timescale_event_store_test
+[ 59%] Built target ctp_config_loader_test
+Consolidate compiler generated dependencies of target redis_realtime_store_client_adapter_test
+[ 59%] Linking CXX executable redis_realtime_store_client_adapter_test
+[ 59%] Built target instrument_meta_cache_test
+Consolidate compiler generated dependencies of target timescale_event_store_client_adapter_test
+[ 59%] Linking CXX executable timescale_event_store_client_adapter_test
+[ 59%] Built target redis_realtime_store_test
+Consolidate compiler generated dependencies of target storage_client_pool_test
+[ 59%] Linking CXX executable storage_client_pool_test
+[ 59%] Built target ctp_md_adapter_test
+Consolidate compiler generated dependencies of target timescale_buffered_event_store_test
+[ 59%] Linking CXX executable timescale_buffered_event_store_test
+[ 59%] Built target timescale_event_store_test
+Consolidate compiler generated dependencies of target storage_client_factory_test
+[ 59%] Linking CXX executable storage_client_factory_test
+[ 59%] Built target redis_realtime_store_client_adapter_test
+Consolidate compiler generated dependencies of target tcp_redis_hash_client_test
+[ 60%] Built target timescale_event_store_client_adapter_test
+[ 61%] Linking CXX executable tcp_redis_hash_client_test
+Consolidate compiler generated dependencies of target libpq_timescale_sql_client_test
+[ 61%] Linking CXX executable libpq_timescale_sql_client_test
+[ 61%] Built target core_engine
+Consolidate compiler generated dependencies of target trading_ledger_store_client_adapter_test
+[ 61%] Linking CXX executable trading_ledger_store_client_adapter_test
+[ 61%] Built target storage_client_pool_test
+Consolidate compiler generated dependencies of target trading_domain_store_client_adapter_test
+[ 61%] Linking CXX executable trading_domain_store_client_adapter_test
+[ 61%] Built target timescale_buffered_event_store_test
+Consolidate compiler generated dependencies of target object_pool_test
+[ 61%] Linking CXX executable object_pool_test
+[ 61%] Built target storage_client_factory_test
+Consolidate compiler generated dependencies of target event_object_pool_test
+[ 61%] Linking CXX executable event_object_pool_test
+[ 61%] Built target libpq_timescale_sql_client_test
+[ 61%] Built target tcp_redis_hash_client_test
+Consolidate compiler generated dependencies of target market_bus_producer_test
+Consolidate compiler generated dependencies of target event_dispatcher_test
+[ 61%] Linking CXX executable market_bus_producer_test
+[ 61%] Linking CXX executable event_dispatcher_test
+[ 61%] Built target trading_ledger_store_client_adapter_test
+Consolidate compiler generated dependencies of target callback_dispatcher_test
+[ 61%] Linking CXX executable callback_dispatcher_test
+[ 62%] Built target trading_domain_store_client_adapter_test
+Consolidate compiler generated dependencies of target flow_controller_test
+[ 62%] Linking CXX executable flow_controller_test
+[ 62%] Built target object_pool_test
+Consolidate compiler generated dependencies of target circuit_breaker_test
+[ 63%] Linking CXX executable circuit_breaker_test
+[ 63%] Built target event_object_pool_test
+Consolidate compiler generated dependencies of target fixed_decimal_test
+[ 63%] Linking CXX executable fixed_decimal_test
+[ 63%] Built target market_bus_producer_test
+Consolidate compiler generated dependencies of target basic_risk_engine_test
+[ 63%] Built target event_dispatcher_test
+[ 63%] Linking CXX executable basic_risk_engine_test
+Consolidate compiler generated dependencies of target risk_policy_engine_test
+[ 63%] Linking CXX executable risk_policy_engine_test
+[ 63%] Built target callback_dispatcher_test
+Consolidate compiler generated dependencies of target in_memory_portfolio_ledger_test
+[ 63%] Linking CXX executable in_memory_portfolio_ledger_test
+[ 63%] Built target flow_controller_test
+Consolidate compiler generated dependencies of target ctp_position_ledger_test
+[ 63%] Linking CXX executable ctp_position_ledger_test
+[ 63%] Built target basic_risk_engine_test
+[ 64%] Built target fixed_decimal_test
+Consolidate compiler generated dependencies of target ctp_close_offset_resolver_test
+Consolidate compiler generated dependencies of target ctp_account_ledger_test
+[ 64%] Linking CXX executable ctp_close_offset_resolver_test
+[ 65%] Linking CXX executable ctp_account_ledger_test
+[ 65%] Built target circuit_breaker_test
+Consolidate compiler generated dependencies of target pending_exit_store_test
+[ 65%] Linking CXX executable pending_exit_store_test
+[ 65%] Built target risk_policy_engine_test
+Consolidate compiler generated dependencies of target trading_permission_controller_test
+[ 65%] Linking CXX executable trading_permission_controller_test
+[ 66%] Built target in_memory_portfolio_ledger_test
+Consolidate compiler generated dependencies of target self_trade_risk_engine_test
+[ 66%] Linking CXX executable self_trade_risk_engine_test
+[ 66%] Built target ctp_account_ledger_test
+Consolidate compiler generated dependencies of target risk_rule_executor_test
+[ 67%] Built target ctp_position_ledger_test
+[ 67%] Built target ctp_close_offset_resolver_test
+[ 67%] Linking CXX executable risk_rule_executor_test
+Consolidate compiler generated dependencies of target risk_manager_test
+Consolidate compiler generated dependencies of target rate_limiter_test
+[ 67%] Linking CXX executable risk_manager_test
+[ 67%] Linking CXX executable rate_limiter_test
+[ 67%] Built target pending_exit_store_test
+Consolidate compiler generated dependencies of target bar_aggregator_test
+[ 67%] Linking CXX executable bar_aggregator_test
+[ 68%] Built target trading_permission_controller_test
+Consolidate compiler generated dependencies of target market_bar_pipeline_test
+[ 68%] Linking CXX executable market_bar_pipeline_test
+[ 69%] Built target self_trade_risk_engine_test
+Consolidate compiler generated dependencies of target dominant_contract_coordinator_test
+[ 69%] Linking CXX executable dominant_contract_coordinator_test
+[ 69%] Built target rate_limiter_test
+[ 70%] Built target risk_rule_executor_test
+Consolidate compiler generated dependencies of target trading_session_calendar_test
+[ 70%] Linking CXX executable trading_session_calendar_test
+Consolidate compiler generated dependencies of target market_data_csv_recorder_test
+[ 70%] Linking CXX executable market_data_csv_recorder_test
+[ 71%] Built target risk_manager_test
+Consolidate compiler generated dependencies of target timeframe_state_fanout_test
+[ 72%] Linking CXX executable timeframe_state_fanout_test
+[ 72%] Built target bar_aggregator_test
+Consolidate compiler generated dependencies of target order_state_machine_test
+[ 72%] Linking CXX executable order_state_machine_test
+[ 72%] Built target market_bar_pipeline_test
+[ 72%] Built target trading_session_calendar_test
+Consolidate compiler generated dependencies of target timeout_cancel_tracker_test
+Consolidate compiler generated dependencies of target execution_planner_test
+[ 72%] Linking CXX executable execution_planner_test
+[ 72%] Linking CXX executable timeout_cancel_tracker_test
+[ 73%] Built target market_data_csv_recorder_test
+[ 73%] Built target dominant_contract_coordinator_test
+Consolidate compiler generated dependencies of target execution_router_test
+Consolidate compiler generated dependencies of target execution_engine_test
+[ 73%] Linking CXX executable execution_router_test
+[ 73%] Linking CXX executable execution_engine_test
+[ 73%] Built target timeframe_state_fanout_test
+Consolidate compiler generated dependencies of target order_manager_test
+[ 73%] Linking CXX executable order_manager_test
+[ 73%] Built target order_state_machine_test
+Consolidate compiler generated dependencies of target position_manager_test
+[ 73%] Linking CXX executable position_manager_test
+[ 73%] Built target execution_planner_test
+Consolidate compiler generated dependencies of target settlement_query_client_test
+[ 74%] Built target execution_router_test
+[ 75%] Linking CXX executable settlement_query_client_test
+Consolidate compiler generated dependencies of target settlement_price_provider_test
+[ 75%] Linking CXX executable settlement_price_provider_test
+[ 75%] Built target timeout_cancel_tracker_test
+Consolidate compiler generated dependencies of target daily_settlement_service_test
+[ 75%] Linking CXX executable daily_settlement_service_test
+[ 76%] Built target execution_engine_test
+Consolidate compiler generated dependencies of target rule_market_state_engine_test
+[ 76%] Linking CXX executable replay_market_parity_test
+[ 76%] Linking CXX executable rule_market_state_engine_test
+[ 77%] Built target order_manager_test
+Consolidate compiler generated dependencies of target market_state_detector_test
+[ 77%] Linking CXX executable market_state_detector_test
+[ 77%] Built target settlement_price_provider_test
+[ 77%] Built target position_manager_test
+Consolidate compiler generated dependencies of target metric_registry_test
+Consolidate compiler generated dependencies of target indicator_trace_parquet_writer_test
+[ 77%] Linking CXX executable metric_registry_test
+[ 77%] Linking CXX executable indicator_trace_parquet_writer_test
+[ 77%] Built target settlement_query_client_test
+Consolidate compiler generated dependencies of target indicator_trace_csv_writer_test
+[ 77%] Linking CXX executable indicator_trace_csv_writer_test
+[ 77%] Built target rule_market_state_engine_test
+Consolidate compiler generated dependencies of target sub_strategy_indicator_trace_parquet_writer_test
+[ 77%] Linking CXX executable sub_strategy_indicator_trace_parquet_writer_test
+[ 77%] Built target daily_settlement_service_test
+Consolidate compiler generated dependencies of target sub_strategy_indicator_trace_csv_writer_test
+[ 77%] Linking CXX executable sub_strategy_indicator_trace_csv_writer_test
+[ 79%] Built target metric_registry_test
+[ 79%] Built target market_state_detector_test
+Consolidate compiler generated dependencies of target product_fee_config_loader_test
+Consolidate compiler generated dependencies of target contract_expiry_calendar_test
+[ 79%] Linking CXX executable contract_expiry_calendar_test
+[ 80%] Linking CXX executable product_fee_config_loader_test
+[ 81%] Built target indicator_trace_parquet_writer_test
+Consolidate compiler generated dependencies of target live_data_feed_test
+[ 82%] Linking CXX executable live_data_feed_test
+[ 82%] Built target indicator_trace_csv_writer_test
+Consolidate compiler generated dependencies of target broker_test
+[ 83%] Linking CXX executable broker_test
+[ 84%] Built target contract_expiry_calendar_test
+[ 84%] Built target sub_strategy_indicator_trace_csv_writer_test
+Consolidate compiler generated dependencies of target engine_test
+[ 84%] Built target product_fee_config_loader_test
+Consolidate compiler generated dependencies of target performance_test
+[ 85%] Linking CXX executable engine_test
+[ 86%] Linking CXX executable performance_test
+Consolidate compiler generated dependencies of target backtest_metrics_test
+[ 86%] Linking CXX executable backtest_metrics_test
+[ 87%] Built target sub_strategy_indicator_trace_parquet_writer_test
+[ 87%] Linking CXX executable backtest_replay_support_test
+Consolidate compiler generated dependencies of target base_strategy_test
+[ 87%] Linking CXX executable base_strategy_test
+[ 87%] Built target replay_market_parity_test
+Consolidate compiler generated dependencies of target atomic_strategy_interface_test
+[ 87%] Built target live_data_feed_test
+[ 87%] Linking CXX executable atomic_strategy_interface_test
+Consolidate compiler generated dependencies of target atomic_factory_test
+[ 87%] Linking CXX executable atomic_factory_test
+[ 87%] Built target broker_test
+Consolidate compiler generated dependencies of target strategy_registry_test
+[ 87%] Linking CXX executable strategy_registry_test
+[ 87%] Built target performance_test
+Consolidate compiler generated dependencies of target strategy_engine_test
+[ 87%] Linking CXX executable strategy_engine_test
+[ 87%] Built target backtest_metrics_test
+[ 88%] Built target base_strategy_test
+Consolidate compiler generated dependencies of target state_persistence_test
+Consolidate compiler generated dependencies of target signal_merger_test
+[ 89%] Linking CXX executable signal_merger_test
+[ 89%] Linking CXX executable state_persistence_test
+[ 89%] Built target engine_test
+Consolidate compiler generated dependencies of target demo_live_strategy_test
+[ 90%] Linking CXX executable demo_live_strategy_test
+[ 91%] Built target atomic_strategy_interface_test
+Consolidate compiler generated dependencies of target composite_config_loader_test
+[ 92%] Linking CXX executable composite_config_loader_test
+[ 93%] Built target atomic_factory_test
+Consolidate compiler generated dependencies of target strategy_main_config_loader_test
+[ 93%] Linking CXX executable strategy_main_config_loader_test
+[ 94%] Built target strategy_registry_test
+Consolidate compiler generated dependencies of target composite_strategy_test
+[ 94%] Linking CXX executable composite_strategy_test
+[ 94%] Built target signal_merger_test
+[ 94%] Built target state_persistence_test
+Consolidate compiler generated dependencies of target atomic_strategies_test
+Consolidate compiler generated dependencies of target sma_test
+[ 94%] Linking CXX executable atomic_strategies_test
+[ 94%] Linking CXX executable sma_test
+[ 95%] Built target strategy_engine_test
+Consolidate compiler generated dependencies of target ema_test
+[ 95%] Built target demo_live_strategy_test
+[ 95%] Built target composite_config_loader_test
+Consolidate compiler generated dependencies of target atr_test
+[ 95%] Linking CXX executable ema_test
+Consolidate compiler generated dependencies of target kama_test
+[ 96%] Linking CXX executable atr_test
+[ 97%] Linking CXX executable kama_test
+[ 97%] Built target backtest_replay_support_test
+Consolidate compiler generated dependencies of target adx_test
+[ 97%] Linking CXX executable adx_test
+[ 97%] Built target strategy_main_config_loader_test
+Consolidate compiler generated dependencies of target cli_support_test
+[ 97%] Linking CXX executable cli_support_test
+[ 97%] Built target composite_strategy_test
+Consolidate compiler generated dependencies of target rolling_config_test
+[ 98%] Linking CXX executable rolling_config_test
+[ 98%] Built target atomic_strategies_test
+[ 98%] Built target sma_test
+Consolidate compiler generated dependencies of target window_generator_test
+Consolidate compiler generated dependencies of target metric_extractor_test
+[ 99%] Linking CXX executable metric_extractor_test
+[ 99%] Linking CXX executable window_generator_test
+[ 99%] Built target ema_test
+[ 99%] Built target atr_test
+Consolidate compiler generated dependencies of target rolling_runner_fixed_test
+[ 99%] Linking CXX executable rolling_runner_fixed_test
+Consolidate compiler generated dependencies of target rolling_runner_optimize_test
+[100%] Linking CXX executable rolling_runner_optimize_test
+[100%] Built target kama_test
+Consolidate compiler generated dependencies of target oos_top10_validation_test
+[100%] Built target adx_test
+[100%] Linking CXX executable oos_top10_validation_test
+Consolidate compiler generated dependencies of target run_backtest_spec_parallel_smoke_test
+[100%] Linking CXX executable run_backtest_spec_parallel_smoke_test
+[100%] Built target cli_support_test
+Consolidate compiler generated dependencies of target ops_cli_test
+[100%] Built target ops_cli_test
+Consolidate compiler generated dependencies of target simnow_wal_export_cli_test
+[100%] Built target simnow_wal_export_cli_test
+[100%] Built target rolling_config_test
+[100%] Built target window_generator_test
+[100%] Built target metric_extractor_test
+[100%] Built target run_backtest_spec_parallel_smoke_test
+[100%] Built target rolling_runner_fixed_test
+[100%] Built target oos_top10_validation_test
+[100%] Built target rolling_runner_optimize_test

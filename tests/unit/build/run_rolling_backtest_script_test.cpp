@@ -70,12 +70,13 @@ const std::string* FindArgValue(const std::vector<std::string>& args, const std:
     return nullptr;
 }
 
-TEST(RunRollingBacktestScriptTest, DryRunUsesDefaultConfigWithoutArgs) {
+TEST(RunRollingBacktestScriptTest, DryRunUsesDefaultConfigWithConfiguredBuild) {
     const auto root = MakeTempDir("dry_run");
     const auto log_file = root / "dry_run.log";
 
-    const std::string command = "bash scripts/build/run_rolling_backtest.sh --dry-run >'" +
-                                EscapePathForShell(log_file) + "' 2>&1";
+    const std::string command =
+        "bash scripts/build/run_rolling_backtest.sh --dry-run --build-dir '" +
+        EscapePathForShell(QUANT_HFT_BUILD_DIR) + "' >'" + EscapePathForShell(log_file) + "' 2>&1";
     const int rc = RunCommand(command);
     EXPECT_EQ(rc, 0);
 
@@ -128,9 +129,9 @@ TEST(RunRollingBacktestScriptTest, SkipBuildPassesExplicitConfigToRollingCli) {
             std::filesystem::perms::owner_write,
         std::filesystem::perm_options::replace);
 
-    const std::string command = "bash scripts/build/run_rolling_backtest.sh --skip-build --build-dir '" +
-                                EscapePathForShell(build_dir) + "' --config '" +
-                                EscapePathForShell(config_path) + "'";
+    const std::string command =
+        "bash scripts/build/run_rolling_backtest.sh --skip-build --build-dir '" +
+        EscapePathForShell(build_dir) + "' --config '" + EscapePathForShell(config_path) + "'";
     const int rc = RunCommand(command);
     EXPECT_EQ(rc, 0);
 

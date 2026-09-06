@@ -1,0 +1,94 @@
+Internal ctest changing into directory: /tmp/quant-hft-research-build
+Test project /tmp/quant-hft-research-build
+      Start 472: ParquetDataFeedTest.StreamingMergeUsesStablePartitionOrdinalAndLazyFuturePartitions
+      Start 787: TaskSchedulerTest.RespectsMaxConcurrency
+      Start 768: OosTop10ValidationTest.CacheIdentityIncludesDatesAndContentEvenWithSameSizeAndMtime
+      Start 470: ParquetDataFeedTest.CursorBoundsResidentBatchAndStopsWithoutScanningWholePartition
+ 1/44 Test #470: ParquetDataFeedTest.CursorBoundsResidentBatchAndStopsWithoutScanningWholePartition ..............   Passed    0.08 sec
+      Start 767: OosTop10ValidationTest.RanksByCalmarThenSharpeAndReusesExistingResults
+ 2/44 Test #787: TaskSchedulerTest.RespectsMaxConcurrency ........................................................   Passed    0.10 sec
+      Start  30: ReplayMarketParityTest.DefaultRuntimeUsesUtcCompleteBarsTickOrderAndSimParameters
+ 3/44 Test #768: OosTop10ValidationTest.CacheIdentityIncludesDatesAndContentEvenWithSameSizeAndMtime .............   Passed    0.10 sec
+      Start 769: OosTop10ValidationTest.UsesTrainingObjectiveDirectionForCandidateRankingAndValidation
+ 4/44 Test #767: OosTop10ValidationTest.RanksByCalmarThenSharpeAndReusesExistingResults ..........................   Passed    0.06 sec
+      Start 770: OosTop10ValidationTest.ContinuesAfterBacktestFailureAndRecordsError
+ 5/44 Test  #30: ReplayMarketParityTest.DefaultRuntimeUsesUtcCompleteBarsTickOrderAndSimParameters ...............   Passed    0.04 sec
+      Start 473: ParquetDataFeedTest.TradingDaySelectionKeepsPreviousFridayNight
+ 6/44 Test #769: OosTop10ValidationTest.UsesTrainingObjectiveDirectionForCandidateRankingAndValidation ...........   Passed    0.04 sec
+      Start 788: TaskSchedulerTest.RunsSequentiallyWhenConcurrencyIsOne
+ 7/44 Test #473: ParquetDataFeedTest.TradingDaySelectionKeepsPreviousFridayNight .................................   Passed    0.02 sec
+      Start 471: ParquetDataFeedTest.CursorRejectsNonMonotonicPartition
+ 8/44 Test #788: TaskSchedulerTest.RunsSequentiallyWhenConcurrencyIsOne ..........................................   Passed    0.02 sec
+      Start 469: ParquetDataFeedTest.DiscoverFromDirectoryParsesPartitionAndMeta
+ 9/44 Test #770: OosTop10ValidationTest.ContinuesAfterBacktestFailureAndRecordsError .............................   Passed    0.04 sec
+      Start 338: MarketBarPipelineTest.AtomicCheckpointRoundTripPreservesPendingState
+10/44 Test #469: ParquetDataFeedTest.DiscoverFromDirectoryParsesPartitionAndMeta .................................   Passed    0.01 sec
+      Start  29: ReplayMarketParityTest.ResearchTransformCheckpointPreservesOffsetsAndRejectsRawRestore
+11/44 Test #471: ParquetDataFeedTest.CursorRejectsNonMonotonicPartition ..........................................   Passed    0.02 sec
+      Start  32: ReplayMarketParityTest.SharedRuntimeDefaultsMatchLiveLoaderAndRejectDecisionDrift
+12/44 Test #338: MarketBarPipelineTest.AtomicCheckpointRoundTripPreservesPendingState ............................   Passed    0.01 sec
+      Start  26: ReplayMarketParityTest.MissingMinuteCannotAdvanceStrategyOrDetector
+13/44 Test  #29: ReplayMarketParityTest.ResearchTransformCheckpointPreservesOffsetsAndRejectsRawRestore ..........   Passed    0.01 sec
+      Start  31: ReplayMarketParityTest.RuntimeConfigIgnoresConnectionSecretsAndRejectsEnvironmentForDecisions
+14/44 Test  #32: ReplayMarketParityTest.SharedRuntimeDefaultsMatchLiveLoaderAndRejectDecisionDrift ...............   Passed    0.01 sec
+      Start  25: ReplayMarketParityTest.AdditionalTimeframeCannotContaminateFiveMinuteDetector
+15/44 Test  #26: ReplayMarketParityTest.MissingMinuteCannotAdvanceStrategyOrDetector .............................   Passed    0.01 sec
+      Start 468: ParquetDataFeedTest.RegisterAndQueryByWindowAndInstrument
+16/44 Test  #31: ReplayMarketParityTest.RuntimeConfigIgnoresConnectionSecretsAndRejectsEnvironmentForDecisions ...   Passed    0.01 sec
+      Start  28: ReplayMarketParityTest.ParameterProfileDoesNotChangeBacktestBehaviorMode
+17/44 Test  #25: ReplayMarketParityTest.AdditionalTimeframeCannotContaminateFiveMinuteDetector ...................   Passed    0.01 sec
+      Start  27: ReplayMarketParityTest.ShutdownPartialBucketIsAuditOnly
+18/44 Test #468: ParquetDataFeedTest.RegisterAndQueryByWindowAndInstrument .......................................   Passed    0.01 sec
+      Start 776: ParameterSpaceTest.UsesDefaultsWhenOptimizationMissing
+19/44 Test  #27: ReplayMarketParityTest.ShutdownPartialBucketIsAuditOnly .........................................   Passed    0.01 sec
+      Start 772: ParameterSpaceTest.LoadsValidConfig
+20/44 Test  #28: ReplayMarketParityTest.ParameterProfileDoesNotChangeBacktestBehaviorMode ........................   Passed    0.01 sec
+      Start 749: RollingConfigTest.LoadsValidConfigAndResolvesPaths
+21/44 Test #776: ParameterSpaceTest.UsesDefaultsWhenOptimizationMissing ..........................................   Passed    0.01 sec
+      Start 753: RollingConfigTest.LoadsRollingOptimizeRandomConfigWithSeed
+22/44 Test #772: ParameterSpaceTest.LoadsValidConfig .............................................................   Passed    0.00 sec
+      Start 341: MarketBarPipelineTest.GapResetCannotRecoverThroughIncompleteBars
+23/44 Test #749: RollingConfigTest.LoadsValidConfigAndResolvesPaths ..............................................   Passed    0.01 sec
+      Start 803: TempConfigGeneratorTest.RewritesTargetSubConfigAndAbsolutizesOtherPaths
+24/44 Test #753: RollingConfigTest.LoadsRollingOptimizeRandomConfigWithSeed ......................................   Passed    0.01 sec
+      Start 777: ParameterSpaceTest.LoadsWeightedObjectivesConfig
+25/44 Test #341: MarketBarPipelineTest.GapResetCannotRecoverThroughIncompleteBars ................................   Passed    0.00 sec
+      Start 774: ParameterSpaceTest.RejectsInvalidConstraintExpression
+26/44 Test #803: TempConfigGeneratorTest.RewritesTargetSubConfigAndAbsolutizesOtherPaths .........................   Passed    0.01 sec
+      Start 775: ParameterSpaceTest.LoadsRandomSearchConfigWithSeed
+27/44 Test #777: ParameterSpaceTest.LoadsWeightedObjectivesConfig ................................................   Passed    0.01 sec
+      Start 802: TempConfigGeneratorTest.TrialValuesOverrideSelectedParameterProfileOnly
+28/44 Test #774: ParameterSpaceTest.RejectsInvalidConstraintExpression ...........................................   Passed    0.01 sec
+      Start 335: MarketBarPipelineTest.RecentCanonicalFiveMinuteStatesSurviveCheckpoint
+29/44 Test #775: ParameterSpaceTest.LoadsRandomSearchConfigWithSeed ..............................................   Passed    0.00 sec
+      Start 336: MarketBarPipelineTest.RecoveryTailNeverProducesTradableEmission
+30/44 Test #802: TempConfigGeneratorTest.TrialValuesOverrideSelectedParameterProfileOnly .........................   Passed    0.00 sec
+      Start 334: MarketBarPipelineTest.CheckpointRestartMatchesContinuousPendingAggregation
+31/44 Test #335: MarketBarPipelineTest.RecentCanonicalFiveMinuteStatesSurviveCheckpoint ..........................   Passed    0.01 sec
+      Start 750: RollingConfigTest.RejectsNonParquetEngineMode
+32/44 Test #336: MarketBarPipelineTest.RecoveryTailNeverProducesTradableEmission .................................   Passed    0.00 sec
+      Start 751: RollingConfigTest.RejectsMissingManifest
+33/44 Test #334: MarketBarPipelineTest.CheckpointRestartMatchesContinuousPendingAggregation ......................   Passed    0.00 sec
+      Start 778: ParameterSpaceTest.LoadsRepoOpsParameterOptimConfig
+34/44 Test #750: RollingConfigTest.RejectsNonParquetEngineMode ...................................................   Passed    0.00 sec
+      Start 337: MarketBarPipelineTest.LateTickSuppressesOpeningUntilTwoCompleteFiveMinuteBars
+35/44 Test #751: RollingConfigTest.RejectsMissingManifest ........................................................   Passed    0.00 sec
+      Start 340: MarketBarPipelineTest.OneMinuteSourceAndStrategyEmissionHaveDistinctDeduplicationKeys
+36/44 Test #778: ParameterSpaceTest.LoadsRepoOpsParameterOptimConfig .............................................   Passed    0.00 sec
+      Start 339: MarketBarPipelineTest.CorruptNestedCheckpointDoesNotPartiallyMutateLiveState
+37/44 Test #337: MarketBarPipelineTest.LateTickSuppressesOpeningUntilTwoCompleteFiveMinuteBars ...................   Passed    0.00 sec
+      Start 773: ParameterSpaceTest.RejectsInvalidSchema
+38/44 Test #340: MarketBarPipelineTest.OneMinuteSourceAndStrategyEmissionHaveDistinctDeduplicationKeys ...........   Passed    0.00 sec
+      Start 333: MarketBarPipelineTest.ExactPayloadDuplicateIsIdempotent
+39/44 Test #339: MarketBarPipelineTest.CorruptNestedCheckpointDoesNotPartiallyMutateLiveState ....................   Passed    0.00 sec
+      Start 786: TaskSchedulerTest.ExplicitInputMemoryBudgetCapsParallelism
+40/44 Test #773: ParameterSpaceTest.RejectsInvalidSchema .........................................................   Passed    0.00 sec
+      Start 789: TaskSchedulerTest.CapturesTaskExceptionsAsFailedTrials
+41/44 Test #333: MarketBarPipelineTest.ExactPayloadDuplicateIsIdempotent .........................................   Passed    0.00 sec
+42/44 Test #786: TaskSchedulerTest.ExplicitInputMemoryBudgetCapsParallelism ......................................   Passed    0.00 sec
+43/44 Test #789: TaskSchedulerTest.CapturesTaskExceptionsAsFailedTrials ..........................................   Passed    0.00 sec
+44/44 Test #472: ParquetDataFeedTest.StreamingMergeUsesStablePartitionOrdinalAndLazyFuturePartitions .............   Passed    0.33 sec
+
+100% tests passed, 0 tests failed out of 44
+
+Total Test time (real) =   0.35 sec

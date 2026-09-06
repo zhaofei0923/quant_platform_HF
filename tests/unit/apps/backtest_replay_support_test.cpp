@@ -27,24 +27,10 @@ namespace quant_hft::apps {
 namespace {
 
 #if QUANT_HFT_ENABLE_ARROW_PARQUET
-template <typename ReaderPtr>
-auto OpenParquetReaderCompat(const std::shared_ptr<arrow::io::RandomAccessFile>& input,
-                             ReaderPtr* reader, int)
-    -> decltype(parquet::arrow::OpenFile(input, arrow::default_memory_pool()), bool()) {
-    auto reader_result = parquet::arrow::OpenFile(input, arrow::default_memory_pool());
-    if (!reader_result.ok()) {
-        return false;
-    }
-    *reader = std::move(reader_result).ValueOrDie();
-    return *reader != nullptr;
-}
-
-template <typename ReaderPtr>
-auto OpenParquetReaderCompat(const std::shared_ptr<arrow::io::RandomAccessFile>& input,
-                             ReaderPtr* reader, long)
-    -> decltype(parquet::arrow::OpenFile(input, arrow::default_memory_pool(), reader), bool()) {
-    auto reader_status = parquet::arrow::OpenFile(input, arrow::default_memory_pool(), reader);
-    return reader_status.ok() && *reader != nullptr;
+bool OpenParquetReaderCompat(const std::shared_ptr<arrow::io::RandomAccessFile>& input,
+                             std::unique_ptr<parquet::arrow::FileReader>* reader, int) {
+    parquet::arrow::FileReaderBuilder builder;
+    return builder.Open(input).ok() && builder.Build(reader).ok() && *reader != nullptr;
 }
 
 std::vector<std::string> ReadStringColumnFromParquet(const std::filesystem::path& path,
@@ -136,6 +122,7 @@ std::filesystem::path WriteTempDetectorConfig(const std::string& content) {
     return path;
 }
 
+// Research fixtures retain the explicit legacy_exchange_local input encoding.
 std::filesystem::path WriteTempReplayCsv(const std::string& stem) {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto path =
@@ -146,6 +133,8 @@ std::filesystem::path WriteTempReplayCsv(const std::string& stem) {
     out << "rb2405,1704186001000000000,101,101,100,21,102,19\n";
     out << "rb2405,1704186060000000000,102,102,101,22,103,20\n";
     out << "rb2405,1704186061000000000,103,103,102,23,104,21\n";
+    out << "rb2405,1704186125000000000,103,104,102,23,104,21\n";
+    out << "rb2405,1704186126000000000,103,105,102,23,104,21\n";
     out.close();
     return path;
 }
@@ -156,14 +145,20 @@ std::filesystem::path WriteMultiMinuteReplayCsv(const std::string& stem) {
         std::filesystem::temp_directory_path() / (stem + "_" + std::to_string(stamp) + ".csv");
     std::ofstream out(path);
     out << "InstrumentID,ts_ns,LastPrice,Volume,BidPrice1,BidVolume1,AskPrice1,AskVolume1\n";
-    out << "rb2405,1704186000000000000,100,100,99,20,101,18\n";
-    out << "rb2405,1704186001000000000,101,101,100,21,102,19\n";
-    out << "rb2405,1704186060000000000,102,102,101,22,103,20\n";
-    out << "rb2405,1704186061000000000,103,103,102,23,104,21\n";
-    out << "rb2405,1704186120000000000,104,104,103,24,105,22\n";
-    out << "rb2405,1704186121000000000,105,105,104,25,106,23\n";
-    out << "rb2405,1704186180000000000,106,106,105,26,107,24\n";
-    out << "rb2405,1704186181000000000,107,107,106,27,108,25\n";
+    // A volume baseline plus three complete five-minute periods also supports
+    // the multi-timeframe indicator tests that use this fixture.
+    for (int minute = 0; minute < 16; ++minute) {
+        for (int second : {0, 30}) {
+            const auto timestamp =
+                1704186000000000000LL + minute * 60'000'000'000LL + second * 1'000'000'000LL;
+            const int index = minute * 2 + (second == 30 ? 1 : 0);
+            const double price = 100.0 + index;
+            out << "rb2405," << timestamp << ',' << price << ',' << 100 + index << ','
+                << price - 1.0 << ",20," << price + 1.0 << ",20\n";
+        }
+    }
+    out << "rb2405,1704186965000000000,131,132,130,20,132,20\n";
+    out << "rb2405,1704186966000000000,131,133,130,20,132,20\n";
     out.close();
     return path;
 }
@@ -181,6 +176,12 @@ std::filesystem::path WriteInterleavedProductReplayCsv(const std::string& stem) 
     out << "rb2405,20240103,09:01:01,0,201,101,200,20,202,18\n";
     out << "c2405,20240103,09:02:00,0,102,102,101,20,103,18\n";
     out << "rb2405,20240103,09:02:01,0,202,102,201,20,203,18\n";
+    out << "c2405,20240103,09:02:05,0,102,103,101,20,103,18\n";
+    out << "rb2405,20240103,09:02:06,0,202,103,201,20,203,18\n";
+    out << "c2405,20240103,09:02:30,0,102,104,101,20,103,18\n";
+    out << "rb2405,20240103,09:02:31,0,202,104,201,20,203,18\n";
+    out << "c2405,20240103,09:03:05,0,102,105,101,20,103,18\n";
+    out << "rb2405,20240103,09:03:06,0,202,105,201,20,203,18\n";
     out.close();
     return path;
 }
@@ -227,22 +228,22 @@ std::filesystem::path WriteInstrumentSwitchReplayCsv(const std::string& stem) {
         std::filesystem::temp_directory_path() / (stem + "_" + std::to_string(stamp) + ".csv");
     std::ofstream out(path);
     out << "InstrumentID,ts_ns,LastPrice,Volume,BidPrice1,BidVolume1,AskPrice1,AskVolume1\n";
-    out << "rb2405,1704186000000000000,100,100,99,20,101,18\n";
-    out << "rb2405,1704186001000000000,101,101,100,21,102,19\n";
-    out << "rb2405,1704186060000000000,102,102,101,22,103,20\n";
-    out << "rb2405,1704186061000000000,103,103,102,23,104,21\n";
-    out << "rb2409,1704186300000000000,200,200,199,20,201,18\n";
-    out << "rb2409,1704186301000000000,201,201,200,21,202,19\n";
-    out << "rb2409,1704186360000000000,202,202,201,22,203,20\n";
-    out << "rb2409,1704186361000000000,203,203,202,23,204,21\n";
-    out << "rb2409,1704186420000000000,204,204,203,24,205,22\n";
-    out << "rb2409,1704186421000000000,205,205,204,25,206,23\n";
-    out << "rb2409,1704186480000000000,206,206,205,26,207,24\n";
-    out << "rb2409,1704186481000000000,207,207,206,27,208,25\n";
-    out << "rb2409,1704186540000000000,208,208,207,28,209,26\n";
-    out << "rb2409,1704186541000000000,209,209,208,29,210,27\n";
-    out << "rb2409,1704186600000000000,210,210,209,30,211,28\n";
-    out << "rb2409,1704186601000000000,211,211,210,31,212,29\n";
+    // The first bucket establishes volume; complete later buckets remain
+    // ordered across the instrument switch. Partial final buckets stay suppressed.
+    for (int minute = 0; minute <= 30; ++minute) {
+        if (minute > 10 && minute < 15) continue;
+        const bool old_contract = minute <= 10;
+        const char* instrument = old_contract ? "rb2405" : "rb2409";
+        for (int second : {0, 30}) {
+            const auto timestamp =
+                1704186000000000000LL + minute * 60'000'000'000LL + second * 1'000'000'000LL;
+            const int index = minute * 2 + (second == 30 ? 1 : 0);
+            const double price = (old_contract ? 100.0 : 200.0) + minute;
+            out << instrument << ',' << timestamp << ',' << price << ',' << 100 + index << ','
+                << price - 1.0 << ",20," << price + 1.0 << ",20\n";
+        }
+    }
+    out << "rb2409,1704187865000000000,230,162,229,20,231,20\n";
     out.close();
     return path;
 }
@@ -258,6 +259,8 @@ std::filesystem::path WriteNightSessionReplayCsv(const std::string& stem) {
     out << "rb2405,20240103,21:00:01,0,101,101,100,21,102,19\n";
     out << "rb2405,20240103,21:01:00,0,102,102,101,22,103,20\n";
     out << "rb2405,20240103,21:01:01,0,103,103,102,23,104,21\n";
+    out << "rb2405,20240103,21:02:05,0,103,104,102,23,104,21\n";
+    out << "rb2405,20240103,21:02:06,0,103,105,102,23,104,21\n";
     out.close();
     return path;
 }
@@ -273,6 +276,8 @@ std::filesystem::path WriteCarryDailyReplayCsv(const std::string& stem) {
     out << "c2405,20240102,09:00:30,0,101,101,100,21,102,19\n";
     out << "c2405,20240102,09:01:00,0,102,102,101,22,103,20\n";
     out << "c2405,20240102,09:01:30,0,103,103,102,23,104,21\n";
+    out << "c2405,20240102,09:02:05,0,103,103,102,23,104,21\n";
+    out << "c2405,20240102,09:02:06,0,103,103,102,23,104,21\n";
     out << "c2405,20240102,14:59:00,0,110,104,109,24,111,22\n";
     out << "c2405,20240102,14:59:30,0,111,105,110,25,112,23\n";
     out << "c2405,20240103,09:00:00,0,112,106,111,26,113,24\n";
@@ -290,10 +295,13 @@ std::filesystem::path WriteLateOpenReplayCsv(const std::string& stem) {
     std::ofstream out(path);
     out << "InstrumentID,TradingDay,UpdateTime,UpdateMillisec,LastPrice,Volume,BidPrice1,"
            "BidVolume1,AskPrice1,AskVolume1\n";
+    out << "c2405,20240102,14:57:00,0,100,98,99,20,101,18\n";
+    out << "c2405,20240102,14:57:30,0,100,99,99,20,101,18\n";
     out << "c2405,20240102,14:58:00,0,100,100,99,20,101,18\n";
     out << "c2405,20240102,14:58:30,0,101,101,100,21,102,19\n";
     out << "c2405,20240102,14:59:00,0,102,102,101,22,103,20\n";
     out << "c2405,20240102,14:59:30,0,103,103,102,23,104,21\n";
+    out << "c2405,20240102,14:59:35,0,103,104,102,23,104,21\n";
     out.close();
     return path;
 }
@@ -311,6 +319,10 @@ std::filesystem::path WriteFlatReplayCsv(const std::string& stem, double price =
     out << "rb2405,1704186060000000000," << price << ",102," << (price - 1.0) << ",22,"
         << (price + 1.0) << ",20\n";
     out << "rb2405,1704186061000000000," << price << ",103," << (price - 1.0) << ",23,"
+        << (price + 1.0) << ",21\n";
+    out << "rb2405,1704186125000000000," << price << ",104," << (price - 1.0) << ",23,"
+        << (price + 1.0) << ",21\n";
+    out << "rb2405,1704186126000000000," << price << ",105," << (price - 1.0) << ",23,"
         << (price + 1.0) << ",21\n";
     out.close();
     return path;
@@ -749,7 +761,18 @@ std::filesystem::path WriteParquetManifest(
         return {};
     }
 
-    for (const auto& [source, trading_day, instrument_id, ticks] : partitions) {
+    for (const auto& [source, trading_day, instrument_id, source_ticks] : partitions) {
+        auto ticks = source_ticks;
+        if (!ticks.empty()) {
+            auto tail = ticks.back();
+            constexpr std::int64_t kMinuteNs = 60'000'000'000LL;
+            tail.ts_ns = (tail.ts_ns / kMinuteNs + 1) * kMinuteNs + 5'000'000'000LL;
+            ++tail.volume;
+            ticks.push_back(tail);
+            tail.ts_ns += 1'000'000'000LL;
+            ++tail.volume;
+            ticks.push_back(tail);
+        }
         if (ticks.empty()) {
             if (error != nullptr) {
                 *error = "parquet partition fixture requires ticks";
@@ -789,11 +812,12 @@ std::filesystem::path WriteParquetManifest(
                 return {};
             }
         }
-        out << "{\"file_path\":\"" << relative_path.generic_string() << "\"," << "\"source\":\""
-            << source << "\"," << "\"trading_day\":\"" << trading_day << "\","
-            << "\"instrument_id\":\"" << instrument_id << "\"," << "\"min_ts_ns\":" << min_it->ts_ns
-            << ',' << "\"max_ts_ns\":" << max_it->ts_ns << ',' << "\"row_count\":" << ticks.size()
-            << "}\n";
+        out << "{\"file_path\":\"" << relative_path.generic_string() << "\","
+            << "\"source\":\"" << source << "\","
+            << "\"trading_day\":\"" << trading_day << "\","
+            << "\"instrument_id\":\"" << instrument_id << "\","
+            << "\"min_ts_ns\":" << min_it->ts_ns << ',' << "\"max_ts_ns\":" << max_it->ts_ns << ','
+            << "\"row_count\":" << ticks.size() << "}\n";
     }
 
     if (!out.good()) {
@@ -845,9 +869,9 @@ std::filesystem::path WriteDeferredBarReplayCsv(const std::string& stem) {
     out << "TradingDay,UpdateTime,InstrumentID,LastPrice,Volume,BidPrice1,BidVolume1,AskPrice1,"
            "AskVolume1\n";
     const std::vector<std::pair<std::string, double>> ticks = {
-        {"09:55:05", 100.0}, {"09:56:05", 101.0}, {"09:57:05", 102.0},
-        {"09:58:05", 103.0}, {"09:59:05", 104.0}, {"10:00:05", 105.0},
-        {"10:00:30", 106.0}, {"10:01:05", 107.0}, {"10:01:30", 108.0},
+        {"09:54:05", 99.0},  {"09:55:05", 100.0}, {"09:56:05", 101.0}, {"09:57:05", 102.0},
+        {"09:58:05", 103.0}, {"09:59:05", 104.0}, {"10:00:05", 105.0}, {"10:00:30", 106.0},
+        {"10:01:05", 107.0}, {"10:01:30", 108.0},
     };
     std::int64_t volume = 100;
     for (const auto& [update_time, last_price] : ticks) {
@@ -1185,6 +1209,9 @@ TEST(BacktestReplaySupportTest,
     ASSERT_FALSE(manifest.empty()) << error;
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "parquet";
     spec.dataset_root = dataset_root.string();
     spec.dataset_manifest = manifest.string();
@@ -1283,6 +1310,9 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecAppliesRiskBudgetToStrategyOpenTr
                                     /*max_risk_per_trade=*/400.0);
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = "risk-budget-open-test";
@@ -1342,6 +1372,9 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecStrictRolloverTransfersOwnerToNew
     ASSERT_FALSE(manifest.empty()) << error;
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "parquet";
     spec.dataset_root = dataset_root.string();
     spec.dataset_manifest = manifest.string();
@@ -1372,7 +1405,7 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecStrictRolloverTransfersOwnerToNew
 
     ASSERT_NE(rollover_open_trade, nullptr);
     ASSERT_NE(transferred_close_trade, nullptr);
-    EXPECT_EQ(transferred_close_trade->timestamp_dt_local, "2024-01-03 09:01:30");
+    EXPECT_EQ(transferred_close_trade->timestamp_dt_local, "2024-01-03 09:02:05");
     EXPECT_DOUBLE_EQ(transferred_close_trade->realized_pnl, 20.0);
     EXPECT_EQ(LastNetPosition(result.position_history, "c2405"), 0);
     EXPECT_EQ(LastNetPosition(result.position_history, "c2407"), 0);
@@ -1418,6 +1451,9 @@ TEST(BacktestReplaySupportTest,
     ASSERT_FALSE(manifest.empty()) << error;
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "parquet";
     spec.dataset_root = dataset_root.string();
     spec.dataset_manifest = manifest.string();
@@ -1485,6 +1521,9 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecParquetExplicitInstrumentDoesNotA
     ASSERT_FALSE(manifest.empty()) << error;
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "parquet";
     spec.dataset_root = dataset_root.string();
     spec.dataset_manifest = manifest.string();
@@ -1575,6 +1614,9 @@ TEST(BacktestReplaySupportTest,
     ASSERT_FALSE(manifest.empty()) << error;
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "parquet";
     spec.dataset_root = dataset_root.string();
     spec.dataset_manifest = manifest.string();
@@ -1617,7 +1659,7 @@ TEST(BacktestReplaySupportTest,
     EXPECT_DOUBLE_EQ(expiry_close_trade->risk_budget_r, 0.0);
 
     ASSERT_NE(reopened_trade, nullptr);
-    EXPECT_EQ(reopened_trade->timestamp_dt_local, "2024-01-03 09:02:30");
+    EXPECT_EQ(reopened_trade->timestamp_dt_local, "2024-01-03 09:03:05");
     EXPECT_GT(reopened_trade->risk_budget_r, 0.0);
 
     for (const TradeRecord& trade : result.trades) {
@@ -1644,6 +1686,9 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecDailyRowsKeepPositionValueAcrossC
         WriteAlwaysOpenCompositeConfig(strategy_type, /*timeframe_minutes=*/1);
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = "daily-carry-test";
@@ -1685,6 +1730,9 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecDailyRowsCaptureLateOpenAfterFina
         WriteAlwaysOpenCompositeConfig(strategy_type, /*timeframe_minutes=*/1);
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = "daily-late-open-test";
@@ -1752,6 +1800,9 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecDailyRowsClearPositionValueAfterE
     ASSERT_FALSE(manifest.empty()) << error;
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "parquet";
     spec.dataset_root = dataset_root.string();
     spec.dataset_manifest = manifest.string();
@@ -1816,6 +1867,11 @@ TEST(BacktestReplaySupportTest,
                                       MakeParquetTick("c2405", "20240102", "09:02:00", 102.0, 12),
                                       MakeParquetTick("c2405", "20240102", "09:03:00", 103.0, 13),
                                       MakeParquetTick("c2405", "20240102", "09:04:00", 104.0, 14),
+                                      MakeParquetTick("c2405", "20240102", "09:05:00", 104.0, 15),
+                                      MakeParquetTick("c2405", "20240102", "09:06:00", 104.0, 16),
+                                      MakeParquetTick("c2405", "20240102", "09:07:00", 104.0, 17),
+                                      MakeParquetTick("c2405", "20240102", "09:08:00", 104.0, 18),
+                                      MakeParquetTick("c2405", "20240102", "09:09:00", 104.0, 19),
                                   }},
                                  {"c",
                                   "20240103",
@@ -1826,12 +1882,20 @@ TEST(BacktestReplaySupportTest,
                                       MakeParquetTick("c2407", "20240103", "09:02:00", 202.0, 22),
                                       MakeParquetTick("c2407", "20240103", "09:03:00", 203.0, 23),
                                       MakeParquetTick("c2407", "20240103", "09:04:00", 204.0, 24),
+                                      MakeParquetTick("c2407", "20240103", "09:05:00", 204.0, 25),
+                                      MakeParquetTick("c2407", "20240103", "09:06:00", 204.0, 26),
+                                      MakeParquetTick("c2407", "20240103", "09:07:00", 204.0, 27),
+                                      MakeParquetTick("c2407", "20240103", "09:08:00", 204.0, 28),
+                                      MakeParquetTick("c2407", "20240103", "09:09:00", 204.0, 29),
                                   }},
                              },
                              &error);
     ASSERT_FALSE(manifest.empty()) << error;
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "parquet";
     spec.dataset_root = dataset_root.string();
     spec.dataset_manifest = manifest.string();
@@ -1895,8 +1959,18 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecLoadsDetectorConfigFile) {
     args["detector_config"] = config_path.string();
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     std::string error;
-    EXPECT_TRUE(ParseBacktestCliSpec(args, &spec, &error)) << error;
+    EXPECT_TRUE(ParseBacktestCliSpec(
+        [&] {
+            auto legacy = args;
+            legacy["behavior_profile"] = "research";
+            return legacy;
+        }(),
+        &spec, &error))
+        << error;
     EXPECT_EQ(spec.detector_config_path, config_path.string());
     EXPECT_EQ(spec.detector_config.adx_period, 7);
     EXPECT_EQ(spec.detector_config.atr_period, 5);
@@ -1915,8 +1989,17 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecRejectsInvalidDetectorConfig
     args["detector-config"] = config_path.string();
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     std::string error;
-    EXPECT_FALSE(ParseBacktestCliSpec(args, &spec, &error));
+    EXPECT_FALSE(ParseBacktestCliSpec(
+        [&] {
+            auto legacy = args;
+            legacy["behavior_profile"] = "research";
+            return legacy;
+        }(),
+        &spec, &error));
     EXPECT_NE(error.find("detector_config"), std::string::npos);
 
     std::filesystem::remove(config_path);
@@ -1935,8 +2018,18 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecLoadsDetectorConfigFromCtpNe
     args["detector_config"] = config_path.string();
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     std::string error;
-    EXPECT_TRUE(ParseBacktestCliSpec(args, &spec, &error)) << error;
+    EXPECT_TRUE(ParseBacktestCliSpec(
+        [&] {
+            auto legacy = args;
+            legacy["behavior_profile"] = "research";
+            return legacy;
+        }(),
+        &spec, &error))
+        << error;
     EXPECT_EQ(spec.detector_config.adx_period, 9);
     EXPECT_EQ(spec.detector_config.atr_period, 11);
 
@@ -1960,8 +2053,18 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecLoadsDetectorConfigByProduct
     args["detector_config"] = config_path.string();
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     std::string error;
-    ASSERT_TRUE(ParseBacktestCliSpec(args, &spec, &error)) << error;
+    ASSERT_TRUE(ParseBacktestCliSpec(
+        [&] {
+            auto legacy = args;
+            legacy["behavior_profile"] = "research";
+            return legacy;
+        }(),
+        &spec, &error))
+        << error;
     EXPECT_EQ(spec.detector_config.adx_period, 9);
     EXPECT_FALSE(spec.detector_config.require_adx_for_trend);
 
@@ -1992,8 +2095,17 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecRejectsInvalidDetectorByProd
     args["detector_config"] = invalid_product.string();
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     std::string error;
-    EXPECT_FALSE(ParseBacktestCliSpec(args, &spec, &error));
+    EXPECT_FALSE(ParseBacktestCliSpec(
+        [&] {
+            auto legacy = args;
+            legacy["behavior_profile"] = "research";
+            return legacy;
+        }(),
+        &spec, &error));
     EXPECT_NE(error.find("market_state_detector_by_product product"), std::string::npos);
     std::filesystem::remove(invalid_product);
 
@@ -2004,7 +2116,13 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecRejectsInvalidDetectorByProd
         "    kama_er_strong: 0.6\n");
     args["detector_config"] = invalid_threshold.string();
     error.clear();
-    EXPECT_FALSE(ParseBacktestCliSpec(args, &spec, &error));
+    EXPECT_FALSE(ParseBacktestCliSpec(
+        [&] {
+            auto legacy = args;
+            legacy["behavior_profile"] = "research";
+            return legacy;
+        }(),
+        &spec, &error));
     EXPECT_NE(error.find("detector_config_by_product"), std::string::npos);
     std::filesystem::remove(invalid_threshold);
 }
@@ -2061,8 +2179,18 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecParsesIndicatorTraceFlags) {
     args["indicator_trace_path"] = "runtime/research/indicator_trace/test.parquet";
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     std::string error;
-    EXPECT_TRUE(ParseBacktestCliSpec(args, &spec, &error)) << error;
+    EXPECT_TRUE(ParseBacktestCliSpec(
+        [&] {
+            auto legacy = args;
+            legacy["behavior_profile"] = "research";
+            return legacy;
+        }(),
+        &spec, &error))
+        << error;
     EXPECT_TRUE(spec.emit_indicator_trace);
     EXPECT_EQ(spec.indicator_trace_path, "runtime/research/indicator_trace/test.parquet");
 }
@@ -2077,8 +2205,18 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecParsesDetailEmissionFlags) {
     args["emit_per_variety_outputs"] = "true";
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     std::string error;
-    EXPECT_TRUE(ParseBacktestCliSpec(args, &spec, &error)) << error;
+    EXPECT_TRUE(ParseBacktestCliSpec(
+        [&] {
+            auto legacy = args;
+            legacy["behavior_profile"] = "research";
+            return legacy;
+        }(),
+        &spec, &error))
+        << error;
     EXPECT_FALSE(spec.emit_trades);
     EXPECT_FALSE(spec.emit_orders);
     EXPECT_TRUE(spec.emit_position_history);
@@ -2096,8 +2234,18 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecParsesCapitalAndConfigFields
     args["strategy_main_config_path"] = main_cfg.string();
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     std::string error;
-    EXPECT_TRUE(ParseBacktestCliSpec(args, &spec, &error)) << error;
+    EXPECT_TRUE(ParseBacktestCliSpec(
+        [&] {
+            auto legacy = args;
+            legacy["behavior_profile"] = "research";
+            return legacy;
+        }(),
+        &spec, &error))
+        << error;
     EXPECT_DOUBLE_EQ(spec.initial_equity, 1500000.0);
     EXPECT_EQ(spec.product_config_path, "configs/strategies/products_info.yaml");
     EXPECT_EQ(spec.strategy_main_config_path, main_cfg.string());
@@ -2123,8 +2271,18 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecLoadsContractExpiryCalendarF
     args["symbols"] = "rb";
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     std::string error;
-    EXPECT_TRUE(ParseBacktestCliSpec(args, &spec, &error)) << error;
+    EXPECT_TRUE(ParseBacktestCliSpec(
+        [&] {
+            auto legacy = args;
+            legacy["behavior_profile"] = "research";
+            return legacy;
+        }(),
+        &spec, &error))
+        << error;
     EXPECT_EQ(spec.contract_expiry_calendar_path, calendar_cfg.string());
 
     std::error_code ec;
@@ -2133,7 +2291,7 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecLoadsContractExpiryCalendarF
     std::filesystem::remove(main_cfg, ec);
 }
 
-TEST(BacktestReplaySupportTest, ParseBacktestCliSpecAcceptsStep4AliasesAndDefaultsStreamingOff) {
+TEST(BacktestReplaySupportTest, ParseBacktestCliSpecAcceptsStep4AliasesAndDefaultsStreamingOn) {
     const std::filesystem::path open_cfg = WriteTempAtomicStrategyConfig();
     const std::filesystem::path calendar_cfg = WriteTempContractExpiryCalendarConfig(
         "contracts:\n  c2405:\n    last_trading_day: 20240110\n");
@@ -2150,15 +2308,25 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecAcceptsStep4AliasesAndDefaul
     args["end"] = "2024-12-31";
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     std::string error;
-    EXPECT_TRUE(ParseBacktestCliSpec(args, &spec, &error)) << error;
+    EXPECT_TRUE(ParseBacktestCliSpec(
+        [&] {
+            auto legacy = args;
+            legacy["behavior_profile"] = "research";
+            return legacy;
+        }(),
+        &spec, &error))
+        << error;
     EXPECT_EQ(spec.start_date, "20240101");
     EXPECT_EQ(spec.end_date, "20241231");
     EXPECT_EQ(spec.strategy_main_config_path, main_cfg.string());
     EXPECT_EQ(spec.strategy_factory, "composite");
     EXPECT_EQ(spec.strategy_composite_config, main_cfg.string());
     EXPECT_EQ(spec.contract_expiry_calendar_path, calendar_cfg.string());
-    EXPECT_FALSE(spec.streaming);
+    EXPECT_TRUE(spec.streaming);
 
     std::error_code ec;
     std::filesystem::remove(open_cfg, ec);
@@ -2177,8 +2345,18 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecAllowsCliOverrideOverMainStr
     args["initial_equity"] = "2000000";
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     std::string error;
-    EXPECT_TRUE(ParseBacktestCliSpec(args, &spec, &error)) << error;
+    EXPECT_TRUE(ParseBacktestCliSpec(
+        [&] {
+            auto legacy = args;
+            legacy["behavior_profile"] = "research";
+            return legacy;
+        }(),
+        &spec, &error))
+        << error;
     EXPECT_DOUBLE_EQ(spec.initial_equity, 2000000.0);
     EXPECT_EQ(spec.strategy_factory, "composite");
     EXPECT_EQ(spec.strategy_composite_config, main_cfg.string());
@@ -2207,8 +2385,18 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecAcceptsMultiStrategyMainConf
     args["product_config_path"] = "";
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     std::string error;
-    ASSERT_TRUE(ParseBacktestCliSpec(args, &spec, &error)) << error;
+    ASSERT_TRUE(ParseBacktestCliSpec(
+        [&] {
+            auto legacy = args;
+            legacy["behavior_profile"] = "research";
+            return legacy;
+        }(),
+        &spec, &error))
+        << error;
     ASSERT_EQ(spec.strategy_configs.size(), 2U);
     EXPECT_EQ(spec.strategy_configs[0].strategy_id, "candidate_c");
     EXPECT_EQ(spec.strategy_configs[0].product_id, "c");
@@ -2246,8 +2434,18 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecReplaysInterleavedMultiProductStr
     args["product_config_path"] = "";
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     std::string error;
-    ASSERT_TRUE(ParseBacktestCliSpec(args, &spec, &error)) << error;
+    ASSERT_TRUE(ParseBacktestCliSpec(
+        [&] {
+            auto legacy = args;
+            legacy["behavior_profile"] = "research";
+            return legacy;
+        }(),
+        &spec, &error))
+        << error;
 
     BacktestCliResult result;
     ASSERT_TRUE(RunBacktestSpec(spec, &result, &error)) << error;
@@ -2276,6 +2474,9 @@ TEST(BacktestReplaySupportTest, LoadCsvTicksAcceptsUtf8BomHeader) {
     const std::filesystem::path csv_path = WriteBomHeaderReplayCsv("quant_hft_bom_header");
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
 
@@ -2296,6 +2497,9 @@ TEST(BacktestReplaySupportTest,
     const std::filesystem::path csv_path = WriteBoundaryReplayCsv("quant_hft_boundary_ticks");
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.symbols = {"c2405"};
@@ -2323,8 +2527,17 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecRejectsExpiryCloseWithoutCal
     args["symbols"] = "c";
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     std::string error;
-    EXPECT_FALSE(ParseBacktestCliSpec(args, &spec, &error));
+    EXPECT_FALSE(ParseBacktestCliSpec(
+        [&] {
+            auto legacy = args;
+            legacy["behavior_profile"] = "research";
+            return legacy;
+        }(),
+        &spec, &error));
     EXPECT_NE(error.find("contract_expiry_calendar_path"), std::string::npos);
 }
 
@@ -2342,8 +2555,17 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecRejectsExpiryCloseWithContin
     args["contract_expiry_calendar_path"] = calendar_cfg.string();
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     std::string error;
-    EXPECT_FALSE(ParseBacktestCliSpec(args, &spec, &error));
+    EXPECT_FALSE(ParseBacktestCliSpec(
+        [&] {
+            auto legacy = args;
+            legacy["behavior_profile"] = "research";
+            return legacy;
+        }(),
+        &spec, &error));
     EXPECT_NE(error.find("product_series_mode"), std::string::npos);
 
     std::error_code ec;
@@ -2363,8 +2585,17 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecRejectsExpiryCloseForExplici
     args["contract_expiry_calendar_path"] = calendar_cfg.string();
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     std::string error;
-    EXPECT_FALSE(ParseBacktestCliSpec(args, &spec, &error));
+    EXPECT_FALSE(ParseBacktestCliSpec(
+        [&] {
+            auto legacy = args;
+            legacy["behavior_profile"] = "research";
+            return legacy;
+        }(),
+        &spec, &error));
     EXPECT_NE(error.find("product symbol selection"), std::string::npos);
 
     std::error_code ec;
@@ -2499,8 +2730,17 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecRejectsRemovedMaxLossPercent
     args["max_loss_percent"] = "0.02";
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     std::string error;
-    EXPECT_FALSE(ParseBacktestCliSpec(args, &spec, &error));
+    EXPECT_FALSE(ParseBacktestCliSpec(
+        [&] {
+            auto legacy = args;
+            legacy["behavior_profile"] = "research";
+            return legacy;
+        }(),
+        &spec, &error));
     EXPECT_NE(error.find("max_loss_percent"), std::string::npos);
     EXPECT_NE(error.find("risk_per_trade_pct"), std::string::npos);
 }
@@ -2515,8 +2755,17 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecRejectsNonBacktestMainRunTyp
     args["strategy_main_config_path"] = main_cfg.string();
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     std::string error;
-    EXPECT_FALSE(ParseBacktestCliSpec(args, &spec, &error));
+    EXPECT_FALSE(ParseBacktestCliSpec(
+        [&] {
+            auto legacy = args;
+            legacy["behavior_profile"] = "research";
+            return legacy;
+        }(),
+        &spec, &error));
     EXPECT_NE(error.find("run_type"), std::string::npos);
 
     std::error_code ec;
@@ -2531,8 +2780,17 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecRejectsInvalidIndicatorTrace
     args["emit-indicator-trace"] = "bad-bool";
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     std::string error;
-    EXPECT_FALSE(ParseBacktestCliSpec(args, &spec, &error));
+    EXPECT_FALSE(ParseBacktestCliSpec(
+        [&] {
+            auto legacy = args;
+            legacy["behavior_profile"] = "research";
+            return legacy;
+        }(),
+        &spec, &error));
     EXPECT_NE(error.find("emit_indicator_trace"), std::string::npos);
 }
 
@@ -2599,8 +2857,17 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecRequiresCompositeConfigWhenF
     args["strategy_factory"] = "composite";
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     std::string error;
-    EXPECT_FALSE(ParseBacktestCliSpec(args, &spec, &error));
+    EXPECT_FALSE(ParseBacktestCliSpec(
+        [&] {
+            auto legacy = args;
+            legacy["behavior_profile"] = "research";
+            return legacy;
+        }(),
+        &spec, &error));
     EXPECT_NE(error.find("strategy_composite_config"), std::string::npos);
 }
 
@@ -2613,8 +2880,18 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecAcceptsCompositeFactoryAndCo
     args["strategy-composite-config"] = config_path.string();
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     std::string error;
-    EXPECT_TRUE(ParseBacktestCliSpec(args, &spec, &error)) << error;
+    EXPECT_TRUE(ParseBacktestCliSpec(
+        [&] {
+            auto legacy = args;
+            legacy["behavior_profile"] = "research";
+            return legacy;
+        }(),
+        &spec, &error))
+        << error;
     EXPECT_EQ(spec.strategy_factory, "composite");
     EXPECT_EQ(spec.strategy_composite_config, config_path.string());
 
@@ -2648,8 +2925,17 @@ TEST(BacktestReplaySupportTest, ParseBacktestCliSpecRejectsInvalidSubStrategyTra
     args["emit_sub_strategy_indicator_trace"] = "not-bool";
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     std::string error;
-    EXPECT_FALSE(ParseBacktestCliSpec(args, &spec, &error));
+    EXPECT_FALSE(ParseBacktestCliSpec(
+        [&] {
+            auto legacy = args;
+            legacy["behavior_profile"] = "research";
+            return legacy;
+        }(),
+        &spec, &error));
     EXPECT_NE(error.find("emit_sub_strategy_indicator_trace"), std::string::npos);
 }
 
@@ -2661,13 +2947,16 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecIndicatorTraceFollowsArrowCapabil
     std::filesystem::remove(trace_path, ec);
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = "indicator-trace-test";
     spec.emit_indicator_trace = true;
     spec.trace_output_format = "parquet";
     spec.indicator_trace_path = trace_path.string();
-    spec.max_ticks = 4;
+    spec.max_ticks.reset();  // Include the finality watermark and subsequent executable tick.
 
     BacktestCliResult result;
     std::string error;
@@ -2698,13 +2987,16 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecSubStrategyTraceRequiresComposite
     std::filesystem::remove(trace_path, ec);
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = "sub-strategy-trace-test";
     spec.strategy_factory = "demo";
     spec.emit_sub_strategy_indicator_trace = true;
     spec.sub_strategy_indicator_trace_path = trace_path.string();
-    spec.max_ticks = 4;
+    spec.max_ticks.reset();  // Include the finality watermark and subsequent executable tick.
 
     BacktestCliResult result;
     std::string error;
@@ -2725,6 +3017,9 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecSubStrategyTraceFollowsArrowCapab
     std::filesystem::remove(trace_path, ec);
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = "sub-strategy-trace-composite-test";
@@ -2733,7 +3028,7 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecSubStrategyTraceFollowsArrowCapab
     spec.emit_sub_strategy_indicator_trace = true;
     spec.trace_output_format = "parquet";
     spec.sub_strategy_indicator_trace_path = trace_path.string();
-    spec.max_ticks = 4;
+    spec.max_ticks.reset();  // Include the finality watermark and subsequent executable tick.
 
     BacktestCliResult result;
     std::string error;
@@ -2765,12 +3060,15 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecIndicatorTraceWritesCsvWhenPathEn
     std::filesystem::remove(trace_path, ec);
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = "indicator-trace-csv-test";
     spec.emit_indicator_trace = true;
     spec.indicator_trace_path = trace_path.string();
-    spec.max_ticks = 4;
+    spec.max_ticks.reset();  // Include the finality watermark and subsequent executable tick.
 
     BacktestCliResult result;
     std::string error;
@@ -2810,6 +3108,9 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecCompositeTraceCarriesSubscribedTi
     std::filesystem::remove(sub_trace_path, ec);
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = "trace-timeframe-composite-test";
@@ -2820,7 +3121,7 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecCompositeTraceCarriesSubscribedTi
     spec.indicator_trace_path = indicator_trace_path.string();
     spec.emit_sub_strategy_indicator_trace = true;
     spec.sub_strategy_indicator_trace_path = sub_trace_path.string();
-    spec.max_ticks = 8;
+    spec.max_ticks.reset();  // Include the finality watermark and subsequent executable tick.
 
     BacktestCliResult result;
     std::string error;
@@ -2843,7 +3144,8 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecCompositeTraceCarriesSubscribedTi
 
     const auto sub_dt_values = ReadStringColumnFromParquet(sub_trace_path, "dt_utc");
     ASSERT_FALSE(sub_dt_values.empty());
-    EXPECT_EQ(sub_dt_values.front(), "2024-01-02 09:00");
+    // The first five-minute bucket lacks a cumulative-volume baseline.
+    EXPECT_EQ(sub_dt_values.front(), "2024-01-02 09:05");
 
     std::filesystem::remove(csv_path, ec);
     std::filesystem::remove(composite_path, ec);
@@ -2864,6 +3166,9 @@ TEST(BacktestReplaySupportTest,
     std::filesystem::remove(trace_path, ec);
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = "sub-trace-instrument-switch";
@@ -2871,7 +3176,7 @@ TEST(BacktestReplaySupportTest,
     spec.strategy_composite_config = composite_path.string();
     spec.emit_sub_strategy_indicator_trace = true;
     spec.sub_strategy_indicator_trace_path = trace_path.string();
-    spec.max_ticks = 16;
+    spec.max_ticks.reset();  // Include the finality watermark and subsequent executable tick.
 
     BacktestCliResult result;
     std::string error;
@@ -2892,9 +3197,9 @@ TEST(BacktestReplaySupportTest,
         dt_values.push_back(fields[2]);
     }
 
-    EXPECT_EQ(dt_values[0], "2024-01-02 09:00");
-    EXPECT_EQ(dt_values[1], "2024-01-02 09:05");
-    EXPECT_EQ(dt_values[2], "2024-01-02 09:10");
+    EXPECT_EQ(dt_values[0], "2024-01-02 09:05");
+    EXPECT_EQ(dt_values[1], "2024-01-02 09:20");
+    EXPECT_EQ(dt_values[2], "2024-01-02 09:25");
     EXPECT_EQ(instrument_ids[0], "rb2405");
     EXPECT_EQ(instrument_ids[1], "rb2409");
     EXPECT_EQ(instrument_ids[2], "rb2409");
@@ -2917,13 +3222,16 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecSubStrategyTraceUsesDefaultPathWh
     std::filesystem::remove(expected_path, ec);
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = run_id;
     spec.strategy_factory = "composite";
     spec.strategy_composite_config = composite_path.string();
     spec.emit_sub_strategy_indicator_trace = true;
-    spec.max_ticks = 4;
+    spec.max_ticks.reset();  // Include the finality watermark and subsequent executable tick.
 
     BacktestCliResult result;
     std::string error;
@@ -2952,6 +3260,9 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecSubStrategyTraceFailsWhenPathExis
     existing.close();
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = "sub-strategy-trace-existing-path";
@@ -2960,7 +3271,7 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecSubStrategyTraceFailsWhenPathExis
     spec.emit_sub_strategy_indicator_trace = true;
     spec.trace_output_format = "parquet";
     spec.sub_strategy_indicator_trace_path = trace_path.string();
-    spec.max_ticks = 4;
+    spec.max_ticks.reset();  // Include the finality watermark and subsequent executable tick.
 
     BacktestCliResult result;
     std::string error;
@@ -2983,11 +3294,14 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecIndicatorTraceUsesDefaultPathWhen
     std::filesystem::remove(expected_path, ec);
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = run_id;
     spec.emit_indicator_trace = true;
-    spec.max_ticks = 4;
+    spec.max_ticks.reset();  // Include the finality watermark and subsequent executable tick.
 
     BacktestCliResult result;
     std::string error;
@@ -3009,6 +3323,9 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecSubStrategyTraceWritesCsvWhenPath
     std::filesystem::remove(trace_path, ec);
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = "sub-strategy-trace-csv-test";
@@ -3016,7 +3333,7 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecSubStrategyTraceWritesCsvWhenPath
     spec.strategy_composite_config = composite_path.string();
     spec.emit_sub_strategy_indicator_trace = true;
     spec.sub_strategy_indicator_trace_path = trace_path.string();
-    spec.max_ticks = 4;
+    spec.max_ticks.reset();  // Include the finality watermark and subsequent executable tick.
 
     BacktestCliResult result;
     std::string error;
@@ -3052,6 +3369,9 @@ TEST(BacktestReplaySupportTest,
     std::filesystem::remove(trace_path, ec);
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = "sub-strategy-trace-night-session-test";
@@ -3059,7 +3379,7 @@ TEST(BacktestReplaySupportTest,
     spec.strategy_composite_config = composite_path.string();
     spec.emit_sub_strategy_indicator_trace = true;
     spec.sub_strategy_indicator_trace_path = trace_path.string();
-    spec.max_ticks = 4;
+    spec.max_ticks.reset();  // Include the finality watermark and subsequent executable tick.
 
     BacktestCliResult result;
     std::string error;
@@ -3070,7 +3390,7 @@ TEST(BacktestReplaySupportTest,
     ASSERT_GE(lines.size(), 2U);
     const std::vector<std::string> fields = SplitCsvLine(lines[1]);
     ASSERT_GE(fields.size(), 6U);
-    EXPECT_EQ(fields[2], "2024-01-02 21:00");
+    EXPECT_EQ(fields[2], "2024-01-02 21:01");
     EXPECT_EQ(fields[3], "20240103");
     EXPECT_EQ(fields[4], "20240102");
 
@@ -3094,13 +3414,16 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecIndicatorTraceFailsWhenPathExists
     existing.close();
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = "indicator-trace-existing-path";
     spec.emit_indicator_trace = true;
     spec.trace_output_format = "parquet";
     spec.indicator_trace_path = trace_path.string();
-    spec.max_ticks = 4;
+    spec.max_ticks.reset();  // Include the finality watermark and subsequent executable tick.
 
     BacktestCliResult result;
     std::string error;
@@ -3117,6 +3440,9 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecDeterministicFillFeedsOrderEventT
     const std::filesystem::path composite_path = WriteTempCompositeConfig();
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = "order-event-feed-test";
@@ -3153,9 +3479,12 @@ TEST(BacktestReplaySupportTest,
     const std::filesystem::path csv_path =
         WriteForceCloseWindowReplayCsv("quant_hft_force_close_window");
     const std::filesystem::path composite_path =
-        WriteForceCloseWindowCompositeConfig(strategy_type, "09:01-09:04", "Asia/Shanghai");
+        WriteForceCloseWindowCompositeConfig(strategy_type, "09:03-09:04", "Asia/Shanghai");
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = "force-close-window-test";
@@ -3167,20 +3496,20 @@ TEST(BacktestReplaySupportTest,
     ASSERT_TRUE(RunBacktestSpec(spec, &result, &error)) << error;
     ASSERT_TRUE(result.has_deterministic);
 
-    const EpochNanos expected_force_close_ts = detail::ToEpochNs("20240103", "09:01:30", 0);
+    const EpochNanos expected_force_close_ts = detail::ToEpochNs("20240103", "09:03:05", 0);
     const EpochNanos window_end_ts = detail::ToEpochNs("20240103", "09:04:00", 0);
 
     std::size_t force_close_count = 0;
     bool saw_initial_open = false;
     for (const TradeRecord& trade : result.trades) {
         if (trade.signal_type == "kOpen" &&
-            trade.timestamp_ns == detail::ToEpochNs("20240103", "09:01:30", 0)) {
+            trade.timestamp_ns == detail::ToEpochNs("20240103", "09:02:05", 0)) {
             saw_initial_open = true;
         }
         if (trade.signal_type == "kForceClose") {
             ++force_close_count;
             EXPECT_EQ(trade.timestamp_ns, expected_force_close_ts);
-            EXPECT_DOUBLE_EQ(trade.price, 103.0);
+            EXPECT_DOUBLE_EQ(trade.price, 106.0);
             EXPECT_EQ(trade.side, "Sell");
             EXPECT_EQ(trade.offset, "Close");
         }
@@ -3209,6 +3538,9 @@ TEST(BacktestReplaySupportTest,
         WriteForceCloseWindowCompositeConfig(strategy_type, "21:00-21:02", "Asia/Shanghai");
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = "force-close-window-night-test";
@@ -3232,9 +3564,12 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecAssignsMonotonicFillAndOrderSeque
     const std::filesystem::path csv_path =
         WriteForceCloseWindowReplayCsv("quant_hft_fill_order_sequence");
     const std::filesystem::path composite_path =
-        WriteForceCloseWindowCompositeConfig(strategy_type, "09:01-09:04", "Asia/Shanghai");
+        WriteForceCloseWindowCompositeConfig(strategy_type, "09:03-09:04", "Asia/Shanghai");
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = "fill-order-sequence-test";
@@ -3281,6 +3616,9 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecDefersFiveMinuteBarSignalUntilLat
         WriteAlwaysOpenCompositeConfig(strategy_type, /*timeframe_minutes=*/5);
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = "deferred-bar-test";
@@ -3295,11 +3633,11 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecDefersFiveMinuteBarSignalUntilLat
     const TradeRecord& trade = result.trades.front();
     EXPECT_EQ(trade.signal_type, "kOpen");
     EXPECT_EQ(trade.signal_ts_ns, detail::ToEpochNs("20240110", "09:59:05", 0));
-    EXPECT_EQ(trade.timestamp_ns, detail::ToEpochNs("20240110", "10:01:30", 0));
+    EXPECT_EQ(trade.timestamp_ns, detail::ToEpochNs("20240110", "10:00:05", 0));
     EXPECT_GT(trade.timestamp_ns, trade.signal_ts_ns);
     EXPECT_EQ(trade.trading_day, "20240110");
-    EXPECT_EQ(trade.update_time, "10:01:30");
-    EXPECT_EQ(trade.timestamp_dt_local, "2024-01-10 10:01:30");
+    EXPECT_EQ(trade.update_time, "10:00:05");
+    EXPECT_EQ(trade.timestamp_dt_local, "2024-01-10 10:00:05");
 
     std::error_code ec;
     std::filesystem::remove(csv_path, ec);
@@ -3315,6 +3653,9 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecDefersTickStopLossUntilNextTick) 
         WriteTickStopCompositeConfig(strategy_type, /*stop_trigger_price=*/104.0);
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = "tick-stop-next-tick-test";
@@ -3348,6 +3689,9 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecExpiresPendingBarSignalAcrossSess
         WriteAlwaysOpenCompositeConfig(strategy_type, /*timeframe_minutes=*/5);
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = "pending-session-expiry-test";
@@ -3369,6 +3713,9 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecRespectsDetailEmissionFlags) {
     const std::filesystem::path composite_path = WriteTempCompositeConfig();
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = "detail-flags-test";
@@ -3409,11 +3756,14 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecAccumulatesCommissionFromProductC
         "      close_today_ratio_by_volume: 0.1\n");
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = "fee-accum-test";
     spec.product_config_path = fee_cfg.string();
-    spec.max_ticks = 4;
+    spec.max_ticks.reset();  // Include the finality watermark and subsequent executable tick.
 
     BacktestCliResult result;
     std::string error;
@@ -3452,11 +3802,14 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecSupportsRawInstrumentInfoJsonConf
         "}\n");
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = "fee-raw-json-test";
     spec.product_config_path = fee_cfg.string();
-    spec.max_ticks = 4;
+    spec.max_ticks.reset();  // Include the finality watermark and subsequent executable tick.
 
     BacktestCliResult result;
     std::string error;
@@ -3487,11 +3840,14 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecFailsWhenProductConfigMissingInst
         "      close_today_ratio_by_volume: 0\n");
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = "fee-missing-test";
     spec.product_config_path = fee_cfg.string();
-    spec.max_ticks = 4;
+    spec.max_ticks.reset();  // Include the finality watermark and subsequent executable tick.
 
     BacktestCliResult result;
     std::string error;
@@ -3521,12 +3877,15 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecEquityCurveUsesInitialEquityBasel
         "      close_today_ratio_by_volume: 0.1\n");
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = "equity-baseline-test";
     spec.initial_equity = 1000.0;
     spec.product_config_path = fee_cfg.string();
-    spec.max_ticks = 4;
+    spec.max_ticks.reset();  // Include the finality watermark and subsequent executable tick.
 
     BacktestCliResult result;
     std::string error;
@@ -3566,12 +3925,15 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecRejectsOpenWhenMarginInsufficient
         "      close_today_ratio_by_volume: 0\n");
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = "margin-reject-test";
     spec.initial_equity = 1000.0;
     spec.product_config_path = fee_cfg.string();
-    spec.max_ticks = 4;
+    spec.max_ticks.reset();  // Include the finality watermark and subsequent executable tick.
 
     BacktestCliResult result;
     std::string error;
@@ -3610,6 +3972,9 @@ TEST(BacktestReplaySupportTest, RunBacktestSpecClipsVolumeByMarginAndTracksUsage
         "      close_today_ratio_by_volume: 0\n");
 
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.csv_path = csv_path.string();
     spec.run_id = "margin-clip-test";
@@ -3779,6 +4144,9 @@ TEST(BacktestReplaySupportTest, ReplayTimeframeFanoutFlushesFiveMinuteSessionEnd
 
 TEST(BacktestReplaySupportTest, RequireParquetBacktestSpecRejectsUnsupportedEngineMode) {
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "csv";
     spec.dataset_root = "backtest_data/parquet_v2";
     std::string error;
@@ -3788,6 +4156,9 @@ TEST(BacktestReplaySupportTest, RequireParquetBacktestSpecRejectsUnsupportedEngi
 
 TEST(BacktestReplaySupportTest, RequireParquetBacktestSpecHonorsArrowBuildFlag) {
     BacktestCliSpec spec;
+    spec.behavior_profile = "research";
+    spec.parameter_profile = "backtest";
+    spec.rollover_mode = "strict";
     spec.engine_mode = "parquet";
     spec.dataset_root = "backtest_data/parquet_v2";
     std::string error;

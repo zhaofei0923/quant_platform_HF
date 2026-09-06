@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <map>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -16,15 +17,15 @@
 #include <utility>
 #include <vector>
 
-#include "quant_hft/apps/cli_support.h"
+#include "quant_hft/common/cli_support.h"
 #include "quant_hft/core/simple_json.h"
 #include "quant_hft/optim/result_analyzer.h"
 
 namespace quant_hft::rolling {
 namespace {
 
-using quant_hft::apps::BacktestCliResult;
-using quant_hft::apps::BacktestCliSpec;
+using quant_hft::backtest::BacktestCliResult;
+using quant_hft::backtest::BacktestCliSpec;
 using quant_hft::optim::ParamValue;
 using quant_hft::optim::ParamValueMap;
 using quant_hft::optim::ResultAnalyzer;
@@ -484,7 +485,7 @@ bool SelectRecommendedCandidateFromCsv(const std::string& csv_path,
 }
 
 bool ParseTrainReport(const std::string& json_text, std::vector<RankedTrial>* ranked_trials,
-                      std::string* error) {
+                      optim::OptimizationConfig* objective_config, std::string* error) {
     if (ranked_trials == nullptr) {
         if (error != nullptr) {
             *error = "ranked trials output is null";
@@ -495,6 +496,19 @@ bool ParseTrainReport(const std::string& json_text, std::vector<RankedTrial>* ra
     Value root;
     if (!quant_hft::simple_json::Parse(json_text, &root, error)) {
         return false;
+    }
+    const bool has_objective_contract = root.Find("metric_path") != nullptr;
+    objective_config->metric_path =
+        ParseStringValue(root.Find("metric_path"), "hf_standard.risk_metrics.calmar_ratio");
+    objective_config->maximize = ParseBoolValue(root.Find("maximize"), true);
+    if (const Value* objectives = root.Find("objectives"); objectives && objectives->IsArray()) {
+        for (const auto& value : objectives->array_value) {
+            optim::OptimizationObjective objective;
+            objective.metric_path = ParseStringValue(value.Find("path"));
+            objective.weight = ParseNumberValue(value.Find("weight"), 1.0);
+            objective.maximize = ParseBoolValue(value.Find("maximize"), true);
+            objective_config->objectives.push_back(std::move(objective));
+        }
     }
     const Value* trials_value = root.Find("trials");
     if (trials_value == nullptr || !trials_value->IsArray()) {
@@ -562,7 +576,14 @@ bool ParseTrainReport(const std::string& json_text, std::vector<RankedTrial>* ra
     }
 
     std::stable_sort(ranked_trials->begin(), ranked_trials->end(),
-                     [](const RankedTrial& left, const RankedTrial& right) {
+                     [&](const RankedTrial& left, const RankedTrial& right) {
+                         if (has_objective_contract) {
+                             if (left.objective == right.objective)
+                                 return left.original_index < right.original_index;
+                             return objective_config->maximize ? left.objective > right.objective
+                                                               : left.objective < right.objective;
+                         }
+                         // Legacy reports omitted objective metadata; preserve their Calmar order.
                          const double left_calmar = MetricSortValue(left.metrics.calmar_ratio);
                          const double right_calmar = MetricSortValue(right.metrics.calmar_ratio);
                          if (left_calmar != right_calmar) {
@@ -643,6 +664,15 @@ bool LoadArchivedBacktestSpec(const std::filesystem::path& archived_result_json,
     parsed.dataset_manifest = ParseStringValue(spec_value->Find("dataset_manifest"));
     parsed.detector_config_path = ParseStringValue(spec_value->Find("detector_config"));
     parsed.engine_mode = ParseStringValue(spec_value->Find("engine_mode"), parsed.engine_mode);
+    // Legacy archives retain their original research semantics explicitly.
+    parsed.online_runtime_config_path =
+        ParseStringValue(spec_value->Find("online_runtime_config_path"), "configs/sim/ctp.yaml");
+    parsed.behavior_profile = ParseStringValue(spec_value->Find("behavior_profile"), "research");
+    parsed.parameter_profile = ParseStringValue(spec_value->Find("parameter_profile"), "backtest");
+    parsed.initialization_policy =
+        ParseStringValue(spec_value->Find("initialization_policy"), "cold_start");
+    parsed.input_timestamp_basis =
+        ParseStringValue(spec_value->Find("input_timestamp_basis"), "legacy_exchange_local");
     parsed.rollover_mode =
         ParseStringValue(spec_value->Find("rollover_mode"), parsed.rollover_mode);
     parsed.product_series_mode =
@@ -693,6 +723,28 @@ bool LoadArchivedBacktestSpec(const std::filesystem::path& archived_result_json,
     parsed.trace_output_format =
         ParseStringValue(spec_value->Find("trace_output_format"), parsed.trace_output_format);
     ParseDetectorConfig(spec_value->Find("market_state_detector"), &parsed.detector_config);
+    if (const auto* products = spec_value->Find("market_state_detector_by_product");
+        products && products->IsObject()) {
+        for (const auto& [product, value] : products->object_value) {
+            MarketStateDetectorConfig config;
+            if (ParseDetectorConfig(&value, &config))
+                parsed.detector_config_by_product[product] = config;
+        }
+    }
+    if (const auto* strategies = spec_value->Find("strategy_configs");
+        strategies && strategies->IsArray()) {
+        for (const auto& value : strategies->array_value) {
+            quant_hft::backtest::BacktestStrategyConfig config;
+            config.strategy_id = ParseStringValue(value.Find("strategy_id"));
+            config.strategy_factory = ParseStringValue(value.Find("strategy_factory"));
+            config.strategy_main_config_path =
+                ParseStringValue(value.Find("strategy_main_config_path"));
+            config.strategy_composite_config =
+                ParseStringValue(value.Find("strategy_composite_config"));
+            config.product_id = ParseStringValue(value.Find("product_id"));
+            parsed.strategy_configs.push_back(std::move(config));
+        }
+    }
     parsed.emit_state_snapshots =
         ParseBoolValue(spec_value->Find("emit_state_snapshots"), parsed.emit_state_snapshots);
     parsed.emit_indicator_trace =
@@ -717,6 +769,93 @@ bool LoadArchivedBacktestSpec(const std::filesystem::path& archived_result_json,
 
     *spec = std::move(parsed);
     return true;
+}
+
+// A cache hit requires byte-identical inputs and the same executable semantics. FNV is
+// an accidental-change fingerprint, not an authenticity or security guarantee.
+std::string BuildCacheIdentity(const BacktestCliSpec& original,
+                               const std::filesystem::path& archived_dir,
+                               std::map<std::string, std::string>* digests, std::string* error) {
+    BacktestCliSpec spec = original;
+    spec.run_id.clear();
+    spec.indicator_trace_path.clear();
+    spec.sub_strategy_indicator_trace_path.clear();
+    spec.wal_path.clear();
+    std::ostringstream identity;
+    identity << "oos-validation-selection-v2\n" << quant_hft::backtest::BuildInputSignature(spec);
+    std::set<std::filesystem::path> pending;
+    const auto add = [&](const std::string& value) {
+        if (!value.empty()) pending.insert(ToAbsoluteNormalized(value));
+    };
+    add(spec.csv_path);
+    add(spec.dataset_manifest);
+    add(spec.detector_config_path);
+    if (spec.behavior_profile == "online_parity") add(spec.online_runtime_config_path);
+    add(spec.product_config_path);
+    add(spec.contract_expiry_calendar_path);
+    add(spec.strategy_main_config_path);
+    add((archived_dir / "composite.yaml").string());
+    add((archived_dir / "target_sub_strategy.yaml").string());
+    add("/proc/self/exe");
+    for (const auto& config : spec.strategy_configs) {
+        add(config.strategy_main_config_path);
+        add(config.strategy_composite_config);
+    }
+    std::error_code ec;
+    if (!spec.dataset_root.empty()) {
+        if (!std::filesystem::is_directory(spec.dataset_root, ec)) {
+            if (error) *error = "cache disabled: dataset directory is unavailable";
+            return {};
+        }
+        // Hash file bytes, including manifests: size/mtime alone misses in-place edits.
+        // Entire dataset is deliberately conservative; no selected partition can be omitted.
+        for (std::filesystem::recursive_directory_iterator it(spec.dataset_root, ec), end;
+             !ec && it != end; it.increment(ec)) {
+            if (it->is_regular_file()) add(it->path().string());
+        }
+        if (ec) {
+            if (error) *error = "cache disabled: dataset enumeration failed: " + ec.message();
+            return {};
+        }
+    }
+    std::set<std::filesystem::path> visited;
+    while (!pending.empty()) {
+        const auto path = *pending.begin();
+        pending.erase(pending.begin());
+        if (!visited.insert(path).second) continue;
+        auto found = digests->find(path.string());
+        std::string digest;
+        if (found != digests->end()) {
+            digest = found->second;
+        } else {
+            digest = quant_hft::backtest::ComputeFileDigest(path, error);
+            if (digest.empty()) return {};
+            digests->emplace(path.string(), digest);
+        }
+        identity << '\n' << path.string() << ':' << digest;
+        if (path.extension() != ".yaml" && path.extension() != ".yml") continue;
+        std::ifstream config(path);
+        std::string line;
+        while (std::getline(config, line)) {
+            const auto colon = line.find(':');
+            if (colon == std::string::npos) continue;
+            std::string key = Trim(line.substr(0, colon));
+            if (key != "config_path" && key != "product_config_path" &&
+                key != "contract_expiry_calendar_path" && key != "detector_config_path")
+                continue;
+            std::string value = Trim(line.substr(colon + 1));
+            if (value.size() > 1 && (value.front() == '\'' || value.front() == '"'))
+                value = value.substr(1, value.size() - 2);
+            std::filesystem::path referenced(value);
+            // Optimization archives intentionally rebind this one generated input.
+            if (referenced.filename() == "target_sub_strategy.yaml")
+                referenced = archived_dir / "target_sub_strategy.yaml";
+            else if (referenced.is_relative())
+                referenced = path.parent_path() / referenced;
+            add(referenced.string());
+        }
+    }
+    return quant_hft::backtest::detail::StableDigest(identity.str());
 }
 
 bool RewriteCompositeConfig(const std::filesystem::path& archived_dir,
@@ -788,7 +927,7 @@ bool RewriteCompositeConfig(const std::filesystem::path& archived_dir,
     }
 
     const std::filesystem::path local_composite = absolute_run_dir / "composite.yaml";
-    if (!quant_hft::apps::WriteTextFile(local_composite.string(), rewritten.str(), error)) {
+    if (!quant_hft::cli::WriteTextFile(local_composite.string(), rewritten.str(), error)) {
         return false;
     }
     *composite_path = local_composite;
@@ -868,13 +1007,13 @@ std::string FormatParamsJson(const ParamValueMap& params) {
             oss << ',';
         }
         first = false;
-        oss << '"' << quant_hft::apps::JsonEscape(key) << '"' << ':';
+        oss << '"' << quant_hft::cli::JsonEscape(key) << '"' << ':';
         const ParamValue& value = params.values.at(key);
         std::visit(
             [&](const auto& actual) {
                 using T = std::decay_t<decltype(actual)>;
                 if constexpr (std::is_same_v<T, std::string>) {
-                    oss << '"' << quant_hft::apps::JsonEscape(actual) << '"';
+                    oss << '"' << quant_hft::cli::JsonEscape(actual) << '"';
                 } else if constexpr (std::is_same_v<T, double>) {
                     oss << FormatDouble(actual);
                 } else {
@@ -899,14 +1038,6 @@ const OosTop10ValidationRow* FindRowByTrialId(const OosTop10ValidationReport& re
 
 bool WriteFinalRecommendedParamsYaml(const OosTop10ValidationRow& row,
                                      const std::string& output_path, std::string* error) {
-    if (!row.oos_calmar.has_value() || !row.oos_sharpe.has_value() ||
-        !row.oos_max_drawdown_pct.has_value()) {
-        if (error != nullptr) {
-            *error = "selected OOS row is missing metrics required for recommendation comment";
-        }
-        return false;
-    }
-
     if (!ResultAnalyzer::WriteBestParamsYaml(row.params, output_path, error)) {
         return false;
     }
@@ -917,13 +1048,15 @@ bool WriteFinalRecommendedParamsYaml(const OosTop10ValidationRow& row,
     }
 
     std::ostringstream yaml;
-    yaml << "# Selected based on highest Out-of-Sample Calmar Ratio among Top10 in-sample "
-            "parameters.\n";
-    yaml << "# OOS Calmar: " << FormatFixedPrecision(*row.oos_calmar, 2)
-         << ", OOS Sharpe: " << FormatFixedPrecision(*row.oos_sharpe, 2)
-         << ", OOS MaxDD: " << FormatFixedPrecision(*row.oos_max_drawdown_pct, 2) << "%\n";
+    yaml << "# Validation selection among training candidates; this interval is not an untouched "
+            "final test.\n";
+    yaml << "# OOS Calmar: " << (row.oos_calmar ? FormatFixedPrecision(*row.oos_calmar, 2) : "N/A")
+         << ", OOS Sharpe: " << (row.oos_sharpe ? FormatFixedPrecision(*row.oos_sharpe, 2) : "N/A")
+         << ", OOS MaxDD: "
+         << (row.oos_max_drawdown_pct ? FormatFixedPrecision(*row.oos_max_drawdown_pct, 2) : "N/A")
+         << "%\n";
     yaml << yaml_body;
-    return quant_hft::apps::WriteTextFile(output_path, yaml.str(), error);
+    return quant_hft::cli::WriteTextFile(output_path, yaml.str(), error);
 }
 
 void PopulateOosMetrics(const TrialMetricsSnapshot& metrics, OosTop10ValidationRow* row) {
@@ -943,7 +1076,8 @@ std::string RenderCsv(const OosTop10ValidationReport& report) {
     std::ostringstream csv;
     csv << "Rank,Trial ID,Params,InSample_Calmar,InSample_MaxDD,InSample_Sharpe,"
            "OOS_Calmar,OOS_MaxDD,OOS_Sharpe,OOS_ProfitFactor,OOS_TotalPnL,OOS_WinRate,"
-           "OOS_Trades,OOS_Status,OOS_Error\n";
+           "OOS_Trades,OOS_Status,OOS_Error,EvaluationRole,OOS_Start,OOS_End,Objective,Maximize,"
+           "OOS_Objective,CacheIdentity,CacheNote\n";
     for (const OosTop10ValidationRow& row : report.rows) {
         csv << row.rank << ',' << CsvEscape(row.trial_id) << ','
             << CsvEscape(FormatParamsJson(row.params)) << ','
@@ -957,7 +1091,11 @@ std::string RenderCsv(const OosTop10ValidationReport& report) {
             << FormatOptionalDouble(row.oos_total_pnl) << ','
             << FormatOptionalDouble(row.oos_win_rate_pct) << ','
             << FormatOptionalInt(row.oos_trades) << ',' << CsvEscape(row.status) << ','
-            << CsvEscape(row.error_msg) << '\n';
+            << CsvEscape(row.error_msg) << ',' << report.evaluation_role << ','
+            << report.oos_start_date << ',' << report.oos_end_date << ','
+            << CsvEscape(report.metric_path) << ',' << (report.maximize ? "true" : "false") << ','
+            << FormatOptionalDouble(row.oos_objective) << ',' << row.cache_identity << ','
+            << CsvEscape(row.cache_note) << '\n';
     }
     return csv.str();
 }
@@ -1001,6 +1139,10 @@ bool RunOosTop10Validation(const OosTop10ValidationRequest& request,
         }
         return false;
     }
+    if (normalized_start > normalized_end) {
+        if (error) *error = "oos_start_date must not be after oos_end_date";
+        return false;
+    }
     if (request.top_n <= 0) {
         if (error != nullptr) {
             *error = "top_n must be positive";
@@ -1026,7 +1168,8 @@ bool RunOosTop10Validation(const OosTop10ValidationRequest& request,
     }
 
     std::vector<RankedTrial> ranked_trials;
-    if (!ParseTrainReport(train_report_text, &ranked_trials, error)) {
+    optim::OptimizationConfig objective_config;
+    if (!ParseTrainReport(train_report_text, &ranked_trials, &objective_config, error)) {
         return false;
     }
     if (ranked_trials.empty()) {
@@ -1050,10 +1193,12 @@ bool RunOosTop10Validation(const OosTop10ValidationRequest& request,
     if (!effective_run_fn) {
         effective_run_fn = [](const BacktestCliSpec& spec, BacktestCliResult* out,
                               std::string* run_error) {
-            return quant_hft::apps::RunBacktestSpec(spec, out, run_error);
+            return quant_hft::backtest::RunBacktestSpec(spec, out, run_error);
         };
     }
 
+    report->metric_path = objective_config.metric_path;
+    report->maximize = objective_config.maximize;
     report->train_report_json = train_report_json.string();
     report->top_trials_dir = top_trials_dir.string();
     report->output_dir = output_dir.string();
@@ -1067,6 +1212,9 @@ bool RunOosTop10Validation(const OosTop10ValidationRequest& request,
     report->rows.clear();
     report->rows.reserve(static_cast<std::size_t>(report->selected_count));
 
+    std::map<std::string, std::string> input_digests;
+    report->oos_start_date = normalized_start;
+    report->oos_end_date = normalized_end;
     for (int index = 0; index < report->selected_count; ++index) {
         const RankedTrial& trial = ranked_trials[static_cast<std::size_t>(index)];
         OosTop10ValidationRow row;
@@ -1088,16 +1236,58 @@ bool RunOosTop10Validation(const OosTop10ValidationRequest& request,
             continue;
         }
 
+        BacktestCliSpec spec;
+        std::string row_error;
+        if (!LoadArchivedBacktestSpec(archived_dir / "result.json", &spec, &row_error)) {
+            row.status = "failed";
+            row.error_msg = row_error;
+            ++report->failed_count;
+            report->rows.push_back(std::move(row));
+            continue;
+        }
+        if (!spec.end_date.empty() && normalized_start <= NormalizeTradingDayToken(spec.end_date)) {
+            row.status = "failed";
+            row.error_msg = "validation interval must start after archived training interval";
+            ++report->failed_count;
+            report->rows.push_back(std::move(row));
+            continue;
+        }
+        spec.start_date = normalized_start;
+        spec.end_date = normalized_end;
+        const std::string archived_primary_config = spec.strategy_composite_config;
+        const auto rebind_primary_config = [&](const std::string& replacement) {
+            for (auto& config : spec.strategy_configs) {
+                if (spec.strategy_configs.size() == 1 ||
+                    config.strategy_composite_config == archived_primary_config ||
+                    config.strategy_composite_config == spec.strategy_composite_config) {
+                    config.strategy_composite_config = replacement;
+                }
+            }
+            spec.strategy_composite_config = replacement;
+        };
+        rebind_primary_config((archived_dir / "composite.yaml").string());
+        row.cache_identity =
+            BuildCacheIdentity(spec, archived_dir, &input_digests, &row.cache_note);
         const std::filesystem::path row_dir = ToAbsoluteNormalized(
-            output_dir / (FormatRankPrefix(row.rank) + "_" + SanitizeFileStem(trial.trial_id)));
+            output_dir / (FormatRankPrefix(row.rank) + "_" + SanitizeFileStem(trial.trial_id)) /
+            (normalized_start + "_" + normalized_end + "_" +
+             (row.cache_identity.empty() ? "uncacheable" : row.cache_identity)));
         const std::filesystem::path result_json_path = row_dir / "result.json";
+        const std::filesystem::path cache_receipt_path = row_dir / "cache_identity.txt";
         row.result_json_path = result_json_path.string();
-
         TrialMetricsSnapshot extracted_metrics;
         std::string metrics_error;
-        if (!request.overwrite && std::filesystem::exists(result_json_path) &&
+        std::string receipt;
+        if (!request.overwrite && !row.cache_identity.empty() &&
+            ReadTextFile(cache_receipt_path, &receipt, nullptr) &&
+            receipt == row.cache_identity + "\n" +
+                           quant_hft::backtest::ComputeFileDigest(result_json_path, nullptr) +
+                           "\n" &&
             ResultAnalyzer::ExtractTrialMetricsFromJson(result_json_path.string(),
                                                         &extracted_metrics, &metrics_error)) {
+            row.oos_objective = ResultAnalyzer::ComputeObjectiveFromJson(
+                result_json_path.string(), objective_config, &metrics_error);
+            if (!metrics_error.empty()) row.oos_objective.reset();
             PopulateOosMetrics(extracted_metrics, &row);
             row.success = true;
             row.reused_existing = true;
@@ -1106,19 +1296,8 @@ bool RunOosTop10Validation(const OosTop10ValidationRequest& request,
             report->rows.push_back(std::move(row));
             continue;
         }
-
         std::filesystem::path composite_path;
-        std::string row_error;
         if (!RewriteCompositeConfig(archived_dir, row_dir, &composite_path, &row_error)) {
-            row.status = "failed";
-            row.error_msg = row_error;
-            ++report->failed_count;
-            report->rows.push_back(std::move(row));
-            continue;
-        }
-
-        BacktestCliSpec spec;
-        if (!LoadArchivedBacktestSpec(archived_dir / "result.json", &spec, &row_error)) {
             row.status = "failed";
             row.error_msg = row_error;
             ++report->failed_count;
@@ -1128,7 +1307,7 @@ bool RunOosTop10Validation(const OosTop10ValidationRequest& request,
 
         spec.start_date = normalized_start;
         spec.end_date = normalized_end;
-        spec.strategy_composite_config = composite_path.string();
+        rebind_primary_config(composite_path.string());
         spec.run_id = "oos-top10-" + train_report_json.parent_path().filename().string() + "-" +
                       SanitizeFileStem(trial.trial_id);
         if (spec.emit_indicator_trace && !spec.indicator_trace_path.empty()) {
@@ -1144,17 +1323,18 @@ bool RunOosTop10Validation(const OosTop10ValidationRequest& request,
         if (!effective_run_fn(spec, &run_result, &row_error)) {
             row.status = "failed";
             row.error_msg = row_error;
-            (void)quant_hft::apps::WriteTextFile((row_dir / "error.txt").string(), row_error,
-                                                 nullptr);
+            (void)quant_hft::cli::WriteTextFile((row_dir / "error.txt").string(), row_error,
+                                                nullptr);
             ++report->failed_count;
             report->rows.push_back(std::move(row));
             continue;
         }
 
         const BacktestCliResult persisted_result = BuildResultForWrite(run_result, spec);
-        const std::string result_json_text = quant_hft::apps::RenderBacktestJson(persisted_result);
-        if (!quant_hft::apps::WriteTextFile(result_json_path.string(), result_json_text,
-                                            &row_error)) {
+        const std::string result_json_text =
+            quant_hft::backtest::RenderBacktestJson(persisted_result);
+        if (!quant_hft::cli::WriteTextFile(result_json_path.string(), result_json_text,
+                                           &row_error)) {
             row.status = "failed";
             row.error_msg = row_error;
             ++report->failed_count;
@@ -1171,6 +1351,19 @@ bool RunOosTop10Validation(const OosTop10ValidationRequest& request,
             continue;
         }
 
+        if (!row.cache_identity.empty()) {
+            const std::string receipt_text =
+                row.cache_identity + "\n" +
+                quant_hft::backtest::ComputeFileDigest(result_json_path, nullptr) + "\n";
+            if (!quant_hft::cli::WriteTextFile(cache_receipt_path.string(), receipt_text,
+                                               &row_error)) {
+                row.cache_note = "cache receipt unavailable: " + row_error;
+            }
+        }
+        metrics_error.clear();
+        row.oos_objective = ResultAnalyzer::ComputeObjectiveFromJson(
+            result_json_path.string(), objective_config, &metrics_error);
+        if (!metrics_error.empty()) row.oos_objective.reset();
         PopulateOosMetrics(extracted_metrics, &row);
         row.success = true;
         row.status = "completed";
@@ -1179,22 +1372,21 @@ bool RunOosTop10Validation(const OosTop10ValidationRequest& request,
     }
 
     const std::string csv_text = RenderCsv(*report);
-    if (!quant_hft::apps::WriteTextFile(report->output_csv, csv_text, error)) {
+    if (!quant_hft::cli::WriteTextFile(report->output_csv, csv_text, error)) {
         return false;
     }
 
-    CsvValidationCandidate recommended_candidate;
-    if (!SelectRecommendedCandidateFromCsv(report->output_csv, &recommended_candidate, error)) {
-        return false;
-    }
-
-    const OosTop10ValidationRow* recommended_row =
-        FindRowByTrialId(*report, recommended_candidate.trial_id);
-    if (recommended_row == nullptr) {
-        if (error != nullptr) {
-            *error = "recommended trial from csv not found in report rows: " +
-                     recommended_candidate.trial_id;
+    const OosTop10ValidationRow* recommended_row = nullptr;
+    for (const auto& row : report->rows) {
+        if (!row.success || !row.oos_objective || !std::isfinite(*row.oos_objective)) continue;
+        if (!recommended_row ||
+            (report->maximize ? *row.oos_objective > *recommended_row->oos_objective
+                              : *row.oos_objective < *recommended_row->oos_objective)) {
+            recommended_row = &row;
         }
+    }
+    if (!recommended_row) {
+        if (error) *error = "no successful validation candidate with the configured objective";
         return false;
     }
 

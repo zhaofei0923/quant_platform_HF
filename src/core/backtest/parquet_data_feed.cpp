@@ -1,9 +1,11 @@
 #include "quant_hft/backtest/parquet_data_feed.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -368,176 +370,32 @@ std::int64_t ReadInt64ArrayValue(const std::shared_ptr<arrow::Array>& values, st
     }
 }
 
-template <typename ReaderPtr>
-auto OpenParquetReader(const std::shared_ptr<arrow::io::RandomAccessFile>& input,
-                       ReaderPtr* reader, int)
-    -> decltype(parquet::arrow::OpenFile(input, arrow::default_memory_pool()), bool()) {
-    auto reader_result = parquet::arrow::OpenFile(input, arrow::default_memory_pool());
-    if (!reader_result.ok()) {
-        return false;
-    }
-    *reader = std::move(reader_result).ValueOrDie();
-    return *reader != nullptr;
-}
-
-template <typename ReaderPtr>
-auto OpenParquetReader(const std::shared_ptr<arrow::io::RandomAccessFile>& input,
-                       ReaderPtr* reader, long)
-    -> decltype(parquet::arrow::OpenFile(input, arrow::default_memory_pool(), reader), bool()) {
-    auto reader_status = parquet::arrow::OpenFile(input, arrow::default_memory_pool(), reader);
-    return reader_status.ok() && *reader != nullptr;
-}
-
 bool AppendTicksFromParquet(const std::filesystem::path& parquet_path,
                             const std::string& default_symbol, const Timestamp& start,
                             const Timestamp& end, std::vector<Tick>* out,
                             ParquetScanMetrics* metrics, std::int64_t max_ticks,
                             std::string* error) {
-    if (out == nullptr) {
-        return false;
+    if (!out) return false;
+    ParquetTickCursor cursor;
+    ParquetPartitionMeta partition;
+    partition.file_path = parquet_path.string();
+    partition.instrument_id = default_symbol;
+    if (!cursor.Open(partition, start, end, {}, 4096, error)) return false;
+    while (max_ticks < 0 || static_cast<std::int64_t>(out->size()) < max_ticks) {
+        Tick tick;
+        bool has_tick = false;
+        if (!cursor.Next(&tick, &has_tick, error)) return false;
+        if (!has_tick) break;
+        out->push_back(std::move(tick));
     }
-    if (max_ticks == 0) {
-        if (metrics != nullptr) {
-            metrics->early_stop_hit = true;
-        }
-        return true;
+    if (metrics) {
+        *metrics = cursor.metrics();
+        metrics->early_stop_hit =
+            max_ticks >= 0 && static_cast<std::int64_t>(out->size()) >= max_ticks;
     }
-
-    auto input_res = arrow::io::ReadableFile::Open(parquet_path.string());
-    if (!input_res.ok()) {
-        if (error != nullptr) {
-            *error = "unable to open parquet file: " + parquet_path.string() + " (" +
-                     input_res.status().ToString() + ")";
-        }
-        return false;
-    }
-
-    std::unique_ptr<parquet::arrow::FileReader> reader;
-    if (!OpenParquetReader(input_res.ValueOrDie(), &reader, 0)) {
-        if (error != nullptr) {
-            *error = "unable to open parquet reader: " + parquet_path.string();
-        }
-        return false;
-    }
-
-    std::shared_ptr<arrow::Table> table;
-    auto table_status = reader->ReadTable(&table);
-    if (!table_status.ok() || table == nullptr) {
-        if (error != nullptr) {
-            *error = "unable to read parquet table: " + parquet_path.string() + " (" +
-                     table_status.ToString() + ")";
-        }
-        return false;
-    }
-
-    if (metrics != nullptr) {
-        metrics->io_bytes += SafeFileSize(parquet_path);
-    }
-
-    const auto* schema = table->schema().get();
-    const int symbol_index = schema->GetFieldIndex("symbol");
-    const int exchange_index = schema->GetFieldIndex("exchange");
-    const int ts_index = schema->GetFieldIndex("ts_ns");
-    const int last_price_index = schema->GetFieldIndex("last_price");
-    const int last_volume_index = schema->GetFieldIndex("last_volume");
-    const int bid_price_index = schema->GetFieldIndex("bid_price1");
-    const int bid_volume_index = schema->GetFieldIndex("bid_volume1");
-    const int ask_price_index = schema->GetFieldIndex("ask_price1");
-    const int ask_volume_index = schema->GetFieldIndex("ask_volume1");
-    const int volume_index = schema->GetFieldIndex("volume");
-    const int turnover_index = schema->GetFieldIndex("turnover");
-    const int open_interest_index = schema->GetFieldIndex("open_interest");
-
-    if (ts_index < 0) {
-        if (error != nullptr) {
-            *error = "parquet missing required column: ts_ns";
-        }
-        return false;
-    }
-
-    arrow::TableBatchReader batch_reader(*table);
-    std::shared_ptr<arrow::RecordBatch> batch;
-    while (true) {
-        auto batch_status = batch_reader.ReadNext(&batch);
-        if (!batch_status.ok()) {
-            if (error != nullptr) {
-                *error = batch_status.ToString();
-            }
-            return false;
-        }
-        if (batch == nullptr) {
-            break;
-        }
-
-        if (metrics != nullptr) {
-            metrics->scan_row_groups += 1;
-        }
-
-        const auto get_column = [&](int index) -> std::shared_ptr<arrow::Array> {
-            if (index < 0 || index >= batch->num_columns()) {
-                return nullptr;
-            }
-            return batch->column(index);
-        };
-
-        const std::shared_ptr<arrow::Array> symbol_column = get_column(symbol_index);
-        const std::shared_ptr<arrow::Array> exchange_column = get_column(exchange_index);
-        const std::shared_ptr<arrow::Array> ts_column = get_column(ts_index);
-        const std::shared_ptr<arrow::Array> last_price_column = get_column(last_price_index);
-        const std::shared_ptr<arrow::Array> last_volume_column = get_column(last_volume_index);
-        const std::shared_ptr<arrow::Array> bid_price_column = get_column(bid_price_index);
-        const std::shared_ptr<arrow::Array> bid_volume_column = get_column(bid_volume_index);
-        const std::shared_ptr<arrow::Array> ask_price_column = get_column(ask_price_index);
-        const std::shared_ptr<arrow::Array> ask_volume_column = get_column(ask_volume_index);
-        const std::shared_ptr<arrow::Array> volume_column = get_column(volume_index);
-        const std::shared_ptr<arrow::Array> turnover_column = get_column(turnover_index);
-        const std::shared_ptr<arrow::Array> open_interest_column = get_column(open_interest_index);
-
-        for (std::int64_t row = 0; row < batch->num_rows(); ++row) {
-            if (metrics != nullptr) {
-                metrics->scan_rows += 1;
-            }
-
-            Tick tick;
-            tick.symbol = default_symbol;
-
-            if (symbol_column != nullptr) {
-                const std::string parsed_symbol = ReadStringArrayValue(symbol_column, row);
-                if (!parsed_symbol.empty()) {
-                    tick.symbol = parsed_symbol;
-                }
-            }
-
-            tick.exchange = ReadStringArrayValue(exchange_column, row);
-            tick.ts_ns = ReadInt64ArrayValue(ts_column, row);
-            tick.last_price = ReadDoubleArrayValue(last_price_column, row);
-            tick.last_volume =
-                static_cast<std::int32_t>(ReadInt64ArrayValue(last_volume_column, row));
-            tick.bid_price1 = ReadDoubleArrayValue(bid_price_column, row);
-            tick.bid_volume1 =
-                static_cast<std::int32_t>(ReadInt64ArrayValue(bid_volume_column, row));
-            tick.ask_price1 = ReadDoubleArrayValue(ask_price_column, row);
-            tick.ask_volume1 =
-                static_cast<std::int32_t>(ReadInt64ArrayValue(ask_volume_column, row));
-            tick.volume = ReadInt64ArrayValue(volume_column, row);
-            tick.turnover = ReadDoubleArrayValue(turnover_column, row);
-            tick.open_interest = ReadInt64ArrayValue(open_interest_column, row);
-
-            if (tick.ts_ns < start.ToEpochNanos() || tick.ts_ns > end.ToEpochNanos()) {
-                continue;
-            }
-            out->push_back(tick);
-            if (max_ticks > 0 && static_cast<std::int64_t>(out->size()) >= max_ticks) {
-                if (metrics != nullptr) {
-                    metrics->early_stop_hit = true;
-                }
-                return true;
-            }
-        }
-    }
-
     return true;
 }
+
 #endif
 
 #if !QUANT_HFT_ENABLE_ARROW_PARQUET
@@ -617,6 +475,201 @@ bool LoadTicksFromSidecar(const ParquetPartitionMeta& partition, const Timestamp
 #endif
 
 }  // namespace
+
+struct ParquetTickCursor::Impl {
+    ParquetPartitionMeta partition;
+    EpochNanos start{0};
+    EpochNanos end{0};
+    EpochNanos previous_ts{std::numeric_limits<EpochNanos>::min()};
+    ParquetScanMetrics metrics;
+#if QUANT_HFT_ENABLE_ARROW_PARQUET
+    std::unique_ptr<parquet::arrow::FileReader> reader;
+    std::unique_ptr<arrow::RecordBatchReader> batches;
+    std::shared_ptr<arrow::RecordBatch> batch;
+    std::array<std::shared_ptr<arrow::Array>, 12> columns;
+    std::int64_t row{0};
+    std::vector<std::int64_t> row_group_ends;
+#else
+    std::ifstream input;
+    std::vector<std::string> headers;
+#endif
+};
+
+ParquetTickCursor::ParquetTickCursor() : impl_(std::make_unique<Impl>()) {}
+ParquetTickCursor::~ParquetTickCursor() = default;
+ParquetTickCursor::ParquetTickCursor(ParquetTickCursor&&) noexcept = default;
+ParquetTickCursor& ParquetTickCursor::operator=(ParquetTickCursor&&) noexcept = default;
+const ParquetScanMetrics& ParquetTickCursor::metrics() const { return impl_->metrics; }
+
+bool ParquetTickCursor::Open(const ParquetPartitionMeta& partition, const Timestamp& start,
+                             const Timestamp& end,
+                             const std::vector<std::string>& projected_columns,
+                             std::size_t batch_size, std::string* error) {
+    impl_ = std::make_unique<Impl>();
+    auto& state = *impl_;
+    state.partition = partition;
+    state.start = start.ToEpochNanos();
+    state.end = end.ToEpochNanos();
+    if (batch_size == 0 || batch_size > 1'048'576 || state.start > state.end) {
+        if (error) *error = "invalid parquet cursor batch size or interval";
+        return false;
+    }
+#if QUANT_HFT_ENABLE_ARROW_PARQUET
+    auto input = arrow::io::ReadableFile::Open(partition.file_path);
+    if (!input.ok()) {
+        if (error) *error = input.status().ToString();
+        return false;
+    }
+    parquet::ReaderProperties parquet_properties;
+    parquet_properties.enable_buffered_stream();
+    parquet_properties.set_buffer_size(64 * 1024);
+    parquet::ArrowReaderProperties arrow_properties;
+    arrow_properties.set_pre_buffer(false);
+    parquet::arrow::FileReaderBuilder builder;
+    builder.properties(arrow_properties);
+    auto status = builder.Open(input.ValueOrDie(), parquet_properties);
+    if (status.ok()) status = builder.Build(&state.reader);
+    if (!status.ok() || !state.reader) {
+        if (error) *error = "unable to open parquet reader: " + status.ToString();
+        return false;
+    }
+    state.reader->set_batch_size(static_cast<std::int64_t>(batch_size));
+    std::shared_ptr<arrow::Schema> schema;
+    status = state.reader->GetSchema(&schema);
+    if (!status.ok() || !schema || schema->GetFieldIndex("ts_ns") < 0) {
+        if (error) *error = "parquet cursor requires ts_ns column";
+        return false;
+    }
+    std::vector<int> columns;
+    if (projected_columns.empty()) {
+        for (int column = 0; column < schema->num_fields(); ++column) columns.push_back(column);
+    } else {
+        std::set<int> unique;
+        unique.insert(schema->GetFieldIndex("ts_ns"));
+        for (const auto& name : projected_columns) {
+            const int index = schema->GetFieldIndex(name);
+            if (index >= 0) unique.insert(index);
+        }
+        columns.assign(unique.begin(), unique.end());
+    }
+    std::vector<int> row_groups;
+    std::int64_t rows = 0;
+    const auto metadata = state.reader->parquet_reader()->metadata();
+    for (int group = 0; group < metadata->num_row_groups(); ++group) {
+        row_groups.push_back(group);
+        rows += metadata->RowGroup(group)->num_rows();
+        state.row_group_ends.push_back(rows);
+    }
+    status = state.reader->GetRecordBatchReader(row_groups, columns, &state.batches);
+    if (!status.ok() || !state.batches) {
+        if (error) *error = "unable to open parquet batch reader: " + status.ToString();
+        return false;
+    }
+    state.metrics.io_bytes = SafeFileSize(partition.file_path);
+#else
+    (void)projected_columns;
+    state.input.open(partition.file_path + ".ticks.csv");
+    std::string header;
+    if (!state.input || !std::getline(state.input, header)) {
+        if (error) *error = "unable to open parquet cursor sidecar";
+        return false;
+    }
+    state.headers = SplitCsvLine(header);
+    state.metrics.io_bytes = SafeFileSize(partition.file_path + ".ticks.csv");
+#endif
+    return true;
+}
+
+bool ParquetTickCursor::Next(Tick* tick, bool* has_tick, std::string* error) {
+    if (!tick || !has_tick) {
+        if (error) *error = "parquet cursor output is null";
+        return false;
+    }
+    *has_tick = false;
+    auto& state = *impl_;
+    for (;;) {
+        Tick row;
+#if QUANT_HFT_ENABLE_ARROW_PARQUET
+        if (!state.batches) {
+            if (error) *error = "parquet cursor is not open";
+            return false;
+        }
+        if (!state.batch || state.row >= state.batch->num_rows()) {
+            const auto status = state.batches->ReadNext(&state.batch);
+            if (!status.ok()) {
+                if (error) *error = status.ToString();
+                return false;
+            }
+            if (!state.batch) return true;
+            static constexpr std::array<const char*, 12> names = {
+                "symbol",      "exchange",   "ts_ns",       "last_price",
+                "last_volume", "bid_price1", "bid_volume1", "ask_price1",
+                "ask_volume1", "volume",     "turnover",    "open_interest"};
+            for (std::size_t column = 0; column < names.size(); ++column) {
+                state.columns[column] = state.batch->GetColumnByName(names[column]);
+            }
+            state.row = 0;
+            ++state.metrics.batches_read;
+            state.metrics.buffered_rows_high_water =
+                std::max(state.metrics.buffered_rows_high_water, state.batch->num_rows());
+        }
+        const auto index = state.row++;
+        row.symbol = ReadStringArrayValue(state.columns[0], index);
+        if (row.symbol.empty()) row.symbol = state.partition.instrument_id;
+        row.exchange = ReadStringArrayValue(state.columns[1], index);
+        row.ts_ns = ReadInt64ArrayValue(state.columns[2], index);
+        row.last_price = ReadDoubleArrayValue(state.columns[3], index);
+        row.last_volume = static_cast<std::int32_t>(ReadInt64ArrayValue(state.columns[4], index));
+        row.bid_price1 = ReadDoubleArrayValue(state.columns[5], index);
+        row.bid_volume1 = static_cast<std::int32_t>(ReadInt64ArrayValue(state.columns[6], index));
+        row.ask_price1 = ReadDoubleArrayValue(state.columns[7], index);
+        row.ask_volume1 = static_cast<std::int32_t>(ReadInt64ArrayValue(state.columns[8], index));
+        row.volume = ReadInt64ArrayValue(state.columns[9], index);
+        row.turnover = ReadDoubleArrayValue(state.columns[10], index);
+        row.open_interest = ReadInt64ArrayValue(state.columns[11], index);
+#else
+        std::string line;
+        if (!std::getline(state.input, line)) {
+            if (state.input.bad()) {
+                if (error) *error = "parquet cursor sidecar read failed";
+                return false;
+            }
+            return true;
+        }
+        if (line.empty()) continue;
+        try {
+            row = BuildTickFromValues(state.headers, SplitCsvLine(line),
+                                      state.partition.instrument_id);
+        } catch (const std::exception&) {
+            if (error) *error = "invalid parquet cursor sidecar row";
+            return false;
+        }
+        ++state.metrics.batches_read;
+        state.metrics.buffered_rows_high_water = 1;
+#endif
+        ++state.metrics.scan_rows;
+#if QUANT_HFT_ENABLE_ARROW_PARQUET
+        state.metrics.scan_row_groups =
+            static_cast<std::int64_t>(std::lower_bound(state.row_group_ends.begin(),
+                                                       state.row_group_ends.end(),
+                                                       state.metrics.scan_rows) -
+                                      state.row_group_ends.begin()) +
+            1;
+#else
+        state.metrics.scan_row_groups = 1;
+#endif
+        if (row.ts_ns < state.previous_ts) {
+            if (error) *error = "non-monotonic parquet partition: " + state.partition.file_path;
+            return false;
+        }
+        state.previous_ts = row.ts_ns;
+        if (row.ts_ns < state.start) continue;
+        if (row.ts_ns > state.end) return true;
+        *tick = std::move(row);
+        *has_tick = true;
+        return true;
+    }
+}
 
 ParquetDataFeed::ParquetDataFeed(std::string parquet_root)
     : parquet_root_(std::move(parquet_root)) {}

@@ -38,24 +38,10 @@ std::filesystem::path UniqueTracePath(const std::string& stem) {
 }
 
 #if QUANT_HFT_ENABLE_ARROW_PARQUET
-template <typename ReaderPtr>
-auto OpenParquetReaderCompat(const std::shared_ptr<arrow::io::RandomAccessFile>& input,
-                             ReaderPtr* reader, int)
-    -> decltype(parquet::arrow::OpenFile(input, arrow::default_memory_pool()), bool()) {
-    auto reader_result = parquet::arrow::OpenFile(input, arrow::default_memory_pool());
-    if (!reader_result.ok()) {
-        return false;
-    }
-    *reader = std::move(reader_result).ValueOrDie();
-    return *reader != nullptr;
-}
-
-template <typename ReaderPtr>
-auto OpenParquetReaderCompat(const std::shared_ptr<arrow::io::RandomAccessFile>& input,
-                             ReaderPtr* reader, long)
-    -> decltype(parquet::arrow::OpenFile(input, arrow::default_memory_pool(), reader), bool()) {
-    auto reader_status = parquet::arrow::OpenFile(input, arrow::default_memory_pool(), reader);
-    return reader_status.ok() && *reader != nullptr;
+bool OpenParquetReaderCompat(const std::shared_ptr<arrow::io::RandomAccessFile>& input,
+                             std::unique_ptr<parquet::arrow::FileReader>* reader, int) {
+    parquet::arrow::FileReaderBuilder builder;
+    return builder.Open(input).ok() && builder.Build(reader).ok() && *reader != nullptr;
 }
 #endif
 

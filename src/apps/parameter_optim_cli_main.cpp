@@ -28,12 +28,13 @@
 namespace {
 
 using quant_hft::apps::ArgMap;
-using quant_hft::apps::DetectDefaultBacktestCliPath;
 using quant_hft::apps::DefaultParameterOptimConfigPath;
+using quant_hft::apps::DetectDefaultBacktestCliPath;
 using quant_hft::apps::GetArg;
 using quant_hft::apps::HasArg;
 using quant_hft::apps::ParseArgs;
 using quant_hft::apps::ResolveConfigPathWithDefault;
+using quant_hft::optim::GenerateTrialConfig;
 using quant_hft::optim::IOptimizationAlgorithm;
 using quant_hft::optim::LoadParameterSpace;
 using quant_hft::optim::OptimizationConfig;
@@ -45,7 +46,6 @@ using quant_hft::optim::TaskScheduler;
 using quant_hft::optim::Trial;
 using quant_hft::optim::TrialConfigArtifacts;
 using quant_hft::optim::TrialConfigRequest;
-using quant_hft::optim::GenerateTrialConfig;
 
 std::atomic<bool> g_interrupted{false};
 
@@ -96,7 +96,7 @@ class TempArtifactManager {
     void Cleanup() {
         std::sort(cleanup_paths_.begin(), cleanup_paths_.end());
         cleanup_paths_.erase(std::unique(cleanup_paths_.begin(), cleanup_paths_.end()),
-                            cleanup_paths_.end());
+                             cleanup_paths_.end());
         std::sort(keep_paths_.begin(), keep_paths_.end());
         keep_paths_.erase(std::unique(keep_paths_.begin(), keep_paths_.end()), keep_paths_.end());
 
@@ -195,8 +195,7 @@ std::string RankedTrialDirectoryName(std::size_t rank, const std::string& trial_
 }
 
 bool CopyDirectoryRecursive(const std::filesystem::path& source,
-                            const std::filesystem::path& destination,
-                            std::string* error) {
+                            const std::filesystem::path& destination, std::string* error) {
     std::error_code ec;
     if (!std::filesystem::exists(source, ec) || !std::filesystem::is_directory(source, ec)) {
         if (error != nullptr) {
@@ -208,8 +207,9 @@ bool CopyDirectoryRecursive(const std::filesystem::path& source,
     std::filesystem::create_directories(destination.parent_path(), ec);
     if (ec) {
         if (error != nullptr) {
-            *error = "failed to create archive parent directory: " + destination.parent_path().string() +
-                     ", error=" + ec.message();
+            *error =
+                "failed to create archive parent directory: " + destination.parent_path().string() +
+                ", error=" + ec.message();
         }
         return false;
     }
@@ -231,8 +231,7 @@ bool CopyDirectoryRecursive(const std::filesystem::path& source,
     return true;
 }
 
-bool PreserveTopKTrials(const OptimizationConfig& config,
-                        OptimizationReport* report,
+bool PreserveTopKTrials(const OptimizationConfig& config, OptimizationReport* report,
                         std::string* error) {
     if (report == nullptr) {
         if (error != nullptr) {
@@ -255,19 +254,21 @@ bool PreserveTopKTrials(const OptimizationConfig& config,
         return true;
     }
 
-    std::stable_sort(completed_indices.begin(), completed_indices.end(), [&](std::size_t left,
-                                                                             std::size_t right) {
-        return report->maximize ? (report->trials[left].objective > report->trials[right].objective)
-                                : (report->trials[left].objective < report->trials[right].objective);
-    });
+    std::stable_sort(
+        completed_indices.begin(), completed_indices.end(),
+        [&](std::size_t left, std::size_t right) {
+            return report->maximize
+                       ? (report->trials[left].objective > report->trials[right].objective)
+                       : (report->trials[left].objective < report->trials[right].objective);
+        });
 
     const std::filesystem::path archive_root = ArchiveRootForTask(config);
     std::error_code ec;
     std::filesystem::remove_all(archive_root, ec);
     if (ec) {
         if (error != nullptr) {
-            *error = "failed to reset archive root: " + archive_root.string() + ", error=" +
-                     ec.message();
+            *error = "failed to reset archive root: " + archive_root.string() +
+                     ", error=" + ec.message();
         }
         return false;
     }
@@ -275,15 +276,14 @@ bool PreserveTopKTrials(const OptimizationConfig& config,
     std::filesystem::create_directories(archive_root, ec);
     if (ec) {
         if (error != nullptr) {
-            *error = "failed to create archive root: " + archive_root.string() + ", error=" +
-                     ec.message();
+            *error = "failed to create archive root: " + archive_root.string() +
+                     ", error=" + ec.message();
         }
         return false;
     }
 
-    const std::size_t top_n =
-        std::min<std::size_t>(static_cast<std::size_t>(config.preserve_top_k_trials),
-                              completed_indices.size());
+    const std::size_t top_n = std::min<std::size_t>(
+        static_cast<std::size_t>(config.preserve_top_k_trials), completed_indices.size());
     for (std::size_t rank = 0; rank < top_n; ++rank) {
         Trial& trial = report->trials[completed_indices[rank]];
         if (trial.working_dir.empty()) {
@@ -315,8 +315,7 @@ bool PreserveTopKTrials(const OptimizationConfig& config,
 
 std::string BuildBacktestCommand(const std::string& backtest_cli_path,
                                  const std::map<std::string, std::string>& backtest_args,
-                                 const std::string& trial_id,
-                                 const TrialConfigArtifacts& artifacts,
+                                 const std::string& trial_id, const TrialConfigArtifacts& artifacts,
                                  const std::filesystem::path& output_json,
                                  const std::filesystem::path& stdout_log,
                                  const std::filesystem::path& stderr_log) {
@@ -324,8 +323,8 @@ std::string BuildBacktestCommand(const std::string& backtest_cli_path,
     cmd << ShellQuote(backtest_cli_path);
 
     for (const auto& [key, value] : backtest_args) {
-        if (key == "strategy_factory" || key == "strategy_composite_config" || key == "output_json" ||
-            key == "output_md" || key == "run_id") {
+        if (key == "strategy_factory" || key == "strategy_composite_config" ||
+            key == "output_json" || key == "output_md" || key == "run_id") {
             continue;
         }
         cmd << " --" << key << ' ' << ShellQuote(value);
@@ -361,8 +360,7 @@ int main(int argc, char** argv) {
         return 2;
     }
     if (resolved_config.used_default) {
-        std::cout << "parameter_optim_cli: using default config: " << resolved_config.path
-                  << '\n';
+        std::cout << "parameter_optim_cli: using default config: " << resolved_config.path << '\n';
     }
     const std::string config_path = resolved_config.path;
 
@@ -392,14 +390,22 @@ int main(int argc, char** argv) {
     }
 
     const std::string backtest_cli_path = DetectBacktestCliPath(args, space, argv[0]);
-    const int requested_concurrent = std::max(1, space.optimization.batch_size);
+    const int requested_concurrent =
+        space.optimization.max_parallel > 0
+            ? std::min(space.optimization.max_parallel, space.optimization.batch_size)
+            : space.optimization.batch_size;
     const int max_concurrent = SafeMaxConcurrent(requested_concurrent);
     if (max_concurrent < requested_concurrent) {
         std::cout << "parameter_optim_cli: limiting concurrency from " << requested_concurrent
-                  << " to " << max_concurrent
-                  << " to reduce CPU and memory pressure\n";
+                  << " to " << max_concurrent << " to reduce CPU and memory pressure\n";
     }
-    TaskScheduler scheduler(max_concurrent);
+    TaskScheduler scheduler(max_concurrent, space.optimization.memory_budget_mb,
+                            space.optimization.per_task_memory_mb);
+    space.optimization.effective_parallel = scheduler.max_concurrent();
+    std::cout << "parameter_optim_cli: effective_parallel=" << scheduler.max_concurrent()
+              << " input_memory_budget_mb=" << space.optimization.memory_budget_mb
+              << " per_task_memory_mb=" << space.optimization.per_task_memory_mb
+              << " (declared input working set; retained output/trace memory is separate)\n";
 
     std::signal(SIGINT, HandleSignal);
     std::signal(SIGTERM, HandleSignal);
@@ -421,6 +427,17 @@ int main(int argc, char** argv) {
         request.target_sub_config_path = space.target_sub_config_path;
         request.param_overrides = params.values;
         request.trial_id = trial.trial_id;
+        const auto backtest_arg = [&](const std::string& underscore, const std::string& hyphen,
+                                      const std::string& fallback) {
+            auto found = space.backtest_args.find(underscore);
+            if (found == space.backtest_args.end()) found = space.backtest_args.find(hyphen);
+            return found == space.backtest_args.end() ? fallback : found->second;
+        };
+        request.parameter_profile = backtest_arg(
+            "parameter_profile", "parameter-profile",
+            backtest_arg("behavior_profile", "behavior-profile", "online_parity") == "research"
+                ? "backtest"
+                : "sim");
 
         TrialConfigArtifacts artifacts;
         std::string trial_error;
@@ -449,15 +466,14 @@ int main(int argc, char** argv) {
 
         if (rc != 0) {
             trial.status = "failed";
-            trial.error_msg = "backtest_cli exit code=" + std::to_string(rc) +
-                              ", stderr=" + stderr_log.string();
+            trial.error_msg =
+                "backtest_cli exit code=" + std::to_string(rc) + ", stderr=" + stderr_log.string();
             return trial;
         }
 
         std::string metric_error;
-        const double objective =
-            ResultAnalyzer::ComputeObjectiveFromJson(trial.result_json_path, space.optimization,
-                                                     &metric_error);
+        const double objective = ResultAnalyzer::ComputeObjectiveFromJson(
+            trial.result_json_path, space.optimization, &metric_error);
         if (!metric_error.empty()) {
             trial.status = "failed";
             trial.error_msg = metric_error;

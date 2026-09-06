@@ -9,10 +9,10 @@
 #include <string>
 #include <vector>
 
-#include "quant_hft/apps/backtest_replay_support.h"
+#include "quant_hft/backtest/replay_runtime.h"
 #include "quant_hft/contracts/instrument_utils.h"
 
-namespace quant_hft::apps {
+namespace quant_hft::backtest {
 
 namespace {
 
@@ -236,4 +236,4 @@ bool ExportBacktestCsv(const BacktestCliResult& result, const std::string& out_d
     return true;
 }
 
-}  // namespace quant_hft::apps
+}  // namespace quant_hft::backtest

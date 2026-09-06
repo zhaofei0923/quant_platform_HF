@@ -1,5 +1,3 @@
-#include "quant_hft/rolling/rolling_runner.h"
-
 #include <gtest/gtest.h>
 
 #include <chrono>
@@ -8,13 +6,14 @@
 #include <string>
 #include <vector>
 
+#include "quant_hft/rolling/rolling_runner.h"
+
 namespace quant_hft::rolling {
 namespace {
 
 std::filesystem::path MakeTempDir(const std::string& stem) {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    const auto dir = std::filesystem::temp_directory_path() /
-                     (stem + "_" + std::to_string(stamp));
+    const auto dir = std::filesystem::temp_directory_path() / (stem + "_" + std::to_string(stamp));
     std::filesystem::create_directories(dir);
     return dir;
 }
@@ -26,8 +25,8 @@ std::filesystem::path WriteManifest(const std::filesystem::path& dataset_root,
     std::ofstream out(manifest);
     int file_index = 0;
     for (const std::string& day : trading_days) {
-        out << "{\"file_path\":\"source=rb/trading_day=" << day
-            << "/instrument_id=rb2405/part-" << file_index++ << ".parquet\",";
+        out << "{\"file_path\":\"source=rb/trading_day=" << day << "/instrument_id=rb2405/part-"
+            << file_index++ << ".parquet\",";
         out << "\"source\":\"rb\",\"trading_day\":\"" << day
             << "\",\"instrument_id\":\"rb2405\",\"min_ts_ns\":1,\"max_ts_ns\":2,\"row_count\":1}\n";
     }
@@ -38,9 +37,8 @@ std::filesystem::path WriteManifest(const std::filesystem::path& dataset_root,
 TEST(RollingRunnerFixedTest, RunsWindowsAndAggregatesSummary) {
     const auto dir = MakeTempDir("rolling_runner_fixed");
     const auto dataset_root = dir / "data";
-    const auto manifest =
-        WriteManifest(dataset_root,
-                      {"20230101", "20230102", "20230103", "20230104", "20230105", "20230106"});
+    const auto manifest = WriteManifest(
+        dataset_root, {"20230101", "20230102", "20230103", "20230104", "20230105", "20230106"});
 
     RollingConfig config;
     config.mode = "fixed_params";
@@ -58,11 +56,10 @@ TEST(RollingRunnerFixedTest, RunsWindowsAndAggregatesSummary) {
     config.optimization.metric = "hf_standard.profit_factor";
     config.output.window_parallel = 2;
 
-    auto fake_run_fn = [](const quant_hft::apps::BacktestCliSpec& spec,
-                          quant_hft::apps::BacktestCliResult* out,
-                          std::string* error) {
+    auto fake_run_fn = [](const quant_hft::backtest::BacktestCliSpec& spec,
+                          quant_hft::backtest::BacktestCliResult* out, std::string* error) {
         (void)error;
-        quant_hft::apps::BacktestCliResult result;
+        quant_hft::backtest::BacktestCliResult result;
         result.run_id = spec.run_id;
         result.engine_mode = spec.engine_mode;
         result.mode = "backtest";
@@ -129,9 +126,8 @@ TEST(RollingRunnerFixedTest, PropagatesBacktestBasePathsAndSizingInputsToSpec) {
     config.output.window_parallel = 1;
 
     bool inspected = false;
-    auto fake_run_fn = [&](const quant_hft::apps::BacktestCliSpec& spec,
-                           quant_hft::apps::BacktestCliResult* out,
-                           std::string* error) {
+    auto fake_run_fn = [&](const quant_hft::backtest::BacktestCliSpec& spec,
+                           quant_hft::backtest::BacktestCliResult* out, std::string* error) {
         (void)error;
         inspected = true;
         EXPECT_EQ(spec.symbols, std::vector<std::string>({"c"}));
@@ -145,7 +141,7 @@ TEST(RollingRunnerFixedTest, PropagatesBacktestBasePathsAndSizingInputsToSpec) {
         EXPECT_DOUBLE_EQ(spec.rollover_slippage_bps, 0.0);
         EXPECT_DOUBLE_EQ(spec.initial_equity, 200000.0);
 
-        quant_hft::apps::BacktestCliResult result;
+        quant_hft::backtest::BacktestCliResult result;
         result.run_id = spec.run_id;
         result.engine_mode = spec.engine_mode;
         result.mode = "backtest";

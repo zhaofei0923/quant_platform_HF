@@ -5,7 +5,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "quant_hft/apps/backtest_replay_support.h"
+#include "quant_hft/backtest/replay_runtime.h"
 #include "quant_hft/rolling/rolling_config.h"
 #include "quant_hft/rolling/window_generator.h"
 
@@ -32,6 +32,12 @@ struct WindowResult {
 };
 
 struct RollingReport {
+    int effective_parallel{1};
+    std::int64_t memory_budget_mb{0};
+    std::int64_t per_task_memory_mb{0};
+    // Independent flat cold starts: metrics describe a window distribution, not chained capital.
+    std::string evaluation_role{"independent_window_validation"};
+    std::string capital_policy{"independent_cold_start"};
     std::string mode;
     std::vector<WindowResult> windows;
     double mean_objective{0.0};
@@ -44,14 +50,10 @@ struct RollingReport {
     std::vector<double> objectives;
 };
 
-using BacktestRunFn = std::function<bool(const quant_hft::apps::BacktestCliSpec&,
-                                         quant_hft::apps::BacktestCliResult*,
-                                         std::string*)>;
+using BacktestRunFn = std::function<bool(const quant_hft::backtest::BacktestCliSpec&,
+                                         quant_hft::backtest::BacktestCliResult*, std::string*)>;
 
-bool RunRollingBacktest(const RollingConfig& config,
-                        RollingReport* report,
-                        std::string* error,
+bool RunRollingBacktest(const RollingConfig& config, RollingReport* report, std::string* error,
                         BacktestRunFn run_fn = BacktestRunFn{});
 
 }  // namespace quant_hft::rolling
-

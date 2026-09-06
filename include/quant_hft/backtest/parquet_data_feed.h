@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -27,6 +28,27 @@ struct ParquetScanMetrics {
     std::int64_t scan_row_groups{0};
     std::int64_t io_bytes{0};
     bool early_stop_hit{false};
+    std::int64_t batches_read{0};
+    std::int64_t buffered_rows_high_water{0};
+};
+
+// A forward-only partition reader. One bounded Arrow RecordBatch is resident; input
+// timestamps must be nondecreasing, because a streaming merge cannot repair disorder.
+class ParquetTickCursor {
+   public:
+    ParquetTickCursor();
+    ~ParquetTickCursor();
+    ParquetTickCursor(ParquetTickCursor&&) noexcept;
+    ParquetTickCursor& operator=(ParquetTickCursor&&) noexcept;
+    bool Open(const ParquetPartitionMeta& partition, const Timestamp& start, const Timestamp& end,
+              const std::vector<std::string>& projected_columns, std::size_t batch_size,
+              std::string* error);
+    bool Next(Tick* tick, bool* has_tick, std::string* error);
+    const ParquetScanMetrics& metrics() const;
+
+   private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 class ParquetDataFeed {

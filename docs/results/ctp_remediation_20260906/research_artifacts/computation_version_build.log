@@ -1,0 +1,34 @@
+[  0%] Building CXX object CMakeFiles/quant_hft_core.dir/src/backtest/replay_helpers.cpp.o
+[  0%] Building CXX object CMakeFiles/quant_hft_core.dir/src/backtest/replay_runtime.cpp.o
+[  0%] Building CXX object CMakeFiles/quant_hft_core.dir/src/rolling/metric_extractor.cpp.o
+[  3%] Building CXX object CMakeFiles/quant_hft_core.dir/src/rolling/oos_top10_validation.cpp.o
+[  3%] Building CXX object CMakeFiles/quant_hft_core.dir/src/apps/backtest_result_export.cpp.o
+[  3%] Building CXX object CMakeFiles/quant_hft_core.dir/src/rolling/rolling_report_writer.cpp.o
+[  3%] Building CXX object CMakeFiles/quant_hft_core.dir/src/rolling/rolling_runner.cpp.o
+/tmp/quant-hft-stage3-snapshot/src/rolling/oos_top10_validation.cpp:1029:30: warning: ‘const quant_hft::rolling::OosTop10ValidationRow* quant_hft::rolling::{anonymous}::FindRowByTrialId(const quant_hft::rolling::OosTop10ValidationReport&, const string&)’ defined but not used [-Wunused-function]
+ 1029 | const OosTop10ValidationRow* FindRowByTrialId(const OosTop10ValidationReport& report,
+      |                              ^~~~~~~~~~~~~~~~
+/tmp/quant-hft-stage3-snapshot/src/rolling/oos_top10_validation.cpp:447:6: warning: ‘bool quant_hft::rolling::{anonymous}::SelectRecommendedCandidateFromCsv(const string&, quant_hft::rolling::{anonymous}::CsvValidationCandidate*, std::string*)’ defined but not used [-Wunused-function]
+  447 | bool SelectRecommendedCandidateFromCsv(const std::string& csv_path,
+      |      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+[  7%] Linking CXX static library libquant_hft_core.a
+[100%] Built target quant_hft_core
+Consolidate compiler generated dependencies of target backtest_cli
+[100%] Building CXX object CMakeFiles/backtest_cli.dir/src/apps/backtest_cli_main.cpp.o
+[100%] Linking CXX executable backtest_cli
+[100%] Built target backtest_cli
+[  0%] Built target gtest
+[  3%] Built target gtest_main
+Consolidate compiler generated dependencies of target quant_hft_core
+[100%] Built target quant_hft_core
+Consolidate compiler generated dependencies of target backtest_replay_support_test
+[100%] Building CXX object CMakeFiles/backtest_replay_support_test.dir/tests/unit/apps/backtest_replay_support_test.cpp.o
+[100%] Linking CXX executable backtest_replay_support_test
+[100%] Built target backtest_replay_support_test
+[  0%] Built target gtest
+[  3%] Built target gtest_main
+[ 96%] Built target quant_hft_core
+Consolidate compiler generated dependencies of target oos_top10_validation_test
+[ 96%] Building CXX object CMakeFiles/oos_top10_validation_test.dir/tests/unit/apps/oos_top10_validation_test.cpp.o
+[100%] Linking CXX executable oos_top10_validation_test
+[100%] Built target oos_top10_validation_test

@@ -1,0 +1,8 @@
+Internal ctest changing into directory: /tmp/quant-hft-research-build
+Test project /tmp/quant-hft-research-build
+    Start 845: QualityGateScriptsTest.DependencyAuditPassesCurrentBuild
+1/1 Test #845: QualityGateScriptsTest.DependencyAuditPassesCurrentBuild ...   Passed    0.05 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   0.07 sec

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <deque>
 #include <future>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -14,8 +15,7 @@ struct ActiveTask {
     std::future<Trial> future;
 };
 
-Trial ExecuteTaskSafely(const TaskScheduler::TaskFunc& task,
-                        const ParamValueMap& params,
+Trial ExecuteTaskSafely(const TaskScheduler::TaskFunc& task, const ParamValueMap& params,
                         std::size_t index) {
     Trial trial;
     trial.trial_id = "trial_" + std::to_string(index);
@@ -48,8 +48,19 @@ Trial GetFutureResult(std::future<Trial>* future, std::size_t index) {
 
 }  // namespace
 
-TaskScheduler::TaskScheduler(int max_concurrent) {
+TaskScheduler::TaskScheduler(int max_concurrent, std::int64_t memory_budget_mb,
+                             std::int64_t per_task_memory_mb) {
     max_concurrent_ = std::max(1, max_concurrent);
+    if (memory_budget_mb < 0 || per_task_memory_mb < 0 ||
+        (memory_budget_mb > 0 &&
+         (per_task_memory_mb == 0 || per_task_memory_mb > memory_budget_mb))) {
+        throw std::invalid_argument(
+            "memory budget requires a positive per-task estimate no larger than the budget");
+    }
+    if (memory_budget_mb > 0) {
+        max_concurrent_ = static_cast<int>(
+            std::min<std::int64_t>(max_concurrent_, memory_budget_mb / per_task_memory_mb));
+    }
 }
 
 std::vector<Trial> TaskScheduler::RunBatch(const std::vector<ParamValueMap>& params_batch,
@@ -88,9 +99,8 @@ std::vector<Trial> TaskScheduler::RunBatch(const std::vector<ParamValueMap>& par
         ordered_results.emplace_back(task_item.index, std::move(completed));
     }
 
-    std::sort(ordered_results.begin(), ordered_results.end(), [](const auto& left, const auto& right) {
-        return left.first < right.first;
-    });
+    std::sort(ordered_results.begin(), ordered_results.end(),
+              [](const auto& left, const auto& right) { return left.first < right.first; });
 
     std::vector<Trial> results;
     results.reserve(ordered_results.size());

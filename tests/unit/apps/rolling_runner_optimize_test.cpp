@@ -1,5 +1,3 @@
-#include "quant_hft/rolling/rolling_runner.h"
-
 #include <gtest/gtest.h>
 
 #include <chrono>
@@ -8,13 +6,14 @@
 #include <string>
 #include <vector>
 
+#include "quant_hft/rolling/rolling_runner.h"
+
 namespace quant_hft::rolling {
 namespace {
 
 std::filesystem::path MakeTempDir(const std::string& stem) {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    const auto dir = std::filesystem::temp_directory_path() /
-                     (stem + "_" + std::to_string(stamp));
+    const auto dir = std::filesystem::temp_directory_path() / (stem + "_" + std::to_string(stamp));
     std::filesystem::create_directories(dir);
     return dir;
 }
@@ -34,8 +33,8 @@ std::filesystem::path WriteManifest(const std::filesystem::path& dataset_root,
     std::ofstream out(manifest);
     int file_index = 0;
     for (const std::string& day : trading_days) {
-        out << "{\"file_path\":\"source=rb/trading_day=" << day
-            << "/instrument_id=rb2405/part-" << file_index++ << ".parquet\",";
+        out << "{\"file_path\":\"source=rb/trading_day=" << day << "/instrument_id=rb2405/part-"
+            << file_index++ << ".parquet\",";
         out << "\"source\":\"rb\",\"trading_day\":\"" << day
             << "\",\"instrument_id\":\"rb2405\",\"min_ts_ns\":1,\"max_ts_ns\":2,\"row_count\":1}\n";
     }
@@ -55,9 +54,8 @@ std::string ReadConfigPathFromComposite(const std::string& composite_path) {
         while (!value.empty() && (value.front() == ' ' || value.front() == '\t')) {
             value.erase(value.begin());
         }
-        if (value.size() >= 2 &&
-            ((value.front() == '"' && value.back() == '"') ||
-             (value.front() == '\'' && value.back() == '\''))) {
+        if (value.size() >= 2 && ((value.front() == '"' && value.back() == '"') ||
+                                  (value.front() == '\'' && value.back() == '\''))) {
             value = value.substr(1, value.size() - 2);
         }
         return value;
@@ -90,7 +88,8 @@ std::string ReadFileText(const std::filesystem::path& path) {
 TEST(RollingRunnerOptimizeTest, SelectsBestTrialAndEvaluatesOnTestWindow) {
     const auto dir = MakeTempDir("rolling_runner_optimize");
     const auto dataset_root = dir / "data";
-    const auto manifest = WriteManifest(dataset_root, {"20230101", "20230102", "20230103", "20230104"});
+    const auto manifest =
+        WriteManifest(dataset_root, {"20230101", "20230102", "20230103", "20230104"});
     const auto products = WriteFile(dir / "instrument_info.json", "{\"products\":{}}\n");
     const auto calendar = WriteFile(dir / "contract_expiry_calendar.yaml", "contracts:\n");
 
@@ -115,39 +114,39 @@ TEST(RollingRunnerOptimizeTest, SelectsBestTrialAndEvaluatesOnTestWindow) {
                                                 calendar.string() +
                                                 "\n"
                                                 "composite:\n"
-                                            "  merge_rule: kPriority\n"
-                                            "  enable_non_backtest: false\n"
-                                            "  sub_strategies:\n"
-                                            "    - id: trend_1\n"
-                                            "      enabled: true\n"
-                                            "      timeframe_minutes: 5\n"
-                                            "      type: TrendStrategy\n"
-                                            "      config_path: " +
+                                                "  merge_rule: kPriority\n"
+                                                "  enable_non_backtest: false\n"
+                                                "  sub_strategies:\n"
+                                                "    - id: trend_1\n"
+                                                "      enabled: true\n"
+                                                "      timeframe_minutes: 5\n"
+                                                "      type: TrendStrategy\n"
+                                                "      config_path: " +
                                                 sub_config.string() + "\n");
 
-    const auto param_space = WriteFile(
-        dir / "param_space.yaml",
-        "composite_config_path: " + composite_config.string() +
-            "\n"
-            "target_sub_config_path: " + sub_config.string() +
-            "\n"
-            "backtest_args:\n"
-            "  engine_mode: parquet\n"
-            "  dataset_root: " +
-            dataset_root.string() +
-            "\n"
-            "optimization:\n"
-            "  algorithm: grid\n"
-            "  metric_path: hf_standard.profit_factor\n"
-            "  maximize: true\n"
-            "  max_trials: 10\n"
-            "  parallel: 2\n"
-            "  constraints:\n"
-            "    - \"profit_factor > 1.5\"\n"
-            "parameters:\n"
-            "  - name: default_volume\n"
-            "    type: int\n"
-            "    values: [1, 2]\n");
+    const auto param_space =
+        WriteFile(dir / "param_space.yaml", "composite_config_path: " + composite_config.string() +
+                                                "\n"
+                                                "target_sub_config_path: " +
+                                                sub_config.string() +
+                                                "\n"
+                                                "backtest_args:\n"
+                                                "  engine_mode: parquet\n"
+                                                "  dataset_root: " +
+                                                dataset_root.string() +
+                                                "\n"
+                                                "optimization:\n"
+                                                "  algorithm: grid\n"
+                                                "  metric_path: hf_standard.profit_factor\n"
+                                                "  maximize: true\n"
+                                                "  max_trials: 10\n"
+                                                "  parallel: 2\n"
+                                                "  constraints:\n"
+                                                "    - \"profit_factor > 1.5\"\n"
+                                                "parameters:\n"
+                                                "  - name: default_volume\n"
+                                                "    type: int\n"
+                                                "    values: [1, 2]\n");
 
     RollingConfig config;
     config.mode = "rolling_optimize";
@@ -184,23 +183,24 @@ TEST(RollingRunnerOptimizeTest, SelectsBestTrialAndEvaluatesOnTestWindow) {
     config.output.keep_temp_files = false;
     config.output.window_parallel = 3;
 
-    auto fake_run_fn = [](const quant_hft::apps::BacktestCliSpec& spec,
-                          quant_hft::apps::BacktestCliResult* out,
-                          std::string* error) {
+    auto fake_run_fn = [](const quant_hft::backtest::BacktestCliSpec& spec,
+                          quant_hft::backtest::BacktestCliResult* out, std::string* error) {
         (void)error;
-        quant_hft::apps::BacktestCliResult result;
+        quant_hft::backtest::BacktestCliResult result;
         result.run_id = spec.run_id;
         result.spec = spec;
         result.mode = "backtest";
         result.engine_mode = spec.engine_mode;
         result.data_source = "parquet";
 
-        const std::string sub_config_path = ReadConfigPathFromComposite(spec.strategy_composite_config);
+        const std::string sub_config_path =
+            ReadConfigPathFromComposite(spec.strategy_composite_config);
         const int default_volume = ReadDefaultVolumeFromSubConfig(sub_config_path);
 
         const bool is_train = spec.run_id.find("-train-") != std::string::npos;
-        result.advanced_summary.profit_factor =
-            is_train ? static_cast<double>(default_volume) : 100.0 + static_cast<double>(default_volume);
+        result.advanced_summary.profit_factor = is_train
+                                                    ? static_cast<double>(default_volume)
+                                                    : 100.0 + static_cast<double>(default_volume);
 
         result.has_deterministic = true;
         result.deterministic.performance.total_pnl = result.advanced_summary.profit_factor * 10.0;
@@ -234,13 +234,15 @@ TEST(RollingRunnerOptimizeTest, SelectsBestTrialAndEvaluatesOnTestWindow) {
     EXPECT_FALSE(report.windows[0].top_trials_dir.empty());
     EXPECT_TRUE(std::filesystem::exists(report.windows[0].top_trials_dir));
     if (std::filesystem::exists(report.windows[0].top_trials_dir)) {
-        EXPECT_EQ(std::distance(std::filesystem::directory_iterator(report.windows[0].top_trials_dir),
-                                std::filesystem::directory_iterator()),
-                  1);
+        EXPECT_EQ(
+            std::distance(std::filesystem::directory_iterator(report.windows[0].top_trials_dir),
+                          std::filesystem::directory_iterator()),
+            1);
     }
 
     std::ifstream best_in(report.windows[0].best_params_yaml);
-    std::string best_text((std::istreambuf_iterator<char>(best_in)), std::istreambuf_iterator<char>());
+    std::string best_text((std::istreambuf_iterator<char>(best_in)),
+                          std::istreambuf_iterator<char>());
     EXPECT_NE(best_text.find("default_volume: 2"), std::string::npos);
 
     const std::string train_report_json_text = ReadFileText(report.windows[0].train_report_json);
@@ -255,7 +257,8 @@ TEST(RollingRunnerOptimizeTest, SelectsBestTrialAndEvaluatesOnTestWindow) {
     EXPECT_NE(train_report_md_text.find("task_id"), std::string::npos);
 
     const auto top10_path =
-        std::filesystem::path(report.windows[0].train_report_json).parent_path() / "top10_in_sample.md";
+        std::filesystem::path(report.windows[0].train_report_json).parent_path() /
+        "top10_in_sample.md";
     ASSERT_TRUE(std::filesystem::exists(top10_path));
     const std::string top10_text = ReadFileText(top10_path);
     EXPECT_NE(top10_text.find("default_volume=2"), std::string::npos);
@@ -268,7 +271,8 @@ TEST(RollingRunnerOptimizeTest, SelectsBestTrialAndEvaluatesOnTestWindow) {
 TEST(RollingRunnerOptimizeTest, SupportsRandomSearchAlgorithm) {
     const auto dir = MakeTempDir("rolling_runner_random_optimize");
     const auto dataset_root = dir / "data";
-    const auto manifest = WriteManifest(dataset_root, {"20230101", "20230102", "20230103", "20230104"});
+    const auto manifest =
+        WriteManifest(dataset_root, {"20230101", "20230102", "20230103", "20230104"});
     const auto products = WriteFile(dir / "instrument_info.json", "{\"products\":{}}\n");
     const auto calendar = WriteFile(dir / "contract_expiry_calendar.yaml", "contracts:\n");
 
@@ -293,38 +297,38 @@ TEST(RollingRunnerOptimizeTest, SupportsRandomSearchAlgorithm) {
                                                 calendar.string() +
                                                 "\n"
                                                 "composite:\n"
-                                            "  merge_rule: kPriority\n"
-                                            "  enable_non_backtest: false\n"
-                                            "  sub_strategies:\n"
-                                            "    - id: trend_1\n"
-                                            "      enabled: true\n"
-                                            "      timeframe_minutes: 5\n"
-                                            "      type: TrendStrategy\n"
-                                            "      config_path: " +
+                                                "  merge_rule: kPriority\n"
+                                                "  enable_non_backtest: false\n"
+                                                "  sub_strategies:\n"
+                                                "    - id: trend_1\n"
+                                                "      enabled: true\n"
+                                                "      timeframe_minutes: 5\n"
+                                                "      type: TrendStrategy\n"
+                                                "      config_path: " +
                                                 sub_config.string() + "\n");
 
-    const auto param_space = WriteFile(
-        dir / "param_space.yaml",
-        "composite_config_path: " + composite_config.string() +
-            "\n"
-            "target_sub_config_path: " + sub_config.string() +
-            "\n"
-            "backtest_args:\n"
-            "  engine_mode: parquet\n"
-            "  dataset_root: " +
-            dataset_root.string() +
-            "\n"
-            "optimization:\n"
-            "  algorithm: random\n"
-            "  metric_path: hf_standard.profit_factor\n"
-            "  maximize: true\n"
-            "  max_trials: 2\n"
-            "  random_seed: 314159\n"
-            "  parallel: 2\n"
-            "parameters:\n"
-            "  - name: default_volume\n"
-            "    type: int\n"
-            "    values: [1, 2, 3]\n");
+    const auto param_space =
+        WriteFile(dir / "param_space.yaml", "composite_config_path: " + composite_config.string() +
+                                                "\n"
+                                                "target_sub_config_path: " +
+                                                sub_config.string() +
+                                                "\n"
+                                                "backtest_args:\n"
+                                                "  engine_mode: parquet\n"
+                                                "  dataset_root: " +
+                                                dataset_root.string() +
+                                                "\n"
+                                                "optimization:\n"
+                                                "  algorithm: random\n"
+                                                "  metric_path: hf_standard.profit_factor\n"
+                                                "  maximize: true\n"
+                                                "  max_trials: 2\n"
+                                                "  random_seed: 314159\n"
+                                                "  parallel: 2\n"
+                                                "parameters:\n"
+                                                "  - name: default_volume\n"
+                                                "    type: int\n"
+                                                "    values: [1, 2, 3]\n");
 
     RollingConfig config;
     config.mode = "rolling_optimize";
@@ -362,18 +366,18 @@ TEST(RollingRunnerOptimizeTest, SupportsRandomSearchAlgorithm) {
     config.output.keep_temp_files = false;
     config.output.window_parallel = 1;
 
-    auto fake_run_fn = [](const quant_hft::apps::BacktestCliSpec& spec,
-                          quant_hft::apps::BacktestCliResult* out,
-                          std::string* error) {
+    auto fake_run_fn = [](const quant_hft::backtest::BacktestCliSpec& spec,
+                          quant_hft::backtest::BacktestCliResult* out, std::string* error) {
         (void)error;
-        quant_hft::apps::BacktestCliResult result;
+        quant_hft::backtest::BacktestCliResult result;
         result.run_id = spec.run_id;
         result.spec = spec;
         result.mode = "backtest";
         result.engine_mode = spec.engine_mode;
         result.data_source = "parquet";
 
-        const std::string sub_config_path = ReadConfigPathFromComposite(spec.strategy_composite_config);
+        const std::string sub_config_path =
+            ReadConfigPathFromComposite(spec.strategy_composite_config);
         const int default_volume = ReadDefaultVolumeFromSubConfig(sub_config_path);
         result.advanced_summary.profit_factor = static_cast<double>(default_volume);
         result.has_deterministic = true;
@@ -403,4 +407,3 @@ TEST(RollingRunnerOptimizeTest, SupportsRandomSearchAlgorithm) {
 
 }  // namespace
 }  // namespace quant_hft::rolling
-

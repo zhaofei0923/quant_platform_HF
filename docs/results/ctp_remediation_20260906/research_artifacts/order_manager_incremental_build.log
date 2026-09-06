@@ -1,0 +1,23 @@
+[  0%] Built target gtest
+Consolidate compiler generated dependencies of target quant_hft_common
+[ 13%] Built target quant_hft_common
+[ 13%] Built target gtest_main
+[ 13%] Built target quant_hft_wal_io
+[ 13%] Building CXX object CMakeFiles/quant_hft_storage.dir/src/core/storage/redis_hash_client.cpp.o
+[ 20%] Built target quant_hft_ctp
+[ 20%] Linking CXX static library libquant_hft_storage.a
+[ 30%] Built target quant_hft_storage
+Consolidate compiler generated dependencies of target quant_hft_services
+[ 30%] Building CXX object CMakeFiles/quant_hft_services.dir/src/services/order/order_manager.cpp.o
+[ 33%] Linking CXX static library libquant_hft_services.a
+[ 53%] Built target quant_hft_services
+Consolidate compiler generated dependencies of target quant_hft_online_runtime
+[ 66%] Built target quant_hft_strategy
+[ 73%] Built target quant_hft_online_runtime
+Consolidate compiler generated dependencies of target quant_hft_backtest
+[ 86%] Built target quant_hft_backtest
+[ 90%] Built target quant_hft_optim
+[ 96%] Built target quant_hft_rolling
+Consolidate compiler generated dependencies of target order_manager_test
+[ 96%] Linking CXX executable order_manager_test
+[100%] Built target order_manager_test

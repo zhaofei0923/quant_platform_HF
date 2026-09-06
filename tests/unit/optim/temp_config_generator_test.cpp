@@ -37,6 +37,36 @@ std::string ReadFile(const std::filesystem::path& path) {
     return buffer.str();
 }
 
+TEST(TempConfigGeneratorTest, TrialValuesOverrideSelectedParameterProfileOnly) {
+    const auto base = MakeTempDir();
+    WriteFile(base / "sub/kama.yaml", "params:\n  id: kama\n  default_volume: 1\n");
+    WriteFile(base / "composite.yaml",
+              "run_type: backtest\nbacktest:\n  initial_equity: 100000\n"
+              "  symbols: [c]\n  start_date: 20260501\n  end_date: 20260530\n"
+              "composite:\n  run_type: backtest\n  sub_strategies:\n"
+              "    - id: kama\n      type: KamaTrendStrategy\n      config_path: ./sub/kama.yaml\n"
+              "      overrides:\n        sim:\n          params:\n            default_volume: 2\n"
+              "        backtest:\n          params:\n            default_volume: 3\n");
+    TrialConfigRequest request;
+    request.composite_config_path = base / "composite.yaml";
+    request.target_sub_config_path = "./sub/kama.yaml";
+    request.parameter_profile = "sim";
+    request.param_overrides["default_volume"] = 9;
+    TrialConfigArtifacts artifacts;
+    std::string error;
+    ASSERT_TRUE(GenerateTrialConfig(request, &artifacts, &error)) << error;
+    CompositeStrategyDefinition generated;
+    ASSERT_TRUE(LoadCompositeStrategyDefinition(artifacts.composite_config_path.string(),
+                                                &generated, &error))
+        << error;
+    ASSERT_EQ(generated.sub_strategies.size(), 1U);
+    EXPECT_EQ(generated.sub_strategies.front().params.at("default_volume"), "9");
+    EXPECT_EQ(generated.sub_strategies.front().overrides.sim_params.at("default_volume"), "9");
+    EXPECT_EQ(generated.sub_strategies.front().overrides.backtest_params.at("default_volume"), "3");
+    std::filesystem::remove_all(artifacts.working_dir);
+    std::filesystem::remove_all(base);
+}
+
 TEST(TempConfigGeneratorTest, RewritesTargetSubConfigAndAbsolutizesOtherPaths) {
     const std::filesystem::path base_dir = MakeTempDir();
     const std::filesystem::path target_sub = base_dir / "sub" / "kama.yaml";
@@ -93,13 +123,14 @@ TEST(TempConfigGeneratorTest, RewritesTargetSubConfigAndAbsolutizesOtherPaths) {
     EXPECT_TRUE(std::filesystem::exists(artifacts.composite_config_path));
 
     std::map<std::string, std::string> params;
-    ASSERT_TRUE(quant_hft::apps::detail::LoadYamlScalarMap(artifacts.sub_config_path, &params, &error))
+    ASSERT_TRUE(
+        quant_hft::apps::detail::LoadYamlScalarMap(artifacts.sub_config_path, &params, &error))
         << error;
     EXPECT_EQ(params["params.take_profit_atr_multiplier"], "20.0");
 
     CompositeStrategyDefinition generated;
-    ASSERT_TRUE(
-        LoadCompositeStrategyDefinition(artifacts.composite_config_path.string(), &generated, &error))
+    ASSERT_TRUE(LoadCompositeStrategyDefinition(artifacts.composite_config_path.string(),
+                                                &generated, &error))
         << error;
     EXPECT_EQ(generated.run_type, "backtest");
     EXPECT_FALSE(generated.market_state_mode);

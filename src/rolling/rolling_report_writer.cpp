@@ -4,13 +4,13 @@
 #include <sstream>
 #include <string>
 
-#include "quant_hft/apps/cli_support.h"
+#include "quant_hft/common/cli_support.h"
 
 namespace quant_hft::rolling {
 namespace {
 
-using quant_hft::apps::JsonEscape;
-using quant_hft::apps::WriteTextFile;
+using quant_hft::cli::JsonEscape;
+using quant_hft::cli::WriteTextFile;
 
 std::string FormatDouble(double value) {
     std::ostringstream oss;
@@ -20,11 +20,17 @@ std::string FormatDouble(double value) {
 
 }  // namespace
 
-bool WriteRollingReportJson(const RollingReport& report,
-                            const std::string& output_path,
+bool WriteRollingReportJson(const RollingReport& report, const std::string& output_path,
                             std::string* error) {
     std::ostringstream json;
     json << "{\n"
+         << "  \"resource_budget\": {\"effective_parallel\":" << report.effective_parallel
+         << ",\"memory_budget_mb\":" << report.memory_budget_mb
+         << ",\"per_task_memory_mb\":" << report.per_task_memory_mb
+         << ",\"scope\":\"declared_input_working_set; retained output and trace memory "
+            "separate\"},\n"
+         << "  \"evaluation_role\": \"" << report.evaluation_role << "\",\n"
+         << "  \"capital_policy\": \"" << report.capital_policy << "\",\n"
          << "  \"mode\": \"" << JsonEscape(report.mode) << "\",\n"
          << "  \"interrupted\": " << (report.interrupted ? "true" : "false") << ",\n"
          << "  \"success_count\": " << report.success_count << ",\n"
@@ -55,21 +61,15 @@ bool WriteRollingReportJson(const RollingReport& report,
              << "      \"test_end\": \"" << JsonEscape(window.test_end) << "\",\n"
              << "      \"success\": " << (window.success ? "true" : "false") << ",\n"
              << "      \"objective\": " << FormatDouble(window.objective) << ",\n"
-                         << "      \"train_trial_count\": " << window.train_trial_count << ",\n"
-                         << "      \"completed_train_trial_count\": "
-                         << window.completed_train_trial_count << ",\n"
-                         << "      \"train_task_id\": \"" << JsonEscape(window.train_task_id)
-                         << "\",\n"
-                         << "      \"train_report_json\": \"" << JsonEscape(window.train_report_json)
-                         << "\",\n"
-                         << "      \"train_report_md\": \"" << JsonEscape(window.train_report_md)
-                         << "\",\n"
-             << "      \"best_params_yaml\": \"" << JsonEscape(window.best_params_yaml)
-             << "\",\n"
-                         << "      \"test_result_json\": \"" << JsonEscape(window.test_result_json)
-                         << "\",\n"
-                         << "      \"top_trials_dir\": \"" << JsonEscape(window.top_trials_dir)
-                         << "\",\n"
+             << "      \"train_trial_count\": " << window.train_trial_count << ",\n"
+             << "      \"completed_train_trial_count\": " << window.completed_train_trial_count
+             << ",\n"
+             << "      \"train_task_id\": \"" << JsonEscape(window.train_task_id) << "\",\n"
+             << "      \"train_report_json\": \"" << JsonEscape(window.train_report_json) << "\",\n"
+             << "      \"train_report_md\": \"" << JsonEscape(window.train_report_md) << "\",\n"
+             << "      \"best_params_yaml\": \"" << JsonEscape(window.best_params_yaml) << "\",\n"
+             << "      \"test_result_json\": \"" << JsonEscape(window.test_result_json) << "\",\n"
+             << "      \"top_trials_dir\": \"" << JsonEscape(window.top_trials_dir) << "\",\n"
              << "      \"error_msg\": \"" << JsonEscape(window.error_msg) << "\",\n"
              << "      \"metrics\": {";
 
@@ -96,8 +96,7 @@ bool WriteRollingReportJson(const RollingReport& report,
     return WriteTextFile(output_path, json.str(), error);
 }
 
-bool WriteRollingReportMarkdown(const RollingReport& report,
-                                const std::string& output_path,
+bool WriteRollingReportMarkdown(const RollingReport& report, const std::string& output_path,
                                 std::string* error) {
     std::ostringstream md;
     md << "# Rolling Backtest Report\n\n"
@@ -110,7 +109,9 @@ bool WriteRollingReportMarkdown(const RollingReport& report,
        << "- Max Objective: `" << FormatDouble(report.max_objective) << "`\n"
        << "- Min Objective: `" << FormatDouble(report.min_objective) << "`\n\n"
        << "## Windows\n\n"
-       << "| index | train | test | success | objective | train_trial_count | completed_train_trial_count | train_task_id | train_report_json | train_report_md | best_params_yaml | test_result_json | top_trials_dir |\n"
+       << "| index | train | test | success | objective | train_trial_count | "
+          "completed_train_trial_count | train_task_id | train_report_json | train_report_md | "
+          "best_params_yaml | test_result_json | top_trials_dir |\n"
        << "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n";
 
     for (const WindowResult& window : report.windows) {
@@ -135,4 +136,3 @@ bool WriteRollingReportMarkdown(const RollingReport& report,
 }
 
 }  // namespace quant_hft::rolling
-

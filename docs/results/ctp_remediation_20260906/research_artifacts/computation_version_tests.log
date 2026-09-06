@@ -1,0 +1,277 @@
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 80 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 80 tests from BacktestReplaySupportTest
+[ RUN      ] BacktestReplaySupportTest.BuildStateSnapshotFromBarPopulatesBarFields
+[       OK ] BacktestReplaySupportTest.BuildStateSnapshotFromBarPopulatesBarFields (0 ms)
+[ RUN      ] BacktestReplaySupportTest.BuildStateSnapshotFromBarUpdatesMarketRegimeWhenDetectorProvided
+[       OK ] BacktestReplaySupportTest.BuildStateSnapshotFromBarUpdatesMarketRegimeWhenDetectorProvided (0 ms)
+[ RUN      ] BacktestReplaySupportTest.PositionPnlUsesContractMultiplier
+[       OK ] BacktestReplaySupportTest.PositionPnlUsesContractMultiplier (0 ms)
+[ RUN      ] BacktestReplaySupportTest.SelectParquetPartitionsForSymbolsSupportsProductAndInstrument
+[       OK ] BacktestReplaySupportTest.SelectParquetPartitionsForSymbolsSupportsProductAndInstrument (0 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecParquetProductSymbolStrictRolloverGeneratesSyntheticTrades
+ts_ns=1788666924229754639 level=info app=composite_strategy event=strategy_decision strategy_id="always_open" event_type="strategy_decision" event_ts_ns="1704186090000000000" instrument_id="c2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="always_open-open"
+ts_ns=1788666924231282202 level=info app=composite_strategy event=strategy_decision strategy_id="always_open" event_type="strategy_decision" event_ts_ns="1704186126000000000" instrument_id="c2405" timeframe_minutes="1" disposition="blocked" reason="existing_same_direction" trace_id="always_open-open"
+ts_ns=1788666924567906990 level=info app=composite_strategy event=strategy_decision strategy_id="always_open" event_type="strategy_decision" event_ts_ns="1704272490000000000" instrument_id="c2407" timeframe_minutes="1" disposition="blocked" reason="existing_same_direction" trace_id="always_open-open"
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecParquetProductSymbolStrictRolloverGeneratesSyntheticTrades (354 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecAppliesRiskBudgetToStrategyOpenTrades
+ts_ns=1788666924573339412 level=info app=composite_strategy event=strategy_decision strategy_id="always_open" event_type="strategy_decision" event_ts_ns="1704186061000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="always_open-open-once"
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecAppliesRiskBudgetToStrategyOpenTrades (3 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecStrictRolloverTransfersOwnerToNewContract
+ts_ns=1788666924582151169 level=info app=composite_strategy event=strategy_decision strategy_id="always_open" event_type="strategy_decision" event_ts_ns="1704186090000000000" instrument_id="c2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="always_open-open"
+ts_ns=1788666924583021262 level=info app=composite_strategy event=strategy_decision strategy_id="always_open" event_type="strategy_decision" event_ts_ns="1704186126000000000" instrument_id="c2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666924934788072 level=info app=composite_strategy event=strategy_decision strategy_id="always_open" event_type="strategy_decision" event_ts_ns="1704272490000000000" instrument_id="c2407" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="always_open-close"
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecStrictRolloverTransfersOwnerToNewContract (362 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecParquetProductSymbolCarryRolloverTransfersPositionWithoutSyntheticTrades
+ts_ns=1788666924945383169 level=info app=composite_strategy event=strategy_decision strategy_id="always_open" event_type="strategy_decision" event_ts_ns="1704186090000000000" instrument_id="c2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="always_open-open"
+ts_ns=1788666924946246837 level=info app=composite_strategy event=strategy_decision strategy_id="always_open" event_type="strategy_decision" event_ts_ns="1704186126000000000" instrument_id="c2405" timeframe_minutes="1" disposition="blocked" reason="existing_same_direction" trace_id="always_open-open"
+ts_ns=1788666925277490900 level=info app=composite_strategy event=strategy_decision strategy_id="always_open" event_type="strategy_decision" event_ts_ns="1704272490000000000" instrument_id="c2407" timeframe_minutes="1" disposition="blocked" reason="existing_product_position" trace_id="always_open-open"
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecParquetProductSymbolCarryRolloverTransfersPositionWithoutSyntheticTrades (342 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecParquetExplicitInstrumentDoesNotAutoRollover
+ts_ns=1788666925288919135 level=info app=composite_strategy event=strategy_decision strategy_id="always_open" event_type="strategy_decision" event_ts_ns="1704186090000000000" instrument_id="c2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="always_open-open"
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecParquetExplicitInstrumentDoesNotAutoRollover (10 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecParquetExpiryCloseUsesOldContractDayOpenAndDoesNotCarryPosition
+ts_ns=1788666925298649892 level=info app=composite_strategy event=strategy_decision strategy_id="always_open" event_type="strategy_decision" event_ts_ns="1704186090000000000" instrument_id="c2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="always_open-open"
+ts_ns=1788666925299514330 level=info app=composite_strategy event=strategy_decision strategy_id="always_open" event_type="strategy_decision" event_ts_ns="1704186126000000000" instrument_id="c2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666925630141493 level=info app=composite_strategy event=strategy_decision strategy_id="always_open" event_type="strategy_decision" event_ts_ns="1704272550000000000" instrument_id="c2407" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="always_open-open"
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecParquetExpiryCloseUsesOldContractDayOpenAndDoesNotCarryPosition (341 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecDailyRowsKeepPositionValueAcrossCarryDay
+ts_ns=1788666925635074256 level=info app=composite_strategy event=strategy_decision strategy_id="always_open" event_type="strategy_decision" event_ts_ns="1704186090000000000" instrument_id="c2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="always_open-open-once"
+ts_ns=1788666925635564493 level=info app=composite_strategy event=strategy_decision strategy_id="always_open" event_type="strategy_decision" event_ts_ns="1704186126000000000" instrument_id="c2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666925715949418 level=info app=composite_strategy event=strategy_decision strategy_id="always_open" event_type="strategy_decision" event_ts_ns="1704207570000000000" instrument_id="c2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecDailyRowsKeepPositionValueAcrossCarryDay (408 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecDailyRowsCaptureLateOpenAfterFinalBar
+ts_ns=1788666926043873557 level=info app=composite_strategy event=strategy_decision strategy_id="always_open" event_type="strategy_decision" event_ts_ns="1704207510000000000" instrument_id="c2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="always_open-open-once"
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecDailyRowsCaptureLateOpenAfterFinalBar (3 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecDailyRowsClearPositionValueAfterExpiryClose
+ts_ns=1788666926052972816 level=info app=composite_strategy event=strategy_decision strategy_id="always_open" event_type="strategy_decision" event_ts_ns="1704186090000000000" instrument_id="c2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="always_open-open-once"
+ts_ns=1788666926053788728 level=info app=composite_strategy event=strategy_decision strategy_id="always_open" event_type="strategy_decision" event_ts_ns="1704186126000000000" instrument_id="c2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecDailyRowsClearPositionValueAfterExpiryClose (334 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecParquetContinuousAdjustedSubTraceKeepsAnalysisSeriesContinuousAcrossRoll
+ts_ns=1788666926390238807 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186540000000000" instrument_id="c2405" timeframe_minutes="5" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666926715882921 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704272940000000000" instrument_id="c2407" timeframe_minutes="5" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecParquetContinuousAdjustedSubTraceKeepsAnalysisSeriesContinuousAcrossRoll (339 ms)
+[ RUN      ] BacktestReplaySupportTest.ParseBacktestCliSpecLoadsDetectorConfigFile
+[       OK ] BacktestReplaySupportTest.ParseBacktestCliSpecLoadsDetectorConfigFile (0 ms)
+[ RUN      ] BacktestReplaySupportTest.ParseBacktestCliSpecRejectsInvalidDetectorConfigFile
+[       OK ] BacktestReplaySupportTest.ParseBacktestCliSpecRejectsInvalidDetectorConfigFile (0 ms)
+[ RUN      ] BacktestReplaySupportTest.ParseBacktestCliSpecLoadsDetectorConfigFromCtpNestedBlock
+[       OK ] BacktestReplaySupportTest.ParseBacktestCliSpecLoadsDetectorConfigFromCtpNestedBlock (0 ms)
+[ RUN      ] BacktestReplaySupportTest.ParseBacktestCliSpecLoadsDetectorConfigByProductOverrides
+[       OK ] BacktestReplaySupportTest.ParseBacktestCliSpecLoadsDetectorConfigByProductOverrides (0 ms)
+[ RUN      ] BacktestReplaySupportTest.ParseBacktestCliSpecRejectsInvalidDetectorByProductConfig
+[       OK ] BacktestReplaySupportTest.ParseBacktestCliSpecRejectsInvalidDetectorByProductConfig (0 ms)
+[ RUN      ] BacktestReplaySupportTest.BuildStateSnapshotCarriesResolvedDetectorDiagnostics
+[       OK ] BacktestReplaySupportTest.BuildStateSnapshotCarriesResolvedDetectorDiagnostics (0 ms)
+[ RUN      ] BacktestReplaySupportTest.ParseBacktestCliSpecParsesIndicatorTraceFlags
+[       OK ] BacktestReplaySupportTest.ParseBacktestCliSpecParsesIndicatorTraceFlags (0 ms)
+[ RUN      ] BacktestReplaySupportTest.ParseBacktestCliSpecParsesDetailEmissionFlags
+[       OK ] BacktestReplaySupportTest.ParseBacktestCliSpecParsesDetailEmissionFlags (0 ms)
+[ RUN      ] BacktestReplaySupportTest.ParseBacktestCliSpecParsesCapitalAndConfigFields
+[       OK ] BacktestReplaySupportTest.ParseBacktestCliSpecParsesCapitalAndConfigFields (0 ms)
+[ RUN      ] BacktestReplaySupportTest.ParseBacktestCliSpecLoadsContractExpiryCalendarFromMainConfig
+[       OK ] BacktestReplaySupportTest.ParseBacktestCliSpecLoadsContractExpiryCalendarFromMainConfig (0 ms)
+[ RUN      ] BacktestReplaySupportTest.ParseBacktestCliSpecAcceptsStep4AliasesAndDefaultsStreamingOn
+[       OK ] BacktestReplaySupportTest.ParseBacktestCliSpecAcceptsStep4AliasesAndDefaultsStreamingOn (0 ms)
+[ RUN      ] BacktestReplaySupportTest.ParseBacktestCliSpecAllowsCliOverrideOverMainStrategyConfig
+[       OK ] BacktestReplaySupportTest.ParseBacktestCliSpecAllowsCliOverrideOverMainStrategyConfig (0 ms)
+[ RUN      ] BacktestReplaySupportTest.ParseBacktestCliSpecAcceptsMultiStrategyMainConfigs
+[       OK ] BacktestReplaySupportTest.ParseBacktestCliSpecAcceptsMultiStrategyMainConfigs (0 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecReplaysInterleavedMultiProductStrategies
+ts_ns=1788666926723805624 level=info app=composite_strategy event=strategy_decision strategy_id="open_once_c" event_type="strategy_decision" event_ts_ns="1704272460000000000" instrument_id="c2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="open_once_c-open-once"
+ts_ns=1788666926723890163 level=info app=composite_strategy event=strategy_decision strategy_id="open_once_rb" event_type="strategy_decision" event_ts_ns="1704272461000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="open_once_rb-open-once"
+ts_ns=1788666926724595248 level=info app=composite_strategy event=strategy_decision strategy_id="open_once_c" event_type="strategy_decision" event_ts_ns="1704272550000000000" instrument_id="c2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666926724652957 level=info app=composite_strategy event=strategy_decision strategy_id="open_once_rb" event_type="strategy_decision" event_ts_ns="1704272551000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecReplaysInterleavedMultiProductStrategies (5 ms)
+[ RUN      ] BacktestReplaySupportTest.LoadCsvTicksAcceptsUtf8BomHeader
+[       OK ] BacktestReplaySupportTest.LoadCsvTicksAcceptsUtf8BomHeader (0 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecPreservesDiagnosticEndpointsWithoutReplayContextLeak
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecPreservesDiagnosticEndpointsWithoutReplayContextLeak (86 ms)
+[ RUN      ] BacktestReplaySupportTest.ParseBacktestCliSpecRejectsExpiryCloseWithoutCalendarPath
+[       OK ] BacktestReplaySupportTest.ParseBacktestCliSpecRejectsExpiryCloseWithoutCalendarPath (0 ms)
+[ RUN      ] BacktestReplaySupportTest.ParseBacktestCliSpecRejectsExpiryCloseWithContinuousAdjusted
+[       OK ] BacktestReplaySupportTest.ParseBacktestCliSpecRejectsExpiryCloseWithContinuousAdjusted (0 ms)
+[ RUN      ] BacktestReplaySupportTest.ParseBacktestCliSpecRejectsExpiryCloseForExplicitInstrumentInput
+[       OK ] BacktestReplaySupportTest.ParseBacktestCliSpecRejectsExpiryCloseForExplicitInstrumentInput (0 ms)
+[ RUN      ] BacktestReplaySupportTest.ResolveBacktestProductConfigPathFallsBackToYamlWhenInstrumentJsonIsMissing
+[       OK ] BacktestReplaySupportTest.ResolveBacktestProductConfigPathFallsBackToYamlWhenInstrumentJsonIsMissing (0 ms)
+[ RUN      ] BacktestReplaySupportTest.ResolveBacktestProductConfigPathUsesMainConfigSiblingWhenPathNotSpecified
+[       OK ] BacktestReplaySupportTest.ResolveBacktestProductConfigPathUsesMainConfigSiblingWhenPathNotSpecified (0 ms)
+[ RUN      ] BacktestReplaySupportTest.ResolveBacktestProductConfigPathFindsRepoDefaultFromBuildLikeWorkingDirectory
+[       OK ] BacktestReplaySupportTest.ResolveBacktestProductConfigPathFindsRepoDefaultFromBuildLikeWorkingDirectory (1 ms)
+[ RUN      ] BacktestReplaySupportTest.ParseBacktestCliSpecRejectsRemovedMaxLossPercentFlag
+[       OK ] BacktestReplaySupportTest.ParseBacktestCliSpecRejectsRemovedMaxLossPercentFlag (0 ms)
+[ RUN      ] BacktestReplaySupportTest.ParseBacktestCliSpecRejectsNonBacktestMainRunType
+[       OK ] BacktestReplaySupportTest.ParseBacktestCliSpecRejectsNonBacktestMainRunType (0 ms)
+[ RUN      ] BacktestReplaySupportTest.ParseBacktestCliSpecRejectsInvalidIndicatorTraceFlag
+[       OK ] BacktestReplaySupportTest.ParseBacktestCliSpecRejectsInvalidIndicatorTraceFlag (0 ms)
+[ RUN      ] BacktestReplaySupportTest.BuildInputSignatureChangesWithIndicatorTraceSpec
+[       OK ] BacktestReplaySupportTest.BuildInputSignatureChangesWithIndicatorTraceSpec (0 ms)
+[ RUN      ] BacktestReplaySupportTest.BuildInputSignatureChangesWithPerVarietyOutputSpec
+[       OK ] BacktestReplaySupportTest.BuildInputSignatureChangesWithPerVarietyOutputSpec (0 ms)
+[ RUN      ] BacktestReplaySupportTest.BuildInputSignatureChangesWithCapitalSpec
+[       OK ] BacktestReplaySupportTest.BuildInputSignatureChangesWithCapitalSpec (0 ms)
+[ RUN      ] BacktestReplaySupportTest.BuildInputSignatureChangesWithContractExpiryCalendarSpec
+[       OK ] BacktestReplaySupportTest.BuildInputSignatureChangesWithContractExpiryCalendarSpec (0 ms)
+[ RUN      ] BacktestReplaySupportTest.ParseBacktestCliSpecRequiresCompositeConfigWhenFactoryComposite
+[       OK ] BacktestReplaySupportTest.ParseBacktestCliSpecRequiresCompositeConfigWhenFactoryComposite (0 ms)
+[ RUN      ] BacktestReplaySupportTest.ParseBacktestCliSpecAcceptsCompositeFactoryAndConfigPath
+[       OK ] BacktestReplaySupportTest.ParseBacktestCliSpecAcceptsCompositeFactoryAndConfigPath (0 ms)
+[ RUN      ] BacktestReplaySupportTest.BuildInputSignatureChangesWithSubStrategyTraceSpec
+[       OK ] BacktestReplaySupportTest.BuildInputSignatureChangesWithSubStrategyTraceSpec (0 ms)
+[ RUN      ] BacktestReplaySupportTest.ParseBacktestCliSpecRejectsInvalidSubStrategyTraceFlag
+[       OK ] BacktestReplaySupportTest.ParseBacktestCliSpecRejectsInvalidSubStrategyTraceFlag (0 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecIndicatorTraceFollowsArrowCapability
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecIndicatorTraceFollowsArrowCapability (5 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecSubStrategyTraceRequiresCompositeFactory
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecSubStrategyTraceRequiresCompositeFactory (0 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecSubStrategyTraceFollowsArrowCapability
+ts_ns=1788666926827014357 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186061000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecSubStrategyTraceFollowsArrowCapability (4 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecIndicatorTraceWritesCsvWhenPathEndsWithCsv
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecIndicatorTraceWritesCsvWhenPathEndsWithCsv (3 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecCompositeTraceCarriesSubscribedTimeframe
+ts_ns=1788666926838501114 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186570000000000" instrument_id="rb2405" timeframe_minutes="5" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666926840425226 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186870000000000" instrument_id="rb2405" timeframe_minutes="5" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecCompositeTraceCarriesSubscribedTimeframe (12 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecSubStrategyTraceFlushesExpiredInstrumentBucketsBeforeFutureBars
+ts_ns=1788666926850953996 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186570000000000" instrument_id="rb2405" timeframe_minutes="5" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666926856141147 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704187470000000000" instrument_id="rb2409" timeframe_minutes="5" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666926858184226 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704187770000000000" instrument_id="rb2409" timeframe_minutes="5" disposition="allowed" reason="none" trace_id=""
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecSubStrategyTraceFlushesExpiredInstrumentBucketsBeforeFutureBars (15 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecSubStrategyTraceUsesDefaultPathWhenEnabled
+ts_ns=1788666926862762379 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186061000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecSubStrategyTraceUsesDefaultPathWhenEnabled (3 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecSubStrategyTraceFailsWhenPathExists
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecSubStrategyTraceFailsWhenPathExists (0 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecIndicatorTraceUsesDefaultPathWhenEnabled
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecIndicatorTraceUsesDefaultPathWhenEnabled (3 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecSubStrategyTraceWritesCsvWhenPathEndsWithCsv
+ts_ns=1788666926870227286 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186061000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecSubStrategyTraceWritesCsvWhenPathEndsWithCsv (3 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecSubStrategyTraceUsesActionDayForNightSessionDisplayTime
+ts_ns=1788666926873756673 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704229261000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecSubStrategyTraceUsesActionDayForNightSessionDisplayTime (3 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecIndicatorTraceFailsWhenPathExists
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecIndicatorTraceFailsWhenPathExists (0 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecDeterministicFillFeedsOrderEventToComposite
+ts_ns=1788666926878188562 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186090000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666926878616608 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186150000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666926879027602 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186210000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id=""
+ts_ns=1788666926879535412 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186270000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666926879964120 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186330000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666926880489176 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186390000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666926880901929 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186450000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666926881310449 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186510000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666926881716180 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186570000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666926882138636 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186630000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666926882806710 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186690000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666926883223827 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186750000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666926883627430 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186810000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666926884033085 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186870000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666926884397170 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186930000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecDeterministicFillFeedsOrderEventToComposite (10 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecForceCloseWindowUsesFirstEligibleTickAndBlocksReopen
+ts_ns=1788666926888881418 level=info app=composite_strategy event=strategy_decision strategy_id="always_open" event_type="strategy_decision" event_ts_ns="1704272490000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="always_open-open"
+ts_ns=1788666926889455000 level=info app=composite_strategy event=strategy_decision strategy_id="always_open" event_type="strategy_decision" event_ts_ns="1704272550000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="existing_same_direction" trace_id="always_open-open"
+ts_ns=1788666926890005443 level=info app=composite_strategy event=strategy_decision strategy_id="always_open" event_type="strategy_decision" event_ts_ns="1704272610000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="forbid_open_window" trace_id="always_open-open"
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecForceCloseWindowUsesFirstEligibleTickAndBlocksReopen (4 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecForceCloseWindowBlocksNightSessionOpensInAsiaShanghai
+ts_ns=1788666926893615831 level=info app=composite_strategy event=strategy_decision strategy_id="always_open" event_type="strategy_decision" event_ts_ns="1704229261000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="forbid_open_window" trace_id="always_open-open"
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecForceCloseWindowBlocksNightSessionOpensInAsiaShanghai (3 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecAssignsMonotonicFillAndOrderSequences
+ts_ns=1788666926897152142 level=info app=composite_strategy event=strategy_decision strategy_id="always_open" event_type="strategy_decision" event_ts_ns="1704272490000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="always_open-open"
+ts_ns=1788666926897663197 level=info app=composite_strategy event=strategy_decision strategy_id="always_open" event_type="strategy_decision" event_ts_ns="1704272550000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="existing_same_direction" trace_id="always_open-open"
+ts_ns=1788666926898235477 level=info app=composite_strategy event=strategy_decision strategy_id="always_open" event_type="strategy_decision" event_ts_ns="1704272610000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="blocked" reason="forbid_open_window" trace_id="always_open-open"
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecAssignsMonotonicFillAndOrderSequences (5 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecDefersFiveMinuteBarSignalUntilLaterTick
+ts_ns=1788666926903493111 level=info app=composite_strategy event=strategy_decision strategy_id="always_open" event_type="strategy_decision" event_ts_ns="1704880745000000000" instrument_id="rb2405" timeframe_minutes="5" disposition="allowed" reason="none" trace_id="always_open-open"
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecDefersFiveMinuteBarSignalUntilLaterTick (5 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecDefersTickStopLossUntilNextTick
+ts_ns=1788666926907768144 level=info app=composite_strategy event=strategy_decision strategy_id="tick_stop" event_type="strategy_decision" event_ts_ns="1704272490000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id="tick_stop-open-once"
+ts_ns=1788666926908325717 level=info app=composite_strategy event=strategy_decision strategy_id="tick_stop" event_type="strategy_decision" event_ts_ns="1704272550000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666926908787019 level=info app=composite_strategy event=strategy_decision strategy_id="tick_stop" event_type="strategy_decision" event_ts_ns="1704272610000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecDefersTickStopLossUntilNextTick (4 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecExpiresPendingBarSignalAcrossSessionBoundary
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecExpiresPendingBarSignalAcrossSessionBoundary (139 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecRespectsDetailEmissionFlags
+ts_ns=1788666927053043302 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186090000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666927053446406 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186150000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666927053852626 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186210000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id=""
+ts_ns=1788666927054427131 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186270000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666927054841751 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186330000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666927055248816 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186390000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666927055654515 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186450000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666927056070166 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186510000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666927056586940 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186570000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666927056998923 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186630000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666927057401930 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186690000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666927057806304 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186750000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666927058227599 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186810000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666927058718064 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186870000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666927059091472 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186930000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecRespectsDetailEmissionFlags (10 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecAccumulatesCommissionFromProductConfig
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecAccumulatesCommissionFromProductConfig (3 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecSupportsRawInstrumentInfoJsonConfig
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecSupportsRawInstrumentInfoJsonConfig (3 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecFailsWhenProductConfigMissingInstrument
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecFailsWhenProductConfigMissingInstrument (2 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecEquityCurveUsesInitialEquityBaseline
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecEquityCurveUsesInitialEquityBaseline (3 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecRejectsOpenWhenMarginInsufficient
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecRejectsOpenWhenMarginInsufficient (3 ms)
+[ RUN      ] BacktestReplaySupportTest.RunBacktestSpecClipsVolumeByMarginAndTracksUsage
+ts_ns=1788666927078806081 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186090000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666927079203075 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186150000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666927079602956 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186210000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="allowed" reason="none" trace_id=""
+ts_ns=1788666927080194685 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186270000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666927080655368 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186330000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666927081054739 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186390000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666927081445655 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186450000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666927081840336 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186510000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666927082340092 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186570000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666927082892271 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186630000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666927083319004 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186690000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666927083711157 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186750000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666927084241661 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186810000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666927084749286 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186870000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+ts_ns=1788666927085165338 level=info app=composite_strategy event=strategy_decision strategy_id="trend_1" event_type="strategy_decision" event_ts_ns="1704186930000000000" instrument_id="rb2405" timeframe_minutes="1" disposition="no_candidate" reason="no_raw_signal" trace_id=""
+[       OK ] BacktestReplaySupportTest.RunBacktestSpecClipsVolumeByMarginAndTracksUsage (10 ms)
+[ RUN      ] BacktestReplaySupportTest.ToEpochNsMapsNightSessionToPreviousCalendarDay
+[       OK ] BacktestReplaySupportTest.ToEpochNsMapsNightSessionToPreviousCalendarDay (0 ms)
+[ RUN      ] BacktestReplaySupportTest.ToEpochNsKeepsDaySessionOnTradingDay
+[       OK ] BacktestReplaySupportTest.ToEpochNsKeepsDaySessionOnTradingDay (0 ms)
+[ RUN      ] BacktestReplaySupportTest.DeriveActionDayFromTradingDayAndUpdateTimeHandlesNightSession
+[       OK ] BacktestReplaySupportTest.DeriveActionDayFromTradingDayAndUpdateTimeHandlesNightSession (0 ms)
+[ RUN      ] BacktestReplaySupportTest.ReplayBarContextTracksInterleavedInstrumentsWithoutDuplication
+[       OK ] BacktestReplaySupportTest.ReplayBarContextTracksInterleavedInstrumentsWithoutDuplication (0 ms)
+[ RUN      ] BacktestReplaySupportTest.ReplayTimeframeFanoutFlushesFiveMinuteSessionEndBar
+[       OK ] BacktestReplaySupportTest.ReplayTimeframeFanoutFlushesFiveMinuteSessionEndBar (0 ms)
+[ RUN      ] BacktestReplaySupportTest.RequireParquetBacktestSpecRejectsUnsupportedEngineMode
+[       OK ] BacktestReplaySupportTest.RequireParquetBacktestSpecRejectsUnsupportedEngineMode (0 ms)
+[ RUN      ] BacktestReplaySupportTest.RequireParquetBacktestSpecHonorsArrowBuildFlag
+[       OK ] BacktestReplaySupportTest.RequireParquetBacktestSpecHonorsArrowBuildFlag (0 ms)
+[----------] 80 tests from BacktestReplaySupportTest (2871 ms total)
+
+[----------] Global test environment tear-down
+[==========] 80 tests from 1 test suite ran. (2871 ms total)
+[  PASSED  ] 80 tests.
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 4 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 4 tests from OosTop10ValidationTest
+[ RUN      ] OosTop10ValidationTest.RanksByCalmarThenSharpeAndReusesExistingResults
+[       OK ] OosTop10ValidationTest.RanksByCalmarThenSharpeAndReusesExistingResults (44 ms)
+[ RUN      ] OosTop10ValidationTest.CacheIdentityIncludesDatesAndContentEvenWithSameSizeAndMtime
+[       OK ] OosTop10ValidationTest.CacheIdentityIncludesDatesAndContentEvenWithSameSizeAndMtime (81 ms)
+[ RUN      ] OosTop10ValidationTest.UsesTrainingObjectiveDirectionForCandidateRankingAndValidation
+[       OK ] OosTop10ValidationTest.UsesTrainingObjectiveDirectionForCandidateRankingAndValidation (30 ms)
+[ RUN      ] OosTop10ValidationTest.ContinuesAfterBacktestFailureAndRecordsError
+[       OK ] OosTop10ValidationTest.ContinuesAfterBacktestFailureAndRecordsError (23 ms)
+[----------] 4 tests from OosTop10ValidationTest (180 ms total)
+
+[----------] Global test environment tear-down
+[==========] 4 tests from 1 test suite ran. (180 ms total)
+[  PASSED  ] 4 tests.

@@ -7,10 +7,9 @@
 namespace quant_hft::rolling {
 namespace {
 
-bool ExtractDerivedTrialMetric(const quant_hft::apps::BacktestCliResult& result,
-                              const std::string& resolved_metric_path,
-                              double* out,
-                              std::string* error) {
+bool ExtractDerivedTrialMetric(const quant_hft::backtest::BacktestCliResult& result,
+                               const std::string& resolved_metric_path, double* out,
+                               std::string* error) {
     if (resolved_metric_path != "hf_standard.risk_metrics.calmar_ratio" &&
         resolved_metric_path != "calmar_ratio" &&
         resolved_metric_path != "hf_standard.risk_metrics.sharpe_ratio" &&
@@ -18,11 +17,11 @@ bool ExtractDerivedTrialMetric(const quant_hft::apps::BacktestCliResult& result,
         return false;
     }
 
-    const std::string json = quant_hft::apps::RenderBacktestJson(result);
+    const std::string json = quant_hft::backtest::RenderBacktestJson(result);
     quant_hft::optim::TrialMetricsSnapshot metrics;
     std::string local_error;
     if (!quant_hft::optim::ResultAnalyzer::ExtractTrialMetricsFromJsonText(json, &metrics,
-                                                                            &local_error)) {
+                                                                           &local_error)) {
         if (error != nullptr) {
             *error = local_error;
         }
@@ -34,7 +33,8 @@ bool ExtractDerivedTrialMetric(const quant_hft::apps::BacktestCliResult& result,
     const std::optional<double>& value = wants_calmar ? metrics.calmar_ratio : metrics.sharpe_ratio;
     if (!value.has_value()) {
         if (error != nullptr) {
-            *error = wants_calmar ? "calmar_ratio is not available" : "sharpe_ratio is not available";
+            *error =
+                wants_calmar ? "calmar_ratio is not available" : "sharpe_ratio is not available";
         }
         return true;
     }
@@ -45,10 +45,8 @@ bool ExtractDerivedTrialMetric(const quant_hft::apps::BacktestCliResult& result,
 
 }  // namespace
 
-bool ExtractMetricFromResult(const quant_hft::apps::BacktestCliResult& result,
-                             const std::string& metric_path,
-                             double* out,
-                             std::string* error) {
+bool ExtractMetricFromResult(const quant_hft::backtest::BacktestCliResult& result,
+                             const std::string& metric_path, double* out, std::string* error) {
     if (out == nullptr) {
         if (error != nullptr) {
             *error = "metric output is null";
@@ -56,8 +54,10 @@ bool ExtractMetricFromResult(const quant_hft::apps::BacktestCliResult& result,
         return false;
     }
 
-    const std::string resolved = quant_hft::optim::ResultAnalyzer::ResolveMetricPathAlias(metric_path);
-    const quant_hft::apps::BacktestSummary summary = quant_hft::apps::SummarizeBacktest(result);
+    const std::string resolved =
+        quant_hft::optim::ResultAnalyzer::ResolveMetricPathAlias(metric_path);
+    const quant_hft::backtest::BacktestSummary summary =
+        quant_hft::backtest::SummarizeBacktest(result);
 
     if (ExtractDerivedTrialMetric(result, resolved, out, error)) {
         return error == nullptr || error->empty();
@@ -100,7 +100,7 @@ bool ExtractMetricFromResult(const quant_hft::apps::BacktestCliResult& result,
         return true;
     }
 
-    const std::string json = quant_hft::apps::RenderBacktestJson(result);
+    const std::string json = quant_hft::backtest::RenderBacktestJson(result);
     std::string local_error;
     const double value =
         quant_hft::optim::ResultAnalyzer::ExtractMetricFromJsonText(json, resolved, &local_error);
@@ -116,4 +116,3 @@ bool ExtractMetricFromResult(const quant_hft::apps::BacktestCliResult& result,
 }
 
 }  // namespace quant_hft::rolling
-

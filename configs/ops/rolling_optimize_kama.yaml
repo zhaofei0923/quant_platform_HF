@@ -11,6 +11,11 @@
 mode: rolling_optimize
 
 backtest_base:
+  # This archived product-chain experiment intentionally uses expiry-close research semantics.
+  behavior_profile: research
+  parameter_profile: backtest
+  input_timestamp_basis: legacy_exchange_local
+  streaming: true
   engine_mode: parquet
   dataset_root: ../../backtest_data/parquet_v2
   symbols: [c]

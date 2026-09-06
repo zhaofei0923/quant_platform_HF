@@ -1,0 +1,14 @@
+[  0%] Built target gtest
+[ 18%] Built target quant_hft_common
+[ 18%] Built target gtest_main
+[ 31%] Built target quant_hft_storage
+Consolidate compiler generated dependencies of target quant_hft_services
+[ 63%] Built target quant_hft_services
+Consolidate compiler generated dependencies of target quant_hft_strategy
+[ 81%] Built target quant_hft_strategy
+Consolidate compiler generated dependencies of target quant_hft_backtest
+[100%] Built target quant_hft_backtest
+Consolidate compiler generated dependencies of target replay_market_parity_test
+[100%] Building CXX object CMakeFiles/replay_market_parity_test.dir/tests/unit/apps/replay_market_parity_test.cpp.o
+[100%] Linking CXX executable replay_market_parity_test
+[100%] Built target replay_market_parity_test

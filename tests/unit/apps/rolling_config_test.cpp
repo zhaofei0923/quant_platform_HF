@@ -12,8 +12,7 @@ namespace {
 
 std::filesystem::path MakeTempDir(const std::string& stem) {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    const auto dir = std::filesystem::temp_directory_path() /
-                     (stem + "_" + std::to_string(stamp));
+    const auto dir = std::filesystem::temp_directory_path() / (stem + "_" + std::to_string(stamp));
     std::filesystem::create_directories(dir);
     return dir;
 }
@@ -40,7 +39,8 @@ TEST(RollingConfigTest, LoadsValidConfigAndResolvesPaths) {
     const auto manifest = dataset_root / "_manifest" / "partitions.jsonl";
     WriteFile(manifest, ManifestLine("20230103"));
     const auto config_dir = dir / "rolling_assets";
-    const auto composite = WriteFile(config_dir / "main_backtest_strategy.yaml", "run_type: backtest\n");
+    const auto composite =
+        WriteFile(config_dir / "main_backtest_strategy.yaml", "run_type: backtest\n");
     const auto products = WriteFile(config_dir / "products_info.yaml", "products:\n");
     const auto calendar = WriteFile(config_dir / "contract_expiry_calendar.yaml", "contracts:\n");
 
@@ -48,33 +48,33 @@ TEST(RollingConfigTest, LoadsValidConfigAndResolvesPaths) {
     std::filesystem::create_directories(report_dir);
 
     const auto config_path = dir / "rolling.yaml";
-    WriteFile(config_path,
-              "mode: fixed_params\n"
-              "backtest_base:\n"
-              "  engine_mode: parquet\n"
-              "  dataset_root: " +
-                  dataset_root.string() +
-                  "\n"
-                  "  strategy_factory: composite\n"
-                  "  strategy_composite_config: ./rolling_assets/main_backtest_strategy.yaml\n"
-                  "  product_config_path: ./rolling_assets/products_info.yaml\n"
-                  "  contract_expiry_calendar_path: ./rolling_assets/contract_expiry_calendar.yaml\n"
-                  "window:\n"
-                  "  type: rolling\n"
-                  "  train_length_days: 2\n"
-                  "  test_length_days: 1\n"
-                  "  step_days: 1\n"
-                  "  min_train_days: 2\n"
-                  "  require_single_contract_test: true\n"
-                  "  start_date: 20230101\n"
-                  "  end_date: 20230131\n"
-                  "output:\n"
-                  "  report_json: " +
-                  (report_dir / "r.json").string() +
-                  "\n"
-                  "  report_md: " +
-                  (report_dir / "r.md").string() +
-                  "\n");
+    WriteFile(
+        config_path,
+        "mode: fixed_params\n"
+        "backtest_base:\n"
+        "  engine_mode: parquet\n"
+        "  dataset_root: " +
+            dataset_root.string() +
+            "\n"
+            "  strategy_factory: composite\n"
+            "  strategy_composite_config: ./rolling_assets/main_backtest_strategy.yaml\n"
+            "  product_config_path: ./rolling_assets/products_info.yaml\n"
+            "  contract_expiry_calendar_path: ./rolling_assets/contract_expiry_calendar.yaml\n"
+            "window:\n"
+            "  type: rolling\n"
+            "  train_length_days: 2\n"
+            "  test_length_days: 1\n"
+            "  step_days: 1\n"
+            "  min_train_days: 2\n"
+            "  require_single_contract_test: true\n"
+            "  start_date: 20230101\n"
+            "  end_date: 20230131\n"
+            "output:\n"
+            "  report_json: " +
+            (report_dir / "r.json").string() +
+            "\n"
+            "  report_md: " +
+            (report_dir / "r.md").string() + "\n");
 
     RollingConfig config;
     std::string error;
@@ -122,8 +122,7 @@ TEST(RollingConfigTest, RejectsNonParquetEngineMode) {
                   (dir / "r.json").string() +
                   "\n"
                   "  report_md: " +
-                  (dir / "r.md").string() +
-                  "\n");
+                  (dir / "r.md").string() + "\n");
 
     RollingConfig config;
     std::string error;
@@ -161,8 +160,7 @@ TEST(RollingConfigTest, RejectsMissingManifest) {
                   (dir / "r.json").string() +
                   "\n"
                   "  report_md: " +
-                  (dir / "r.md").string() +
-                  "\n");
+                  (dir / "r.md").string() + "\n");
 
     RollingConfig config;
     std::string error;
@@ -174,12 +172,13 @@ TEST(RollingConfigTest, RejectsMissingManifest) {
 }
 
 TEST(RollingConfigTest, LoadsRepoOpsRollingOptimizeConfig) {
-    const auto repo_root = std::filesystem::path(__FILE__)
-                               .parent_path()
-                               .parent_path()
-                               .parent_path()
-                               .parent_path();
+    const auto repo_root =
+        std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path();
     const auto path = repo_root / "configs" / "ops" / "rolling_optimize_kama.yaml";
+    if (!std::filesystem::exists(repo_root / "backtest_data/parquet_v2")) {
+        GTEST_SKIP() << "Repository research dataset is not installed; synthetic config/window "
+                        "tests still run";
+    }
 
     RollingConfig config;
     std::string error;
@@ -200,16 +199,13 @@ TEST(RollingConfigTest, LoadsRepoOpsRollingOptimizeConfig) {
     EXPECT_EQ(config.window.min_train_days, 120);
     EXPECT_EQ(config.window.start_date, "20240102");
     EXPECT_EQ(config.window.end_date, "20241231");
-    EXPECT_EQ(config.output.root_dir,
-              (repo_root / "runtime" / "rolling_optimize_kama").string());
+    EXPECT_EQ(config.output.root_dir, (repo_root / "runtime" / "rolling_optimize_kama").string());
     EXPECT_EQ(config.output.report_json,
-              (repo_root / "runtime" / "rolling_optimize_kama" /
-               "rolling_optimize_report.json")
+              (repo_root / "runtime" / "rolling_optimize_kama" / "rolling_optimize_report.json")
                   .string());
-    EXPECT_EQ(config.output.report_md,
-              (repo_root / "runtime" / "rolling_optimize_kama" /
-               "rolling_optimize_report.md")
-                  .string());
+    EXPECT_EQ(
+        config.output.report_md,
+        (repo_root / "runtime" / "rolling_optimize_kama" / "rolling_optimize_report.md").string());
     EXPECT_EQ(config.output.best_params_dir,
               (repo_root / "runtime" / "rolling_optimize_kama" / "best_params").string());
     EXPECT_TRUE(std::filesystem::exists(config.optimization.param_space));
@@ -225,26 +221,26 @@ TEST(RollingConfigTest, LoadsRollingOptimizeRandomConfigWithSeed) {
     const auto sub_config = WriteFile(dir / "sub_strategy.yaml", "params:\n");
     const auto products = WriteFile(dir / "instrument_info.json", "{\"products\":{}}\n");
     const auto calendar = WriteFile(dir / "contract_expiry_calendar.yaml", "contracts:\n");
-    const auto param_space = WriteFile(
-        dir / "param_space.yaml",
-        "composite_config_path: " + composite.string() +
-            "\n"
-            "target_sub_config_path: " + sub_config.string() +
-            "\n"
-            "backtest_args:\n"
-            "  engine_mode: parquet\n"
-            "  dataset_root: " +
-            dataset_root.string() +
-            "\n"
-            "optimization:\n"
-            "  algorithm: random\n"
-            "  metric_path: profit_factor\n"
-            "  max_trials: 12\n"
-            "  random_seed: 1001\n"
-            "parameters:\n"
-            "  - name: default_volume\n"
-            "    type: int\n"
-            "    values: [1, 2, 3]\n");
+    const auto param_space =
+        WriteFile(dir / "param_space.yaml", "composite_config_path: " + composite.string() +
+                                                "\n"
+                                                "target_sub_config_path: " +
+                                                sub_config.string() +
+                                                "\n"
+                                                "backtest_args:\n"
+                                                "  engine_mode: parquet\n"
+                                                "  dataset_root: " +
+                                                dataset_root.string() +
+                                                "\n"
+                                                "optimization:\n"
+                                                "  algorithm: random\n"
+                                                "  metric_path: profit_factor\n"
+                                                "  max_trials: 12\n"
+                                                "  random_seed: 1001\n"
+                                                "parameters:\n"
+                                                "  - name: default_volume\n"
+                                                "    type: int\n"
+                                                "    values: [1, 2, 3]\n");
 
     const auto config_path = dir / "rolling.yaml";
     WriteFile(config_path,
@@ -292,8 +288,7 @@ TEST(RollingConfigTest, LoadsRollingOptimizeRandomConfigWithSeed) {
                   (dir / "report.json").string() +
                   "\n"
                   "  report_md: " +
-                  (dir / "report.md").string() +
-                  "\n");
+                  (dir / "report.md").string() + "\n");
 
     RollingConfig config;
     std::string error;

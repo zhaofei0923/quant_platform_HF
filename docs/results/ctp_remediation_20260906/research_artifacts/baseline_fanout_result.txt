@@ -1,0 +1,2 @@
+same_first_5m_bucket: replay_detector_bars=7 live_detector_bars=1
+missing_09:02_in_5m_bucket: replay_strategy_has_bar=1 live_strategy_eligible=0 live_observed=4/5

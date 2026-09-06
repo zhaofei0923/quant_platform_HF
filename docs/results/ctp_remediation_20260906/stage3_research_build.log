@@ -1,0 +1,586 @@
+[  0%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/regulatory/wal_projection_replay.cpp.o
+[  0%] Building CXX object CMakeFiles/quant_hft_core.dir/src/backtest/replay_helpers.cpp.o
+[  0%] Building CXX object CMakeFiles/quant_hft_core.dir/src/backtest/replay_runtime.cpp.o
+[  0%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/config/runtime_semantics_loader.cpp.o
+[  0%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/runtime/durable_order_event_inbox.cpp.o
+[  3%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/runtime/account_execution_scheduler.cpp.o
+[  3%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/runtime/runtime_identity.cpp.o
+[  3%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/runtime/runtime_paths.cpp.o
+[  7%] Building CXX object CMakeFiles/quant_hft_core.dir/src/backtest/broker.cpp.o
+[  7%] Building CXX object CMakeFiles/quant_hft_core.dir/src/backtest/backtest_data_feed.cpp.o
+[  7%] Building CXX object CMakeFiles/quant_hft_core.dir/src/backtest/engine.cpp.o
+[  7%] Building CXX object CMakeFiles/quant_hft_core.dir/src/backtest/performance.cpp.o
+[ 10%] Building CXX object CMakeFiles/quant_hft_core.dir/src/backtest/backtest_metrics.cpp.o
+[ 10%] Building CXX object CMakeFiles/quant_hft_core.dir/src/backtest/live_data_feed.cpp.o
+[ 10%] Building CXX object CMakeFiles/quant_hft_core.dir/src/apps/backtest_result_export.cpp.o
+[ 10%] Building CXX object CMakeFiles/quant_hft_core.dir/src/optim/parameter_space.cpp.o
+[ 14%] Building CXX object CMakeFiles/quant_hft_core.dir/src/optim/grid_search.cpp.o
+[ 14%] Building CXX object CMakeFiles/quant_hft_core.dir/src/optim/random_search.cpp.o
+[ 14%] Building CXX object CMakeFiles/quant_hft_core.dir/src/optim/task_scheduler.cpp.o
+[ 14%] Building CXX object CMakeFiles/quant_hft_core.dir/src/optim/result_analyzer.cpp.o
+[ 14%] Building CXX object CMakeFiles/quant_hft_core.dir/src/optim/temp_config_generator.cpp.o
+[ 17%] Building CXX object CMakeFiles/quant_hft_core.dir/src/rolling/rolling_config.cpp.o
+[ 17%] Building CXX object CMakeFiles/quant_hft_core.dir/src/rolling/window_generator.cpp.o
+[ 17%] Building CXX object CMakeFiles/quant_hft_core.dir/src/rolling/metric_extractor.cpp.o
+[ 17%] Building CXX object CMakeFiles/quant_hft_core.dir/src/rolling/rolling_runner.cpp.o
+[ 21%] Building CXX object CMakeFiles/quant_hft_core.dir/src/rolling/oos_top10_validation.cpp.o
+[ 21%] Building CXX object CMakeFiles/quant_hft_core.dir/src/rolling/rolling_report_writer.cpp.o
+[ 21%] Building CXX object CMakeFiles/quant_hft_core.dir/src/indicators/adx.cpp.o
+[ 21%] Building CXX object CMakeFiles/quant_hft_core.dir/src/indicators/atr.cpp.o
+[ 25%] Building CXX object CMakeFiles/quant_hft_core.dir/src/indicators/ema.cpp.o
+[ 25%] Building CXX object CMakeFiles/quant_hft_core.dir/src/indicators/kama.cpp.o
+[ 25%] Building CXX object CMakeFiles/quant_hft_core.dir/src/indicators/sma.cpp.o
+[ 25%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/base_strategy.cpp.o
+[ 28%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/strategy_registry.cpp.o
+[ 28%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/strategy_engine.cpp.o
+[ 28%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/demo_live_strategy.cpp.o
+[ 28%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/atomic_factory.cpp.o
+[ 28%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/signal_merger.cpp.o
+[ 32%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/state_persistence.cpp.o
+/tmp/quant-hft-stage3-snapshot/src/rolling/oos_top10_validation.cpp:1029:30: warning: ‘const quant_hft::rolling::OosTop10ValidationRow* quant_hft::rolling::{anonymous}::FindRowByTrialId(const quant_hft::rolling::OosTop10ValidationReport&, const string&)’ defined but not used [-Wunused-function]
+ 1029 | const OosTop10ValidationRow* FindRowByTrialId(const OosTop10ValidationReport& report,
+      |                              ^~~~~~~~~~~~~~~~
+/tmp/quant-hft-stage3-snapshot/src/rolling/oos_top10_validation.cpp:447:6: warning: ‘bool quant_hft::rolling::{anonymous}::SelectRecommendedCandidateFromCsv(const string&, quant_hft::rolling::{anonymous}::CsvValidationCandidate*, std::string*)’ defined but not used [-Wunused-function]
+  447 | bool SelectRecommendedCandidateFromCsv(const std::string& csv_path,
+      |      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+[ 32%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/composite_config_loader.cpp.o
+[ 32%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/strategy_main_config_loader.cpp.o
+[ 32%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/composite_strategy.cpp.o
+[ 35%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/atomic/kama_trend_strategy.cpp.o
+[ 35%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/atomic/trend_strategy.cpp.o
+[ 35%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/atomic/time_filter.cpp.o
+[ 35%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/atomic/max_position_risk_control.cpp.o
+[ 39%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/atomic/register_builtin_atomic_strategies.cpp.o
+[ 39%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/backtest/indicator_trace_csv_writer.cpp.o
+[ 39%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/backtest/indicator_trace_parquet_writer.cpp.o
+[ 39%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/backtest/contract_expiry_calendar.cpp.o
+[ 39%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/backtest/product_fee_config_loader.cpp.o
+[ 42%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/backtest/sub_strategy_indicator_trace_csv_writer.cpp.o
+In file included from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/buffer.h:29,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/data.h:27,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/array_base.h:26,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array.h:41,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/api.h:22,
+                 from /tmp/quant-hft-stage3-snapshot/src/core/backtest/indicator_trace_parquet_writer.cpp:11:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/device.h: In member function ‘virtual arrow::Result<std::shared_ptr<arrow::Device::Stream> > arrow::Device::MakeStream(unsigned int)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/device.h:142:67: warning: unused parameter ‘flags’ [-Wunused-parameter]
+  142 |   virtual Result<std::shared_ptr<Stream>> MakeStream(unsigned int flags) {
+      |                                                      ~~~~~~~~~~~~~^~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/device.h: In member function ‘virtual arrow::Result<std::shared_ptr<arrow::Device::Stream> > arrow::Device::WrapStream(void*, arrow::Device::Stream::release_fn_t)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/device.h:152:60: warning: unused parameter ‘device_stream’ [-Wunused-parameter]
+  152 |   virtual Result<std::shared_ptr<Stream>> WrapStream(void* device_stream,
+      |                                                      ~~~~~~^~~~~~~~~~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/device.h:153:75: warning: unused parameter ‘release_fn’ [-Wunused-parameter]
+  153 |                                                      Stream::release_fn_t release_fn) {
+      |                                                      ~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~
+[ 42%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/backtest/sub_strategy_indicator_trace_parquet_writer.cpp.o
+[ 42%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/backtest/parquet_data_feed.cpp.o
+In file included from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/data.h:29,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/array_base.h:26,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array.h:41,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/api.h:22,
+                 from /tmp/quant-hft-stage3-snapshot/src/core/backtest/indicator_trace_parquet_writer.cpp:11:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/type.h: In member function ‘virtual std::string arrow::MonthIntervalType::ToString(bool) const’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/type.h:1726:29: warning: unused parameter ‘show_metadata’ [-Wunused-parameter]
+ 1726 |   std::string ToString(bool show_metadata = false) const override { return name(); }
+      |                        ~~~~~^~~~~~~~~~~~~~~~~~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/type.h: In member function ‘virtual std::string arrow::DayTimeIntervalType::ToString(bool) const’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/type.h:1762:29: warning: unused parameter ‘show_metadata’ [-Wunused-parameter]
+ 1762 |   std::string ToString(bool show_metadata = false) const override { return name(); }
+      |                        ~~~~~^~~~~~~~~~~~~~~~~~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/type.h: In member function ‘virtual std::string arrow::MonthDayNanoIntervalType::ToString(bool) const’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/type.h:1802:29: warning: unused parameter ‘show_metadata’ [-Wunused-parameter]
+ 1802 |   std::string ToString(bool show_metadata = false) const override { return name(); }
+      |                        ~~~~~^~~~~~~~~~~~~~~~~~~~~
+In file included from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_adaptive.h:25,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/builder.h:22,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/api.h:26,
+                 from /tmp/quant-hft-stage3-snapshot/src/core/backtest/indicator_trace_parquet_writer.cpp:11:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h: In member function ‘virtual arrow::Status arrow::ArrayBuilder::AppendArraySlice(const arrow::ArraySpan&, int64_t, int64_t)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h:178:52: warning: unused parameter ‘array’ [-Wunused-parameter]
+  178 |   virtual Status AppendArraySlice(const ArraySpan& array, int64_t offset,
+      |                                   ~~~~~~~~~~~~~~~~~^~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h:178:67: warning: unused parameter ‘offset’ [-Wunused-parameter]
+  178 |   virtual Status AppendArraySlice(const ArraySpan& array, int64_t offset,
+      |                                                           ~~~~~~~~^~~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h:179:43: warning: unused parameter ‘length’ [-Wunused-parameter]
+  179 |                                   int64_t length) {
+      |                                   ~~~~~~~~^~~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h: In function ‘arrow::Result<std::unique_ptr<arrow::ArrayBuilder> > arrow::MakeBuilder(const std::shared_ptr<arrow::DataType>&, arrow::MemoryPool*)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h:334:19: warning: redundant move in return statement [-Wredundant-move]
+  334 |   return std::move(out);
+      |          ~~~~~~~~~^~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h:334:19: note: remove ‘std::move’ call
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h: In function ‘arrow::Result<std::unique_ptr<arrow::ArrayBuilder> > arrow::MakeBuilderExactIndex(const std::shared_ptr<arrow::DataType>&, arrow::MemoryPool*)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h:348:19: warning: redundant move in return statement [-Wredundant-move]
+  348 |   return std::move(out);
+      |          ~~~~~~~~~^~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h:348:19: note: remove ‘std::move’ call
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h: In function ‘arrow::Result<std::unique_ptr<arrow::ArrayBuilder> > arrow::MakeDictionaryBuilder(const std::shared_ptr<arrow::DataType>&, const std::shared_ptr<arrow::Array>&, arrow::MemoryPool*)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h:367:19: warning: redundant move in return statement [-Wredundant-move]
+  367 |   return std::move(out);
+      |          ~~~~~~~~~^~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h:367:19: note: remove ‘std::move’ call
+In file included from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_dict.h:29,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/builder.h:26,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/api.h:26,
+                 from /tmp/quant-hft-stage3-snapshot/src/core/backtest/indicator_trace_parquet_writer.cpp:11:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_primitive.h: In constructor ‘arrow::NullBuilder::NullBuilder(arrow::MemoryPool*, int64_t)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_primitive.h:35:32: warning: unused parameter ‘alignment’ [-Wunused-parameter]
+   35 |                        int64_t alignment = kDefaultBufferAlignment)
+      |                        ~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_primitive.h: In constructor ‘arrow::NullBuilder::NullBuilder(const std::shared_ptr<arrow::DataType>&, arrow::MemoryPool*, int64_t)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_primitive.h:37:57: warning: unused parameter ‘type’ [-Wunused-parameter]
+   37 |   explicit NullBuilder(const std::shared_ptr<DataType>& type,
+      |                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~
+In file included from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/scalar.h:39,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_dict.h:32,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/builder.h:26,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/api.h:26,
+                 from /tmp/quant-hft-stage3-snapshot/src/core/backtest/indicator_trace_parquet_writer.cpp:11:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h: In member function ‘arrow::Result<std::pair<arrow::Decimal128, arrow::Decimal128> > arrow::Decimal128::Divide(const arrow::Decimal128&) const’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h:83:21: warning: redundant move in return statement [-Wredundant-move]
+   83 |     return std::move(result);
+      |            ~~~~~~~~~^~~~~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h:83:21: note: remove ‘std::move’ call
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h: In member function ‘arrow::Result<arrow::Decimal128> arrow::Decimal128::Rescale(int32_t, int32_t) const’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h:121:21: warning: redundant move in return statement [-Wredundant-move]
+  121 |     return std::move(out);
+      |            ~~~~~~~~~^~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h:121:21: note: remove ‘std::move’ call
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h: In member function ‘arrow::Result<arrow::Decimal256> arrow::Decimal256::Rescale(int32_t, int32_t) const’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h:221:21: warning: redundant move in return statement [-Wredundant-move]
+  221 |     return std::move(out);
+      |            ~~~~~~~~~^~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h:221:21: note: remove ‘std::move’ call
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h: In member function ‘arrow::Result<std::pair<arrow::Decimal256, arrow::Decimal256> > arrow::Decimal256::Divide(const arrow::Decimal256&) const’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h:238:21: warning: redundant move in return statement [-Wredundant-move]
+  238 |     return std::move(result);
+      |            ~~~~~~~~~^~~~~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h:238:21: note: remove ‘std::move’ call
+In file included from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/builder.h:29,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/api.h:26,
+                 from /tmp/quant-hft-stage3-snapshot/src/core/backtest/indicator_trace_parquet_writer.cpp:11:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_run_end.h: In member function ‘virtual arrow::Status arrow::internal::RunCompressorBuilder::WillCloseRun(const std::shared_ptr<const arrow::Scalar>&, int64_t)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_run_end.h:77:68: warning: unused parameter ‘value’ [-Wunused-parameter]
+   77 |   virtual Status WillCloseRun(const std::shared_ptr<const Scalar>& value,
+      |                               ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_run_end.h:78:39: warning: unused parameter ‘length’ [-Wunused-parameter]
+   78 |                               int64_t length) {
+      |                               ~~~~~~~~^~~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_run_end.h: In member function ‘virtual arrow::Status arrow::internal::RunCompressorBuilder::WillCloseRunOfEmptyValues(int64_t)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_run_end.h:89:52: warning: unused parameter ‘length’ [-Wunused-parameter]
+   89 |   virtual Status WillCloseRunOfEmptyValues(int64_t length) { return Status::OK(); }
+      |                                            ~~~~~~~~^~~~~~
+[ 42%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/common/callback_dispatcher.cpp.o
+[ 46%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/common/event_dispatcher.cpp.o
+In file included from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/buffer.h:29,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/data.h:27,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/array_base.h:26,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array.h:41,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/api.h:22,
+                 from /tmp/quant-hft-stage3-snapshot/src/core/backtest/sub_strategy_indicator_trace_parquet_writer.cpp:11:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/device.h: In member function ‘virtual arrow::Result<std::shared_ptr<arrow::Device::Stream> > arrow::Device::MakeStream(unsigned int)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/device.h:142:67: warning: unused parameter ‘flags’ [-Wunused-parameter]
+  142 |   virtual Result<std::shared_ptr<Stream>> MakeStream(unsigned int flags) {
+      |                                                      ~~~~~~~~~~~~~^~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/device.h: In member function ‘virtual arrow::Result<std::shared_ptr<arrow::Device::Stream> > arrow::Device::WrapStream(void*, arrow::Device::Stream::release_fn_t)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/device.h:152:60: warning: unused parameter ‘device_stream’ [-Wunused-parameter]
+  152 |   virtual Result<std::shared_ptr<Stream>> WrapStream(void* device_stream,
+      |                                                      ~~~~~~^~~~~~~~~~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/device.h:153:75: warning: unused parameter ‘release_fn’ [-Wunused-parameter]
+  153 |                                                      Stream::release_fn_t release_fn) {
+      |                                                      ~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~
+[ 46%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/common/flow_controller.cpp.o
+In file included from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/buffer.h:29,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/data.h:27,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/array_base.h:26,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array.h:41,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/api.h:22,
+                 from /tmp/quant-hft-stage3-snapshot/src/core/backtest/parquet_data_feed.cpp:19:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/device.h: In member function ‘virtual arrow::Result<std::shared_ptr<arrow::Device::Stream> > arrow::Device::MakeStream(unsigned int)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/device.h:142:67: warning: unused parameter ‘flags’ [-Wunused-parameter]
+  142 |   virtual Result<std::shared_ptr<Stream>> MakeStream(unsigned int flags) {
+      |                                                      ~~~~~~~~~~~~~^~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/device.h: In member function ‘virtual arrow::Result<std::shared_ptr<arrow::Device::Stream> > arrow::Device::WrapStream(void*, arrow::Device::Stream::release_fn_t)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/device.h:152:60: warning: unused parameter ‘device_stream’ [-Wunused-parameter]
+  152 |   virtual Result<std::shared_ptr<Stream>> WrapStream(void* device_stream,
+      |                                                      ~~~~~~^~~~~~~~~~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/device.h:153:75: warning: unused parameter ‘release_fn’ [-Wunused-parameter]
+  153 |                                                      Stream::release_fn_t release_fn) {
+      |                                                      ~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~
+In file included from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/data.h:29,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/array_base.h:26,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array.h:41,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/api.h:22,
+                 from /tmp/quant-hft-stage3-snapshot/src/core/backtest/sub_strategy_indicator_trace_parquet_writer.cpp:11:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/type.h: In member function ‘virtual std::string arrow::MonthIntervalType::ToString(bool) const’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/type.h:1726:29: warning: unused parameter ‘show_metadata’ [-Wunused-parameter]
+ 1726 |   std::string ToString(bool show_metadata = false) const override { return name(); }
+      |                        ~~~~~^~~~~~~~~~~~~~~~~~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/type.h: In member function ‘virtual std::string arrow::DayTimeIntervalType::ToString(bool) const’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/type.h:1762:29: warning: unused parameter ‘show_metadata’ [-Wunused-parameter]
+ 1762 |   std::string ToString(bool show_metadata = false) const override { return name(); }
+      |                        ~~~~~^~~~~~~~~~~~~~~~~~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/type.h: In member function ‘virtual std::string arrow::MonthDayNanoIntervalType::ToString(bool) const’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/type.h:1802:29: warning: unused parameter ‘show_metadata’ [-Wunused-parameter]
+ 1802 |   std::string ToString(bool show_metadata = false) const override { return name(); }
+      |                        ~~~~~^~~~~~~~~~~~~~~~~~~~~
+In file included from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/data.h:29,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/array_base.h:26,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array.h:41,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/api.h:22,
+                 from /tmp/quant-hft-stage3-snapshot/src/core/backtest/parquet_data_feed.cpp:19:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/type.h: In member function ‘virtual std::string arrow::MonthIntervalType::ToString(bool) const’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/type.h:1726:29: warning: unused parameter ‘show_metadata’ [-Wunused-parameter]
+ 1726 |   std::string ToString(bool show_metadata = false) const override { return name(); }
+      |                        ~~~~~^~~~~~~~~~~~~~~~~~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/type.h: In member function ‘virtual std::string arrow::DayTimeIntervalType::ToString(bool) const’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/type.h:1762:29: warning: unused parameter ‘show_metadata’ [-Wunused-parameter]
+ 1762 |   std::string ToString(bool show_metadata = false) const override { return name(); }
+      |                        ~~~~~^~~~~~~~~~~~~~~~~~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/type.h: In member function ‘virtual std::string arrow::MonthDayNanoIntervalType::ToString(bool) const’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/type.h:1802:29: warning: unused parameter ‘show_metadata’ [-Wunused-parameter]
+ 1802 |   std::string ToString(bool show_metadata = false) const override { return name(); }
+      |                        ~~~~~^~~~~~~~~~~~~~~~~~~~~
+In file included from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_adaptive.h:25,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/builder.h:22,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/api.h:26,
+                 from /tmp/quant-hft-stage3-snapshot/src/core/backtest/sub_strategy_indicator_trace_parquet_writer.cpp:11:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h: In member function ‘virtual arrow::Status arrow::ArrayBuilder::AppendArraySlice(const arrow::ArraySpan&, int64_t, int64_t)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h:178:52: warning: unused parameter ‘array’ [-Wunused-parameter]
+  178 |   virtual Status AppendArraySlice(const ArraySpan& array, int64_t offset,
+      |                                   ~~~~~~~~~~~~~~~~~^~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h:178:67: warning: unused parameter ‘offset’ [-Wunused-parameter]
+  178 |   virtual Status AppendArraySlice(const ArraySpan& array, int64_t offset,
+      |                                                           ~~~~~~~~^~~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h:179:43: warning: unused parameter ‘length’ [-Wunused-parameter]
+  179 |                                   int64_t length) {
+      |                                   ~~~~~~~~^~~~~~
+In file included from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_adaptive.h:25,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/builder.h:22,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/api.h:26,
+                 from /tmp/quant-hft-stage3-snapshot/src/core/backtest/parquet_data_feed.cpp:19:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h: In member function ‘virtual arrow::Status arrow::ArrayBuilder::AppendArraySlice(const arrow::ArraySpan&, int64_t, int64_t)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h:178:52: warning: unused parameter ‘array’ [-Wunused-parameter]
+  178 |   virtual Status AppendArraySlice(const ArraySpan& array, int64_t offset,
+      |                                   ~~~~~~~~~~~~~~~~~^~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h:178:67: warning: unused parameter ‘offset’ [-Wunused-parameter]
+  178 |   virtual Status AppendArraySlice(const ArraySpan& array, int64_t offset,
+      |                                                           ~~~~~~~~^~~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h:179:43: warning: unused parameter ‘length’ [-Wunused-parameter]
+  179 |                                   int64_t length) {
+      |                                   ~~~~~~~~^~~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h: In function ‘arrow::Result<std::unique_ptr<arrow::ArrayBuilder> > arrow::MakeBuilder(const std::shared_ptr<arrow::DataType>&, arrow::MemoryPool*)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h:334:19: warning: redundant move in return statement [-Wredundant-move]
+  334 |   return std::move(out);
+      |          ~~~~~~~~~^~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h:334:19: note: remove ‘std::move’ call
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h: In function ‘arrow::Result<std::unique_ptr<arrow::ArrayBuilder> > arrow::MakeBuilderExactIndex(const std::shared_ptr<arrow::DataType>&, arrow::MemoryPool*)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h:348:19: warning: redundant move in return statement [-Wredundant-move]
+  348 |   return std::move(out);
+      |          ~~~~~~~~~^~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h:348:19: note: remove ‘std::move’ call
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h: In function ‘arrow::Result<std::unique_ptr<arrow::ArrayBuilder> > arrow::MakeDictionaryBuilder(const std::shared_ptr<arrow::DataType>&, const std::shared_ptr<arrow::Array>&, arrow::MemoryPool*)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h:367:19: warning: redundant move in return statement [-Wredundant-move]
+  367 |   return std::move(out);
+      |          ~~~~~~~~~^~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h:367:19: note: remove ‘std::move’ call
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h: In function ‘arrow::Result<std::unique_ptr<arrow::ArrayBuilder> > arrow::MakeBuilder(const std::shared_ptr<arrow::DataType>&, arrow::MemoryPool*)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h:334:19: warning: redundant move in return statement [-Wredundant-move]
+  334 |   return std::move(out);
+      |          ~~~~~~~~~^~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h:334:19: note: remove ‘std::move’ call
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h: In function ‘arrow::Result<std::unique_ptr<arrow::ArrayBuilder> > arrow::MakeBuilderExactIndex(const std::shared_ptr<arrow::DataType>&, arrow::MemoryPool*)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h:348:19: warning: redundant move in return statement [-Wredundant-move]
+  348 |   return std::move(out);
+      |          ~~~~~~~~~^~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h:348:19: note: remove ‘std::move’ call
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h: In function ‘arrow::Result<std::unique_ptr<arrow::ArrayBuilder> > arrow::MakeDictionaryBuilder(const std::shared_ptr<arrow::DataType>&, const std::shared_ptr<arrow::Array>&, arrow::MemoryPool*)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h:367:19: warning: redundant move in return statement [-Wredundant-move]
+  367 |   return std::move(out);
+      |          ~~~~~~~~~^~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_base.h:367:19: note: remove ‘std::move’ call
+In file included from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_dict.h:29,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/builder.h:26,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/api.h:26,
+                 from /tmp/quant-hft-stage3-snapshot/src/core/backtest/sub_strategy_indicator_trace_parquet_writer.cpp:11:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_primitive.h: In constructor ‘arrow::NullBuilder::NullBuilder(arrow::MemoryPool*, int64_t)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_primitive.h:35:32: warning: unused parameter ‘alignment’ [-Wunused-parameter]
+   35 |                        int64_t alignment = kDefaultBufferAlignment)
+      |                        ~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_primitive.h: In constructor ‘arrow::NullBuilder::NullBuilder(const std::shared_ptr<arrow::DataType>&, arrow::MemoryPool*, int64_t)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_primitive.h:37:57: warning: unused parameter ‘type’ [-Wunused-parameter]
+   37 |   explicit NullBuilder(const std::shared_ptr<DataType>& type,
+      |                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~
+In file included from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_dict.h:29,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/builder.h:26,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/api.h:26,
+                 from /tmp/quant-hft-stage3-snapshot/src/core/backtest/parquet_data_feed.cpp:19:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_primitive.h: In constructor ‘arrow::NullBuilder::NullBuilder(arrow::MemoryPool*, int64_t)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_primitive.h:35:32: warning: unused parameter ‘alignment’ [-Wunused-parameter]
+   35 |                        int64_t alignment = kDefaultBufferAlignment)
+      |                        ~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_primitive.h: In constructor ‘arrow::NullBuilder::NullBuilder(const std::shared_ptr<arrow::DataType>&, arrow::MemoryPool*, int64_t)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_primitive.h:37:57: warning: unused parameter ‘type’ [-Wunused-parameter]
+   37 |   explicit NullBuilder(const std::shared_ptr<DataType>& type,
+      |                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~
+[ 46%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/common/circuit_breaker.cpp.o
+In file included from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/scalar.h:39,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_dict.h:32,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/builder.h:26,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/api.h:26,
+                 from /tmp/quant-hft-stage3-snapshot/src/core/backtest/sub_strategy_indicator_trace_parquet_writer.cpp:11:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h: In member function ‘arrow::Result<std::pair<arrow::Decimal128, arrow::Decimal128> > arrow::Decimal128::Divide(const arrow::Decimal128&) const’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h:83:21: warning: redundant move in return statement [-Wredundant-move]
+   83 |     return std::move(result);
+      |            ~~~~~~~~~^~~~~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h:83:21: note: remove ‘std::move’ call
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h: In member function ‘arrow::Result<arrow::Decimal128> arrow::Decimal128::Rescale(int32_t, int32_t) const’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h:121:21: warning: redundant move in return statement [-Wredundant-move]
+  121 |     return std::move(out);
+      |            ~~~~~~~~~^~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h:121:21: note: remove ‘std::move’ call
+In file included from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/scalar.h:39,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_dict.h:32,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/builder.h:26,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/api.h:26,
+                 from /tmp/quant-hft-stage3-snapshot/src/core/backtest/parquet_data_feed.cpp:19:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h: In member function ‘arrow::Result<std::pair<arrow::Decimal128, arrow::Decimal128> > arrow::Decimal128::Divide(const arrow::Decimal128&) const’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h:83:21: warning: redundant move in return statement [-Wredundant-move]
+   83 |     return std::move(result);
+      |            ~~~~~~~~~^~~~~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h:83:21: note: remove ‘std::move’ call
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h: In member function ‘arrow::Result<arrow::Decimal256> arrow::Decimal256::Rescale(int32_t, int32_t) const’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h:221:21: warning: redundant move in return statement [-Wredundant-move]
+  221 |     return std::move(out);
+      |            ~~~~~~~~~^~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h:221:21: note: remove ‘std::move’ call
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h: In member function ‘arrow::Result<arrow::Decimal128> arrow::Decimal128::Rescale(int32_t, int32_t) const’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h:121:21: warning: redundant move in return statement [-Wredundant-move]
+  121 |     return std::move(out);
+      |            ~~~~~~~~~^~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h:121:21: note: remove ‘std::move’ call
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h: In member function ‘arrow::Result<std::pair<arrow::Decimal256, arrow::Decimal256> > arrow::Decimal256::Divide(const arrow::Decimal256&) const’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h:238:21: warning: redundant move in return statement [-Wredundant-move]
+  238 |     return std::move(result);
+      |            ~~~~~~~~~^~~~~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h:238:21: note: remove ‘std::move’ call
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h: In member function ‘arrow::Result<arrow::Decimal256> arrow::Decimal256::Rescale(int32_t, int32_t) const’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h:221:21: warning: redundant move in return statement [-Wredundant-move]
+  221 |     return std::move(out);
+      |            ~~~~~~~~~^~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h:221:21: note: remove ‘std::move’ call
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h: In member function ‘arrow::Result<std::pair<arrow::Decimal256, arrow::Decimal256> > arrow::Decimal256::Divide(const arrow::Decimal256&) const’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h:238:21: warning: redundant move in return statement [-Wredundant-move]
+  238 |     return std::move(result);
+      |            ~~~~~~~~~^~~~~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/util/decimal.h:238:21: note: remove ‘std::move’ call
+In file included from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/builder.h:29,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/api.h:26,
+                 from /tmp/quant-hft-stage3-snapshot/src/core/backtest/sub_strategy_indicator_trace_parquet_writer.cpp:11:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_run_end.h: In member function ‘virtual arrow::Status arrow::internal::RunCompressorBuilder::WillCloseRun(const std::shared_ptr<const arrow::Scalar>&, int64_t)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_run_end.h:77:68: warning: unused parameter ‘value’ [-Wunused-parameter]
+   77 |   virtual Status WillCloseRun(const std::shared_ptr<const Scalar>& value,
+      |                               ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_run_end.h:78:39: warning: unused parameter ‘length’ [-Wunused-parameter]
+   78 |                               int64_t length) {
+      |                               ~~~~~~~~^~~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_run_end.h: In member function ‘virtual arrow::Status arrow::internal::RunCompressorBuilder::WillCloseRunOfEmptyValues(int64_t)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_run_end.h:89:52: warning: unused parameter ‘length’ [-Wunused-parameter]
+   89 |   virtual Status WillCloseRunOfEmptyValues(int64_t length) { return Status::OK(); }
+      |                                            ~~~~~~~~^~~~~~
+In file included from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/builder.h:29,
+                 from /home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/api.h:26,
+                 from /tmp/quant-hft-stage3-snapshot/src/core/backtest/parquet_data_feed.cpp:19:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_run_end.h: In member function ‘virtual arrow::Status arrow::internal::RunCompressorBuilder::WillCloseRun(const std::shared_ptr<const arrow::Scalar>&, int64_t)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_run_end.h:77:68: warning: unused parameter ‘value’ [-Wunused-parameter]
+   77 |   virtual Status WillCloseRun(const std::shared_ptr<const Scalar>& value,
+      |                               ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_run_end.h:78:39: warning: unused parameter ‘length’ [-Wunused-parameter]
+   78 |                               int64_t length) {
+      |                               ~~~~~~~~^~~~~~
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_run_end.h: In member function ‘virtual arrow::Status arrow::internal::RunCompressorBuilder::WillCloseRunOfEmptyValues(int64_t)’:
+/home/kevin/.cache/quant-hft-deps/pyarrow16/pyarrow/include/arrow/array/builder_run_end.h:89:52: warning: unused parameter ‘length’ [-Wunused-parameter]
+   89 |   virtual Status WillCloseRunOfEmptyValues(int64_t length) { return Status::OK(); }
+      |                                            ~~~~~~~~^~~~~~
+[ 46%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/common/fixed_decimal.cpp.o
+[ 50%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/ctp/ctp_config.cpp.o
+[ 50%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/ctp/ctp_config_loader.cpp.o
+[ 50%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/ctp/instrument_meta_cache.cpp.o
+[ 50%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/ctp/ctp_trader_adapter.cpp.o
+[ 53%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/ctp/ctp_md_adapter.cpp.o
+[ 53%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/ctp/ctp_gateway_adapter.cpp.o
+[ 53%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/ctp/query_scheduler.cpp.o
+[ 53%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/regulatory/local_wal_regulatory_sink.cpp.o
+[ 53%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/regulatory/wal_replay_loader.cpp.o
+[ 57%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/redis_hash_client.cpp.o
+/tmp/quant-hft-stage3-snapshot/src/core/ctp/ctp_gateway_adapter.cpp: In member function ‘virtual bool quant_hft::CtpGatewayAdapter::RequestUserLogin(int, const string&, const string&, const string&)’:
+/tmp/quant-hft-stage3-snapshot/src/core/ctp/ctp_gateway_adapter.cpp:3373:61: warning: unused parameter ‘user_id’ [-Wunused-parameter]
+ 3373 |                                          const std::string& user_id, const std::string& password) {
+      |                                          ~~~~~~~~~~~~~~~~~~~^~~~~~~
+[ 57%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/redis_realtime_store.cpp.o
+[ 57%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/redis_realtime_store_client_adapter.cpp.o
+[ 57%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/libpq_timescale_sql_client.cpp.o
+[ 60%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/storage_client_pool.cpp.o
+[ 60%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/storage_client_factory.cpp.o
+[ 60%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/storage_connection_config.cpp.o
+[ 60%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/tcp_redis_hash_client.cpp.o
+[ 64%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/settlement_store_client_adapter.cpp.o
+[ 64%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/trading_domain_store_client_adapter.cpp.o
+[ 64%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/trading_ledger_store_client_adapter.cpp.o
+[ 64%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/timescale_buffered_event_store.cpp.o
+[ 64%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/timescale_event_store.cpp.o
+[ 67%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/timescale_event_store_client_adapter.cpp.o
+[ 67%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/timescale_sql_client.cpp.o
+[ 67%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/market/kafka_market_bus_producer.cpp.o
+[ 67%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/perf/object_pool.cpp.o
+[ 71%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/perf/event_object_pool.cpp.o
+[ 71%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/monitoring/metric_registry.cpp.o
+[ 71%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/monitoring/exporter.cpp.o
+[ 71%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/risk/basic_risk_engine.cpp.o
+[ 75%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/risk/risk_policy_engine.cpp.o
+[ 75%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/risk/self_trade_risk_engine.cpp.o
+[ 75%] Building CXX object CMakeFiles/quant_hft_core.dir/src/risk/risk_rule_executor.cpp.o
+[ 75%] Building CXX object CMakeFiles/quant_hft_core.dir/src/risk/risk_rule_registry.cpp.o
+[ 78%] Building CXX object CMakeFiles/quant_hft_core.dir/src/risk/risk_manager.cpp.o
+[ 78%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/order/execution_planner.cpp.o
+[ 78%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/order/execution_engine.cpp.o
+[ 78%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/order/order_manager.cpp.o
+[ 78%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/order/execution_router.cpp.o
+[ 82%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/order/in_memory_order_gateway.cpp.o
+[ 82%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/order/order_state_machine.cpp.o
+/tmp/quant-hft-stage3-snapshot/src/risk/risk_rule_registry.cpp:11:6: warning: ‘bool quant_hft::{anonymous}::IsOpenOrder(const quant_hft::OrderIntent&)’ defined but not used [-Wunused-function]
+   11 | bool IsOpenOrder(const OrderIntent& intent) { return intent.offset == OffsetFlag::kOpen; }
+      |      ^~~~~~~~~~~
+[ 82%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/order/pending_exit_store.cpp.o
+/tmp/quant-hft-stage3-snapshot/src/services/order/execution_engine.cpp: In member function ‘quant_hft::TradeApplyResult quant_hft::ExecutionEngine::ProcessOrderEvent(const quant_hft::OrderEvent&, const quant_hft::WalReceipt&, bool)’:
+/tmp/quant-hft-stage3-snapshot/src/services/order/execution_engine.cpp:365:72: warning: missing initializer for member ‘quant_hft::TradeApplyRequest::accounting_policy’ [-Wmissing-field-initializers]
+  365 |                                   event.event_source == "OnRspQryTrade"};
+      |                                                                        ^
+[ 82%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/order/timeout_cancel_tracker.cpp.o
+[ 85%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/order/trading_permission_controller.cpp.o
+[ 85%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/settlement/settlement_price_provider.cpp.o
+[ 85%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/settlement/settlement_query_client.cpp.o
+[ 85%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/settlement/daily_settlement_service.cpp.o
+[ 89%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/portfolio/ctp_account_ledger.cpp.o
+[ 89%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/portfolio/ctp_close_offset_resolver.cpp.o
+[ 89%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/portfolio/ctp_position_ledger.cpp.o
+[ 89%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/portfolio/position_manager.cpp.o
+[ 89%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/portfolio/in_memory_portfolio_ledger.cpp.o
+[ 92%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/market_state/bar_aggregator.cpp.o
+[ 92%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/market_state/market_bar_pipeline.cpp.o
+[ 92%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/market_state/dominant_contract_coordinator.cpp.o
+[ 92%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/market_state/trading_session_calendar.cpp.o
+[ 96%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/market_state/market_data_csv_recorder.cpp.o
+[ 96%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/market_state/market_state_detector.cpp.o
+[ 96%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/market_state/rule_market_state_engine.cpp.o
+[ 96%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/market_state/timeframe_state_fanout.cpp.o
+[100%] Linking CXX static library libquant_hft_core.a
+[100%] Built target quant_hft_core
+[100%] Building CXX object CMakeFiles/core_engine.dir/src/apps/core_engine_main.cpp.o
+[100%] Linking CXX executable core_engine
+[100%] Built target core_engine
+Consolidate compiler generated dependencies of target quant_hft_core
+[100%] Built target quant_hft_core
+[100%] Building CXX object CMakeFiles/backtest_cli.dir/src/apps/backtest_cli_main.cpp.o
+[100%] Linking CXX executable backtest_cli
+[100%] Built target backtest_cli
+[100%] Built target quant_hft_core
+[100%] Building CXX object CMakeFiles/parameter_optim_cli.dir/src/apps/parameter_optim_cli_main.cpp.o
+[100%] Linking CXX executable parameter_optim_cli
+[100%] Built target parameter_optim_cli
+[ 96%] Built target quant_hft_core
+[ 96%] Building CXX object CMakeFiles/rolling_backtest_cli.dir/src/apps/rolling_backtest_cli_main.cpp.o
+[100%] Linking CXX executable rolling_backtest_cli
+[100%] Built target rolling_backtest_cli
+[  0%] Building CXX object _deps/googletest-build/googletest/CMakeFiles/gtest.dir/src/gtest-all.cc.o
+[ 96%] Built target quant_hft_core
+[ 96%] Linking CXX static library ../../../lib/libgtest.a
+[ 96%] Built target gtest
+[ 96%] Building CXX object _deps/googletest-build/googletest/CMakeFiles/gtest_main.dir/src/gtest_main.cc.o
+[100%] Linking CXX static library ../../../lib/libgtest_main.a
+[100%] Built target gtest_main
+[100%] Building CXX object CMakeFiles/replay_market_parity_test.dir/tests/unit/apps/replay_market_parity_test.cpp.o
+[100%] Linking CXX executable replay_market_parity_test
+[100%] Built target replay_market_parity_test
+Consolidate compiler generated dependencies of target gtest
+[  0%] Built target gtest
+Consolidate compiler generated dependencies of target gtest_main
+[  3%] Built target gtest_main
+[100%] Built target quant_hft_core
+[100%] Building CXX object CMakeFiles/backtest_replay_support_test.dir/tests/unit/apps/backtest_replay_support_test.cpp.o
+[100%] Linking CXX executable backtest_replay_support_test
+[100%] Built target backtest_replay_support_test
+[  0%] Built target gtest
+[  3%] Built target gtest_main
+[ 96%] Built target quant_hft_core
+[ 96%] Building CXX object CMakeFiles/metric_extractor_test.dir/tests/unit/apps/metric_extractor_test.cpp.o
+[100%] Linking CXX executable metric_extractor_test
+[100%] Built target metric_extractor_test
+[  0%] Built target gtest
+[  3%] Built target gtest_main
+[ 96%] Built target quant_hft_core
+[ 96%] Building CXX object CMakeFiles/oos_top10_validation_test.dir/tests/unit/apps/oos_top10_validation_test.cpp.o
+[100%] Linking CXX executable oos_top10_validation_test
+[100%] Built target oos_top10_validation_test
+[  0%] Built target gtest
+[  3%] Built target gtest_main
+[100%] Built target quant_hft_core
+[100%] Building CXX object CMakeFiles/rolling_config_test.dir/tests/unit/apps/rolling_config_test.cpp.o
+[100%] Linking CXX executable rolling_config_test
+[100%] Built target rolling_config_test
+[  0%] Built target gtest
+[  3%] Built target gtest_main
+[ 96%] Built target quant_hft_core
+[ 96%] Building CXX object CMakeFiles/rolling_runner_fixed_test.dir/tests/unit/apps/rolling_runner_fixed_test.cpp.o
+[100%] Linking CXX executable rolling_runner_fixed_test
+[100%] Built target rolling_runner_fixed_test
+[  0%] Built target gtest
+[  3%] Built target gtest_main
+[100%] Built target quant_hft_core
+[100%] Building CXX object CMakeFiles/rolling_runner_optimize_test.dir/tests/unit/apps/rolling_runner_optimize_test.cpp.o
+[100%] Linking CXX executable rolling_runner_optimize_test
+[100%] Built target rolling_runner_optimize_test
+[  0%] Built target gtest
+[  3%] Built target gtest_main
+[ 96%] Built target quant_hft_core
+[ 96%] Building CXX object CMakeFiles/window_generator_test.dir/tests/unit/apps/window_generator_test.cpp.o
+[100%] Linking CXX executable window_generator_test
+[100%] Built target window_generator_test
+[  0%] Built target gtest
+[  3%] Built target gtest_main
+[100%] Built target quant_hft_core
+[100%] Building CXX object CMakeFiles/backtest_data_feed_test.dir/tests/unit/backtest/backtest_data_feed_test.cpp.o
+[100%] Linking CXX executable backtest_data_feed_test
+[100%] Built target backtest_data_feed_test
+[  0%] Built target gtest
+[  3%] Built target gtest_main
+[100%] Built target quant_hft_core
+[100%] Building CXX object CMakeFiles/parquet_data_feed_test.dir/tests/unit/backtest/parquet_data_feed_test.cpp.o
+[100%] Linking CXX executable parquet_data_feed_test
+[100%] Built target parquet_data_feed_test
+[  0%] Built target gtest
+[  3%] Built target gtest_main
+[100%] Built target quant_hft_core
+[100%] Building CXX object CMakeFiles/indicator_trace_parquet_writer_test.dir/tests/unit/backtest/indicator_trace_parquet_writer_test.cpp.o
+[100%] Linking CXX executable indicator_trace_parquet_writer_test
+[100%] Built target indicator_trace_parquet_writer_test
+[  0%] Built target gtest
+[  3%] Built target gtest_main
+[ 96%] Built target quant_hft_core
+[ 96%] Building CXX object CMakeFiles/sub_strategy_indicator_trace_parquet_writer_test.dir/tests/unit/backtest/sub_strategy_indicator_trace_parquet_writer_test.cpp.o
+[100%] Linking CXX executable sub_strategy_indicator_trace_parquet_writer_test
+[100%] Built target sub_strategy_indicator_trace_parquet_writer_test
+[  0%] Built target gtest
+[  3%] Built target gtest_main
+[ 96%] Built target quant_hft_core
+[100%] Building CXX object CMakeFiles/temp_config_generator_test.dir/tests/unit/optim/temp_config_generator_test.cpp.o
+[100%] Linking CXX executable temp_config_generator_test
+[100%] Built target temp_config_generator_test
+[  0%] Built target gtest
+[  3%] Built target gtest_main
+[100%] Built target quant_hft_core
+[100%] Building CXX object CMakeFiles/task_scheduler_test.dir/tests/unit/optim/task_scheduler_test.cpp.o
+[100%] Linking CXX executable task_scheduler_test
+[100%] Built target task_scheduler_test

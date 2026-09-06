@@ -1,0 +1,32 @@
+{
+  "recorded_at_utc": "2026-09-06T03:11:58Z",
+  "worktree_head_at_capture": "961e33e5f4418f6273d09260e61342dfe8f84a90",
+  "baseline": "4aaa1b7",
+  "build_dir": "/tmp/quant-hft-research-build",
+  "arrow_version": "16.1.0",
+  "compiler": "g++ (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0",
+  "input_batch_rows": 4096,
+  "input_stream_buffer_bytes": 65536,
+  "benchmark_repeats_per_case": 1,
+  "final_validation_at_utc": "2026-09-06T03:37:20Z",
+  "final_worktree_head": "42c931a7edc36da692db5db90a98b58132ae6178",
+  "final_ctest": {
+    "total": 919,
+    "passed": 905,
+    "skipped": 14,
+    "failed": 0,
+    "elapsed_seconds": 4.53
+  },
+  "focused_ctest": {
+    "passed": 64,
+    "failed": 0,
+    "elapsed_seconds": 0.33
+  },
+  "pre_risk_ctest": {
+    "total": 904,
+    "passed": 890,
+    "skipped": 14,
+    "failed": 0,
+    "elapsed_seconds": 4.84
+  }
+}

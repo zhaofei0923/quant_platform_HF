@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -8,8 +9,20 @@
 namespace quant_hft {
 
 class ITimescaleSqlClient {
-public:
+   public:
     virtual ~ITimescaleSqlClient() = default;
+
+    using Transaction = std::function<bool(ITimescaleSqlClient&, std::string*)>;
+    // The callback and commit use one connection. False or an exception rolls back.
+    // No failover/retry is allowed after an ambiguous commit.
+    virtual bool RunInTransaction(const Transaction&, std::string* error) {
+        if (error != nullptr) *error = "atomic transactions unsupported";
+        return false;
+    }
+    virtual bool LockTransactionKey(const std::string&, std::string* error) {
+        if (error != nullptr) *error = "transaction lock unsupported";
+        return false;
+    }
 
     virtual bool InsertRow(const std::string& table,
                            const std::unordered_map<std::string, std::string>& row,
@@ -18,8 +31,7 @@ public:
     virtual bool UpsertRow(const std::string& table,
                            const std::unordered_map<std::string, std::string>& row,
                            const std::vector<std::string>& conflict_keys,
-                           const std::vector<std::string>& update_keys,
-                           std::string* error) {
+                           const std::vector<std::string>& update_keys, std::string* error) {
         (void)table;
         (void)row;
         (void)conflict_keys;
@@ -31,43 +43,39 @@ public:
     }
 
     virtual std::vector<std::unordered_map<std::string, std::string>> QueryRows(
-        const std::string& table,
-        const std::string& key,
-        const std::string& value,
+        const std::string& table, const std::string& key, const std::string& value,
         std::string* error) const = 0;
 
     virtual std::vector<std::unordered_map<std::string, std::string>> QueryAllRows(
-        const std::string& table,
-        std::string* error) const = 0;
+        const std::string& table, std::string* error) const = 0;
     virtual bool Ping(std::string* error) const = 0;
 };
 
 class InMemoryTimescaleSqlClient : public ITimescaleSqlClient {
-public:
+   public:
+    bool RunInTransaction(const Transaction& transaction, std::string* error) override;
+    bool LockTransactionKey(const std::string&, std::string* error) override;
     bool InsertRow(const std::string& table,
                    const std::unordered_map<std::string, std::string>& row,
                    std::string* error) override;
     bool UpsertRow(const std::string& table,
                    const std::unordered_map<std::string, std::string>& row,
                    const std::vector<std::string>& conflict_keys,
-                   const std::vector<std::string>& update_keys,
-                   std::string* error) override;
+                   const std::vector<std::string>& update_keys, std::string* error) override;
 
     std::vector<std::unordered_map<std::string, std::string>> QueryRows(
-        const std::string& table,
-        const std::string& key,
-        const std::string& value,
+        const std::string& table, const std::string& key, const std::string& value,
         std::string* error) const override;
 
     std::vector<std::unordered_map<std::string, std::string>> QueryAllRows(
-        const std::string& table,
-        std::string* error) const override;
+        const std::string& table, std::string* error) const override;
     bool Ping(std::string* error) const override;
 
-private:
-    mutable std::mutex mutex_;
-    std::unordered_map<std::string,
-                       std::vector<std::unordered_map<std::string, std::string>>>
+   private:
+    bool in_transaction_{false};
+    mutable std::recursive_mutex mutex_;
+    std::vector<std::function<void()>> undo_log_;
+    std::unordered_map<std::string, std::vector<std::unordered_map<std::string, std::string>>>
         tables_;
 };
 

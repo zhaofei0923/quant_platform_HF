@@ -27,13 +27,9 @@ struct LibpqTimescaleSqlClient::LibpqApi {
     using PQerrorMessageFn = char* (*)(const PGconn* conn);
     using PQfinishFn = void (*)(PGconn* conn);
     using PQexecFn = PGresult* (*)(PGconn* conn, const char* query);
-    using PQexecParamsFn = PGresult* (*)(PGconn* conn,
-                                         const char* command,
-                                         int n_params,
-                                         const Oid* param_types,
-                                         const char* const* param_values,
-                                         const int* param_lengths,
-                                         const int* param_formats,
+    using PQexecParamsFn = PGresult* (*)(PGconn* conn, const char* command, int n_params,
+                                         const Oid* param_types, const char* const* param_values,
+                                         const int* param_lengths, const int* param_formats,
                                          int result_format);
     using PQresultStatusFn = int (*)(const PGresult* result);
     using PQresStatusFn = const char* (*)(int status);
@@ -137,10 +133,8 @@ LibpqTimescaleSqlClient::LibpqApi LoadLibpqApi() {
     return api;
 }
 
-std::string ConnOrResultError(const LibpqTimescaleSqlClient::LibpqApi& api,
-                              const PGconn* conn,
-                              const PGresult* result,
-                              const std::string& fallback) {
+std::string ConnOrResultError(const LibpqTimescaleSqlClient::LibpqApi& api, const PGconn* conn,
+                              const PGresult* result, const std::string& fallback) {
     if (result != nullptr && api.PQresultErrorMessage != nullptr) {
         const char* result_error = api.PQresultErrorMessage(result);
         if (result_error != nullptr && *result_error != '\0') {
@@ -198,10 +192,9 @@ std::string LibpqTimescaleSqlClient::QuoteIdentifier(const std::string& identifi
     return "\"" + identifier + "\"";
 }
 
-bool LibpqTimescaleSqlClient::ValidateQualifiedTableIdentifier(
-    const std::string& table_identifier,
-    std::string* quoted_identifier,
-    std::string* error) const {
+bool LibpqTimescaleSqlClient::ValidateQualifiedTableIdentifier(const std::string& table_identifier,
+                                                               std::string* quoted_identifier,
+                                                               std::string* error) const {
     if (quoted_identifier == nullptr) {
         if (error != nullptr) {
             *error = "quoted_identifier is null";
@@ -273,8 +266,7 @@ std::string LibpqTimescaleSqlClient::BuildConnInfo() const {
         return config_.dsn;
     }
 
-    auto append_field = [](std::ostringstream* stream,
-                           const std::string& key,
+    auto append_field = [](std::ostringstream* stream, const std::string& key,
                            const std::string& value) {
         if (stream == nullptr || value.empty()) {
             return;
@@ -289,8 +281,7 @@ std::string LibpqTimescaleSqlClient::BuildConnInfo() const {
     append_field(&conn_info, "user", config_.user);
     append_field(&conn_info, "password", config_.password);
     append_field(&conn_info, "sslmode", config_.ssl_mode);
-    conn_info << "connect_timeout='"
-              << std::max(1, config_.connect_timeout_ms / 1000) << "'";
+    conn_info << "connect_timeout='" << std::max(1, config_.connect_timeout_ms / 1000) << "'";
     return conn_info.str();
 }
 
@@ -339,8 +330,7 @@ bool LibpqTimescaleSqlClient::IsTuplesOk(const LibpqApi& api, void* result_ptr) 
            status == "PGRES_TUPLES_CHUNK";
 }
 
-std::string LibpqTimescaleSqlClient::ResultStatusText(const LibpqApi& api,
-                                                      void* result_ptr) {
+std::string LibpqTimescaleSqlClient::ResultStatusText(const LibpqApi& api, void* result_ptr) {
     auto* result = static_cast<PGresult*>(result_ptr);
     if (result == nullptr) {
         return "PGRES_NULL";
@@ -353,8 +343,8 @@ std::string LibpqTimescaleSqlClient::ResultStatusText(const LibpqApi& api,
     return std::string(status_text);
 }
 
-std::vector<std::unordered_map<std::string, std::string>>
-LibpqTimescaleSqlClient::ParseRows(const LibpqApi& api, void* result_ptr) {
+std::vector<std::unordered_map<std::string, std::string>> LibpqTimescaleSqlClient::ParseRows(
+    const LibpqApi& api, void* result_ptr) {
     auto* result = static_cast<PGresult*>(result_ptr);
     if (result == nullptr) {
         return {};
@@ -384,20 +374,55 @@ LibpqTimescaleSqlClient::ParseRows(const LibpqApi& api, void* result_ptr) {
     return out;
 }
 
+bool LibpqTimescaleSqlClient::RunInTransaction(const Transaction& transaction, std::string* error) {
+    if (transaction_connection_ != nullptr) {
+        if (error != nullptr) *error = "nested transactions unsupported";
+        return false;
+    }
+    void* raw = nullptr;
+    if (!Connect(&raw, error)) return false;
+    const auto& api = Api();
+    std::unique_ptr<PGconn, LibpqApi::PQfinishFn> connection(static_cast<PGconn*>(raw),
+                                                             api.PQfinish);
+    LibpqTimescaleSqlClient session(config_);
+    session.transaction_connection_ = raw;
+    if (!session.ExecuteStatement("BEGIN", {}, false, nullptr, error)) return false;
+    try {
+        if (transaction(session, error)) {
+            // A failed COMMIT has an unknown outcome. Caller replays using its identity.
+            return session.ExecuteStatement("COMMIT", {}, false, nullptr, error);
+        }
+    } catch (...) {
+        std::string ignored;
+        session.ExecuteStatement("ROLLBACK", {}, false, nullptr, &ignored);
+        throw;
+    }
+    std::string ignored;
+    session.ExecuteStatement("ROLLBACK", {}, false, nullptr, &ignored);
+    return false;
+}
+
+bool LibpqTimescaleSqlClient::LockTransactionKey(const std::string& key, std::string* error) {
+    if (transaction_connection_ == nullptr) {
+        if (error != nullptr) *error = "lock requires a transaction";
+        return false;
+    }
+    return ExecuteStatement("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", {key}, true,
+                            nullptr, error);
+}
+
 bool LibpqTimescaleSqlClient::ExecuteStatement(
-    const std::string& sql,
-    const std::vector<std::string>& params,
-    bool expect_tuples,
-    std::vector<std::unordered_map<std::string, std::string>>* out_rows,
-    std::string* error) const {
-    void* conn_raw = nullptr;
-    if (!Connect(&conn_raw, error)) {
+    const std::string& sql, const std::vector<std::string>& params, bool expect_tuples,
+    std::vector<std::unordered_map<std::string, std::string>>* out_rows, std::string* error) const {
+    void* conn_raw = transaction_connection_;
+    if (conn_raw == nullptr && !Connect(&conn_raw, error)) {
         return false;
     }
 
     const auto& api = Api();
     auto* conn = static_cast<PGconn*>(conn_raw);
-    std::unique_ptr<PGconn, LibpqApi::PQfinishFn> conn_guard(conn, api.PQfinish);
+    std::unique_ptr<PGconn, LibpqApi::PQfinishFn> conn_guard(
+        transaction_connection_ == nullptr ? conn : nullptr, api.PQfinish);
 
     PGresult* result = nullptr;
     if (params.empty()) {
@@ -408,14 +433,8 @@ bool LibpqTimescaleSqlClient::ExecuteStatement(
         for (const auto& param : params) {
             values.push_back(param.c_str());
         }
-        result = api.PQexecParams(conn,
-                                  sql.c_str(),
-                                  static_cast<int>(values.size()),
-                                  nullptr,
-                                  values.data(),
-                                  nullptr,
-                                  nullptr,
-                                  0);
+        result = api.PQexecParams(conn, sql.c_str(), static_cast<int>(values.size()), nullptr,
+                                  values.data(), nullptr, nullptr, 0);
     }
 
     if (result == nullptr) {
@@ -429,11 +448,8 @@ bool LibpqTimescaleSqlClient::ExecuteStatement(
     const bool ok = expect_tuples ? IsTuplesOk(api, result) : IsCommandOk(api, result);
     if (!ok) {
         if (error != nullptr) {
-            *error = ConnOrResultError(api,
-                                       conn,
-                                       result,
-                                       "unexpected result status: " +
-                                           ResultStatusText(api, result));
+            *error = ConnOrResultError(
+                api, conn, result, "unexpected result status: " + ResultStatusText(api, result));
         }
         return false;
     }
@@ -444,10 +460,9 @@ bool LibpqTimescaleSqlClient::ExecuteStatement(
     return true;
 }
 
-bool LibpqTimescaleSqlClient::InsertRow(
-    const std::string& table,
-    const std::unordered_map<std::string, std::string>& row,
-    std::string* error) {
+bool LibpqTimescaleSqlClient::InsertRow(const std::string& table,
+                                        const std::unordered_map<std::string, std::string>& row,
+                                        std::string* error) {
     if (row.empty()) {
         if (error != nullptr) {
             *error = "empty row";
@@ -460,8 +475,7 @@ bool LibpqTimescaleSqlClient::InsertRow(
     }
 
     std::vector<std::pair<std::string, std::string>> ordered(row.begin(), row.end());
-    std::sort(ordered.begin(),
-              ordered.end(),
+    std::sort(ordered.begin(), ordered.end(),
               [](const auto& lhs, const auto& rhs) { return lhs.first < rhs.first; });
     for (const auto& [column, value] : ordered) {
         (void)value;
@@ -496,12 +510,11 @@ bool LibpqTimescaleSqlClient::InsertRow(
     return ExecuteStatement(sql.str(), params, false, nullptr, error);
 }
 
-bool LibpqTimescaleSqlClient::UpsertRow(
-    const std::string& table,
-    const std::unordered_map<std::string, std::string>& row,
-    const std::vector<std::string>& conflict_keys,
-    const std::vector<std::string>& update_keys,
-    std::string* error) {
+bool LibpqTimescaleSqlClient::UpsertRow(const std::string& table,
+                                        const std::unordered_map<std::string, std::string>& row,
+                                        const std::vector<std::string>& conflict_keys,
+                                        const std::vector<std::string>& update_keys,
+                                        std::string* error) {
     if (row.empty()) {
         if (error != nullptr) {
             *error = "empty row";
@@ -521,8 +534,7 @@ bool LibpqTimescaleSqlClient::UpsertRow(
     }
 
     std::vector<std::pair<std::string, std::string>> ordered(row.begin(), row.end());
-    std::sort(ordered.begin(),
-              ordered.end(),
+    std::sort(ordered.begin(), ordered.end(),
               [](const auto& lhs, const auto& rhs) { return lhs.first < rhs.first; });
     for (const auto& [column, value] : ordered) {
         (void)value;
@@ -613,11 +625,9 @@ bool LibpqTimescaleSqlClient::UpsertRow(
     return ExecuteStatement(sql.str(), params, false, nullptr, error);
 }
 
-std::vector<std::unordered_map<std::string, std::string>>
-LibpqTimescaleSqlClient::QueryRows(const std::string& table,
-                                   const std::string& key,
-                                   const std::string& value,
-                                   std::string* error) const {
+std::vector<std::unordered_map<std::string, std::string>> LibpqTimescaleSqlClient::QueryRows(
+    const std::string& table, const std::string& key, const std::string& value,
+    std::string* error) const {
     std::string sql_table;
     if (!ValidateQualifiedTableIdentifier(table, &sql_table, error) ||
         !ValidateSimpleIdentifier(key, "column", error)) {
@@ -633,8 +643,8 @@ LibpqTimescaleSqlClient::QueryRows(const std::string& table,
     return rows;
 }
 
-std::vector<std::unordered_map<std::string, std::string>>
-LibpqTimescaleSqlClient::QueryAllRows(const std::string& table, std::string* error) const {
+std::vector<std::unordered_map<std::string, std::string>> LibpqTimescaleSqlClient::QueryAllRows(
+    const std::string& table, std::string* error) const {
     std::string sql_table;
     if (!ValidateQualifiedTableIdentifier(table, &sql_table, error)) {
         return {};

@@ -4,8 +4,7 @@
 
 namespace quant_hft {
 
-RedisHashClientPool::RedisHashClientPool(
-    std::vector<std::shared_ptr<IRedisHashClient>> clients)
+RedisHashClientPool::RedisHashClientPool(std::vector<std::shared_ptr<IRedisHashClient>> clients)
     : clients_(std::move(clients)) {}
 
 std::size_t RedisHashClientPool::Size() const { return clients_.size(); }
@@ -51,22 +50,30 @@ std::size_t TimescaleSqlClientPool::HealthyClientCount() const {
     return healthy;
 }
 
-std::shared_ptr<ITimescaleSqlClient> TimescaleSqlClientPool::ClientAt(
-    std::size_t index) const {
+std::shared_ptr<ITimescaleSqlClient> TimescaleSqlClientPool::ClientAt(std::size_t index) const {
     if (clients_.empty()) {
         return nullptr;
     }
     return clients_[index % clients_.size()];
 }
 
-PooledRedisHashClient::PooledRedisHashClient(
-    std::vector<std::shared_ptr<IRedisHashClient>> clients)
+PooledRedisHashClient::PooledRedisHashClient(std::vector<std::shared_ptr<IRedisHashClient>> clients)
     : pool_(std::move(clients)) {}
 
-bool PooledRedisHashClient::HSet(
-    const std::string& key,
-    const std::unordered_map<std::string, std::string>& fields,
-    std::string* error) {
+bool PooledRedisHashClient::HSetVersioned(
+    const std::string& key, const std::unordered_map<std::string, std::string>& fields,
+    std::uint64_t version, std::string* error) {
+    if (pool_.Size() == 0) {
+        if (error != nullptr) *error = "empty Redis pool";
+        return false;
+    }
+    auto client = pool_.ClientAt(std::hash<std::string>{}(key) % pool_.Size());
+    return client != nullptr && client->HSetVersioned(key, fields, version, error);
+}
+
+bool PooledRedisHashClient::HSet(const std::string& key,
+                                 const std::unordered_map<std::string, std::string>& fields,
+                                 std::string* error) {
     const auto total = pool_.Size();
     if (total == 0 || key.empty()) {
         if (error != nullptr) {
@@ -96,10 +103,9 @@ bool PooledRedisHashClient::HSet(
     return false;
 }
 
-bool PooledRedisHashClient::HGetAll(
-    const std::string& key,
-    std::unordered_map<std::string, std::string>* out,
-    std::string* error) const {
+bool PooledRedisHashClient::HGetAll(const std::string& key,
+                                    std::unordered_map<std::string, std::string>* out,
+                                    std::string* error) const {
     const auto total = pool_.Size();
     if (total == 0 || key.empty() || out == nullptr) {
         if (error != nullptr) {
@@ -129,10 +135,8 @@ bool PooledRedisHashClient::HGetAll(
     return false;
 }
 
-bool PooledRedisHashClient::HIncrBy(const std::string& key,
-                                    const std::string& field,
-                                    std::int64_t delta,
-                                    std::string* error) {
+bool PooledRedisHashClient::HIncrBy(const std::string& key, const std::string& field,
+                                    std::int64_t delta, std::string* error) {
     const auto total = pool_.Size();
     if (total == 0 || key.empty() || field.empty()) {
         if (error != nullptr) {
@@ -161,9 +165,7 @@ bool PooledRedisHashClient::HIncrBy(const std::string& key,
     return false;
 }
 
-bool PooledRedisHashClient::Expire(const std::string& key,
-                                   int ttl_seconds,
-                                   std::string* error) {
+bool PooledRedisHashClient::Expire(const std::string& key, int ttl_seconds, std::string* error) {
     const auto total = pool_.Size();
     if (total == 0 || key.empty() || ttl_seconds <= 0) {
         if (error != nullptr) {
@@ -207,10 +209,23 @@ PooledTimescaleSqlClient::PooledTimescaleSqlClient(
     std::vector<std::shared_ptr<ITimescaleSqlClient>> clients)
     : pool_(std::move(clients)) {}
 
-bool PooledTimescaleSqlClient::InsertRow(
-    const std::string& table,
-    const std::unordered_map<std::string, std::string>& row,
-    std::string* error) {
+bool PooledTimescaleSqlClient::RunInTransaction(const Transaction& transaction,
+                                                std::string* error) {
+    if (pool_.Size() == 0) {
+        if (error != nullptr) *error = "empty SQL pool";
+        return false;
+    }
+    const auto client = pool_.ClientAt(next_index_.fetch_add(1) % pool_.Size());
+    if (client == nullptr) {
+        if (error != nullptr) *error = "null SQL pool client";
+        return false;
+    }
+    return client->RunInTransaction(transaction, error);
+}
+
+bool PooledTimescaleSqlClient::InsertRow(const std::string& table,
+                                         const std::unordered_map<std::string, std::string>& row,
+                                         std::string* error) {
     const auto total = pool_.Size();
     if (total == 0 || table.empty()) {
         if (error != nullptr) {
@@ -239,12 +254,11 @@ bool PooledTimescaleSqlClient::InsertRow(
     return false;
 }
 
-bool PooledTimescaleSqlClient::UpsertRow(
-    const std::string& table,
-    const std::unordered_map<std::string, std::string>& row,
-    const std::vector<std::string>& conflict_keys,
-    const std::vector<std::string>& update_keys,
-    std::string* error) {
+bool PooledTimescaleSqlClient::UpsertRow(const std::string& table,
+                                         const std::unordered_map<std::string, std::string>& row,
+                                         const std::vector<std::string>& conflict_keys,
+                                         const std::vector<std::string>& update_keys,
+                                         std::string* error) {
     const auto total = pool_.Size();
     if (total == 0 || table.empty()) {
         if (error != nullptr) {
@@ -273,11 +287,9 @@ bool PooledTimescaleSqlClient::UpsertRow(
     return false;
 }
 
-std::vector<std::unordered_map<std::string, std::string>>
-PooledTimescaleSqlClient::QueryRows(const std::string& table,
-                                    const std::string& key,
-                                    const std::string& value,
-                                    std::string* error) const {
+std::vector<std::unordered_map<std::string, std::string>> PooledTimescaleSqlClient::QueryRows(
+    const std::string& table, const std::string& key, const std::string& value,
+    std::string* error) const {
     const auto total = pool_.Size();
     if (total == 0 || table.empty()) {
         if (error != nullptr) {
@@ -308,9 +320,8 @@ PooledTimescaleSqlClient::QueryRows(const std::string& table,
     return {};
 }
 
-std::vector<std::unordered_map<std::string, std::string>>
-PooledTimescaleSqlClient::QueryAllRows(const std::string& table,
-                                       std::string* error) const {
+std::vector<std::unordered_map<std::string, std::string>> PooledTimescaleSqlClient::QueryAllRows(
+    const std::string& table, std::string* error) const {
     const auto total = pool_.Size();
     if (total == 0 || table.empty()) {
         if (error != nullptr) {

@@ -1,0 +1,199 @@
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 21 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 21 tests from TradingDomainStoreClientAdapterTest
+[ RUN      ] TradingDomainStoreClientAdapterTest.EveryApplyWriteFailureRollsBackAndCanBeReplayed
+[       OK ] TradingDomainStoreClientAdapterTest.EveryApplyWriteFailureRollsBackAndCanBeReplayed (0 ms)
+[ RUN      ] TradingDomainStoreClientAdapterTest.ConcurrentSameAccountFillsDoNotLoseUpdates
+[       OK ] TradingDomainStoreClientAdapterTest.ConcurrentSameAccountFillsDoNotLoseUpdates (2 ms)
+[ RUN      ] TradingDomainStoreClientAdapterTest.OutboxConsumersAcknowledgeIndependently
+[       OK ] TradingDomainStoreClientAdapterTest.OutboxConsumersAcknowledgeIndependently (0 ms)
+[ RUN      ] TradingDomainStoreClientAdapterTest.RuntimeEnvironmentBindingCannotBeReusedAcrossBrokersOrEnvironments
+[       OK ] TradingDomainStoreClientAdapterTest.RuntimeEnvironmentBindingCannotBeReusedAcrossBrokersOrEnvironments (0 ms)
+[ RUN      ] TradingDomainStoreClientAdapterTest.AtomicApplyDeduplicatesAndQuarantinesPayloadConflict
+[       OK ] TradingDomainStoreClientAdapterTest.AtomicApplyDeduplicatesAndQuarantinesPayloadConflict (0 ms)
+[ RUN      ] TradingDomainStoreClientAdapterTest.ReceiptGapsAdvanceOnlyWhenEveryRecordIsApplied
+[       OK ] TradingDomainStoreClientAdapterTest.ReceiptGapsAdvanceOnlyWhenEveryRecordIsApplied (0 ms)
+[ RUN      ] TradingDomainStoreClientAdapterTest.ReceiptCannotBeReboundToAnotherTradeOrChecksum
+[       OK ] TradingDomainStoreClientAdapterTest.ReceiptCannotBeReboundToAnotherTradeOrChecksum (0 ms)
+[ RUN      ] TradingDomainStoreClientAdapterTest.DirectionAndTradingDayArePartOfIdentity
+[       OK ] TradingDomainStoreClientAdapterTest.DirectionAndTradingDayArePartOfIdentity (0 ms)
+[ RUN      ] TradingDomainStoreClientAdapterTest.ExactCloseAllocationKeepsSidesAndHedgeBucketsSeparate
+[       OK ] TradingDomainStoreClientAdapterTest.ExactCloseAllocationKeepsSidesAndHedgeBucketsSeparate (0 ms)
+[ RUN      ] TradingDomainStoreClientAdapterTest.CloseCannotConsumeAnotherHedgeBook
+[       OK ] TradingDomainStoreClientAdapterTest.CloseCannotConsumeAnotherHedgeBook (0 ms)
+[ RUN      ] TradingDomainStoreClientAdapterTest.RuntimeAccountRejectsRawBackfillAndUnattributedTrade
+[       OK ] TradingDomainStoreClientAdapterTest.RuntimeAccountRejectsRawBackfillAndUnattributedTrade (0 ms)
+[ RUN      ] TradingDomainStoreClientAdapterTest.BrokerBaselineCoversHistoryWithoutAddingAgain
+[       OK ] TradingDomainStoreClientAdapterTest.BrokerBaselineCoversHistoryWithoutAddingAgain (0 ms)
+[ RUN      ] TradingDomainStoreClientAdapterTest.LiveGenericCloseRequiresRuleAndUsesItsExactAllocation
+[       OK ] TradingDomainStoreClientAdapterTest.LiveGenericCloseRequiresRuleAndUsesItsExactAllocation (0 ms)
+[ RUN      ] TradingDomainStoreClientAdapterTest.VerifiedOpeningPriceValuationPersistsComputedProfitWithoutBlockingUnvaluedFacts
+[       OK ] TradingDomainStoreClientAdapterTest.VerifiedOpeningPriceValuationPersistsComputedProfitWithoutBlockingUnvaluedFacts (0 ms)
+[ RUN      ] TradingDomainStoreClientAdapterTest.InMemoryTransactionRollsBackOnFalseAndException
+[       OK ] TradingDomainStoreClientAdapterTest.InMemoryTransactionRollsBackOnFalseAndException (0 ms)
+[ RUN      ] TradingDomainStoreClientAdapterTest.TradingDayAdvanceIsAtomicIdempotentAndEmitsPositionOutbox
+[       OK ] TradingDomainStoreClientAdapterTest.TradingDayAdvanceIsAtomicIdempotentAndEmitsPositionOutbox (0 ms)
+[ RUN      ] TradingDomainStoreClientAdapterTest.WritesDomainRowsToConfiguredSchema
+[       OK ] TradingDomainStoreClientAdapterTest.WritesDomainRowsToConfiguredSchema (0 ms)
+[ RUN      ] TradingDomainStoreClientAdapterTest.OrderLifecycleUpdatesOneAccountScopedRow
+[       OK ] TradingDomainStoreClientAdapterTest.OrderLifecycleUpdatesOneAccountScopedRow (0 ms)
+[ RUN      ] TradingDomainStoreClientAdapterTest.RejectsMissingRequiredFields
+[       OK ] TradingDomainStoreClientAdapterTest.RejectsMissingRequiredFields (0 ms)
+[ RUN      ] TradingDomainStoreClientAdapterTest.PersistsTimestampWithUtcOffsetSuffix
+[       OK ] TradingDomainStoreClientAdapterTest.PersistsTimestampWithUtcOffsetSuffix (0 ms)
+[ RUN      ] TradingDomainStoreClientAdapterTest.SkipsDuplicateOrderAndTradeByBusinessKeys
+[       OK ] TradingDomainStoreClientAdapterTest.SkipsDuplicateOrderAndTradeByBusinessKeys (0 ms)
+[----------] 21 tests from TradingDomainStoreClientAdapterTest (7 ms total)
+
+[----------] Global test environment tear-down
+[==========] 21 tests from 1 test suite ran. (7 ms total)
+[  PASSED  ] 21 tests.
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 7 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 7 tests from StorageClientPoolTest
+[ RUN      ] StorageClientPoolTest.TransactionFailureNeverFailsOverToAnotherBook
+[       OK ] StorageClientPoolTest.TransactionFailureNeverFailsOverToAnotherBook (0 ms)
+[ RUN      ] StorageClientPoolTest.RedisPoolFallsBackWhenPrimaryUnhealthy
+[       OK ] StorageClientPoolTest.RedisPoolFallsBackWhenPrimaryUnhealthy (0 ms)
+[ RUN      ] StorageClientPoolTest.RedisPoolReadsBackWrittenHash
+[       OK ] StorageClientPoolTest.RedisPoolReadsBackWrittenHash (0 ms)
+[ RUN      ] StorageClientPoolTest.TimescalePoolRoundRobinAndFallback
+[       OK ] StorageClientPoolTest.TimescalePoolRoundRobinAndFallback (0 ms)
+[ RUN      ] StorageClientPoolTest.PoolHealthCountReflectsAvailableClients
+[       OK ] StorageClientPoolTest.PoolHealthCountReflectsAvailableClients (0 ms)
+[ RUN      ] StorageClientPoolTest.InMemoryTimescaleClientUpsertUpdatesExistingRow
+[       OK ] StorageClientPoolTest.InMemoryTimescaleClientUpsertUpdatesExistingRow (0 ms)
+[ RUN      ] StorageClientPoolTest.TimescalePoolUpsertFallsBackToHealthyReplica
+[       OK ] StorageClientPoolTest.TimescalePoolUpsertFallsBackToHealthyReplica (0 ms)
+[----------] 7 tests from StorageClientPoolTest (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 7 tests from 1 test suite ran. (0 ms total)
+[  PASSED  ] 7 tests.
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 10 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 10 tests from OrderManagerTest
+[ RUN      ] OrderManagerTest.ValidStateTransitionAndPersistence
+[       OK ] OrderManagerTest.ValidStateTransitionAndPersistence (0 ms)
+[ RUN      ] OrderManagerTest.PersistenceFailureDoesNotMarkEventAndRetryWritesState
+[       OK ] OrderManagerTest.PersistenceFailureDoesNotMarkEventAndRetryWritesState (0 ms)
+[ RUN      ] OrderManagerTest.DurableMarkerDoesNotSkipProcessLocalRecovery
+[       OK ] OrderManagerTest.DurableMarkerDoesNotSkipProcessLocalRecovery (0 ms)
+[ RUN      ] OrderManagerTest.DuplicateEventIgnoredByIdempotency
+[       OK ] OrderManagerTest.DuplicateEventIgnoredByIdempotency (0 ms)
+[ RUN      ] OrderManagerTest.InvalidTransitionRejected
+[       OK ] OrderManagerTest.InvalidTransitionRejected (0 ms)
+[ RUN      ] OrderManagerTest.TradeEventIdempotentByTradeId
+[       OK ] OrderManagerTest.TradeEventIdempotentByTradeId (0 ms)
+[ RUN      ] OrderManagerTest.TradeEventUsesLastTradeVolumeWhenCumulativeFilledVolumeAdvances
+[       OK ] OrderManagerTest.TradeEventUsesLastTradeVolumeWhenCumulativeFilledVolumeAdvances (0 ms)
+[ RUN      ] OrderManagerTest.CancelActionRejectedDoesNotMakeOrderTerminal
+[       OK ] OrderManagerTest.CancelActionRejectedDoesNotMakeOrderTerminal (0 ms)
+[ RUN      ] OrderManagerTest.GetActiveOrdersByStrategyFiltersCorrectly
+[       OK ] OrderManagerTest.GetActiveOrdersByStrategyFiltersCorrectly (0 ms)
+[ RUN      ] OrderManagerTest.GetActiveOrdersByAccountSpansStrategies
+[       OK ] OrderManagerTest.GetActiveOrdersByAccountSpansStrategies (0 ms)
+[----------] 10 tests from OrderManagerTest (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 10 tests from 1 test suite ran. (0 ms total)
+[  PASSED  ] 10 tests.
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 5 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 5 tests from PositionManagerTest
+[ RUN      ] PositionManagerTest.LostRedisReplyLeavesOutboxAndRetryDoesNotDoubleCount
+[       OK ] PositionManagerTest.LostRedisReplyLeavesOutboxAndRetryDoesNotDoubleCount (0 ms)
+[ RUN      ] PositionManagerTest.VersionedProjectionNeverReplacesNewerSnapshot
+[       OK ] PositionManagerTest.VersionedProjectionNeverReplacesNewerSnapshot (0 ms)
+[ RUN      ] PositionManagerTest.OpenTradeUpdatesPgAndRedis
+[       OK ] PositionManagerTest.OpenTradeUpdatesPgAndRedis (0 ms)
+[ RUN      ] PositionManagerTest.CloseTradeReducesVolume
+[       OK ] PositionManagerTest.CloseTradeReducesVolume (0 ms)
+[ RUN      ] PositionManagerTest.ReconcileWritesSnapshotToRedis
+[       OK ] PositionManagerTest.ReconcileWritesSnapshotToRedis (0 ms)
+[----------] 5 tests from PositionManagerTest (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 5 tests from 1 test suite ran. (1 ms total)
+[  PASSED  ] 5 tests.
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 16 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 16 tests from CtpPositionLedgerTest
+[ RUN      ] CtpPositionLedgerTest.FrozenFieldsDescribeOrderDirectionWithoutOppositeFallback
+[       OK ] CtpPositionLedgerTest.FrozenFieldsDescribeOrderDirectionWithoutOppositeFallback (0 ms)
+[ RUN      ] CtpPositionLedgerTest.NonShfeCurrentYesterdayIsTotalMinusToday
+[       OK ] CtpPositionLedgerTest.NonShfeCurrentYesterdayIsTotalMinusToday (0 ms)
+[ RUN      ] CtpPositionLedgerTest.TerminalReportRetainsUnbookedFillReservationAndCommittedAllocationIsIdempotent
+[       OK ] CtpPositionLedgerTest.TerminalReportRetainsUnbookedFillReservationAndCommittedAllocationIsIdempotent (0 ms)
+[ RUN      ] CtpPositionLedgerTest.GenericCloseUsesYesterdayBucketWhenDateOmitted
+[       OK ] CtpPositionLedgerTest.GenericCloseUsesYesterdayBucketWhenDateOmitted (0 ms)
+[ RUN      ] CtpPositionLedgerTest.GenericCloseAllocatesTodayBeforeYesterday
+[       OK ] CtpPositionLedgerTest.GenericCloseAllocatesTodayBeforeYesterday (0 ms)
+[ RUN      ] CtpPositionLedgerTest.GenericCloseRejectsWithoutMutatingBucketsWhenTotalShort
+[       OK ] CtpPositionLedgerTest.GenericCloseRejectsWithoutMutatingBucketsWhenTotalShort (0 ms)
+[ RUN      ] CtpPositionLedgerTest.ExplicitCloseTodayDoesNotBorrowYesterday
+[       OK ] CtpPositionLedgerTest.ExplicitCloseTodayDoesNotBorrowYesterday (0 ms)
+[ RUN      ] CtpPositionLedgerTest.FreezesAndReleasesRemainingOnPartialFillThenCancel
+[       OK ] CtpPositionLedgerTest.FreezesAndReleasesRemainingOnPartialFillThenCancel (0 ms)
+[ RUN      ] CtpPositionLedgerTest.RejectReleasesAllFrozenVolume
+[       OK ] CtpPositionLedgerTest.RejectReleasesAllFrozenVolume (0 ms)
+[ RUN      ] CtpPositionLedgerTest.CancelActionRejectedDoesNotReleaseFrozenVolume
+[       OK ] CtpPositionLedgerTest.CancelActionRejectedDoesNotReleaseFrozenVolume (0 ms)
+[ RUN      ] CtpPositionLedgerTest.OpenFillAddsPositionWithoutFreeze
+[       OK ] CtpPositionLedgerTest.OpenFillAddsPositionWithoutFreeze (0 ms)
+[ RUN      ] CtpPositionLedgerTest.ExchangeAndHedgeFlagSeparatePositionBuckets
+[       OK ] CtpPositionLedgerTest.ExchangeAndHedgeFlagSeparatePositionBuckets (0 ms)
+[ RUN      ] CtpPositionLedgerTest.BatchReplacementRemovesPositionsMissingFromBrokerTruth
+[       OK ] CtpPositionLedgerTest.BatchReplacementRemovesPositionsMissingFromBrokerTruth (0 ms)
+[ RUN      ] CtpPositionLedgerTest.EmptyBatchAuthoritativelyClearsAccountOnly
+[       OK ] CtpPositionLedgerTest.EmptyBatchAuthoritativelyClearsAccountOnly (0 ms)
+[ RUN      ] CtpPositionLedgerTest.InvalidBatchDoesNotPartiallyReplaceAccount
+[       OK ] CtpPositionLedgerTest.InvalidBatchDoesNotPartiallyReplaceAccount (0 ms)
+[ RUN      ] CtpPositionLedgerTest.DuplicateNormalizedBrokerKeyIsRejectedAtomically
+[       OK ] CtpPositionLedgerTest.DuplicateNormalizedBrokerKeyIsRejectedAtomically (0 ms)
+[----------] 16 tests from CtpPositionLedgerTest (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 16 tests from 1 test suite ran. (0 ms total)
+[  PASSED  ] 16 tests.
+Running main() from /tmp/quant-hft-build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 13 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 13 tests from RiskManagerTest
+[ RUN      ] RiskManagerTest.CommittedTradeStatisticsRestoreAndDeduplicateByDay
+[       OK ] RiskManagerTest.CommittedTradeStatisticsRestoreAndDeduplicateByDay (0 ms)
+[ RUN      ] RiskManagerTest.CheckOrderMaxVolumeExceededRejects
+[       OK ] RiskManagerTest.CheckOrderMaxVolumeExceededRejects (0 ms)
+[ RUN      ] RiskManagerTest.CheckOrderSelfTradePreventionCrossPriceRejects
+[       OK ] RiskManagerTest.CheckOrderSelfTradePreventionCrossPriceRejects (0 ms)
+[ RUN      ] RiskManagerTest.SelfTradePreventionCoversEveryOpenCloseCombination
+[       OK ] RiskManagerTest.SelfTradePreventionCoversEveryOpenCloseCombination (0 ms)
+[ RUN      ] RiskManagerTest.CheckOrderSelfTradePreventionRejectsAcrossStrategiesInSameAccount
+[       OK ] RiskManagerTest.CheckOrderSelfTradePreventionRejectsAcrossStrategiesInSameAccount (0 ms)
+[ RUN      ] RiskManagerTest.CheckOrderOrderRateExceededRejects
+[       OK ] RiskManagerTest.CheckOrderOrderRateExceededRejects (0 ms)
+[ RUN      ] RiskManagerTest.CheckOrderSimSubaccountCapitalExceededRejects
+[       OK ] RiskManagerTest.CheckOrderSimSubaccountCapitalExceededRejects (0 ms)
+[ RUN      ] RiskManagerTest.CheckOrderSimSubaccountUsesContextContractMultiplier
+[       OK ] RiskManagerTest.CheckOrderSimSubaccountUsesContextContractMultiplier (0 ms)
+[ RUN      ] RiskManagerTest.CheckCancelCancelRateExceededRejects
+[       OK ] RiskManagerTest.CheckCancelCancelRateExceededRejects (0 ms)
+[ RUN      ] RiskManagerTest.CheckCancelDailyCancelCountExceededRejects
+[       OK ] RiskManagerTest.CheckCancelDailyCancelCountExceededRejects (0 ms)
+[ RUN      ] RiskManagerTest.RiskRuleLoadFromYamlSuccess
+[       OK ] RiskManagerTest.RiskRuleLoadFromYamlSuccess (0 ms)
+[ RUN      ] RiskManagerTest.RiskManagerReloadRulesDynamicUpdate
+[       OK ] RiskManagerTest.RiskManagerReloadRulesDynamicUpdate (0 ms)
+[ RUN      ] RiskManagerTest.InitializeStopsExistingDynamicReloadThread
+[       OK ] RiskManagerTest.InitializeStopsExistingDynamicReloadThread (1002 ms)
+[----------] 13 tests from RiskManagerTest (1003 ms total)
+
+[----------] Global test environment tear-down
+[==========] 13 tests from 1 test suite ran. (1003 ms total)
+[  PASSED  ] 13 tests.
+contract sync verification passed

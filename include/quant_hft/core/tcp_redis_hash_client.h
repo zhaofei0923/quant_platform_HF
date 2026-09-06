@@ -10,32 +10,28 @@
 namespace quant_hft {
 
 class TcpRedisHashClient : public IRedisHashClient {
-public:
+   public:
     struct RespValue;
 
     explicit TcpRedisHashClient(RedisConnectionConfig config);
+    bool HSetVersioned(const std::string& key,
+                       const std::unordered_map<std::string, std::string>& fields,
+                       std::uint64_t version, std::string* error) override;
 
-    bool HSet(const std::string& key,
-              const std::unordered_map<std::string, std::string>& fields,
+    bool HSet(const std::string& key, const std::unordered_map<std::string, std::string>& fields,
               std::string* error) override;
-    bool HGetAll(const std::string& key,
-                 std::unordered_map<std::string, std::string>* out,
+    bool HGetAll(const std::string& key, std::unordered_map<std::string, std::string>* out,
                  std::string* error) const override;
-    bool HIncrBy(const std::string& key,
-                 const std::string& field,
-                 std::int64_t delta,
+    bool HIncrBy(const std::string& key, const std::string& field, std::int64_t delta,
                  std::string* error) override;
     bool Expire(const std::string& key, int ttl_seconds, std::string* error) override;
     bool Ping(std::string* error) const override;
 
-private:
-    bool ExecuteCommand(const std::vector<std::string>& args,
-                        RespValue* reply,
+   private:
+    bool ExecuteCommand(const std::vector<std::string>& args, RespValue* reply,
                         std::string* error) const;
     bool Authenticate(int fd, std::string* error) const;
-    bool SendCommand(int fd,
-                     const std::vector<std::string>& args,
-                     std::string* error) const;
+    bool SendCommand(int fd, const std::vector<std::string>& args, std::string* error) const;
     bool ReadReply(int fd, RespValue* out, std::string* error) const;
 
     RedisConnectionConfig config_;

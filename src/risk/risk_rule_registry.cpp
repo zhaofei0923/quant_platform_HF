@@ -187,20 +187,14 @@ void RegisterDefaultRiskRules(
             if (!enable_self_trade_prevention || rule.threshold <= 0.0) {
                 return AllowResult();
             }
-            if (!IsOpenOrder(intent)) {
-                return AllowResult();
-            }
             if (order_manager == nullptr) {
                 return AllowResult();
             }
 
-            const auto active_orders = order_manager->GetActiveOrdersByAccount(
-                context.account_id, context.instrument_id);
+            const auto active_orders =
+                order_manager->GetActiveOrdersByAccount(context.account_id, context.instrument_id);
             for (const auto& order : active_orders) {
                 if (order.symbol != context.instrument_id) {
-                    continue;
-                }
-                if (order.offset != OffsetFlag::kOpen) {
                     continue;
                 }
                 if (!IsCrossingPrice(intent, order)) {

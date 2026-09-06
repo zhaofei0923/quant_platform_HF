@@ -21,8 +21,8 @@ InvestorPositionSnapshot MakePositionSnapshot(
     snapshot.position = position;
     snapshot.today_position = position_date == "today" ? position : 0;
     snapshot.yd_position = position_date == "yesterday" ? position : 0;
-    snapshot.long_frozen = direction == PositionDirection::kLong ? frozen : 0;
-    snapshot.short_frozen = direction == PositionDirection::kShort ? frozen : 0;
+    snapshot.long_frozen = direction == PositionDirection::kShort ? frozen : 0;
+    snapshot.short_frozen = direction == PositionDirection::kLong ? frozen : 0;
     snapshot.ts_ns = 1;
     snapshot.source = "ctp";
     return snapshot;
@@ -47,6 +47,81 @@ OrderEvent MakeOrderEvent(const std::string& client_order_id, OrderStatus status
 }
 
 }  // namespace
+
+TEST(CtpPositionLedgerTest, FrozenFieldsDescribeOrderDirectionWithoutOppositeFallback) {
+    CtpPositionLedger ledger;
+    auto snapshot = MakePositionSnapshot(10);
+    snapshot.long_frozen = 9;
+    snapshot.short_frozen = 2;
+    std::string error;
+    ASSERT_TRUE(ledger.ApplyInvestorPositionSnapshot(snapshot, &error));
+    EXPECT_EQ(ledger.GetPosition("acc-1", "SHFE.ag2406", PositionDirection::kLong, "today", "SHFE")
+                  .closable,
+              8);
+    snapshot.short_frozen = 0;
+    ASSERT_TRUE(ledger.ApplyInvestorPositionSnapshot(snapshot, &error));
+    EXPECT_EQ(ledger.GetPosition("acc-1", "SHFE.ag2406", PositionDirection::kLong, "today", "SHFE")
+                  .closable,
+              10);
+    snapshot.posi_direction = "3";
+    ASSERT_TRUE(ledger.ApplyInvestorPositionSnapshot(snapshot, &error));
+    EXPECT_EQ(ledger.GetPosition("acc-1", "SHFE.ag2406", PositionDirection::kShort, "today", "SHFE")
+                  .closable,
+              1);
+}
+
+TEST(CtpPositionLedgerTest, NonShfeCurrentYesterdayIsTotalMinusToday) {
+    CtpPositionLedger ledger;
+    auto snapshot = MakePositionSnapshot(10, "c2607", "DCE");
+    snapshot.position_date = "1";
+    snapshot.today_position = 4;
+    snapshot.yd_position = 12;  // Start-of-day quantity is not current yesterday inventory.
+    std::string error;
+    ASSERT_TRUE(ledger.ReplaceInvestorPositionSnapshotBatch("acc-1", {snapshot}, &error)) << error;
+    EXPECT_EQ(
+        ledger.GetPosition("acc-1", "c2607", PositionDirection::kLong, "today", "DCE").position, 4);
+    EXPECT_EQ(
+        ledger.GetPosition("acc-1", "c2607", PositionDirection::kLong, "yesterday", "DCE").position,
+        6);
+}
+
+TEST(CtpPositionLedgerTest,
+     TerminalReportRetainsUnbookedFillReservationAndCommittedAllocationIsIdempotent) {
+    CtpPositionLedger ledger;
+    ledger.UseCommittedTradeAccounting(true);
+    std::string error;
+    ASSERT_TRUE(ledger.ApplyInvestorPositionSnapshot(MakePositionSnapshot(5), &error));
+    CtpOrderIntentForLedger intent;
+    intent.client_order_id = "close";
+    intent.account_id = "acc-1";
+    intent.instrument_id = "SHFE.ag2406";
+    intent.exchange_id = "SHFE";
+    intent.offset = OffsetFlag::kCloseToday;
+    intent.requested_volume = 5;
+    ASSERT_TRUE(ledger.RegisterOrderIntent(intent, &error));
+    ASSERT_TRUE(
+        ledger.ApplyOrderEvent(MakeOrderEvent("close", OrderStatus::kCanceled, 5, 2, 2), &error));
+    auto position =
+        ledger.GetPosition("acc-1", "SHFE.ag2406", PositionDirection::kLong, "today", "SHFE");
+    EXPECT_EQ(position.position, 5);
+    EXPECT_EQ(position.frozen, 2);
+    EXPECT_TRUE(ledger.HasUnbookedFills("acc-1"));
+    Trade trade;
+    trade.order_id = "close";
+    trade.account_id = "acc-1";
+    trade.symbol = "SHFE.ag2406";
+    trade.exchange = "SHFE";
+    trade.side = Side::kSell;
+    trade.offset = OffsetFlag::kCloseToday;
+    trade.quantity = 2;
+    ASSERT_TRUE(ledger.ApplyCommittedTrade("canonical", trade, {2, 0}, &error)) << error;
+    ASSERT_TRUE(ledger.ApplyCommittedTrade("canonical", trade, {2, 0}, &error));
+    position =
+        ledger.GetPosition("acc-1", "SHFE.ag2406", PositionDirection::kLong, "today", "SHFE");
+    EXPECT_EQ(position.position, 3);
+    EXPECT_EQ(position.frozen, 0);
+    EXPECT_FALSE(ledger.HasUnbookedFills("acc-1"));
+}
 
 TEST(CtpPositionLedgerTest, GenericCloseUsesYesterdayBucketWhenDateOmitted) {
     CtpPositionLedger ledger;

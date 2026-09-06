@@ -13,53 +13,53 @@
 namespace quant_hft {
 
 class RedisHashClientPool {
-public:
+   public:
     explicit RedisHashClientPool(std::vector<std::shared_ptr<IRedisHashClient>> clients);
 
     std::size_t Size() const;
     std::size_t HealthyClientCount() const;
     std::shared_ptr<IRedisHashClient> ClientAt(std::size_t index) const;
 
-private:
+   private:
     std::vector<std::shared_ptr<IRedisHashClient>> clients_;
 };
 
 class TimescaleSqlClientPool {
-public:
+   public:
     explicit TimescaleSqlClientPool(std::vector<std::shared_ptr<ITimescaleSqlClient>> clients);
 
     std::size_t Size() const;
     std::size_t HealthyClientCount() const;
     std::shared_ptr<ITimescaleSqlClient> ClientAt(std::size_t index) const;
 
-private:
+   private:
     std::vector<std::shared_ptr<ITimescaleSqlClient>> clients_;
 };
 
 class PooledRedisHashClient : public IRedisHashClient {
-public:
+   public:
     explicit PooledRedisHashClient(std::vector<std::shared_ptr<IRedisHashClient>> clients);
+    bool HSetVersioned(const std::string& key,
+                       const std::unordered_map<std::string, std::string>& fields,
+                       std::uint64_t version, std::string* error) override;
 
-    bool HSet(const std::string& key,
-              const std::unordered_map<std::string, std::string>& fields,
+    bool HSet(const std::string& key, const std::unordered_map<std::string, std::string>& fields,
               std::string* error) override;
-    bool HGetAll(const std::string& key,
-                 std::unordered_map<std::string, std::string>* out,
+    bool HGetAll(const std::string& key, std::unordered_map<std::string, std::string>* out,
                  std::string* error) const override;
-    bool HIncrBy(const std::string& key,
-                 const std::string& field,
-                 std::int64_t delta,
+    bool HIncrBy(const std::string& key, const std::string& field, std::int64_t delta,
                  std::string* error) override;
     bool Expire(const std::string& key, int ttl_seconds, std::string* error) override;
     bool Ping(std::string* error) const override;
 
-private:
+   private:
     RedisHashClientPool pool_;
 };
 
 class PooledTimescaleSqlClient : public ITimescaleSqlClient {
-public:
+   public:
     explicit PooledTimescaleSqlClient(std::vector<std::shared_ptr<ITimescaleSqlClient>> clients);
+    bool RunInTransaction(const Transaction& transaction, std::string* error) override;
 
     bool InsertRow(const std::string& table,
                    const std::unordered_map<std::string, std::string>& row,
@@ -67,19 +67,15 @@ public:
     bool UpsertRow(const std::string& table,
                    const std::unordered_map<std::string, std::string>& row,
                    const std::vector<std::string>& conflict_keys,
-                   const std::vector<std::string>& update_keys,
-                   std::string* error) override;
+                   const std::vector<std::string>& update_keys, std::string* error) override;
     std::vector<std::unordered_map<std::string, std::string>> QueryRows(
-        const std::string& table,
-        const std::string& key,
-        const std::string& value,
+        const std::string& table, const std::string& key, const std::string& value,
         std::string* error) const override;
     std::vector<std::unordered_map<std::string, std::string>> QueryAllRows(
-        const std::string& table,
-        std::string* error) const override;
+        const std::string& table, std::string* error) const override;
     bool Ping(std::string* error) const override;
 
-private:
+   private:
     mutable std::atomic<std::size_t> next_index_{0};
     TimescaleSqlClientPool pool_;
 };

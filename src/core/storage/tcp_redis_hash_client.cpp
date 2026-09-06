@@ -39,7 +39,7 @@ struct TcpRedisHashClient::RespValue {
 namespace {
 
 class SocketGuard {
-public:
+   public:
     explicit SocketGuard(int fd) : fd_(fd) {}
     ~SocketGuard() {
         if (fd_ >= 0) {
@@ -52,7 +52,7 @@ public:
 
     int get() const { return fd_; }
 
-private:
+   private:
     int fd_{-1};
 };
 
@@ -84,10 +84,7 @@ bool SetSocketIoTimeout(int fd, int timeout_ms, std::string* error) {
     return true;
 }
 
-bool ConnectWithTimeout(int fd,
-                        const sockaddr* addr,
-                        socklen_t addr_len,
-                        int timeout_ms,
+bool ConnectWithTimeout(int fd, const sockaddr* addr, socklen_t addr_len, int timeout_ms,
                         std::string* error) {
     const int original_flags = ::fcntl(fd, F_GETFL, 0);
     if (original_flags < 0) {
@@ -186,8 +183,7 @@ int ConnectSocket(const RedisConnectionConfig& config, std::string* error) {
             continue;
         }
 
-        const int connect_timeout_ms =
-            NormalizeTimeoutMs(config.connect_timeout_ms, 1000);
+        const int connect_timeout_ms = NormalizeTimeoutMs(config.connect_timeout_ms, 1000);
         if (!ConnectWithTimeout(fd, it->ai_addr, it->ai_addrlen, connect_timeout_ms, &last_error)) {
             ::close(fd);
             continue;
@@ -309,15 +305,9 @@ bool ReadLine(int fd, std::string* out, std::string* error) {
     }
 }
 
-bool ParseRespReply(int fd,
-                    int depth,
-                    TcpRedisHashClient::RespValue* out,
-                    std::string* error);
+bool ParseRespReply(int fd, int depth, TcpRedisHashClient::RespValue* out, std::string* error);
 
-bool ParseArrayReply(int fd,
-                     int depth,
-                     int count,
-                     TcpRedisHashClient::RespValue* out,
+bool ParseArrayReply(int fd, int depth, int count, TcpRedisHashClient::RespValue* out,
                      std::string* error) {
     if (out == nullptr) {
         if (error != nullptr) {
@@ -339,10 +329,7 @@ bool ParseArrayReply(int fd,
     return true;
 }
 
-bool ParseRespReply(int fd,
-                    int depth,
-                    TcpRedisHashClient::RespValue* out,
-                    std::string* error) {
+bool ParseRespReply(int fd, int depth, TcpRedisHashClient::RespValue* out, std::string* error) {
     if (out == nullptr) {
         if (error != nullptr) {
             *error = "out is null";
@@ -469,8 +456,28 @@ bool RespString(const TcpRedisHashClient::RespValue& value, std::string* out) {
 
 }  // namespace
 
-TcpRedisHashClient::TcpRedisHashClient(RedisConnectionConfig config)
-    : config_(std::move(config)) {}
+TcpRedisHashClient::TcpRedisHashClient(RedisConnectionConfig config) : config_(std::move(config)) {}
+
+bool TcpRedisHashClient::HSetVersioned(const std::string& key,
+                                       const std::unordered_map<std::string, std::string>& fields,
+                                       std::uint64_t version, std::string* error) {
+    // Decimal-string comparison retains all uint64 bits (Lua numbers do not).
+    const std::string script =
+        "local o=redis.call('HGET',KEYS[1],'version');local n=ARGV[1];"
+        "if o and (#o>#n or (#o==#n and o>n)) then return 0 end;"
+        "for i=2,#ARGV,2 do redis.call('HSET',KEYS[1],ARGV[i],ARGV[i+1]) end;"
+        "redis.call('HSET',KEYS[1],'version',n);return 1";
+    std::vector<std::string> args{"EVAL", script, "1", key, std::to_string(version)};
+    for (const auto& [field, value] : fields) {
+        args.push_back(field);
+        args.push_back(value);
+    }
+    RespValue reply;
+    if (!ExecuteCommand(args, &reply, error)) return false;
+    if (reply.type == RespValue::Type::kInteger) return true;
+    if (error != nullptr) *error = "unexpected versioned projection reply";
+    return false;
+}
 
 bool TcpRedisHashClient::HSet(const std::string& key,
                               const std::unordered_map<std::string, std::string>& fields,
@@ -488,10 +495,8 @@ bool TcpRedisHashClient::HSet(const std::string& key,
         return false;
     }
 
-    std::vector<std::pair<std::string, std::string>> ordered_fields(fields.begin(),
-                                                                     fields.end());
-    std::sort(ordered_fields.begin(),
-              ordered_fields.end(),
+    std::vector<std::pair<std::string, std::string>> ordered_fields(fields.begin(), fields.end());
+    std::sort(ordered_fields.begin(), ordered_fields.end(),
               [](const auto& lhs, const auto& rhs) { return lhs.first < rhs.first; });
 
     std::vector<std::string> args;
@@ -563,8 +568,7 @@ bool TcpRedisHashClient::HGetAll(const std::string& key,
     for (std::size_t i = 0; i < reply.elements.size(); i += 2) {
         std::string field;
         std::string value;
-        if (!RespString(reply.elements[i], &field) ||
-            !RespString(reply.elements[i + 1], &value)) {
+        if (!RespString(reply.elements[i], &field) || !RespString(reply.elements[i + 1], &value)) {
             if (error != nullptr) {
                 *error = "invalid HGETALL field/value type";
             }
@@ -575,10 +579,8 @@ bool TcpRedisHashClient::HGetAll(const std::string& key,
     return true;
 }
 
-bool TcpRedisHashClient::HIncrBy(const std::string& key,
-                                 const std::string& field,
-                                 std::int64_t delta,
-                                 std::string* error) {
+bool TcpRedisHashClient::HIncrBy(const std::string& key, const std::string& field,
+                                 std::int64_t delta, std::string* error) {
     if (key.empty() || field.empty()) {
         if (error != nullptr) {
             *error = "key and field must be non-empty";
@@ -599,9 +601,7 @@ bool TcpRedisHashClient::HIncrBy(const std::string& key,
     return true;
 }
 
-bool TcpRedisHashClient::Expire(const std::string& key,
-                                int ttl_seconds,
-                                std::string* error) {
+bool TcpRedisHashClient::Expire(const std::string& key, int ttl_seconds, std::string* error) {
     if (key.empty()) {
         if (error != nullptr) {
             *error = "empty key";
@@ -655,8 +655,7 @@ bool TcpRedisHashClient::Ping(std::string* error) const {
     return true;
 }
 
-bool TcpRedisHashClient::ExecuteCommand(const std::vector<std::string>& args,
-                                        RespValue* reply,
+bool TcpRedisHashClient::ExecuteCommand(const std::vector<std::string>& args, RespValue* reply,
                                         std::string* error) const {
     if (args.empty()) {
         if (error != nullptr) {
@@ -729,8 +728,7 @@ bool TcpRedisHashClient::Authenticate(int fd, std::string* error) const {
     return true;
 }
 
-bool TcpRedisHashClient::SendCommand(int fd,
-                                     const std::vector<std::string>& args,
+bool TcpRedisHashClient::SendCommand(int fd, const std::vector<std::string>& args,
                                      std::string* error) const {
     const auto payload = BuildRespCommand(args);
     return SendAll(fd, payload, error);

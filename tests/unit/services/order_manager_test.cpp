@@ -1,19 +1,24 @@
+#include "quant_hft/services/order_manager.h"
+
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <unordered_set>
 #include <vector>
 
-#include <gtest/gtest.h>
-
-#include "quant_hft/services/order_manager.h"
+#include "quant_hft/core/trading_domain_store_client_adapter.h"
 
 namespace quant_hft {
 namespace {
 
 class FakeTradingDomainStore final : public ITradingDomainStore {
-public:
+   public:
     bool UpsertOrder(const Order& order, std::string* error) override {
-        (void)error;
+        if (fail_orders) {
+            if (error != nullptr) *error = "injected order persistence failure";
+            return false;
+        }
         orders.push_back(order);
         return true;
     }
@@ -42,14 +47,14 @@ public:
         return true;
     }
 
-    bool MarkProcessedOrderEvent(const ProcessedOrderEventRecord& event, std::string* error) override {
+    bool MarkProcessedOrderEvent(const ProcessedOrderEventRecord& event,
+                                 std::string* error) override {
         (void)error;
         processed.insert(event.event_key);
         return true;
     }
 
-    bool ExistsProcessedOrderEvent(const std::string& event_key,
-                                   bool* exists,
+    bool ExistsProcessedOrderEvent(const std::string& event_key, bool* exists,
                                    std::string* error) const override {
         (void)error;
         if (exists != nullptr) {
@@ -70,10 +75,8 @@ public:
         return true;
     }
 
-    bool LoadPositionSummary(const std::string& account_id,
-                             const std::string& strategy_id,
-                             std::vector<Position>* out,
-                             std::string* error) const override {
+    bool LoadPositionSummary(const std::string& account_id, const std::string& strategy_id,
+                             std::vector<Position>* out, std::string* error) const override {
         (void)account_id;
         (void)strategy_id;
         (void)error;
@@ -83,10 +86,8 @@ public:
         return true;
     }
 
-    bool UpdateOrderCancelRetry(const std::string& client_order_id,
-                                std::int32_t cancel_retry_count,
-                                EpochNanos last_cancel_ts_ns,
-                                std::string* error) override {
+    bool UpdateOrderCancelRetry(const std::string& client_order_id, std::int32_t cancel_retry_count,
+                                EpochNanos last_cancel_ts_ns, std::string* error) override {
         (void)client_order_id;
         (void)cancel_retry_count;
         (void)last_cancel_ts_ns;
@@ -95,6 +96,7 @@ public:
     }
 
     std::vector<Order> orders;
+    bool fail_orders{false};
     std::vector<Trade> trades;
     mutable std::unordered_set<std::string> processed;
 };
@@ -142,6 +144,40 @@ TEST(OrderManagerTest, ValidStateTransitionAndPersistence) {
     EXPECT_FALSE(store->orders.empty());
 }
 
+TEST(OrderManagerTest, PersistenceFailureDoesNotMarkEventAndRetryWritesState) {
+    auto store = std::make_shared<FakeTradingDomainStore>();
+    OrderManager manager(store);
+    (void)manager.CreateOrder(BuildIntent("retry"));
+    auto accepted = BuildAcceptedEvent("retry");
+    store->fail_orders = true;
+    std::string error;
+    Order result;
+    EXPECT_FALSE(manager.OnOrderEvent(accepted, &result, &error));
+    EXPECT_TRUE(store->processed.empty());
+    store->fail_orders = false;
+    error.clear();
+    ASSERT_TRUE(manager.OnOrderEvent(accepted, &result, &error)) << error;
+    EXPECT_EQ(store->orders.back().status, OrderStatus::kAccepted);
+    EXPECT_EQ(store->processed.size(), 1U);
+}
+
+TEST(OrderManagerTest, DurableMarkerDoesNotSkipProcessLocalRecovery) {
+    auto store = std::make_shared<FakeTradingDomainStore>();
+    auto accepted = BuildAcceptedEvent("recovered");
+    accepted.strategy_id = "s1";
+    {
+        OrderManager first(store);
+        ASSERT_TRUE(first.OnOrderEvent(accepted, nullptr, nullptr));
+    }
+    OrderManager restarted(store);
+    (void)restarted.CreateOrder(BuildIntent("recovered"));
+    std::string error;
+    ASSERT_TRUE(restarted.OnOrderEvent(accepted, nullptr, &error)) << error;
+    ASSERT_TRUE(restarted.GetOrder("recovered").has_value());
+    EXPECT_EQ(restarted.GetOrder("recovered")->status, OrderStatus::kAccepted);
+    EXPECT_EQ(restarted.GetActiveOrders().size(), 1U);
+}
+
 TEST(OrderManagerTest, DuplicateEventIgnoredByIdempotency) {
     auto store = std::make_shared<FakeTradingDomainStore>();
     OrderManager manager(store);
@@ -178,7 +214,8 @@ TEST(OrderManagerTest, InvalidTransitionRejected) {
 }
 
 TEST(OrderManagerTest, TradeEventIdempotentByTradeId) {
-    auto store = std::make_shared<FakeTradingDomainStore>();
+    auto sql = std::make_shared<InMemoryTimescaleSqlClient>();
+    auto store = std::make_shared<TradingDomainStoreClientAdapter>(sql, StorageRetryPolicy{});
     OrderManager manager(store);
     (void)manager.CreateOrder(BuildIntent("ord-trade"));
 
@@ -196,11 +233,13 @@ TEST(OrderManagerTest, TradeEventIdempotentByTradeId) {
     std::string error;
     ASSERT_TRUE(manager.OnTradeEvent(trade_event, &trade, &error)) << error;
     ASSERT_TRUE(manager.OnTradeEvent(trade_event, &trade, &error)) << error;
-    EXPECT_EQ(store->trades.size(), 1U);
+    EXPECT_EQ(sql->QueryAllRows("trading_core.trades", &error).size(), 1U);
+    EXPECT_EQ(trade.quantity, 0);  // Duplicate results never invite downstream reapplication.
 }
 
 TEST(OrderManagerTest, TradeEventUsesLastTradeVolumeWhenCumulativeFilledVolumeAdvances) {
-    auto store = std::make_shared<FakeTradingDomainStore>();
+    auto sql = std::make_shared<InMemoryTimescaleSqlClient>();
+    auto store = std::make_shared<TradingDomainStoreClientAdapter>(sql, StorageRetryPolicy{});
     OrderManager manager(store);
     auto intent = BuildIntent("ord-trade-volume");
     intent.volume = 3;
@@ -220,8 +259,9 @@ TEST(OrderManagerTest, TradeEventUsesLastTradeVolumeWhenCumulativeFilledVolumeAd
     Trade trade;
     std::string error;
     ASSERT_TRUE(manager.OnTradeEvent(trade_event, &trade, &error)) << error;
-    ASSERT_EQ(store->trades.size(), 1U);
-    EXPECT_EQ(store->trades.front().quantity, 1);
+    const auto rows = sql->QueryAllRows("trading_core.trades", &error);
+    ASSERT_EQ(rows.size(), 1U);
+    EXPECT_EQ(rows.front().at("volume"), "1");
     EXPECT_EQ(trade.quantity, 1);
 }
 
@@ -291,4 +331,3 @@ TEST(OrderManagerTest, GetActiveOrdersByAccountSpansStrategies) {
 
 }  // namespace
 }  // namespace quant_hft
-

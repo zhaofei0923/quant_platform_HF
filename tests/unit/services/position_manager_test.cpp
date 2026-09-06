@@ -1,14 +1,15 @@
+#include "quant_hft/services/position_manager.h"
+
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
-#include <gtest/gtest.h>
-
 #include "quant_hft/core/redis_hash_client.h"
-#include "quant_hft/core/trading_domain_store_client_adapter.h"
 #include "quant_hft/core/timescale_sql_client.h"
-#include "quant_hft/services/position_manager.h"
+#include "quant_hft/core/trading_domain_store_client_adapter.h"
 
 namespace quant_hft {
 namespace {
@@ -29,10 +30,58 @@ Trade BuildOpenTrade(const std::string& trade_id, Side side, int qty) {
     return trade;
 }
 
+class LoseFirstProjectionAcknowledgement final : public InMemoryRedisHashClient {
+   public:
+    bool HSetVersioned(const std::string& key,
+                       const std::unordered_map<std::string, std::string>& fields,
+                       std::uint64_t version, std::string* error) override {
+        if (!InMemoryRedisHashClient::HSetVersioned(key, fields, version, error)) return false;
+        if (first_) {
+            first_ = false;
+            if (error != nullptr) *error = "injected lost Redis reply after successful write";
+            return false;
+        }
+        return true;
+    }
+
+   private:
+    bool first_{true};
+};
+
+TEST(PositionManagerTest, LostRedisReplyLeavesOutboxAndRetryDoesNotDoubleCount) {
+    auto sql = std::make_shared<InMemoryTimescaleSqlClient>();
+    auto store = std::make_shared<TradingDomainStoreClientAdapter>(sql, StorageRetryPolicy{});
+    auto redis = std::make_shared<LoseFirstProjectionAcknowledgement>();
+    PositionManager manager(store, redis);
+    std::string error;
+    EXPECT_FALSE(manager.UpdatePosition(BuildOpenTrade("retry", Side::kBuy, 2), &error));
+    std::vector<TradeOutboxRecord> pending;
+    ASSERT_TRUE(store->LoadPendingOutbox("acc1", &pending, &error));
+    ASSERT_EQ(pending.size(), 1U);
+    ASSERT_TRUE(manager.DrainOutbox("acc1", &error)) << error;
+    ASSERT_TRUE(manager.DrainOutbox("acc1", &error)) << error;
+    std::unordered_map<std::string, std::string> fields;
+    ASSERT_TRUE(redis->HGetAll("position:acc1:SHFE.ag2406", &fields, &error));
+    EXPECT_EQ(fields.at("long_volume"), "2");
+    EXPECT_EQ(sql->QueryAllRows("trading_core.trades", nullptr).size(), 1U);
+    ASSERT_TRUE(store->LoadPendingOutbox("acc1", &pending, &error));
+    EXPECT_TRUE(pending.empty());
+}
+
+TEST(PositionManagerTest, VersionedProjectionNeverReplacesNewerSnapshot) {
+    InMemoryRedisHashClient redis;
+    std::string error;
+    ASSERT_TRUE(redis.HSetVersioned("position", {{"long_volume", "9"}}, 9, &error));
+    ASSERT_TRUE(redis.HSetVersioned("position", {{"long_volume", "2"}}, 2, &error));
+    std::unordered_map<std::string, std::string> fields;
+    ASSERT_TRUE(redis.HGetAll("position", &fields, &error));
+    EXPECT_EQ(fields.at("long_volume"), "9");
+}
+
 TEST(PositionManagerTest, OpenTradeUpdatesPgAndRedis) {
     auto sql = std::make_shared<InMemoryTimescaleSqlClient>();
-    auto store = std::make_shared<TradingDomainStoreClientAdapter>(
-        sql, StorageRetryPolicy{}, "trading_core");
+    auto store = std::make_shared<TradingDomainStoreClientAdapter>(sql, StorageRetryPolicy{},
+                                                                   "trading_core");
     auto redis = std::make_shared<InMemoryRedisHashClient>();
     PositionManager manager(store, redis);
 
@@ -48,8 +97,8 @@ TEST(PositionManagerTest, OpenTradeUpdatesPgAndRedis) {
 
 TEST(PositionManagerTest, CloseTradeReducesVolume) {
     auto sql = std::make_shared<InMemoryTimescaleSqlClient>();
-    auto store = std::make_shared<TradingDomainStoreClientAdapter>(
-        sql, StorageRetryPolicy{}, "trading_core");
+    auto store = std::make_shared<TradingDomainStoreClientAdapter>(sql, StorageRetryPolicy{},
+                                                                   "trading_core");
     auto redis = std::make_shared<InMemoryRedisHashClient>();
     PositionManager manager(store, redis);
 
@@ -57,7 +106,7 @@ TEST(PositionManagerTest, CloseTradeReducesVolume) {
     ASSERT_TRUE(manager.UpdatePosition(BuildOpenTrade("t2", Side::kBuy, 3), &error)) << error;
 
     Trade close = BuildOpenTrade("t3", Side::kSell, 1);
-    close.offset = OffsetFlag::kClose;
+    close.offset = OffsetFlag::kCloseToday;
     close.quantity = 1;
     close.trade_ts_ns = 200;
     ASSERT_TRUE(manager.UpdatePosition(close, &error)) << error;
@@ -69,8 +118,8 @@ TEST(PositionManagerTest, CloseTradeReducesVolume) {
 
 TEST(PositionManagerTest, ReconcileWritesSnapshotToRedis) {
     auto sql = std::make_shared<InMemoryTimescaleSqlClient>();
-    auto store = std::make_shared<TradingDomainStoreClientAdapter>(
-        sql, StorageRetryPolicy{}, "trading_core");
+    auto store = std::make_shared<TradingDomainStoreClientAdapter>(sql, StorageRetryPolicy{},
+                                                                   "trading_core");
     auto redis = std::make_shared<InMemoryRedisHashClient>();
     PositionManager manager(store, redis);
 

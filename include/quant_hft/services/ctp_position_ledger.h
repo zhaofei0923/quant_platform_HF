@@ -4,6 +4,8 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "quant_hft/contracts/types.h"
@@ -48,6 +50,10 @@ class CtpPositionLedger {
         std::string* error);
     bool RegisterOrderIntent(const CtpOrderIntentForLedger& intent, std::string* error);
     bool ApplyOrderEvent(const OrderEvent& event, std::string* error);
+    void UseCommittedTradeAccounting(bool enabled);
+    bool HasUnbookedFills(const std::string& account_id) const;
+    bool ApplyCommittedTrade(const std::string& identity, const Trade& trade,
+                             const quant_hft::CloseAllocation& allocation, std::string* error);
 
     CtpPositionView GetPosition(const std::string& account_id, const std::string& instrument_id,
                                 PositionDirection direction, const std::string& position_date,
@@ -94,6 +100,8 @@ class CtpPositionLedger {
         std::string position_date;
         std::vector<CloseAllocation> close_allocations;
         std::int32_t last_filled_volume{0};
+        std::int32_t booked_trade_volume{0};
+        bool terminal{false};
     };
 
     static bool IsCloseOffset(OffsetFlag offset);
@@ -110,10 +118,15 @@ class CtpPositionLedger {
                                const std::string& exchange_id, const std::string& hedge_flag,
                                PositionDirection direction, const std::string& position_date);
     static std::int32_t ClampNonNegative(std::int32_t value);
+    static bool BuildSnapshotBuckets(const InvestorPositionSnapshot& snapshot,
+                                     std::vector<std::pair<PositionKey, PositionBucket>>* out,
+                                     std::string* error);
 
     mutable std::mutex mutex_;
     std::unordered_map<PositionKey, PositionBucket, PositionKeyHasher> positions_;
     std::unordered_map<std::string, PendingOrderState> pending_orders_;
+    bool committed_trade_accounting_{false};
+    std::unordered_set<std::string> applied_trade_identities_;
 };
 
 }  // namespace quant_hft

@@ -11,6 +11,7 @@
 #include <sstream>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 #include "quant_hft/core/flow_controller.h"
@@ -329,6 +330,60 @@ class DefaultRiskManager final : public RiskManager {
         }
     }
 
+    bool OnCommittedTrade(const std::string& identity, const Trade& trade,
+                          std::string* error) override {
+        if (!trade.valuation_complete || identity.empty() || trade.trading_day.empty() ||
+            !std::isfinite(trade.profit) || !std::isfinite(trade.commission)) {
+            if (error != nullptr) *error = "verified trade valuation and identity/day required";
+            return false;
+        }
+        std::lock_guard<std::mutex> lock(stats_mutex_);
+        if (!statistics_trading_day_.empty() && trade.trading_day < statistics_trading_day_)
+            return true;
+        if (trade.trading_day != statistics_trading_day_) {
+            statistics_trading_day_ = trade.trading_day;
+            committed_trade_ids_.clear();
+            daily_loss_accumulated_ = daily_commission_ = 0;
+        }
+        if (!committed_trade_ids_.insert(identity).second) return true;
+        daily_loss_accumulated_ += std::max(0.0, -trade.profit);
+        daily_commission_ += std::max(0.0, trade.commission);
+        return true;
+    }
+
+    bool RestoreTradeStatistics(const std::string& day, const std::vector<Trade>& trades,
+                                std::string* error) override {
+        if (day.empty()) {
+            if (error != nullptr) *error = "trading day required";
+            return false;
+        }
+        std::unordered_set<std::string> identities;
+        double loss = 0, commission = 0;
+        for (const auto& trade : trades) {
+            if (trade.trading_day != day) continue;
+            if (!trade.valuation_complete || trade.trade_id.empty() ||
+                !std::isfinite(trade.profit) || !std::isfinite(trade.commission)) {
+                if (error != nullptr) *error = "invalid committed trade statistics";
+                return false;
+            }
+            if (!identities.insert(trade.trade_id).second) continue;
+            loss += std::max(0.0, -trade.profit);
+            commission += std::max(0.0, trade.commission);
+        }
+        std::lock_guard<std::mutex> lock(stats_mutex_);
+        statistics_trading_day_ = day;
+        committed_trade_ids_ = std::move(identities);
+        daily_loss_accumulated_ = loss;
+        daily_commission_ = commission;
+        return true;
+    }
+
+    RiskTradeStatistics GetTradeStatistics() const override {
+        std::lock_guard<std::mutex> lock(stats_mutex_);
+        return {statistics_trading_day_, daily_loss_accumulated_, daily_commission_,
+                committed_trade_ids_.size()};
+    }
+
     void OnOrderRejected(const Order& order, const std::string& reason) override {
         RiskRule synthetic_rule;
         synthetic_rule.rule_id = "risk.order_rejected";
@@ -367,6 +422,8 @@ class DefaultRiskManager final : public RiskManager {
 
     void ResetDailyStats() override {
         std::lock_guard<std::mutex> lock(stats_mutex_);
+        committed_trade_ids_.clear();
+        statistics_trading_day_.clear();
         daily_loss_accumulated_ = 0.0;
         daily_commission_ = 0.0;
         daily_cancel_count_by_key_.clear();
@@ -633,6 +690,8 @@ class DefaultRiskManager final : public RiskManager {
     std::unordered_map<std::string, std::shared_ptr<TokenBucket>> cancel_limiters_;
 
     mutable std::mutex stats_mutex_;
+    std::string statistics_trading_day_;
+    std::unordered_set<std::string> committed_trade_ids_;
     double daily_loss_accumulated_{0.0};
     double daily_commission_{0.0};
     std::unordered_map<std::string, int> daily_cancel_count_by_key_;

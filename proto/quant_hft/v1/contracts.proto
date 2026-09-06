@@ -111,6 +111,28 @@ message Trade {
   double commission = 11;
   double profit = 12;
   string account_id = 13;
+  string trading_day = 14;
+  string raw_trade_id = 15;
+  string exchange_order_id = 16;
+  string hedge_flag = 17;
+  string broker_id = 18;
+  // False means commission/profit are not verified accounting values.
+  bool valuation_complete = 19;
+}
+
+message TradeIdentity {
+  uint32 version = 1;
+  string account_id = 2;
+  string trading_day = 3;
+  string exchange_id = 4;
+  string raw_trade_id = 5;
+  string side = 6;
+  string broker_id = 7;
+}
+
+message CloseAllocation {
+  int32 today = 1;
+  int32 yesterday = 2;
 }
 
 message Position {
@@ -129,6 +151,9 @@ message Position {
   double position_profit = 13;
   double margin = 14;
   int64 update_time_ns = 15;
+  string hedge_flag = 16;
+  string trading_day = 17;
+  uint64 version = 18;
 }
 
 message Account {
@@ -256,6 +281,12 @@ message OrderEvent {
   string raw_trade_id = 35;
   int32 query_request_id = 36;
   uint64 recovery_generation = 37;
+  string hedge_flag = 38;
+  string broker_id = 39;
+  // Only a committed domain projection may populate these fields.
+  Position committed_position = 40;
+  string committed_trade_identity = 41;
+  uint64 position_version = 42;
 }
 
 message PositionSnapshot {

@@ -4,10 +4,29 @@
 
 namespace quant_hft {
 
-bool InMemoryRedisHashClient::HSet(
-    const std::string& key,
-    const std::unordered_map<std::string, std::string>& fields,
-    std::string* error) {
+bool InMemoryRedisHashClient::HSetVersioned(
+    const std::string& key, const std::unordered_map<std::string, std::string>& fields,
+    std::uint64_t version, std::string* error) {
+    if (key.empty()) {
+        if (error != nullptr) *error = "empty projection key";
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (IsExpiredLocked(key)) {
+        storage_.erase(key);
+        expiry_epoch_seconds_.erase(key);
+    }
+    auto& stored = storage_[key];
+    const auto old = stored.find("version");
+    if (old != stored.end() && std::stoull(old->second) > version) return true;
+    for (const auto& [field, value] : fields) stored[field] = value;
+    stored["version"] = std::to_string(version);
+    return true;
+}
+
+bool InMemoryRedisHashClient::HSet(const std::string& key,
+                                   const std::unordered_map<std::string, std::string>& fields,
+                                   std::string* error) {
     if (key.empty()) {
         if (error != nullptr) {
             *error = "empty key";
@@ -24,10 +43,9 @@ bool InMemoryRedisHashClient::HSet(
     return true;
 }
 
-bool InMemoryRedisHashClient::HGetAll(
-    const std::string& key,
-    std::unordered_map<std::string, std::string>* out,
-    std::string* error) const {
+bool InMemoryRedisHashClient::HGetAll(const std::string& key,
+                                      std::unordered_map<std::string, std::string>* out,
+                                      std::string* error) const {
     if (out == nullptr) {
         if (error != nullptr) {
             *error = "out is null";
@@ -59,10 +77,8 @@ bool InMemoryRedisHashClient::HGetAll(
     return true;
 }
 
-bool InMemoryRedisHashClient::HIncrBy(const std::string& key,
-                                      const std::string& field,
-                                      std::int64_t delta,
-                                      std::string* error) {
+bool InMemoryRedisHashClient::HIncrBy(const std::string& key, const std::string& field,
+                                      std::int64_t delta, std::string* error) {
     if (key.empty() || field.empty()) {
         if (error != nullptr) {
             *error = "key and field must be non-empty";
@@ -92,9 +108,7 @@ bool InMemoryRedisHashClient::HIncrBy(const std::string& key,
     return true;
 }
 
-bool InMemoryRedisHashClient::Expire(const std::string& key,
-                                     int ttl_seconds,
-                                     std::string* error) {
+bool InMemoryRedisHashClient::Expire(const std::string& key, int ttl_seconds, std::string* error) {
     if (key.empty()) {
         if (error != nullptr) {
             *error = "empty key";

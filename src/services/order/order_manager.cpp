@@ -42,7 +42,13 @@ Order OrderManager::CreateOrder(const OrderIntent& intent) {
     state_machine_.OnOrderIntent(intent);
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        orders_[order.order_id] = order;
+        const auto existing = orders_.find(order.order_id);
+        if (existing != orders_.end()) {
+            // A synchronous gateway callback may already have advanced this order.
+            order = existing->second;
+        } else {
+            orders_.emplace(order.order_id, order);
+        }
     }
     if (domain_store_ != nullptr) {
         std::string ignored_error;
@@ -51,7 +57,10 @@ Order OrderManager::CreateOrder(const OrderIntent& intent) {
     return order;
 }
 
-bool OrderManager::OnOrderEvent(const OrderEvent& event, Order* out_order, std::string* error) {
+bool OrderManager::OnOrderEvent(const OrderEvent& event, Order* out_order, std::string* error,
+                                bool* transition_rejected) {
+    if (error != nullptr) error->clear();
+    if (transition_rejected != nullptr) *transition_rejected = false;
     const auto event_key = BuildOrderEventKey(event);
     if (event_key.empty()) {
         if (error != nullptr) {
@@ -59,14 +68,12 @@ bool OrderManager::OnOrderEvent(const OrderEvent& event, Order* out_order, std::
         }
         return false;
     }
-    if (IsEventProcessed(event_key, error)) {
-        if (out_order != nullptr) {
-            const auto existing = GetOrder(ResolveOrderId(event));
-            if (existing.has_value()) {
-                *out_order = *existing;
-            }
+    if (IsEventProcessed(event_key)) {
+        const auto existing = GetOrder(ResolveOrderId(event));
+        if (existing.has_value()) {
+            if (out_order != nullptr) *out_order = *existing;
+            return true;
         }
-        return true;
     }
 
     bool applied = state_machine_.OnOrderEvent(event);
@@ -74,6 +81,7 @@ bool OrderManager::OnOrderEvent(const OrderEvent& event, Order* out_order, std::
         applied = state_machine_.RecoverFromOrderEvent(event);
     }
     if (!applied) {
+        if (transition_rejected != nullptr) *transition_rejected = true;
         if (error != nullptr) {
             *error = "order state transition rejected";
         }
@@ -119,12 +127,12 @@ bool OrderManager::OnOrderEvent(const OrderEvent& event, Order* out_order, std::
 
     if (domain_store_ != nullptr) {
         std::string store_error;
-        if (!domain_store_->UpsertOrder(order, &store_error) && error != nullptr &&
-            error->empty()) {
-            *error = store_error;
+        if (!domain_store_->UpsertOrder(order, &store_error)) {
+            if (error != nullptr) *error = "order persistence failed: " + store_error;
+            return false;
         }
     }
-    MarkEventProcessed(event_key, event, 0, error);
+    if (!MarkEventProcessed(event_key, event, 0, error)) return false;
 
     if (out_order != nullptr) {
         *out_order = order;
@@ -146,11 +154,26 @@ bool OrderManager::OnTradeEvent(const OrderEvent& event, Trade* out_trade, std::
         }
         return false;
     }
-    if (IsEventProcessed(event_key, error)) {
-        return true;
+    const Trade trade = BuildTrade(event);
+    if (out_trade != nullptr) *out_trade = {};
+    if (domain_store_ == nullptr) {
+        if (error != nullptr) *error = "atomic trade domain store required";
+        return false;
     }
+    TradeApplyRequest request;
+    request.trade = trade;
+    request.allow_ephemeral = true;
+    TradeApplyResult result;
+    if (!domain_store_->ApplyTrade(request, &result, error) ||
+        result.status == TradeApplyStatus::kConflict || result.status == TradeApplyStatus::kFailed)
+        return false;
+    if (out_trade != nullptr && result.status == TradeApplyStatus::kApplied) *out_trade = trade;
+    return true;
+}
 
+Trade OrderManager::BuildTrade(const OrderEvent& event) const {
     Trade trade;
+    const auto event_key = BuildTradeEventKey(event);
     trade.trade_id = event.trade_id.empty() ? event_key : event.trade_id;
     trade.order_id = ResolveOrderId(event);
     trade.account_id = event.account_id;
@@ -172,21 +195,12 @@ bool OrderManager::OnTradeEvent(const OrderEvent& event, Trade* out_trade, std::
     trade.trade_ts_ns = event.ts_ns > 0 ? event.ts_ns : NowEpochNanos();
     trade.commission = 0.0;
     trade.profit = 0.0;
-
-    if (domain_store_ != nullptr) {
-        std::string store_error;
-        if (!domain_store_->AppendTrade(trade, &store_error)) {
-            if (error != nullptr) {
-                *error = store_error;
-            }
-            return false;
-        }
-    }
-    MarkEventProcessed(event_key, event, 1, error);
-    if (out_trade != nullptr) {
-        *out_trade = trade;
-    }
-    return true;
+    trade.trading_day = event.trading_day;
+    trade.raw_trade_id = event.raw_trade_id;
+    trade.exchange_order_id = event.exchange_order_id;
+    trade.hedge_flag = event.hedge_flag;
+    trade.broker_id = event.broker_id;
+    return trade;
 }
 
 std::optional<Order> OrderManager::GetOrder(const std::string& client_order_id) const {
@@ -310,39 +324,15 @@ std::string OrderManager::BuildTradeEventKey(const OrderEvent& event) {
            std::to_string(event.last_trade_volume);
 }
 
-bool OrderManager::IsEventProcessed(const std::string& event_key, std::string* error) const {
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (processed_events_.find(event_key) != processed_events_.end()) {
-            return true;
-        }
-    }
-    if (domain_store_ == nullptr) {
-        return false;
-    }
-    bool exists = false;
-    std::string store_error;
-    if (!domain_store_->ExistsProcessedOrderEvent(event_key, &exists, &store_error)) {
-        if (error != nullptr) {
-            *error = store_error;
-        }
-        return false;
-    }
-    return exists;
+bool OrderManager::IsEventProcessed(const std::string& event_key) const {
+    // Durable markers prove persistence, not reconstruction of this process's state.
+    // WAL recovery may already have created a new order from its prepared mapping.
+    std::lock_guard<std::mutex> lock(mutex_);
+    return processed_events_.find(event_key) != processed_events_.end();
 }
 
-void OrderManager::MarkEventProcessed(const std::string& event_key, const OrderEvent& event,
+bool OrderManager::MarkEventProcessed(const std::string& event_key, const OrderEvent& event,
                                       std::int32_t event_type, std::string* error) {
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (processed_events_.insert(event_key).second) {
-            processed_order_.push_back(event_key);
-            while (processed_order_.size() > processed_event_cache_size_) {
-                processed_events_.erase(processed_order_.front());
-                processed_order_.pop_front();
-            }
-        }
-    }
     if (domain_store_ != nullptr) {
         ProcessedOrderEventRecord record;
         record.event_key = event_key;
@@ -353,12 +343,17 @@ void OrderManager::MarkEventProcessed(const std::string& event_key, const OrderE
         record.trade_id = event.trade_id;
         record.event_source = event.event_source;
         record.processed_ts_ns = event.ts_ns > 0 ? event.ts_ns : NowEpochNanos();
-        std::string store_error;
-        if (!domain_store_->MarkProcessedOrderEvent(record, &store_error) && error != nullptr &&
-            error->empty()) {
-            *error = store_error;
+        if (!domain_store_->MarkProcessedOrderEvent(record, error)) return false;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (processed_events_.insert(event_key).second) {
+        processed_order_.push_back(event_key);
+        while (processed_order_.size() > processed_event_cache_size_) {
+            processed_events_.erase(processed_order_.front());
+            processed_order_.pop_front();
         }
     }
+    return true;
 }
 
 std::string OrderManager::ResolveOrderId(const OrderEvent& event) {

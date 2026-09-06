@@ -105,6 +105,13 @@ struct RiskManagerConfig {
     int reload_interval_seconds{60};
 };
 
+struct RiskTradeStatistics {
+    std::string trading_day;
+    double loss{0.0};
+    double commission{0.0};
+    std::size_t trade_count{0};
+};
+
 class RiskManager {
    public:
     virtual ~RiskManager() = default;
@@ -117,6 +124,16 @@ class RiskManager {
                                         const OrderContext& context) = 0;
 
     virtual void OnTrade(const Trade& trade) = 0;
+    virtual bool OnCommittedTrade(const std::string&, const Trade&, std::string* error) {
+        if (error != nullptr) *error = "idempotent trade statistics unsupported";
+        return false;
+    }
+    virtual bool RestoreTradeStatistics(const std::string&, const std::vector<Trade>&,
+                                        std::string* error) {
+        if (error != nullptr) *error = "trade statistics restore unsupported";
+        return false;
+    }
+    virtual RiskTradeStatistics GetTradeStatistics() const { return {}; }
 
     virtual void OnOrderRejected(const Order& order, const std::string& reason) = 0;
 

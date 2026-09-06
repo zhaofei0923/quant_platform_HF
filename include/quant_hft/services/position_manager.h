@@ -13,21 +13,20 @@
 namespace quant_hft {
 
 class PositionManager {
-public:
+   public:
     PositionManager(std::shared_ptr<ITradingDomainStore> domain_store,
                     std::shared_ptr<IRedisHashClient> redis_client);
 
     bool UpdatePosition(const Trade& trade, std::string* error);
+    bool DrainOutbox(const std::string& account_id, std::string* error);
     std::vector<Position> GetCurrentPositions(const std::string& account_id) const;
-    bool ReconcilePositions(const std::string& account_id,
-                            const std::string& strategy_id,
-                            const std::string& trading_day,
-                            std::string* error);
+    bool ReconcilePositions(const std::string& account_id, const std::string& strategy_id,
+                            const std::string& trading_day, std::string* error);
 
-private:
+   private:
     static std::string PositionRedisKey(const std::string& account_id,
                                         const std::string& instrument_id);
-    bool SyncPositionToRedis(const Position& before, const Position& after, std::string* error);
+    bool RefreshAccountProjection(const std::string& account_id, std::string* error);
 
     std::shared_ptr<ITradingDomainStore> domain_store_;
     std::shared_ptr<IRedisHashClient> redis_client_;
@@ -36,4 +35,3 @@ private:
 };
 
 }  // namespace quant_hft
-

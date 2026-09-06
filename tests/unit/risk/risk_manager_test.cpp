@@ -14,6 +14,34 @@
 namespace quant_hft {
 namespace {
 
+TEST(RiskManagerTest, CommittedTradeStatisticsRestoreAndDeduplicateByDay) {
+    auto manager = CreateRiskManager(nullptr, nullptr);
+    Trade first;
+    first.trade_id = "canonical-1";
+    first.trading_day = "20260907";
+    first.profit = -40;
+    first.commission = 2;
+    first.valuation_complete = true;
+    std::string error;
+    ASSERT_TRUE(manager->OnCommittedTrade(first.trade_id, first, &error));
+    ASSERT_TRUE(manager->OnCommittedTrade(first.trade_id, first, &error));
+    EXPECT_DOUBLE_EQ(manager->GetTradeStatistics().loss, 40);
+    EXPECT_DOUBLE_EQ(manager->GetTradeStatistics().commission, 2);
+    auto restored = CreateRiskManager(nullptr, nullptr);
+    ASSERT_TRUE(restored->RestoreTradeStatistics("20260907", {first, first}, &error));
+    ASSERT_TRUE(restored->OnCommittedTrade(first.trade_id, first, &error));
+    EXPECT_EQ(restored->GetTradeStatistics().trade_count, 1U);
+    EXPECT_DOUBLE_EQ(restored->GetTradeStatistics().loss, 40);
+    Trade tomorrow = first;
+    tomorrow.trade_id = "canonical-2";
+    tomorrow.trading_day = "20260908";
+    tomorrow.profit = -5;
+    ASSERT_TRUE(restored->OnCommittedTrade(tomorrow.trade_id, tomorrow, &error));
+    ASSERT_TRUE(restored->OnCommittedTrade(first.trade_id, first, &error));
+    EXPECT_DOUBLE_EQ(restored->GetTradeStatistics().loss, 5);
+    EXPECT_EQ(restored->GetTradeStatistics().trade_count, 1U);
+}
+
 class FakeTradingDomainStore final : public ITradingDomainStore {
    public:
     bool UpsertOrder(const Order& order, std::string* error) override {
@@ -157,6 +185,28 @@ TEST(RiskManagerTest, CheckOrderSelfTradePreventionCrossPriceRejects) {
     auto result = risk_manager->CheckOrder(buy_intent, BuildContext());
     EXPECT_FALSE(result.allowed);
     EXPECT_EQ(result.violated_rule, RiskRuleType::SELF_TRADE_PREVENTION);
+}
+
+TEST(RiskManagerTest, SelfTradePreventionCoversEveryOpenCloseCombination) {
+    for (const auto resting_offset : {OffsetFlag::kOpen, OffsetFlag::kCloseToday}) {
+        for (const auto incoming_offset : {OffsetFlag::kOpen, OffsetFlag::kCloseYesterday}) {
+            auto store = std::make_shared<FakeTradingDomainStore>();
+            auto orders = std::make_shared<OrderManager>(store);
+            auto resting = BuildIntent("resting", Side::kSell, 4000.0);
+            resting.offset = resting_offset;
+            orders->CreateOrder(resting);
+            auto risk = CreateRiskManager(orders, store);
+            RiskManagerConfig config;
+            config.enable_dynamic_reload = false;
+            config.rule_file_path.clear();
+            ASSERT_TRUE(risk->Initialize(config));
+            auto incoming = BuildIntent("incoming", Side::kBuy, 4000.0);
+            incoming.offset = incoming_offset;
+            const auto result = risk->CheckOrder(incoming, BuildContext());
+            EXPECT_FALSE(result.allowed);
+            EXPECT_EQ(result.violated_rule, RiskRuleType::SELF_TRADE_PREVENTION);
+        }
+    }
 }
 
 TEST(RiskManagerTest, CheckOrderSelfTradePreventionRejectsAcrossStrategiesInSameAccount) {

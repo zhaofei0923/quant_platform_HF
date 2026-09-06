@@ -1,0 +1,310 @@
+[  0%] Building CXX object CMakeFiles/quant_hft_core.dir/src/backtest/broker.cpp.o
+[  0%] Building CXX object CMakeFiles/quant_hft_core.dir/src/backtest/backtest_metrics.cpp.o
+[  0%] Building CXX object CMakeFiles/quant_hft_core.dir/src/backtest/engine.cpp.o
+[  3%] Building CXX object CMakeFiles/quant_hft_core.dir/src/backtest/backtest_data_feed.cpp.o
+[  3%] Building CXX object CMakeFiles/quant_hft_core.dir/src/backtest/performance.cpp.o
+[  7%] Building CXX object CMakeFiles/quant_hft_core.dir/src/backtest/live_data_feed.cpp.o
+[  7%] Building CXX object CMakeFiles/quant_hft_core.dir/src/apps/backtest_result_export.cpp.o
+[  7%] Building CXX object CMakeFiles/quant_hft_core.dir/src/optim/parameter_space.cpp.o
+[  7%] Building CXX object CMakeFiles/quant_hft_core.dir/src/optim/grid_search.cpp.o
+[  7%] Building CXX object CMakeFiles/quant_hft_core.dir/src/optim/random_search.cpp.o
+[  7%] Building CXX object CMakeFiles/quant_hft_core.dir/src/optim/task_scheduler.cpp.o
+[ 11%] Building CXX object CMakeFiles/quant_hft_core.dir/src/optim/result_analyzer.cpp.o
+[ 11%] Building CXX object CMakeFiles/quant_hft_core.dir/src/optim/temp_config_generator.cpp.o
+In file included from /tmp/quant-hft-stage1-snapshot/src/apps/backtest_result_export.cpp:12:
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h: In function ‘bool quant_hft::apps::LoadParquetTicks(const quant_hft::apps::BacktestCliSpec&, std::vector<quant_hft::apps::ReplayTick>*, quant_hft::apps::ReplayReport*, std::string*)’:
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3352:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3352 |                     .ts_ns = streams[index][0].ts_ns,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3353:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3353 |                     .instrument_id = streams[index][0].instrument_id,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3354:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3354 |                     .stream_index = index,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3355:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3355 |                     .row_index = 0,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3375:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3375 |                     .ts_ns = next_tick.ts_ns,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3376:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3376 |                     .instrument_id = next_tick.instrument_id,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3377:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3377 |                     .stream_index = node.stream_index,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3378:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3378 |                     .row_index = next_row,
+      |                     ^
+[ 11%] Building CXX object CMakeFiles/quant_hft_core.dir/src/rolling/rolling_config.cpp.o
+[ 11%] Building CXX object CMakeFiles/quant_hft_core.dir/src/rolling/window_generator.cpp.o
+[ 14%] Building CXX object CMakeFiles/quant_hft_core.dir/src/rolling/metric_extractor.cpp.o
+[ 14%] Building CXX object CMakeFiles/quant_hft_core.dir/src/rolling/rolling_runner.cpp.o
+[ 14%] Building CXX object CMakeFiles/quant_hft_core.dir/src/rolling/oos_top10_validation.cpp.o
+[ 14%] Building CXX object CMakeFiles/quant_hft_core.dir/src/rolling/rolling_report_writer.cpp.o
+[ 18%] Building CXX object CMakeFiles/quant_hft_core.dir/src/indicators/adx.cpp.o
+[ 18%] Building CXX object CMakeFiles/quant_hft_core.dir/src/indicators/atr.cpp.o
+[ 18%] Building CXX object CMakeFiles/quant_hft_core.dir/src/indicators/ema.cpp.o
+In file included from /tmp/quant-hft-stage1-snapshot/include/quant_hft/rolling/metric_extractor.h:5,
+                 from /tmp/quant-hft-stage1-snapshot/src/rolling/metric_extractor.cpp:1:
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h: In function ‘bool quant_hft::apps::LoadParquetTicks(const quant_hft::apps::BacktestCliSpec&, std::vector<quant_hft::apps::ReplayTick>*, quant_hft::apps::ReplayReport*, std::string*)’:
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3352:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3352 |                     .ts_ns = streams[index][0].ts_ns,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3353:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3353 |                     .instrument_id = streams[index][0].instrument_id,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3354:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3354 |                     .stream_index = index,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3355:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3355 |                     .row_index = 0,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3375:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3375 |                     .ts_ns = next_tick.ts_ns,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3376:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3376 |                     .instrument_id = next_tick.instrument_id,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3377:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3377 |                     .stream_index = node.stream_index,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3378:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3378 |                     .row_index = next_row,
+      |                     ^
+[ 18%] Building CXX object CMakeFiles/quant_hft_core.dir/src/indicators/kama.cpp.o
+In file included from /tmp/quant-hft-stage1-snapshot/include/quant_hft/rolling/rolling_runner.h:8,
+                 from /tmp/quant-hft-stage1-snapshot/src/rolling/rolling_runner.cpp:1:
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h: In function ‘bool quant_hft::apps::LoadParquetTicks(const quant_hft::apps::BacktestCliSpec&, std::vector<quant_hft::apps::ReplayTick>*, quant_hft::apps::ReplayReport*, std::string*)’:
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3352:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3352 |                     .ts_ns = streams[index][0].ts_ns,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3353:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3353 |                     .instrument_id = streams[index][0].instrument_id,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3354:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3354 |                     .stream_index = index,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3355:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3355 |                     .row_index = 0,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3375:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3375 |                     .ts_ns = next_tick.ts_ns,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3376:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3376 |                     .instrument_id = next_tick.instrument_id,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3377:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3377 |                     .stream_index = node.stream_index,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3378:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3378 |                     .row_index = next_row,
+      |                     ^
+[ 22%] Building CXX object CMakeFiles/quant_hft_core.dir/src/indicators/sma.cpp.o
+In file included from /tmp/quant-hft-stage1-snapshot/include/quant_hft/rolling/rolling_runner.h:8,
+                 from /tmp/quant-hft-stage1-snapshot/include/quant_hft/rolling/rolling_report_writer.h:5,
+                 from /tmp/quant-hft-stage1-snapshot/src/rolling/rolling_report_writer.cpp:1:
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h: In function ‘bool quant_hft::apps::LoadParquetTicks(const quant_hft::apps::BacktestCliSpec&, std::vector<quant_hft::apps::ReplayTick>*, quant_hft::apps::ReplayReport*, std::string*)’:
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3352:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3352 |                     .ts_ns = streams[index][0].ts_ns,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3353:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3353 |                     .instrument_id = streams[index][0].instrument_id,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3354:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3354 |                     .stream_index = index,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3355:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3355 |                     .row_index = 0,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3375:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3375 |                     .ts_ns = next_tick.ts_ns,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3376:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3376 |                     .instrument_id = next_tick.instrument_id,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3377:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3377 |                     .stream_index = node.stream_index,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3378:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3378 |                     .row_index = next_row,
+      |                     ^
+In file included from /tmp/quant-hft-stage1-snapshot/include/quant_hft/rolling/oos_top10_validation.h:8,
+                 from /tmp/quant-hft-stage1-snapshot/src/rolling/oos_top10_validation.cpp:1:
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h: In function ‘bool quant_hft::apps::LoadParquetTicks(const quant_hft::apps::BacktestCliSpec&, std::vector<quant_hft::apps::ReplayTick>*, quant_hft::apps::ReplayReport*, std::string*)’:
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3352:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3352 |                     .ts_ns = streams[index][0].ts_ns,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3353:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3353 |                     .instrument_id = streams[index][0].instrument_id,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3354:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3354 |                     .stream_index = index,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3355:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3355 |                     .row_index = 0,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3375:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3375 |                     .ts_ns = next_tick.ts_ns,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3376:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3376 |                     .instrument_id = next_tick.instrument_id,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3377:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3377 |                     .stream_index = node.stream_index,
+      |                     ^
+/tmp/quant-hft-stage1-snapshot/include/quant_hft/apps/backtest_replay_support.h:3378:21: warning: C++ designated initializers only available with ‘-std=c++20’ or ‘-std=gnu++20’ [-Wpedantic]
+ 3378 |                     .row_index = next_row,
+      |                     ^
+[ 22%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/base_strategy.cpp.o
+[ 22%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/strategy_registry.cpp.o
+[ 22%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/strategy_engine.cpp.o
+[ 25%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/demo_live_strategy.cpp.o
+[ 25%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/atomic_factory.cpp.o
+[ 25%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/signal_merger.cpp.o
+[ 25%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/state_persistence.cpp.o
+[ 25%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/composite_config_loader.cpp.o
+[ 29%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/strategy_main_config_loader.cpp.o
+[ 29%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/composite_strategy.cpp.o
+[ 29%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/atomic/kama_trend_strategy.cpp.o
+[ 29%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/atomic/trend_strategy.cpp.o
+[ 33%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/atomic/time_filter.cpp.o
+[ 33%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/atomic/max_position_risk_control.cpp.o
+[ 33%] Building CXX object CMakeFiles/quant_hft_core.dir/src/strategy/atomic/register_builtin_atomic_strategies.cpp.o
+[ 33%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/backtest/indicator_trace_csv_writer.cpp.o
+[ 37%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/backtest/indicator_trace_parquet_writer.cpp.o
+[ 37%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/backtest/contract_expiry_calendar.cpp.o
+[ 37%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/backtest/product_fee_config_loader.cpp.o
+[ 37%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/backtest/sub_strategy_indicator_trace_csv_writer.cpp.o
+/tmp/quant-hft-stage1-snapshot/src/core/backtest/indicator_trace_parquet_writer.cpp:28:13: warning: ‘std::string quant_hft::{anonymous}::FormatDateTimeFromEpochNs(quant_hft::EpochNanos)’ defined but not used [-Wunused-function]
+   28 | std::string FormatDateTimeFromEpochNs(EpochNanos ts_ns) {
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~
+[ 40%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/backtest/sub_strategy_indicator_trace_parquet_writer.cpp.o
+[ 40%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/backtest/parquet_data_feed.cpp.o
+[ 40%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/common/callback_dispatcher.cpp.o
+[ 40%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/common/event_dispatcher.cpp.o
+/tmp/quant-hft-stage1-snapshot/src/core/backtest/sub_strategy_indicator_trace_parquet_writer.cpp:48:13: warning: ‘std::string quant_hft::{anonymous}::MarketRegimeToLabel(quant_hft::MarketRegime)’ defined but not used [-Wunused-function]
+   48 | std::string MarketRegimeToLabel(MarketRegime regime) {
+      |             ^~~~~~~~~~~~~~~~~~~
+/tmp/quant-hft-stage1-snapshot/src/core/backtest/sub_strategy_indicator_trace_parquet_writer.cpp:28:13: warning: ‘std::string quant_hft::{anonymous}::FormatDateTimeFromEpochNs(quant_hft::EpochNanos)’ defined but not used [-Wunused-function]
+   28 | std::string FormatDateTimeFromEpochNs(EpochNanos ts_ns) {
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~
+[ 44%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/common/flow_controller.cpp.o
+[ 44%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/common/circuit_breaker.cpp.o
+[ 44%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/common/fixed_decimal.cpp.o
+[ 44%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/ctp/ctp_config.cpp.o
+[ 48%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/ctp/ctp_config_loader.cpp.o
+[ 48%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/ctp/instrument_meta_cache.cpp.o
+[ 48%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/ctp/ctp_trader_adapter.cpp.o
+[ 48%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/ctp/ctp_md_adapter.cpp.o
+[ 51%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/ctp/ctp_gateway_adapter.cpp.o
+[ 51%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/ctp/query_scheduler.cpp.o
+[ 51%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/regulatory/local_wal_regulatory_sink.cpp.o
+[ 51%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/regulatory/wal_replay_loader.cpp.o
+[ 55%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/redis_hash_client.cpp.o
+[ 55%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/redis_realtime_store.cpp.o
+[ 55%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/redis_realtime_store_client_adapter.cpp.o
+[ 55%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/libpq_timescale_sql_client.cpp.o
+[ 59%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/storage_client_pool.cpp.o
+[ 59%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/storage_client_factory.cpp.o
+[ 59%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/storage_connection_config.cpp.o
+[ 59%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/tcp_redis_hash_client.cpp.o
+[ 62%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/settlement_store_client_adapter.cpp.o
+[ 62%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/trading_domain_store_client_adapter.cpp.o
+[ 62%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/trading_ledger_store_client_adapter.cpp.o
+[ 62%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/timescale_buffered_event_store.cpp.o
+[ 66%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/timescale_event_store.cpp.o
+[ 66%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/timescale_event_store_client_adapter.cpp.o
+[ 66%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/storage/timescale_sql_client.cpp.o
+[ 66%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/market/kafka_market_bus_producer.cpp.o
+[ 70%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/perf/object_pool.cpp.o
+[ 70%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/perf/event_object_pool.cpp.o
+[ 70%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/monitoring/metric_registry.cpp.o
+[ 70%] Building CXX object CMakeFiles/quant_hft_core.dir/src/core/monitoring/exporter.cpp.o
+[ 74%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/risk/basic_risk_engine.cpp.o
+[ 74%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/risk/risk_policy_engine.cpp.o
+[ 74%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/risk/self_trade_risk_engine.cpp.o
+[ 74%] Building CXX object CMakeFiles/quant_hft_core.dir/src/risk/risk_rule_executor.cpp.o
+[ 77%] Building CXX object CMakeFiles/quant_hft_core.dir/src/risk/risk_rule_registry.cpp.o
+[ 77%] Building CXX object CMakeFiles/quant_hft_core.dir/src/risk/risk_manager.cpp.o
+[ 77%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/order/execution_planner.cpp.o
+[ 77%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/order/execution_engine.cpp.o
+[ 81%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/order/order_manager.cpp.o
+[ 81%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/order/execution_router.cpp.o
+[ 81%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/order/in_memory_order_gateway.cpp.o
+[ 81%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/order/order_state_machine.cpp.o
+/tmp/quant-hft-stage1-snapshot/src/risk/risk_rule_registry.cpp:11:6: warning: ‘bool quant_hft::{anonymous}::IsOpenOrder(const quant_hft::OrderIntent&)’ defined but not used [-Wunused-function]
+   11 | bool IsOpenOrder(const OrderIntent& intent) { return intent.offset == OffsetFlag::kOpen; }
+      |      ^~~~~~~~~~~
+[ 85%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/order/pending_exit_store.cpp.o
+[ 85%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/order/timeout_cancel_tracker.cpp.o
+[ 85%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/order/trading_permission_controller.cpp.o
+[ 85%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/settlement/settlement_price_provider.cpp.o
+[ 88%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/settlement/settlement_query_client.cpp.o
+[ 88%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/settlement/daily_settlement_service.cpp.o
+[ 88%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/portfolio/ctp_account_ledger.cpp.o
+[ 88%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/portfolio/ctp_close_offset_resolver.cpp.o
+[ 92%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/portfolio/ctp_position_ledger.cpp.o
+[ 92%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/portfolio/position_manager.cpp.o
+[ 92%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/portfolio/in_memory_portfolio_ledger.cpp.o
+[ 92%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/market_state/bar_aggregator.cpp.o
+[ 96%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/market_state/market_bar_pipeline.cpp.o
+[ 96%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/market_state/dominant_contract_coordinator.cpp.o
+[ 96%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/market_state/trading_session_calendar.cpp.o
+[ 96%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/market_state/market_data_csv_recorder.cpp.o
+[100%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/market_state/market_state_detector.cpp.o
+[100%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/market_state/rule_market_state_engine.cpp.o
+[100%] Building CXX object CMakeFiles/quant_hft_core.dir/src/services/market_state/timeframe_state_fanout.cpp.o
+[100%] Linking CXX static library libquant_hft_core.a
+[100%] Built target quant_hft_core
+[100%] Building CXX object CMakeFiles/core_engine.dir/src/apps/core_engine_main.cpp.o
+[100%] Linking CXX executable core_engine
+[100%] Built target core_engine
+[  0%] Building CXX object _deps/googletest-build/googletest/CMakeFiles/gtest.dir/src/gtest-all.cc.o
+Consolidate compiler generated dependencies of target quant_hft_core
+[ 93%] Built target quant_hft_core
+[ 96%] Linking CXX static library ../../../lib/libgtest.a
+[ 96%] Built target gtest
+[ 96%] Building CXX object _deps/googletest-build/googletest/CMakeFiles/gtest_main.dir/src/gtest_main.cc.o
+[ 96%] Linking CXX static library ../../../lib/libgtest_main.a
+[ 96%] Built target gtest_main
+[ 96%] Building CXX object CMakeFiles/trading_domain_store_client_adapter_test.dir/tests/unit/core/trading_domain_store_client_adapter_test.cpp.o
+[100%] Linking CXX executable trading_domain_store_client_adapter_test
+[100%] Built target trading_domain_store_client_adapter_test
+Consolidate compiler generated dependencies of target gtest
+[  3%] Built target gtest
+Consolidate compiler generated dependencies of target gtest_main
+[  3%] Built target gtest_main
+[ 96%] Built target quant_hft_core
+[ 96%] Building CXX object CMakeFiles/storage_client_pool_test.dir/tests/unit/core/storage_client_pool_test.cpp.o
+[100%] Linking CXX executable storage_client_pool_test
+[100%] Built target storage_client_pool_test
+[  3%] Built target gtest
+[  3%] Built target gtest_main
+[ 96%] Built target quant_hft_core
+[ 96%] Building CXX object CMakeFiles/order_manager_test.dir/tests/unit/services/order_manager_test.cpp.o
+[100%] Linking CXX executable order_manager_test
+[100%] Built target order_manager_test
+[  3%] Built target gtest
+[  3%] Built target gtest_main
+[100%] Built target quant_hft_core
+[100%] Building CXX object CMakeFiles/position_manager_test.dir/tests/unit/services/position_manager_test.cpp.o
+[100%] Linking CXX executable position_manager_test
+[100%] Built target position_manager_test
+[  3%] Built target gtest
+[  3%] Built target gtest_main
+[100%] Built target quant_hft_core
+[100%] Building CXX object CMakeFiles/ctp_position_ledger_test.dir/tests/unit/services/ctp_position_ledger_test.cpp.o
+[100%] Linking CXX executable ctp_position_ledger_test
+[100%] Built target ctp_position_ledger_test
+[  3%] Built target gtest
+[  3%] Built target gtest_main
+[100%] Built target quant_hft_core
+[100%] Building CXX object CMakeFiles/risk_manager_test.dir/tests/unit/risk/risk_manager_test.cpp.o
+[100%] Linking CXX executable risk_manager_test
+[100%] Built target risk_manager_test
+[ 96%] Built target quant_hft_core
+[ 96%] Building CXX object CMakeFiles/verify_contract_sync_cli.dir/src/apps/verify_contract_sync_cli_main.cpp.o
+[100%] Linking CXX executable verify_contract_sync_cli
+[100%] Built target verify_contract_sync_cli

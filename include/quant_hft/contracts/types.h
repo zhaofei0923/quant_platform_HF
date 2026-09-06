@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <string>
 
 namespace quant_hft {
@@ -182,6 +183,41 @@ struct Trade {
     EpochNanos trade_ts_ns{0};
     double commission{0.0};
     double profit{0.0};
+    std::string trading_day;
+    std::string raw_trade_id;
+    std::string exchange_order_id;
+    HedgeFlag hedge_flag{HedgeFlag::kSpeculation};
+    std::string broker_id;
+    bool valuation_complete{false};
+};
+
+// Conservative versioned identity. Uniqueness is not assumed beyond these fields:
+// a different immutable payload with this key is quarantined, never silently dropped.
+struct TradeIdentity {
+    std::uint32_t version{2};
+    std::string account_id;
+    std::string trading_day;
+    std::string exchange_id;
+    std::string raw_trade_id;
+    Side side{Side::kBuy};
+
+    std::string Key() const {
+        if (account_id.empty() || trading_day.empty() || exchange_id.empty() ||
+            raw_trade_id.empty())
+            return {};
+        const auto part = [](const std::string& value) {
+            return std::to_string(value.size()) + ":" + value;
+        };
+        return "trade:v" + std::to_string(version) + ":" + part(broker_id) + part(account_id) +
+               part(trading_day) + part(exchange_id) + part(raw_trade_id) +
+               std::to_string(static_cast<int>(side));
+    }
+    std::string broker_id;
+};
+
+struct CloseAllocation {
+    std::int32_t today{0};
+    std::int32_t yesterday{0};
 };
 
 struct Position {
@@ -200,6 +236,9 @@ struct Position {
     double position_profit{0.0};
     double margin{0.0};
     EpochNanos update_time_ns{0};
+    HedgeFlag hedge_flag{HedgeFlag::kSpeculation};
+    std::string trading_day;
+    std::uint64_t version{0};
 };
 
 struct Account {
@@ -400,6 +439,12 @@ struct OrderEvent {
     std::string raw_trade_id;
     std::int32_t query_request_id{0};
     std::uint64_t recovery_generation{0};
+    HedgeFlag hedge_flag{HedgeFlag::kSpeculation};
+    std::string broker_id;
+    // Set only by the domain commit/outbox dispatcher, never by a gateway report.
+    std::optional<Position> committed_position;
+    std::string committed_trade_identity;
+    std::uint64_t position_version{0};
 };
 
 inline std::string BuildCanonicalTradeKey(const OrderEvent& event) {
@@ -409,8 +454,10 @@ inline std::string BuildCanonicalTradeKey(const OrderEvent& event) {
         raw_trade_id.empty()) {
         return {};
     }
-    return event.account_id + "|" + event.trading_day + "|" + event.exchange_id + "|" +
-           raw_trade_id;
+    return TradeIdentity{
+        2,          event.account_id, event.trading_day, event.exchange_id, raw_trade_id,
+        event.side, event.broker_id}
+        .Key();
 }
 
 struct PendingExit {

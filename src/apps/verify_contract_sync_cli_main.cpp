@@ -66,13 +66,29 @@ std::vector<std::string> ParseCppStructFields(const std::string& path, const std
     std::string raw_line;
     const std::regex field_pattern(R"(([A-Za-z_][A-Za-z0-9_]*)\s*(?:\{[^;]*\})?\s*;$)");
 
+    int function_depth = 0;
     while (std::getline(lines, raw_line)) {
         const std::size_t comment_pos = raw_line.find("//");
         std::string line = Trim(raw_line.substr(0, comment_pos));
         if (line.empty()) {
             continue;
         }
+        const auto brace_change = [&]() {
+            int change = 0;
+            for (char ch : line) {
+                if (ch == '{')
+                    ++change;
+                else if (ch == '}')
+                    --change;
+            }
+            return change;
+        };
+        if (function_depth > 0) {
+            function_depth += brace_change();
+            continue;
+        }
         if (line.find('(') != std::string::npos || line.rfind("struct ", 0) == 0) {
+            function_depth = brace_change();
             continue;
         }
         if (line.back() != ';') {
@@ -181,11 +197,18 @@ int main() {
               "created_at_ns", "updated_at_ns", "commission", "message"}},
             {"Trade",
              {"trade_id", "order_id", "account_id", "strategy_id", "symbol", "exchange", "side",
-              "offset", "price", "quantity", "trade_ts_ns", "commission", "profit"}},
+              "offset", "price", "quantity", "trade_ts_ns", "commission", "profit", "trading_day",
+              "raw_trade_id", "exchange_order_id", "hedge_flag", "broker_id",
+              "valuation_complete"}},
+            {"TradeIdentity",
+             {"version", "account_id", "trading_day", "exchange_id", "raw_trade_id", "side",
+              "broker_id"}},
+            {"CloseAllocation", {"today", "yesterday"}},
             {"Position",
              {"symbol", "exchange", "strategy_id", "account_id", "long_qty", "short_qty",
               "long_today_qty", "short_today_qty", "long_yd_qty", "short_yd_qty", "avg_long_price",
-              "avg_short_price", "position_profit", "margin", "update_time_ns"}},
+              "avg_short_price", "position_profit", "margin", "update_time_ns", "hedge_flag",
+              "trading_day", "version"}},
             {"Account",
              {"account_id", "balance", "available", "margin", "commission", "position_profit",
               "close_profit", "risk_degree", "update_time_ns"}},
@@ -255,6 +278,11 @@ int main() {
               "raw_trade_id",
               "query_request_id",
               "recovery_generation",
+              "hedge_flag",
+              "broker_id",
+              "committed_position",
+              "committed_trade_identity",
+              "position_version",
               "ts_ns",
               "trace_id",
               "execution_algo_id",

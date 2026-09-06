@@ -8,41 +8,41 @@
 namespace quant_hft {
 
 class IRedisHashClient {
-public:
+   public:
     virtual ~IRedisHashClient() = default;
+    virtual bool HSetVersioned(const std::string&,
+                               const std::unordered_map<std::string, std::string>&, std::uint64_t,
+                               std::string* error) {
+        if (error != nullptr) *error = "atomic versioned projection unsupported";
+        return false;
+    }
 
     virtual bool HSet(const std::string& key,
                       const std::unordered_map<std::string, std::string>& fields,
                       std::string* error) = 0;
-    virtual bool HGetAll(const std::string& key,
-                         std::unordered_map<std::string, std::string>* out,
+    virtual bool HGetAll(const std::string& key, std::unordered_map<std::string, std::string>* out,
                          std::string* error) const = 0;
-    virtual bool HIncrBy(const std::string& key,
-                         const std::string& field,
-                         std::int64_t delta,
+    virtual bool HIncrBy(const std::string& key, const std::string& field, std::int64_t delta,
                          std::string* error) = 0;
-    virtual bool Expire(const std::string& key,
-                        int ttl_seconds,
-                        std::string* error) = 0;
+    virtual bool Expire(const std::string& key, int ttl_seconds, std::string* error) = 0;
     virtual bool Ping(std::string* error) const = 0;
 };
 
 class InMemoryRedisHashClient : public IRedisHashClient {
-public:
-    bool HSet(const std::string& key,
-              const std::unordered_map<std::string, std::string>& fields,
+   public:
+    bool HSetVersioned(const std::string& key,
+                       const std::unordered_map<std::string, std::string>& fields,
+                       std::uint64_t version, std::string* error) override;
+    bool HSet(const std::string& key, const std::unordered_map<std::string, std::string>& fields,
               std::string* error) override;
-    bool HGetAll(const std::string& key,
-                 std::unordered_map<std::string, std::string>* out,
+    bool HGetAll(const std::string& key, std::unordered_map<std::string, std::string>* out,
                  std::string* error) const override;
-    bool HIncrBy(const std::string& key,
-                 const std::string& field,
-                 std::int64_t delta,
+    bool HIncrBy(const std::string& key, const std::string& field, std::int64_t delta,
                  std::string* error) override;
     bool Expire(const std::string& key, int ttl_seconds, std::string* error) override;
     bool Ping(std::string* error) const override;
 
-private:
+   private:
     bool IsExpiredLocked(const std::string& key) const;
     static std::int64_t NowEpochSeconds();
 

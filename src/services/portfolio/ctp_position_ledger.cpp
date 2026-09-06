@@ -57,32 +57,49 @@ std::size_t CtpPositionLedger::PositionKeyHasher::operator()(const PositionKey& 
 
 bool CtpPositionLedger::ApplyInvestorPositionSnapshot(const InvestorPositionSnapshot& snapshot,
                                                       std::string* error) {
-    if (snapshot.account_id.empty() || snapshot.instrument_id.empty()) {
-        if (error != nullptr) {
-            *error = "snapshot account_id and instrument_id are required";
-        }
-        return false;
-    }
-
-    const auto direction = ParsePositionDirection(snapshot.posi_direction);
-    const auto position_date = NormalizePositionDate(snapshot.position_date);
-    const auto key = MakeKey(snapshot.account_id, snapshot.instrument_id, snapshot.exchange_id,
-                             snapshot.hedge_flag, direction, position_date);
-
-    PositionBucket bucket;
-    bucket.position = ClampNonNegative(snapshot.position);
-    const auto preferred_frozen =
-        direction == PositionDirection::kLong ? snapshot.long_frozen : snapshot.short_frozen;
-    const auto fallback_frozen = std::max(snapshot.long_frozen, snapshot.short_frozen);
-    bucket.frozen =
-        std::min(bucket.position,
-                 ClampNonNegative(preferred_frozen > 0 ? preferred_frozen : fallback_frozen));
-    bucket.last_update_ts_ns = snapshot.ts_ns;
-
+    std::vector<std::pair<PositionKey, PositionBucket>> buckets;
+    if (!BuildSnapshotBuckets(snapshot, &buckets, error)) return false;
     std::lock_guard<std::mutex> lock(mutex_);
-    positions_[key] = bucket;
+    for (const auto& [key, bucket] : buckets) positions_[key] = bucket;
     if (error != nullptr) {
         error->clear();
+    }
+    return true;
+}
+
+bool CtpPositionLedger::BuildSnapshotBuckets(
+    const InvestorPositionSnapshot& snapshot,
+    std::vector<std::pair<PositionKey, PositionBucket>>* out, std::string* error) {
+    if (snapshot.account_id.empty() || snapshot.instrument_id.empty() ||
+        !IsKnownPositionDirection(snapshot.posi_direction) || snapshot.position < 0) {
+        if (error != nullptr) *error = "invalid broker position snapshot identity/quantity";
+        return false;
+    }
+    const auto direction = ParsePositionDirection(snapshot.posi_direction);
+    const auto exchange = NormalizeExchangeId(snapshot.exchange_id, snapshot.instrument_id);
+    const auto date = NormalizePositionDate(snapshot.position_date);
+    // CTP LongFrozen describes pending buys; ShortFrozen describes pending sells.
+    // Long positions are closed by sells; short positions by buys. An unrelated
+    // opposite field must not be substituted when the relevant field is zero.
+    const int frozen = ClampNonNegative(
+        direction == PositionDirection::kLong ? snapshot.short_frozen : snapshot.long_frozen);
+    const auto add = [&](const std::string& bucket_date, int volume) {
+        out->push_back({MakeKey(snapshot.account_id, snapshot.instrument_id, exchange,
+                                snapshot.hedge_flag, direction, bucket_date),
+                        {volume, std::min(volume, frozen), snapshot.ts_ns}});
+    };
+    if (exchange != "SHFE" && exchange != "INE" && date == "today") {
+        if (snapshot.today_position < 0 || snapshot.today_position > snapshot.position) {
+            if (error != nullptr) *error = "TodayPosition exceeds current aggregate Position";
+            return false;
+        }
+        // YdPosition is the beginning-of-day quantity, not necessarily the remaining
+        // yesterday inventory. Total frozen has no reliable per-day attribution;
+        // conservatively subtract it from each dated bucket when admitting closes.
+        add("today", snapshot.today_position);
+        add("yesterday", snapshot.position - snapshot.today_position);
+    } else {
+        add(date, snapshot.position);
     }
     return true;
 }
@@ -108,25 +125,15 @@ bool CtpPositionLedger::ReplaceInvestorPositionSnapshotBatch(
             return false;
         }
 
-        const auto direction = ParsePositionDirection(snapshot.posi_direction);
-        const auto position_date = NormalizePositionDate(snapshot.position_date);
-        const auto key = MakeKey(snapshot.account_id, snapshot.instrument_id, snapshot.exchange_id,
-                                 snapshot.hedge_flag, direction, position_date);
-        PositionBucket bucket;
-        bucket.position = ClampNonNegative(snapshot.position);
-        const auto preferred_frozen =
-            direction == PositionDirection::kLong ? snapshot.long_frozen : snapshot.short_frozen;
-        const auto fallback_frozen = std::max(snapshot.long_frozen, snapshot.short_frozen);
-        bucket.frozen =
-            std::min(bucket.position,
-                     ClampNonNegative(preferred_frozen > 0 ? preferred_frozen : fallback_frozen));
-        bucket.last_update_ts_ns = snapshot.ts_ns;
-
-        if (!replacement.emplace(key, bucket).second) {
-            if (error != nullptr) {
-                *error = "broker position batch contains a duplicate normalized position key";
+        std::vector<std::pair<PositionKey, PositionBucket>> buckets;
+        if (!BuildSnapshotBuckets(snapshot, &buckets, error)) return false;
+        for (const auto& [key, bucket] : buckets) {
+            if (!replacement.emplace(key, bucket).second) {
+                if (error != nullptr) {
+                    *error = "broker position batch contains a duplicate normalized position key";
+                }
+                return false;
             }
-            return false;
         }
     }
 
@@ -272,6 +279,33 @@ bool CtpPositionLedger::ApplyOrderEvent(const OrderEvent& event, std::string* er
         return false;
     }
 
+    if (committed_trade_accounting_) {
+        pending.last_filled_volume = event.filled_volume;
+        if (IsTerminalStatus(event.status)) {
+            pending.terminal = true;
+            // Retain reservations for fills reported by the order channel but not
+            // yet booked by the trade channel. A terminal report is not a fill.
+            int retain = std::max(0, pending.last_filled_volume - pending.booked_trade_volume);
+            if (IsCloseOffset(pending.intent.offset)) {
+                for (auto& allocation : pending.close_allocations) {
+                    const int kept = std::min(retain, allocation.frozen_volume);
+                    const int released = allocation.frozen_volume - kept;
+                    auto& bucket =
+                        positions_[MakeKey(pending.intent.account_id, pending.intent.instrument_id,
+                                           pending.intent.exchange_id, pending.intent.hedge_flag,
+                                           pending.intent.direction, allocation.position_date)];
+                    bucket.frozen = std::max(0, bucket.frozen - released);
+                    allocation.frozen_volume = kept;
+                    retain -= kept;
+                }
+            }
+            if (pending.booked_trade_volume >= pending.last_filled_volume)
+                pending_orders_.erase(pending_it);
+        }
+        if (error != nullptr) error->clear();
+        return true;
+    }
+
     const auto delta_filled = event.filled_volume - pending.last_filled_volume;
     if (delta_filled > 0) {
         if (IsCloseOffset(pending.intent.offset)) {
@@ -326,6 +360,96 @@ bool CtpPositionLedger::ApplyOrderEvent(const OrderEvent& event, std::string* er
     if (error != nullptr) {
         error->clear();
     }
+    return true;
+}
+
+void CtpPositionLedger::UseCommittedTradeAccounting(bool enabled) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    committed_trade_accounting_ = enabled;
+}
+
+bool CtpPositionLedger::HasUnbookedFills(const std::string& account_id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& [id, pending] : pending_orders_) {
+        (void)id;
+        if (pending.intent.account_id == account_id &&
+            pending.last_filled_volume > pending.booked_trade_volume)
+            return true;
+    }
+    return false;
+}
+
+bool CtpPositionLedger::ApplyCommittedTrade(const std::string& identity, const Trade& trade,
+                                            const quant_hft::CloseAllocation& allocation,
+                                            std::string* error) {
+    if (identity.empty() || trade.account_id.empty() || trade.symbol.empty() ||
+        trade.quantity <= 0) {
+        if (error != nullptr) *error = "committed trade identity and positive quantity required";
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!committed_trade_accounting_) {
+        if (error != nullptr) *error = "committed trade accounting mode not enabled";
+        return false;
+    }
+    if (applied_trade_identities_.count(identity)) return true;
+    const bool close = IsCloseOffset(trade.offset);
+    const auto direction =
+        (trade.side == Side::kBuy) != close ? PositionDirection::kLong : PositionDirection::kShort;
+    const std::string hedge = trade.hedge_flag == HedgeFlag::kHedge       ? "3"
+                              : trade.hedge_flag == HedgeFlag::kArbitrage ? "2"
+                                                                          : "1";
+    const auto today_key =
+        MakeKey(trade.account_id, trade.symbol, trade.exchange, hedge, direction, "today");
+    const auto yesterday_key =
+        MakeKey(trade.account_id, trade.symbol, trade.exchange, hedge, direction, "yesterday");
+    if (close) {
+        const auto td = positions_.find(today_key);
+        const auto yd = positions_.find(yesterday_key);
+        const int today = td == positions_.end() ? 0 : td->second.position;
+        const int yesterday = yd == positions_.end() ? 0 : yd->second.position;
+        if (allocation.today < 0 || allocation.yesterday < 0 ||
+            allocation.today + allocation.yesterday != trade.quantity || allocation.today > today ||
+            allocation.yesterday > yesterday) {
+            if (error != nullptr)
+                *error = "broker projection disagrees with committed close allocation";
+            return false;
+        }
+    }
+    auto pending_it = pending_orders_.find(trade.order_id);
+    if (close) {
+        for (const auto& dated : {std::make_pair("today", allocation.today),
+                                  std::make_pair("yesterday", allocation.yesterday)}) {
+            if (dated.second == 0) continue;
+            auto& bucket =
+                positions_[dated.first == std::string("today") ? today_key : yesterday_key];
+            bucket.position -= dated.second;
+            bucket.last_update_ts_ns = trade.trade_ts_ns;
+            int remaining = dated.second;
+            if (pending_it != pending_orders_.end()) {
+                for (auto& reservation : pending_it->second.close_allocations) {
+                    if (reservation.position_date != dated.first) continue;
+                    const int released = std::min(remaining, reservation.frozen_volume);
+                    bucket.frozen = std::max(0, bucket.frozen - released);
+                    reservation.frozen_volume -= released;
+                    remaining -= released;
+                }
+            }
+            bucket.frozen = std::min(bucket.frozen, bucket.position);
+        }
+    } else {
+        auto& bucket = positions_[today_key];
+        bucket.position += trade.quantity;
+        bucket.last_update_ts_ns = trade.trade_ts_ns;
+    }
+    if (pending_it != pending_orders_.end()) {
+        pending_it->second.booked_trade_volume += trade.quantity;
+        if (pending_it->second.terminal &&
+            pending_it->second.booked_trade_volume >= pending_it->second.last_filled_volume)
+            pending_orders_.erase(pending_it);
+    }
+    applied_trade_identities_.insert(identity);
+    if (error != nullptr) error->clear();
     return true;
 }
 

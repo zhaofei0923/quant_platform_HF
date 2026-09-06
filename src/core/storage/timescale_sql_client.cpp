@@ -2,10 +2,42 @@
 
 namespace quant_hft {
 
-bool InMemoryTimescaleSqlClient::InsertRow(
-    const std::string& table,
-    const std::unordered_map<std::string, std::string>& row,
-    std::string* error) {
+bool InMemoryTimescaleSqlClient::RunInTransaction(const Transaction& transaction,
+                                                  std::string* error) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (in_transaction_) {
+        if (error != nullptr) *error = "nested transactions unsupported";
+        return false;
+    }
+    in_transaction_ = true;
+    const auto rollback = [&]() {
+        for (auto it = undo_log_.rbegin(); it != undo_log_.rend(); ++it) (*it)();
+        undo_log_.clear();
+        in_transaction_ = false;
+    };
+    try {
+        if (!transaction(*this, error)) {
+            rollback();
+            return false;
+        }
+    } catch (...) {
+        rollback();
+        throw;
+    }
+    undo_log_.clear();
+    in_transaction_ = false;
+    return true;
+}
+
+bool InMemoryTimescaleSqlClient::LockTransactionKey(const std::string&, std::string* error) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!in_transaction_ && error != nullptr) *error = "lock requires a transaction";
+    return in_transaction_;
+}
+
+bool InMemoryTimescaleSqlClient::InsertRow(const std::string& table,
+                                           const std::unordered_map<std::string, std::string>& row,
+                                           std::string* error) {
     if (table.empty()) {
         if (error != nullptr) {
             *error = "empty table";
@@ -13,17 +45,20 @@ bool InMemoryTimescaleSqlClient::InsertRow(
         return false;
     }
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (in_transaction_) {
+        const auto size = tables_[table].size();
+        undo_log_.push_back([this, table, size] { tables_[table].resize(size); });
+    }
     tables_[table].push_back(row);
     return true;
 }
 
-bool InMemoryTimescaleSqlClient::UpsertRow(
-    const std::string& table,
-    const std::unordered_map<std::string, std::string>& row,
-    const std::vector<std::string>& conflict_keys,
-    const std::vector<std::string>& update_keys,
-    std::string* error) {
+bool InMemoryTimescaleSqlClient::UpsertRow(const std::string& table,
+                                           const std::unordered_map<std::string, std::string>& row,
+                                           const std::vector<std::string>& conflict_keys,
+                                           const std::vector<std::string>& update_keys,
+                                           std::string* error) {
     if (table.empty()) {
         if (error != nullptr) {
             *error = "empty table";
@@ -40,7 +75,7 @@ bool InMemoryTimescaleSqlClient::UpsertRow(
         return InsertRow(table, row, error);
     }
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto& rows = tables_[table];
     for (const auto& key : conflict_keys) {
         if (row.find(key) == row.end()) {
@@ -90,6 +125,12 @@ bool InMemoryTimescaleSqlClient::UpsertRow(
         if (!matches_conflict_keys(existing)) {
             continue;
         }
+        if (in_transaction_) {
+            const std::size_t index = static_cast<std::size_t>(&existing - rows.data());
+            undo_log_.push_back([this, table, index, before = existing]() mutable {
+                tables_[table][index].swap(before);
+            });
+        }
         for (const auto& key : update_columns) {
             const auto row_it = row.find(key);
             if (row_it == row.end()) {
@@ -103,17 +144,19 @@ bool InMemoryTimescaleSqlClient::UpsertRow(
         return true;
     }
 
+    if (in_transaction_) {
+        const auto size = rows.size();
+        undo_log_.push_back([this, table, size] { tables_[table].resize(size); });
+    }
     rows.push_back(row);
     return true;
 }
 
-std::vector<std::unordered_map<std::string, std::string>>
-InMemoryTimescaleSqlClient::QueryRows(const std::string& table,
-                                      const std::string& key,
-                                      const std::string& value,
-                                      std::string* error) const {
+std::vector<std::unordered_map<std::string, std::string>> InMemoryTimescaleSqlClient::QueryRows(
+    const std::string& table, const std::string& key, const std::string& value,
+    std::string* error) const {
     (void)error;
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     const auto table_it = tables_.find(table);
     if (table_it == tables_.end()) {
         return {};
@@ -130,11 +173,10 @@ InMemoryTimescaleSqlClient::QueryRows(const std::string& table,
     return out;
 }
 
-std::vector<std::unordered_map<std::string, std::string>>
-InMemoryTimescaleSqlClient::QueryAllRows(const std::string& table,
-                                         std::string* error) const {
+std::vector<std::unordered_map<std::string, std::string>> InMemoryTimescaleSqlClient::QueryAllRows(
+    const std::string& table, std::string* error) const {
     (void)error;
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     const auto table_it = tables_.find(table);
     if (table_it == tables_.end()) {
         return {};

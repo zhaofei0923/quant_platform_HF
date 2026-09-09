@@ -164,7 +164,10 @@ int main(int argc, char** argv) {
     }
     CtpFileConfig file_config;
     std::string error;
-    if (!CtpConfigLoader::LoadFromYaml(config_path, &file_config, &error)) {
+    CtpConfigLoadOptions load_options;
+    // This query-only tool consumes connection and contract settings, not strategies.
+    load_options.defer_strategy_definitions_to_deployment = true;
+    if (!CtpConfigLoader::LoadFromYaml(config_path, &file_config, &error, load_options)) {
         EmitStructuredLog(&bootstrap_runtime, "simnow_probe", "error", "config_load_failed",
                           {{"config_path", config_path}, {"error", error}});
         return 3;

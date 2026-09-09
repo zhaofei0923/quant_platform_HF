@@ -434,7 +434,11 @@ int main(int argc, char** argv) {
     }
 
     CtpFileConfig file_config;
-    if (!CtpConfigLoader::LoadFromYaml(options.config_path, &file_config, &error)) {
+    CtpConfigLoadOptions load_options;
+    // The EOD fallback queries snapshots without strategies. Explicit execution keeps
+    // the original configuration requirements; this does not authorize formal flattening.
+    load_options.defer_strategy_definitions_to_deployment = !options.execute;
+    if (!CtpConfigLoader::LoadFromYaml(options.config_path, &file_config, &error, load_options)) {
         EmitStructuredLog(&bootstrap_runtime,
                           "simnow_flatten_positions",
                           "error",

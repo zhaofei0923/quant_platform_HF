@@ -170,7 +170,10 @@ int main(int argc, char** argv) {
 
     CtpFileConfig file_config;
     std::string config_error;
-    if (!CtpConfigLoader::LoadFromYaml(config_path, &file_config, &config_error)) {
+    CtpConfigLoadOptions load_options;
+    // Settlement consumes account connection settings and never instantiates strategies.
+    load_options.defer_strategy_definitions_to_deployment = true;
+    if (!CtpConfigLoader::LoadFromYaml(config_path, &file_config, &config_error, load_options)) {
         EmitStructuredLog(&bootstrap_runtime, "daily_settlement", "error", "config_load_failed",
                           {{"config_path", config_path}, {"error", config_error}});
         return 1;

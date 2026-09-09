@@ -14,7 +14,7 @@
 namespace quant_hft {
 namespace {
 
-// The caller provisions a disposable database with migrations 004, 007, 008 and 009 plus
+// The caller provisions a disposable database with migrations 004, 005, 007-010 plus
 // default order/trade/position_detail partitions. No production connection default.
 class AtomicTradePostgresTest : public ::testing::Test {
    protected:
@@ -104,6 +104,72 @@ TEST_F(AtomicTradePostgresTest, LifecycleUpsertUpdatesExistingPartitionedOrder) 
     EXPECT_EQ(after.front().at("volume_canceled"), "2");
     EXPECT_EQ(after.front().at("order_status"),
               std::to_string(static_cast<int>(OrderStatus::kCanceled)));
+}
+
+TEST_F(AtomicTradePostgresTest, LongApplicationOrderReferencesRemainExactAcrossLifecycleAndLots) {
+    // A real stop-loss reference already exceeds 50 characters; a shared prefix must never
+    // cause truncation or collision with another order in recovery.
+    const std::string prefix = "kama_candidate_hc-stop_loss-hc2701-1788916275854971482";
+    Order order;
+    order.order_id = prefix + "-first";
+    order.account_id = account;
+    order.strategy_id = "test-strategy";
+    order.symbol = "rb";
+    order.exchange = "SHFE";
+    order.quantity = 2;
+    order.price = 4000;
+    order.created_at_ns = NowEpochNanos();
+    std::string error;
+    ASSERT_GT(order.order_id.size(), 50U);
+    ASSERT_TRUE(store->UpsertOrder(order, &error)) << error;
+    auto second = order;
+    second.order_id = prefix + "-second";
+    ASSERT_TRUE(store->UpsertOrder(second, &error)) << error;
+    order.status = OrderStatus::kFilled;
+    order.filled_quantity = 2;
+    ASSERT_TRUE(store->UpsertOrder(order, &error)) << error;
+    const auto orders = sql->QueryRows("trading_core.orders", "account_id", account, &error);
+    ASSERT_EQ(orders.size(), 2U) << error;
+    bool first_found = false, second_found = false;
+    for (const auto& row : orders) {
+        if (row.at("order_ref") == order.order_id) {
+            first_found = true;
+            EXPECT_EQ(row.at("volume_traded"), "2");
+        }
+        if (row.at("order_ref") == second.order_id) second_found = true;
+    }
+    EXPECT_TRUE(first_found);
+    EXPECT_TRUE(second_found);
+    auto fill = Fill("long-ref-fill", 0);
+    fill.trade.order_id = order.order_id;
+    TradeApplyResult applied;
+    ASSERT_TRUE(store->ApplyTrade(fill, &applied, &error)) << error;
+    ASSERT_EQ(applied.status, TradeApplyStatus::kApplied);
+    ASSERT_TRUE(store->ApplyTrade(fill, &applied, &error)) << error;
+    EXPECT_EQ(applied.status, TradeApplyStatus::kDuplicate);
+    const auto trades = sql->QueryRows("trading_core.trades", "account_id", account, &error);
+    ASSERT_EQ(trades.size(), 1U) << error;
+    EXPECT_EQ(trades.front().at("order_ref"), order.order_id);
+    const auto lots = sql->QueryRows("trading_core.position_detail", "account_id", account, &error);
+    ASSERT_EQ(lots.size(), 1U) << error;
+    EXPECT_EQ(lots.front().at("open_order_ref"), order.order_id);
+    ProcessedOrderEventRecord event;
+    event.event_key = "event:" + std::string(260, 'x') + order.order_id;
+    event.order_ref = order.order_id;
+    event.processed_ts_ns = NowEpochNanos();
+    ASSERT_TRUE(store->MarkProcessedOrderEvent(event, &error)) << error;
+    bool exists = false;
+    ASSERT_TRUE(store->ExistsProcessedOrderEvent(event.event_key, &exists, &error)) << error;
+    EXPECT_TRUE(exists);
+    RiskEventRecord risk;
+    risk.account_id = account;
+    risk.strategy_id = "test-strategy";
+    risk.order_ref = order.order_id;
+    risk.event_ts_ns = NowEpochNanos();
+    ASSERT_TRUE(store->AppendRiskEvent(risk, &error)) << error;
+    const auto risks = sql->QueryRows("trading_core.risk_events", "account_id", account, &error);
+    ASSERT_EQ(risks.size(), 1U) << error;
+    EXPECT_EQ(risks.front().at("order_ref"), order.order_id);
 }
 
 TEST_F(AtomicTradePostgresTest, ApplyDuplicateCloseAndReceiptConflictAreAtomic) {

@@ -12,9 +12,6 @@ CTP_CONFIG_PATH="${CTP_CONFIG_PATH:-${QUANT_ROOT}/configs/prod/ctp.yaml}"
 SETTLEMENT_BIN="${SETTLEMENT_BIN:-${BUILD_DIR}/daily_settlement}"
 EVIDENCE_JSON="${EVIDENCE_JSON:-}"
 DIFF_JSON="${DIFF_JSON:-}"
-RUN_READINESS_GATES=0
-BENCHMARK_RESULT_JSON="${BENCHMARK_RESULT_JSON:-}"
-BENCHMARK_RUNS="${BENCHMARK_RUNS:-20}"
 EXECUTE=0
 STRICT_ORDER_TRADE_BACKFILL="${SETTLEMENT_STRICT_ORDER_TRADE_BACKFILL:-1}"
 
@@ -28,9 +25,6 @@ Options:
   --settlement-bin <path>         daily_settlement binary path (default: ${SETTLEMENT_BIN})
   --evidence-json <path>          Evidence json output path (default: ${EVIDENCE_JSON})
   --diff-json <path>              Reconcile diff json output path (default: ${DIFF_JSON})
-  --run-readiness-gates           Run benchmark gate after settlement success
-  --benchmark-result-json <path>  Benchmark report output path (default: ${BENCHMARK_RESULT_JSON})
-  --benchmark-runs <int>          Benchmark runs (default: ${BENCHMARK_RUNS})
   --execute                       Execute for real (default: dry-run)
   --strict-order-trade-backfill  Require broker order/trade backfill (default)
   --allow-incomplete-backfill    Compatibility escape hatch; do not use for live settlement
@@ -45,9 +39,9 @@ while [[ $# -gt 0 ]]; do
     --settlement-bin) SETTLEMENT_BIN="${2:-}"; shift 2 ;;
     --evidence-json) EVIDENCE_JSON="${2:-}"; shift 2 ;;
     --diff-json) DIFF_JSON="${2:-}"; shift 2 ;;
-    --run-readiness-gates) RUN_READINESS_GATES=1; shift ;;
-    --benchmark-result-json) BENCHMARK_RESULT_JSON="${2:-}"; shift 2 ;;
-    --benchmark-runs) BENCHMARK_RUNS="${2:-}"; shift 2 ;;
+    --run-readiness-gates|--benchmark-result-json|--benchmark-runs)
+      echo "error: research benchmark options moved to quant_research; run settlement separately" >&2
+      exit 2 ;;
     --execute) EXECUTE=1; shift ;;
     --strict-order-trade-backfill) STRICT_ORDER_TRADE_BACKFILL=1; shift ;;
     --allow-incomplete-backfill) STRICT_ORDER_TRADE_BACKFILL=0; shift ;;
@@ -64,7 +58,6 @@ fi
 EOD_DIR="${REPORT_ROOT}/${TRADING_DAY}"
 EVIDENCE_JSON="${EVIDENCE_JSON:-${EOD_DIR}/daily_settlement_evidence.json}"
 DIFF_JSON="${DIFF_JSON:-${EOD_DIR}/settlement_diff.json}"
-BENCHMARK_RESULT_JSON="${BENCHMARK_RESULT_JSON:-${EOD_DIR}/daily_settlement_benchmark.json}"
 
 mkdir -p "$(dirname "${EVIDENCE_JSON}")"
 mkdir -p "$(dirname "${DIFF_JSON}")"
@@ -74,6 +67,10 @@ mkdir -p "$(dirname "${DIFF_JSON}")"
 }
 
 if [[ ${EXECUTE} -eq 1 ]]; then
+  if [[ "${QUANT_HFT_SUPERVISOR_BOUND:-0}" == "1" ]]; then
+    export QUANT_HFT_SETTLEMENT_FLOW_PATH="${EOD_DIR}/settlement_flow"
+    mkdir -p "${QUANT_HFT_SETTLEMENT_FLOW_PATH}"
+  fi
   rm -f -- "${EVIDENCE_JSON}"
   settlement_cmd=(
     "${SETTLEMENT_BIN}"
@@ -113,12 +110,4 @@ else
     strict_arg=" --strict-order-trade-backfill"
   fi
   echo "[dry-run] ${SETTLEMENT_BIN} --config ${CTP_CONFIG_PATH} --trading-day ${TRADING_DAY} --evidence-path ${EVIDENCE_JSON} --diff-report-path ${DIFF_JSON}${strict_arg}"
-fi
-
-if [[ ${RUN_READINESS_GATES} -eq 1 ]]; then
-  mkdir -p "$(dirname "${BENCHMARK_RESULT_JSON}")"
-  "${BUILD_DIR}/backtest_benchmark_cli" \
-    --runs "${BENCHMARK_RUNS}" \
-    --baseline_p95_ms 100 \
-    --result_json "${BENCHMARK_RESULT_JSON}"
 fi

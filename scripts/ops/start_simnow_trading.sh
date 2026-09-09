@@ -493,11 +493,13 @@ is_non_negative_int "${STARTUP_GRACE_SECONDS}" || die "SIMNOW_STARTUP_GRACE_SECO
 
 cd "${QUANT_ROOT}"
 
-[[ -f "${ENV_FILE}" ]] || die "env file not found: ${ENV_FILE}"
-set -a
-# shellcheck disable=SC1090
-source "${ENV_FILE}"
-set +a
+if [[ "${QUANT_HFT_SUPERVISOR_BOUND:-0}" != "1" ]]; then
+  [[ -f "${ENV_FILE}" ]] || die "env file not found: ${ENV_FILE}"
+  set -a
+  # shellcheck disable=SC1090
+  source "${ENV_FILE}"
+  set +a
+fi
 
 if [[ ${PROBE_SECONDS_SET_BY_CLI} -eq 0 ]]; then
   PROBE_SECONDS="${SIMNOW_PROBE_SECONDS:-${PROBE_SECONDS}}"
@@ -696,6 +698,14 @@ candidate_groups=group1(30011/30001),group2(30012/30002),group3(30013/30003)
 EOF
 
 core_cmd=("${CORE_ENGINE_BIN}" --config "${CONFIG_PATH}")
+if [[ -n "${QUANT_HFT_DEPLOYMENT_FILE:-}" ]]; then
+  [[ -n "${QUANT_HFT_DEPLOYMENT_ACCOUNT:-}" ]] || die "formal deployment account is missing"
+  [[ -x "${BUILD_DIR}/quant_config_cli" ]] || die "formal deployment launcher is missing"
+  [[ "${RUN_SECONDS}" == "0" && "${FORCE_INSTRUMENT_REFRESH}" == "0" ]] ||
+    die "formal supervised launch does not accept run-seconds or forced instrument refresh"
+  core_cmd=("${BUILD_DIR}/quant_config_cli" launch "${QUANT_HFT_DEPLOYMENT_FILE}"
+            "${QUANT_HFT_DEPLOYMENT_ACCOUNT}")
+fi
 instrument_refresh_args=()
 if [[ "${FORCE_INSTRUMENT_REFRESH}" == "1" ]]; then
   core_cmd+=(--force-instrument-refresh)
@@ -735,6 +745,10 @@ if [[ ${DRY_RUN} -eq 1 ]]; then
 fi
 
 if [[ ${SKIP_PROBE} -eq 0 ]]; then
+  if [[ "${QUANT_HFT_SUPERVISOR_BOUND:-0}" == "1" ]]; then
+    export QUANT_HFT_PROBE_FLOW_PATH="${RUN_DIR}/probe_flow"
+    mkdir -p "${QUANT_HFT_PROBE_FLOW_PATH}"
+  fi
   echo "[step] running safe SimNow probe before trading"
   if ! timeout "${PROBE_TIMEOUT_SECONDS}s" "${SIMNOW_PROBE_BIN}" "${CONFIG_PATH}" \
       --monitor-seconds "${PROBE_SECONDS}" \

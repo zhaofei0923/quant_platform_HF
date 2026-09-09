@@ -2,7 +2,8 @@
 ctp:
   environment: simnow
   enable_real_api: true
-  is_production_mode: false
+  # SDK trading-hours key selection; the account environment remains SimNow.
+  is_production_mode: ${CTP_SIM_IS_PRODUCTION_MODE}
   broker_id: ${CTP_SIM_BROKER_ID}
   user_id: ${CTP_SIM_USER_ID}
   investor_id: ${CTP_SIM_INVESTOR_ID}

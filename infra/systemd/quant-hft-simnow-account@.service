@@ -1,0 +1,24 @@
+[Unit]
+Description=Quant supervised SimNow account %i
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=quant
+Group=quant
+WorkingDirectory=/opt/quant_platform_HF/current
+EnvironmentFile=/etc/quant_platform_HF/accounts/%i.env
+Environment=QUANT_HFT_DEPLOYMENT_ACCOUNT=%i
+Environment=TZ=Asia/Shanghai
+ExecStart=/bin/bash /opt/quant_platform_HF/current/scripts/ops/run_packaged_supervisor.sh
+Restart=on-failure
+RestartSec=15
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+TimeoutStopSec=150
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

@@ -16,7 +16,8 @@ void Usage() {
     std::cerr << "quant_config_cli validate|resolve|list <deployment.yaml> [output.json]\n"
                  "quant_config_cli migrate <legacy-main.yaml> <sim|live|backtest> <parameter-id> "
                  "<algorithm@version> <schema.yaml> <output-dir>\n"
-                 "quant_config_cli launch <deployment.yaml> <account-ref>\n";
+                 "quant_config_cli launch <deployment.yaml> <account-ref>\n"
+                 "quant_config_cli supervise <deployment.yaml> <account-ref> [--dry-run]\n";
 }
 
 void LoadCredentials(const std::string& path) {
@@ -72,7 +73,8 @@ int main(int argc, char** argv) {
         std::cout << "migration written; original files and trading facts unchanged\n";
         return 0;
     }
-    if (command != "validate" && command != "resolve" && command != "list" && command != "launch") {
+    if (command != "validate" && command != "resolve" && command != "list" && command != "launch" &&
+        command != "supervise") {
         Usage();
         return 2;
     }
@@ -112,8 +114,10 @@ int main(int argc, char** argv) {
                 std::cout << instance.initial_capital;
             std::cout << '\t' << instance.state_namespace << '\n';
         }
-    } else if (command == "launch") {
-        if (argc != 4) {
+    } else if (command == "launch" || command == "supervise") {
+        const bool supervise = command == "supervise";
+        const bool dry_run = supervise && argc == 5 && std::string(argv[4]) == "--dry-run";
+        if (argc != 4 && !dry_run) {
             Usage();
             return 2;
         }
@@ -123,12 +127,39 @@ int main(int argc, char** argv) {
             if (gethostname(host, sizeof(host)) != 0 || account.active_host != host) {
                 throw std::runtime_error("account active_host differs from this host");
             }
+            if (supervise && account.environment != "simnow") {
+                throw std::runtime_error("session supervisor requires a SimNow account");
+            }
             LoadCredentials(account.credential_ref);
             setenv("QUANT_HFT_DEPLOYMENT_FILE", deployment.source_path.c_str(), 1);
             setenv("QUANT_HFT_DEPLOYMENT_ACCOUNT", account.account_ref.c_str(), 1);
             setenv("QUANT_HFT_RUNTIME_ROOT", account.runtime_root.c_str(), 1);
-            const auto binary =
-                std::filesystem::canonical("/proc/self/exe").parent_path() / "core_engine";
+            const auto binary_dir = std::filesystem::canonical("/proc/self/exe").parent_path();
+            if (supervise) {
+                const auto release_root = binary_dir.parent_path();
+                const auto script = release_root / "scripts/ops/supervise_simnow_trading.sh";
+                if (!std::filesystem::is_regular_file(script))
+                    throw std::runtime_error("packaged SimNow supervisor is missing");
+                setenv("QUANT_ROOT", release_root.c_str(), 1);
+                setenv("BUILD_DIR", binary_dir.c_str(), 1);
+                setenv("QUANT_HFT_BIN_DIR", binary_dir.c_str(), 1);
+                setenv("CTP_CONFIG_PATH", account.connection_config.c_str(), 1);
+                // Credentials and operator settings are already bound by the launcher and
+                // service environment; the scripts must not source a retired mixed .env.
+                setenv("QUANT_HFT_SUPERVISOR_BOUND", "1", 1);
+                std::cout << "supervising account=" << account.account_ref
+                          << " config=" << deployment.effective_hash << std::endl;
+                if (dry_run)
+                    execl("/bin/bash", "bash", script.c_str(), "--config",
+                          account.connection_config.c_str(), "--build-dir", binary_dir.c_str(),
+                          "--dry-run", nullptr);
+                else
+                    execl("/bin/bash", "bash", script.c_str(), "--config",
+                          account.connection_config.c_str(), "--build-dir", binary_dir.c_str(),
+                          nullptr);
+                throw std::runtime_error("cannot exec packaged SimNow supervisor");
+            }
+            const auto binary = binary_dir / "core_engine";
             std::cout << "launching account=" << account.account_ref
                       << " config=" << deployment.effective_hash << std::endl;
             execl(binary.c_str(), binary.c_str(), "--config", account.connection_config.c_str(),

@@ -1415,11 +1415,13 @@ is_bool_flag "${CONVERT_MARKET_PARQUET}" || die "SIMNOW_EOD_CONVERT_MARKET_PARQU
 is_positive_int "${INSTRUMENT_TIMEOUT_SECONDS}" || die "SIMNOW_INSTRUMENT_TIMEOUT_SECONDS must be positive"
 
 cd "${QUANT_ROOT}"
-[[ -f "${ENV_FILE}" ]] || die "env file not found: ${ENV_FILE}"
-set -a
-# shellcheck disable=SC1090
-source "${ENV_FILE}"
-set +a
+if [[ "${QUANT_HFT_SUPERVISOR_BOUND:-0}" != "1" ]]; then
+  [[ -f "${ENV_FILE}" ]] || die "env file not found: ${ENV_FILE}"
+  set -a
+  # shellcheck disable=SC1090
+  source "${ENV_FILE}"
+  set +a
+fi
 
 if [[ ${WINDOWS_SET_BY_CLI} -eq 0 ]]; then
   TRADING_WINDOWS="${SIMNOW_TRADING_WINDOWS:-${TRADING_WINDOWS}}"
@@ -1550,6 +1552,7 @@ if [[ ${DRY_RUN} -eq 1 ]]; then
 fi
 
 remove_stale_current_pid
+trap 'stop_engine "supervisor_shutdown"; exit 0' TERM INT
 echo "[info] SimNow supervisor started at $(date -Is)" | tee -a "${SUPERVISOR_LOG}"
 echo "[info] windows=${TRADING_WINDOWS}" | tee -a "${SUPERVISOR_LOG}"
 echo "[info] prewarm_windows=${PREWARM_WINDOWS}" | tee -a "${SUPERVISOR_LOG}"

@@ -1,9 +1,9 @@
 {
   "requirements": [
     {
-      "id": "SPLIT-CONFIG",
+      "id": "ONLINE-DOC-01",
       "doc": "develop/00-实现对齐矩阵与缺口总览.md",
-      "description": "Current online implementation and validation evidence, excluding external acceptance.",
+      "description": "Online source-path traceability. Functional and external acceptance status is recorded separately in the validation report.",
       "code_paths": [
         "src/core/config/deployment_config.cpp"
       ],
@@ -15,42 +15,266 @@
       ]
     },
     {
-      "id": "SPLIT-STATE",
+      "id": "ONLINE-DOC-02",
+      "doc": "develop/00-未完成能力补齐路线图.md",
+      "description": "Online source-path traceability. Functional and external acceptance status is recorded separately in the validation report.",
+      "code_paths": [
+        "src/core/config/deployment_config.cpp"
+      ],
+      "test_paths": [
+        "tests/unit/core/deployment_config_test.cpp"
+      ],
+      "evidence_paths": [
+        "docs/results/three_project_split_validation.md"
+      ]
+    },
+    {
+      "id": "ONLINE-DOC-03",
       "doc": "develop/00-项目总览与设计原则.md",
-      "description": "Current online implementation and validation evidence, excluding external acceptance.",
+      "description": "Online source-path traceability. Functional and external acceptance status is recorded separately in the validation report.",
       "code_paths": [
-        "src/core/config/strategy_state_migration.cpp"
+        "src/core/config/deployment_config.cpp"
       ],
       "test_paths": [
-        "tests/unit/core/strategy_state_migration_test.cpp"
+        "tests/unit/core/deployment_config_test.cpp"
       ],
       "evidence_paths": [
         "docs/results/three_project_split_validation.md"
       ]
     },
     {
-      "id": "SPLIT-BOOKS",
+      "id": "ONLINE-DOC-04",
+      "doc": "develop/01-系统架构设计/01-01-整体架构图与技术栈选型.md",
+      "description": "Online source-path traceability. Functional and external acceptance status is recorded separately in the validation report.",
+      "code_paths": [
+        "CMakeLists.txt"
+      ],
+      "test_paths": [
+        "tests/unit/core/runtime_semantics_defaults_test.cpp"
+      ],
+      "evidence_paths": [
+        "docs/results/three_project_split_validation.md"
+      ]
+    },
+    {
+      "id": "ONLINE-DOC-05",
       "doc": "develop/01-系统架构设计/01-02-核心模块划分与职责.md",
-      "description": "Current online implementation and validation evidence, excluding external acceptance.",
+      "description": "Online source-path traceability. Functional and external acceptance status is recorded separately in the validation report.",
       "code_paths": [
-        "src/core/storage/trading_domain_store_client_adapter.cpp"
+        "CMakeLists.txt"
       ],
       "test_paths": [
-        "tests/unit/core/trading_domain_store_client_adapter_test.cpp"
+        "tests/unit/core/runtime_semantics_defaults_test.cpp"
       ],
       "evidence_paths": [
         "docs/results/three_project_split_validation.md"
       ]
     },
     {
-      "id": "SPLIT-GATES",
+      "id": "ONLINE-DOC-06",
+      "doc": "develop/01-系统架构设计/01-03-关键数据流与接口设计.md",
+      "description": "Online source-path traceability. Functional and external acceptance status is recorded separately in the validation report.",
+      "code_paths": [
+        "CMakeLists.txt"
+      ],
+      "test_paths": [
+        "tests/unit/core/runtime_semantics_defaults_test.cpp"
+      ],
+      "evidence_paths": [
+        "docs/results/three_project_split_validation.md"
+      ]
+    },
+    {
+      "id": "ONLINE-DOC-07",
+      "doc": "develop/03-实盘交易系统核心设计/03-01-实时风控体系设计.md",
+      "description": "Online source-path traceability. Functional and external acceptance status is recorded separately in the validation report.",
+      "code_paths": [
+        "src/services/order/execution_engine.cpp"
+      ],
+      "test_paths": [
+        "tests/unit/services/execution_engine_test.cpp"
+      ],
+      "evidence_paths": [
+        "docs/results/three_project_split_validation.md"
+      ]
+    },
+    {
+      "id": "ONLINE-DOC-08",
+      "doc": "develop/03-实盘交易系统核心设计/03-02-订单与执行引擎设计.md",
+      "description": "Online source-path traceability. Functional and external acceptance status is recorded separately in the validation report.",
+      "code_paths": [
+        "src/services/order/execution_engine.cpp"
+      ],
+      "test_paths": [
+        "tests/unit/services/execution_engine_test.cpp"
+      ],
+      "evidence_paths": [
+        "docs/results/three_project_split_validation.md"
+      ]
+    },
+    {
+      "id": "ONLINE-DOC-09",
+      "doc": "develop/03-实盘交易系统核心设计/03-03-高性能基础组件设计（内存管理、网络等）.md",
+      "description": "Online source-path traceability. Functional and external acceptance status is recorded separately in the validation report.",
+      "code_paths": [
+        "src/services/order/execution_engine.cpp"
+      ],
+      "test_paths": [
+        "tests/unit/services/execution_engine_test.cpp"
+      ],
+      "evidence_paths": [
+        "docs/results/three_project_split_validation.md"
+      ]
+    },
+    {
+      "id": "ONLINE-DOC-10",
+      "doc": "develop/04-基础设施与运维/04-01-监控、日志与告警体系设计.md",
+      "description": "Online source-path traceability. Functional and external acceptance status is recorded separately in the validation report.",
+      "code_paths": [
+        "src/core/monitoring/dashboard_snapshot.cpp"
+      ],
+      "test_paths": [
+        "tests/unit/monitoring/dashboard_snapshot_test.cpp"
+      ],
+      "evidence_paths": [
+        "docs/results/three_project_split_validation.md"
+      ]
+    },
+    {
+      "id": "ONLINE-DOC-11",
+      "doc": "develop/04-基础设施与运维/04-02-部署、灾备与持续集成方案.md",
+      "description": "Online source-path traceability. Functional and external acceptance status is recorded separately in the validation report.",
+      "code_paths": [
+        "src/core/monitoring/dashboard_snapshot.cpp"
+      ],
+      "test_paths": [
+        "tests/unit/monitoring/dashboard_snapshot_test.cpp"
+      ],
+      "evidence_paths": [
+        "docs/results/three_project_split_validation.md"
+      ]
+    },
+    {
+      "id": "ONLINE-DOC-12",
+      "doc": "develop/05-API文档/05-01-C++核心API参考.md",
+      "description": "Online source-path traceability. Functional and external acceptance status is recorded separately in the validation report.",
+      "code_paths": [
+        "src/apps/verify_contract_sync_cli_main.cpp"
+      ],
+      "test_paths": [
+        "tests/unit/apps/ops_cli_test.cpp"
+      ],
+      "evidence_paths": [
+        "docs/results/three_project_split_validation.md"
+      ]
+    },
+    {
+      "id": "ONLINE-DOC-13",
+      "doc": "develop/05-API文档/05-02-C++策略包接口参考.md",
+      "description": "Online source-path traceability. Functional and external acceptance status is recorded separately in the validation report.",
+      "code_paths": [
+        "src/apps/verify_contract_sync_cli_main.cpp"
+      ],
+      "test_paths": [
+        "tests/unit/apps/ops_cli_test.cpp"
+      ],
+      "evidence_paths": [
+        "docs/results/three_project_split_validation.md"
+      ]
+    },
+    {
+      "id": "ONLINE-DOC-14",
+      "doc": "develop/06-开发者指南/06-01-环境搭建与快速开始.md",
+      "description": "Online source-path traceability. Functional and external acceptance status is recorded separately in the validation report.",
+      "code_paths": [
+        "scripts/build/bootstrap.sh"
+      ],
+      "test_paths": [
+        "tests/unit/build/quality_gate_scripts_test.cpp"
+      ],
+      "evidence_paths": [
+        "docs/results/three_project_split_validation.md"
+      ]
+    },
+    {
+      "id": "ONLINE-DOC-15",
+      "doc": "develop/06-开发者指南/06-02-代码结构与开发流程.md",
+      "description": "Online source-path traceability. Functional and external acceptance status is recorded separately in the validation report.",
+      "code_paths": [
+        "scripts/build/bootstrap.sh"
+      ],
+      "test_paths": [
+        "tests/unit/build/quality_gate_scripts_test.cpp"
+      ],
+      "evidence_paths": [
+        "docs/results/three_project_split_validation.md"
+      ]
+    },
+    {
+      "id": "ONLINE-DOC-16",
+      "doc": "develop/06-开发者指南/06-03-文档开发与多会话协作.md",
+      "description": "Online source-path traceability. Functional and external acceptance status is recorded separately in the validation report.",
+      "code_paths": [
+        "scripts/build/bootstrap.sh"
+      ],
+      "test_paths": [
+        "tests/unit/build/quality_gate_scripts_test.cpp"
+      ],
+      "evidence_paths": [
+        "docs/results/three_project_split_validation.md"
+      ]
+    },
+    {
+      "id": "ONLINE-DOC-17",
+      "doc": "develop/07-部署与运维/07-01-系统部署手册.md",
+      "description": "Online source-path traceability. Functional and external acceptance status is recorded separately in the validation report.",
+      "code_paths": [
+        "scripts/ops/run_account_deployment.sh"
+      ],
+      "test_paths": [
+        "tests/unit/build/tencent_simnow_schedule_script_test.sh"
+      ],
+      "evidence_paths": [
+        "docs/results/three_project_split_validation.md"
+      ]
+    },
+    {
+      "id": "ONLINE-DOC-18",
+      "doc": "develop/07-部署与运维/07-02-运维操作手册.md",
+      "description": "Online source-path traceability. Functional and external acceptance status is recorded separately in the validation report.",
+      "code_paths": [
+        "scripts/ops/run_account_deployment.sh"
+      ],
+      "test_paths": [
+        "tests/unit/build/tencent_simnow_schedule_script_test.sh"
+      ],
+      "evidence_paths": [
+        "docs/results/three_project_split_validation.md"
+      ]
+    },
+    {
+      "id": "ONLINE-DOC-19",
       "doc": "develop/08-测试与验证/08-01-测试策略与验证方案.md",
-      "description": "Current online implementation and validation evidence, excluding external acceptance.",
+      "description": "Online source-path traceability. Functional and external acceptance status is recorded separately in the validation report.",
       "code_paths": [
         "scripts/build/three_project_boundary_check.sh"
       ],
       "test_paths": [
         "tests/unit/build/quality_gate_scripts_test.cpp"
+      ],
+      "evidence_paths": [
+        "docs/results/three_project_split_validation.md"
+      ]
+    },
+    {
+      "id": "ONLINE-DOC-20",
+      "doc": "develop/09-数据库设计/09-01-数据库设计.md",
+      "description": "Online source-path traceability. Functional and external acceptance status is recorded separately in the validation report.",
+      "code_paths": [
+        "src/core/storage/trading_domain_store_client_adapter.cpp"
+      ],
+      "test_paths": [
+        "tests/integration/atomic_trade_postgres_test.cpp"
       ],
       "evidence_paths": [
         "docs/results/three_project_split_validation.md"

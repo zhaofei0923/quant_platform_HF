@@ -456,6 +456,7 @@ struct ScheduledQueryTaskState {
     std::atomic<bool> query_ok{true};
 
     CtpGatewayAdapter::TradingAccountSnapshotCallback trading_account_callback;
+    CtpGatewayAdapter::TradingAccountQueryCallback trading_account_query_callback;
     TradingAccountSnapshot trading_account_snapshot;
 
     CtpGatewayAdapter::InvestorPositionSnapshotCallback investor_position_callback;
@@ -1504,6 +1505,8 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
             event.side = FromCtpDirection(p_order->Direction);
             event.offset = FromCtpOffset(p_order->CombOffsetFlag[0]);
             event.status = FromCtpOrderStatus(p_order->OrderStatus);
+            event.hedge_flag = p_order->CombHedgeFlag[0] == '3' ? HedgeFlag::kHedge :
+                (p_order->CombHedgeFlag[0] == '2' ? HedgeFlag::kArbitrage : HedgeFlag::kSpeculation);
             event.total_volume = p_order->VolumeTotalOriginal;
             event.filled_volume = p_order->VolumeTraded;
             event.avg_fill_price = p_order->LimitPrice;
@@ -1533,6 +1536,7 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
                 const auto meta_it = owner_->client_order_meta_.find(event.client_order_id);
                 if (meta_it != owner_->client_order_meta_.end()) {
                     event.strategy_id = meta_it->second.strategy_id;
+                    event.component_id = meta_it->second.component_id;
                     meta_it->second.terminal = IsTerminalOrderStatus(event.status);
                     if (event.trading_day.empty()) {
                         event.trading_day = meta_it->second.trading_day;
@@ -1640,6 +1644,7 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
                 if (meta_it != owner_->client_order_meta_.end()) {
                     auto& meta = meta_it->second;
                     event.strategy_id = meta.strategy_id;
+                    event.component_id = meta.component_id;
                     if (event.trading_day.empty()) {
                         event.trading_day = meta.trading_day;
                     }
@@ -1883,6 +1888,8 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
             event.offset = FromCtpOffset(p_order->CombOffsetFlag[0]);
             event.status = FromCtpOrderStatus(p_order->OrderStatus);
             event.total_volume = p_order->VolumeTotalOriginal;
+            event.hedge_flag = p_order->CombHedgeFlag[0] == '3' ? HedgeFlag::kHedge :
+                (p_order->CombHedgeFlag[0] == '2' ? HedgeFlag::kArbitrage : HedgeFlag::kSpeculation);
             event.filled_volume = p_order->VolumeTraded;
             event.avg_fill_price = p_order->LimitPrice;
             event.reason = SafeCtpString(p_order->StatusMsg);
@@ -1905,6 +1912,7 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
                     const auto meta_it = owner_->client_order_meta_.find(it->second);
                     if (meta_it != owner_->client_order_meta_.end()) {
                         event.strategy_id = meta_it->second.strategy_id;
+                        event.component_id = meta_it->second.component_id;
                         meta_it->second.terminal = IsTerminalOrderStatus(event.status);
                         if (event.trading_day.empty()) {
                             event.trading_day = meta_it->second.trading_day;
@@ -1982,6 +1990,7 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
                 if (meta_it != owner_->client_order_meta_.end()) {
                     auto& meta = meta_it->second;
                     event.strategy_id = meta.strategy_id;
+                    event.component_id = meta.component_id;
                     if (event.trading_day.empty()) {
                         event.trading_day = meta.trading_day;
                     }
@@ -2101,6 +2110,7 @@ class CtpTdSpi final : public CThostFtdcTraderSpi {
             const auto meta_it = owner_->client_order_meta_.find(event.client_order_id);
             if (meta_it != owner_->client_order_meta_.end()) {
                 event.strategy_id = meta_it->second.strategy_id;
+                event.component_id = meta_it->second.component_id;
                 event.trading_day = meta_it->second.trading_day;
             }
             if (event.trading_day.empty()) {
@@ -3019,6 +3029,7 @@ bool CtpGatewayAdapter::PlaceOrder(const OrderIntent& intent) {
             OrderMeta meta;
             meta.order_ref = order_ref;
             meta.strategy_id = intent.strategy_id;
+            meta.component_id = intent.component_id;
             meta.instrument_id = intent.instrument_id;
             meta.side = intent.side;
             meta.offset = intent.offset;
@@ -3033,6 +3044,7 @@ bool CtpGatewayAdapter::PlaceOrder(const OrderIntent& intent) {
             submit_mapping.account_id =
                 intent.account_id.empty() ? runtime_config_.investor_id : intent.account_id;
             submit_mapping.strategy_id = intent.strategy_id;
+            submit_mapping.component_id = intent.component_id;
             submit_mapping.trace_id = intent.trace_id;
             submit_mapping.client_order_id = intent.client_order_id;
             submit_mapping.instrument_id = intent.instrument_id;
@@ -3146,6 +3158,7 @@ bool CtpGatewayAdapter::PlaceOrder(const OrderIntent& intent) {
         simulated_event.account_id =
             intent.account_id.empty() ? runtime_config_.investor_id : intent.account_id;
         simulated_event.strategy_id = intent.strategy_id;
+        simulated_event.component_id = intent.component_id;
         simulated_event.client_order_id = intent.client_order_id;
         simulated_event.exchange_order_id = "ctp-sim-" + intent.client_order_id;
         simulated_event.instrument_id = intent.instrument_id;
@@ -3161,6 +3174,7 @@ bool CtpGatewayAdapter::PlaceOrder(const OrderIntent& intent) {
         OrderMeta meta;
         meta.order_ref = intent.client_order_id;
         meta.strategy_id = intent.strategy_id;
+        meta.component_id = intent.component_id;
         meta.instrument_id = intent.instrument_id;
         meta.side = intent.side;
         meta.offset = intent.offset;
@@ -3174,6 +3188,7 @@ bool CtpGatewayAdapter::PlaceOrder(const OrderIntent& intent) {
         submit_mapping.account_id =
             intent.account_id.empty() ? runtime_config_.investor_id : intent.account_id;
         submit_mapping.strategy_id = intent.strategy_id;
+        submit_mapping.component_id = intent.component_id;
         submit_mapping.trace_id = intent.trace_id;
         submit_mapping.client_order_id = intent.client_order_id;
         submit_mapping.instrument_id = intent.instrument_id;
@@ -3299,6 +3314,7 @@ bool CtpGatewayAdapter::CancelOrder(const std::string& client_order_id,
         simulated_event.ts_ns = NowEpochNanos();
         simulated_event.trace_id = trace_id;
         simulated_event.strategy_id = it->second.strategy_id;
+        simulated_event.component_id = it->second.component_id;
         simulated_event.instrument_id = it->second.instrument_id;
         simulated_event.side = it->second.side;
         simulated_event.offset = it->second.offset;
@@ -3502,6 +3518,12 @@ bool CtpGatewayAdapter::EnqueueTradingAccountQuery(int request_id) {
     task.execute = [this, request_id, generation, state]() {
         auto mark_failed = [&]() { state->query_ok = false; };
         CtpRuntimeConfig runtime;
+        TradingAccountQueryStartCallback start_callback;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            start_callback = trading_account_query_start_callback_;
+        }
+        if (start_callback) start_callback(request_id, generation);
         QueryScopeExit completion([&]() {
             QueryScopeExit release([&]() {
                 if (!state->query_ok.load() || !runtime.enable_real_api) {
@@ -3512,6 +3534,20 @@ bool CtpGatewayAdapter::EnqueueTradingAccountQuery(int request_id) {
                 FailQuery(request_id, generation, "trading_account", "query submission failed");
                 CompleteScheduledQuery(request_id, generation);
             } else if (!runtime.enable_real_api) {
+                if (state->trading_account_query_callback) {
+                    QueryResult<TradingAccountSnapshot> result;
+                    result.metadata.request_id = request_id;
+                    result.metadata.generation = generation;
+                    result.metadata.query_name = "trading_account";
+                    result.metadata.account_id = state->trading_account_snapshot.investor_id;
+                    result.metadata.trading_day = state->trading_account_snapshot.trading_day;
+                    result.metadata.source = "simulated";
+                    result.metadata.full_account = true;
+                    result.metadata.complete = true;
+                    result.metadata.success = true;
+                    result.rows.push_back(state->trading_account_snapshot);
+                    state->trading_account_query_callback(result);
+                }
                 if (state->trading_account_callback) {
                     state->trading_account_callback(state->trading_account_snapshot);
                 }
@@ -3562,6 +3598,7 @@ bool CtpGatewayAdapter::EnqueueTradingAccountQuery(int request_id) {
                 trading_account_snapshot_.source = "simulated";
                 state->trading_account_snapshot = trading_account_snapshot_;
                 state->trading_account_callback = trading_account_snapshot_callback_;
+                state->trading_account_query_callback = trading_account_query_callback_;
                 return;
             }
         }
@@ -4549,6 +4586,17 @@ void CtpGatewayAdapter::RegisterTradingAccountSnapshotCallback(
     TradingAccountSnapshotCallback callback) {
     std::lock_guard<std::mutex> lock(mutex_);
     trading_account_snapshot_callback_ = std::move(callback);
+}
+
+void CtpGatewayAdapter::RegisterTradingAccountQueryStartCallback(
+    TradingAccountQueryStartCallback callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    trading_account_query_start_callback_ = std::move(callback);
+}
+
+void CtpGatewayAdapter::RegisterTradingAccountQueryCallback(TradingAccountQueryCallback callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    trading_account_query_callback_ = std::move(callback);
 }
 
 void CtpGatewayAdapter::RegisterInvestorPositionSnapshotCallback(

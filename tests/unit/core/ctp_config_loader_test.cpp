@@ -425,6 +425,16 @@ TEST(CtpConfigLoaderTest, RequiresCompositeConfigPathWhenFactoryIsComposite) {
     EXPECT_FALSE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error));
     EXPECT_NE(error.find("strategy_composite_config"), std::string::npos);
 
+    // Merely setting a deployment environment variable must not weaken standalone loading.
+    const ScopedEnvVar deployment("QUANT_HFT_DEPLOYMENT_FILE", "/unvalidated/deployment.yaml");
+    EXPECT_FALSE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error));
+    CtpConfigLoadOptions options;
+    options.defer_strategy_definitions_to_deployment = true;
+    ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error, options))
+        << error;
+    EXPECT_EQ(config.strategy_factory, "composite");
+    EXPECT_TRUE(config.strategy_composite_config.empty());
+
     std::filesystem::remove(config_path);
 }
 

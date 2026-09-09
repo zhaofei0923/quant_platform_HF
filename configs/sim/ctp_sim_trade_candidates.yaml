@@ -1,3 +1,4 @@
+# Instance identity and parameter sets are resolved from configs/deploy manifests.
 # CONFIG DOC
 # Purpose: SimNow multi-product run config for candidates in docs/ops/sim_trade_candidate_params.md.
 # Consumer: start_simnow_trading.sh / supervise_simnow_trading.sh / core_engine / simnow_compare_cli
@@ -92,11 +93,7 @@ ctp:
   dominant_contract_switch_timeout_ms: 30000
   dominant_contract_require_complete_baseline: true
   dominant_contract_switch_mode: "flat_only"   # startup_only | dry_run | flat_only
-  strategy_ids: "kama_candidate_c,kama_candidate_hc"
   strategy_factory: "composite"
-  strategy_composite_config_map:
-    kama_candidate_c: "configs/strategies/main_sim_trade_candidate_c.yaml"
-    kama_candidate_hc: "configs/strategies/main_sim_trade_candidate_hc.yaml"
   strategy_queue_capacity: 8192
   strategy_state_persist_enabled: true
   strategy_state_backend: "file"

@@ -339,6 +339,32 @@ class FakeGateway final : public CtpGatewayAdapter {
 
 }  // namespace
 
+TEST(CTPTraderAdapterTest, AccountQueryMetadataSurvivesAdapterDispatch) {
+    CTPTraderAdapter adapter(100);
+    ASSERT_TRUE(adapter.Connect(BuildSimConfig()));
+    std::atomic<int> started{0};
+    std::atomic<int> completed{0};
+    std::atomic<std::uint64_t> generation{0};
+    adapter.RegisterTradingAccountQueryStartCallback([&](int request, std::uint64_t value) {
+        EXPECT_EQ(request, 702);
+        generation = value;
+        ++started;
+    });
+    adapter.RegisterTradingAccountQueryCallback([&](const auto& result) {
+        EXPECT_EQ(result.metadata.request_id, 702);
+        EXPECT_EQ(result.metadata.generation, generation.load());
+        EXPECT_TRUE(result.metadata.complete);
+        EXPECT_TRUE(result.metadata.success);
+        EXPECT_EQ(result.rows.size(), 1U);
+        EXPECT_EQ(started, 1);
+        ++completed;
+    });
+    ASSERT_TRUE(adapter.EnqueueTradingAccountQuery(702));
+    ASSERT_TRUE(WaitUntil([&] { return completed == 1; }, 1000));
+    adapter.StopEventDelivery();
+    adapter.Disconnect();
+}
+
 TEST(CTPTraderAdapterTest, DisconnectTriggersReconnectScheduling) {
     auto fake_gateway = std::make_shared<FakeGateway>();
     CTPTraderAdapter adapter(fake_gateway, 1);

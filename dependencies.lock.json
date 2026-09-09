@@ -1,0 +1,10 @@
+{
+  "package": "QuantStrategies",
+  "version": "1.0.0",
+  "archive": "quant_strategies-1.0.0-Linux.tar.gz",
+  "archive_sha256": "e4b9eefe601b351992778e5e009e7bc20ba676989f9db37b25366ec3bbcceadb",
+  "manifest_sha256": "c13b174e0aed50002c85c61026613d1937ac554255d3ae6f203159fd9fef6cd4",
+  "source_commit": "32cb073",
+  "cxx_standard": 17,
+  "build_platform": "Linux GCC 11 x86_64"
+}

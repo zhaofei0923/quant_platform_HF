@@ -1,3 +1,5 @@
+#include "quant_hft/core/host_adapters/host_clock.h"
+#include "quant_hft/core/host_adapters/filesystem_configuration_reader.h"
 #include <iostream>
 #include <string>
 
@@ -6,6 +8,8 @@
 #include "quant_hft/services/order_state_machine.h"
 
 int main(int argc, char** argv) {
+    quant_hft::BindOnlineHostClocks();
+    quant_hft::BindFilesystemConfigurationReader();
     using namespace quant_hft;
 
     const std::string wal_path = argc > 1 ? argv[1] : "runtime_events.wal";

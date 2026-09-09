@@ -62,7 +62,7 @@ collect_missing_core_commands() {
 
 install_ubuntu_deps() {
   sudo apt-get update
-  sudo apt-get install -y build-essential cmake git pkg-config
+  sudo apt-get install -y build-essential cmake git pkg-config libgtest-dev libyaml-cpp-dev libssl-dev ripgrep
 }
 
 install_ubuntu_deps_if_needed() {
@@ -94,21 +94,18 @@ install_ubuntu_deps_if_needed() {
 cd "${REPO_ROOT}"
 install_ubuntu_deps_if_needed
 
-cmake -S . -B "${BUILD_DIR}" -DQUANT_HFT_BUILD_TESTS=ON
+: "${QUANT_STRATEGIES_PREFIX:?Set QUANT_STRATEGIES_PREFIX to an installed, locked strategy package}"
+cmake -S . -B "${BUILD_DIR}" -DQUANT_HFT_BUILD_TESTS=ON -DCMAKE_PREFIX_PATH="${QUANT_STRATEGIES_PREFIX}"
 cmake --build "${BUILD_DIR}" -j"$(nproc)"
 ctest --test-dir "${BUILD_DIR}" --output-on-failure
 
 bash scripts/build/dependency_audit.sh --build-dir "${BUILD_DIR}"
 
 mkdir -p docs/results
-"${BUILD_DIR}/backtest_benchmark_cli" --runs 5 --baseline_p95_ms 100 --result_json docs/results/backtest_benchmark_result.json
 bash scripts/build/run_consistency_gates.sh --build-dir "${BUILD_DIR}" --results-dir docs/results
 bash scripts/build/run_preprod_rehearsal_gate.sh --build-dir "${BUILD_DIR}" --results-dir docs/results
-"${BUILD_DIR}/verify_contract_sync_cli"
-"${BUILD_DIR}/verify_develop_requirements_cli"
 
 bash scripts/build/repo_purity_check.sh --repo-root .
-python3 scripts/build/verify_products_info_sync.py
-python3 scripts/build/verify_config_docs_coverage.py
+bash scripts/build/three_project_boundary_check.sh --repo-root . --build-dir "${BUILD_DIR}"
 
 echo "bootstrap completed"

@@ -1,3 +1,5 @@
+#include "quant_hft/core/host_adapters/host_clock.h"
+#include "quant_hft/core/host_adapters/filesystem_configuration_reader.h"
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
@@ -414,6 +416,8 @@ int SubmitCloseOrders(quant_hft::CTPTraderAdapter* trader,
 }  // namespace
 
 int main(int argc, char** argv) {
+    quant_hft::BindOnlineHostClocks();
+    quant_hft::BindFilesystemConfigurationReader();
     using namespace quant_hft;
 
     CtpRuntimeConfig bootstrap_runtime;

@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <cstdlib>
 #include <memory>
 #include <string>
@@ -13,7 +14,7 @@
 namespace quant_hft {
 namespace {
 
-// The caller provisions a disposable database with migrations 004, 007 and 008 plus
+// The caller provisions a disposable database with migrations 004, 007, 008 and 009 plus
 // default order/trade/position_detail partitions. No production connection default.
 class AtomicTradePostgresTest : public ::testing::Test {
    protected:
@@ -228,6 +229,97 @@ TEST_F(AtomicTradePostgresTest, TradingDayRolloverAndIndependentOutboxConsumersP
     EXPECT_EQ(pending.size(), 1U);
     ASSERT_TRUE(store->LoadTradeHistory(account, "", &pending, &error)) << error;
     EXPECT_EQ(pending.size(), 1U);
+}
+
+TEST_F(AtomicTradePostgresTest, IndependentEconomicOwnerAndPhysicalCloseDatesPersistSeparately) {
+    std::string error;
+    ASSERT_TRUE(store->ConfigureIndependentStrategyBooks(account, {{"A", 50000}, {"B", 50000}},
+                                                        &error)) << error;
+    auto a = Fill("a-yesterday", 0);
+    a.trade.strategy_id = "A";
+    a.trade.exchange = "DCE";
+    a.trade.symbol = "m2701";
+    a.trade.quantity = 1;
+    a.trade.price = 100;
+    auto& policy = a.accounting_policy;
+    policy.valuation_inputs_verified = true;
+    policy.contract_multiplier = 10;
+    policy.valuation_source = "isolated-pg-independent-v1";
+    policy.fee_model = TradeFeeModel::kMoneyPlusVolumeV1;
+    policy.open_fee = {0, 1};
+    policy.close_fee = {0, 2};
+    policy.close_today_fee = {0, 7};
+    policy.fee_date_basis = "close_allocation_v1";
+    policy.fee_allocation_source = "isolated-pg-independent";
+    policy.fee_allocation_version = "v1";
+    policy.generic_close_priority = GenericClosePriority::kYesterdayFirst;
+    policy.close_rule_source = "isolated-pg-independent";
+    policy.close_rule_version = "v1";
+    TradeApplyResult result;
+    ASSERT_TRUE(store->ApplyTrade(a, &result, &error)) << error;
+    auto b = a;
+    b.trade.strategy_id = "B";
+    b.trade.trade_id = b.trade.raw_trade_id = "b-today";
+    b.trade.trading_day = "20260908";
+    b.trade.price = 120;
+    b.receipt.sequence = 1;
+    b.receipt.checksum = 2;
+    ASSERT_TRUE(store->ApplyTrade(b, &result, &error)) << error;
+    auto close = b;
+    close.trade.trade_id = close.trade.raw_trade_id = "b-close";
+    close.trade.side = Side::kSell;
+    close.trade.offset = OffsetFlag::kClose;
+    close.trade.price = 130;
+    close.receipt.sequence = 2;
+    close.receipt.checksum = 3;
+    ASSERT_TRUE(store->ApplyTrade(close, &result, &error)) << error;
+    EXPECT_EQ(result.close_allocation.today, 1);
+    EXPECT_EQ(result.broker_close_allocation.yesterday, 1);
+    ASSERT_TRUE(store->ApplyTrade(close, &result, &error)) << error;
+    EXPECT_EQ(result.status, TradeApplyStatus::kDuplicate);
+    StrategyCapitalSnapshot capital;
+    std::vector<Position> own;
+    ASSERT_TRUE(store->LoadStrategyBook(account, "B", &capital, &own, &error)) << error;
+    EXPECT_DOUBLE_EQ(capital.realized_pnl, 100);
+    EXPECT_DOUBLE_EQ(capital.commission, 3);
+    ASSERT_TRUE(store->LoadPositionSummary(account, "A", &own, &error)) << error;
+    ASSERT_EQ(own.size(), 1U);
+    EXPECT_EQ(own.front().long_qty, 1);
+    EXPECT_DOUBLE_EQ(own.front().avg_long_price, 100);
+    ASSERT_TRUE(store->LoadBrokerPositionSummary(account, &own, &error)) << error;
+    ASSERT_EQ(own.size(), 1U);
+    EXPECT_EQ(own.front().long_today_qty, 1);
+    EXPECT_EQ(own.front().long_yd_qty, 0);
+}
+
+TEST_F(AtomicTradePostgresTest, AccountWideOpenReservationsSerializeAcrossIndependentOwners) {
+    std::string error;
+    ASSERT_TRUE(store->ConfigureIndependentStrategyBooks(account, {{"A", 1000}, {"B", 1000}},
+                                                        &error)) << error;
+    std::atomic<int> accepted{0};
+    std::vector<std::thread> threads;
+    for (int i = 0; i < 8; ++i) {
+        threads.emplace_back([&, i] {
+            StrategyOpenReservationRequest request;
+            request.intent.account_id = account;
+            request.intent.strategy_id = i % 2 == 0 ? "A" : "B";
+            request.intent.client_order_id = "open-" + std::to_string(i);
+            request.intent.instrument_id = "rb";
+            request.intent.offset = OffsetFlag::kOpen;
+            request.intent.price = 100;
+            request.intent.volume = 1;
+            request.new_margin_and_fee = 600;
+            request.max_margin_to_equity_ratio = 1;
+            request.account_equity = 2000;
+            request.max_account_margin_to_equity_ratio = 0.4;
+            std::string reserve_error;
+            if (store->ReserveStrategyOpen(request, &reserve_error)) ++accepted;
+        });
+    }
+    for (auto& thread : threads) thread.join();
+    EXPECT_EQ(accepted, 1);
+    EXPECT_EQ(sql->QueryRows("trading_core.strategy_open_reservations", "account_id", account,
+                            &error).size(), 1U) << error;
 }
 }  // namespace
 }  // namespace quant_hft

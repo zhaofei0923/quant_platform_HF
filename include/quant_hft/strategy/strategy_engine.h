@@ -52,14 +52,20 @@ struct StrategyEngineConfig {
     std::function<double(const std::string&)> contract_multiplier_resolver;
     std::function<std::optional<StrategyContractIdentity>(const std::string&)>
         contract_identity_resolver;
+    // Present only for independently owned instance books. Never feed broker totals to instances.
+    std::function<bool(const std::string&, const std::string&, std::vector<Position>*,
+                       std::string*)>
+        owned_position_resolver;
+    std::function<bool(const std::string&, const std::string&, TradingAccountSnapshot*,
+                       std::string*)>
+        capital_snapshot_resolver;
     bool load_state_on_start{false};
     EpochNanos state_snapshot_interval_ns{0};
     EpochNanos metrics_collect_interval_ns{1'000'000'000};
     // Optional observer. It is called only from the strategy worker, after a
     // complete in-memory snapshot is built. Exceptions are isolated from
     // strategy execution and trading permission.
-    std::function<void(const std::vector<StrategyRiskSnapshot>&, EpochNanos,
-                       const std::string&)>
+    std::function<void(const std::vector<StrategyRiskSnapshot>&, EpochNanos, const std::string&)>
         risk_snapshot_sink;
     EpochNanos risk_snapshot_interval_ns{1'000'000'000};
 };
@@ -77,6 +83,7 @@ class StrategyEngine {
         std::string strategy_id;
         std::string strategy_factory;
         StrategyContext context;
+        std::shared_ptr<const CompositeStrategyDefinition> definition;
     };
     struct MarketGapRecoveryReport {
         bool success{false};
@@ -206,8 +213,10 @@ class StrategyEngine {
         std::string strategy_id;
         std::string account_id;
         std::unique_ptr<ILiveStrategy> strategy;
+        std::unordered_map<std::string, std::string> metadata;
     };
 
+    bool SaveEntryState(const StrategyEntry& entry, StrategyState* state, std::string* error) const;
     StrategyEnqueueResult EnqueueEvent(EngineEvent event);
     void TimerLoop();
     void CompleteCanceledControl(EngineEvent& event, const std::string& reason);

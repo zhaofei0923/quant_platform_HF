@@ -752,8 +752,8 @@ TEST(StrategyEngineTest, RestartedPrivateSnapshotStaysMissingUntilValidAccountDa
     ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
         factory_name, []() { return std::make_unique<RecordingStrategy>(); }, &error));
 
-    const auto directory = std::filesystem::temp_directory_path() /
-                           ("quant-hft-risk-restart-" + factory_name);
+    const auto directory =
+        std::filesystem::temp_directory_path() / ("quant-hft-risk-restart-" + factory_name);
     std::filesystem::remove_all(directory);
     DashboardSnapshotWriter writer;
     RuntimeIdentity identity{"simnow", "9999", "sim-account", "risk-restart-test"};
@@ -763,8 +763,7 @@ TEST(StrategyEngineTest, RestartedPrivateSnapshotStaysMissingUntilValidAccountDa
     cfg.timer_interval_ns = 5'000'000;
     cfg.risk_snapshot_interval_ns = 5'000'000;
     cfg.risk_snapshot_sink = [&](const std::vector<StrategyRiskSnapshot>& rows,
-                                 EpochNanos observed_at_ns,
-                                 const std::string& trading_day) {
+                                 EpochNanos observed_at_ns, const std::string& trading_day) {
         writer.CaptureStrategyRisk(rows, observed_at_ns, trading_day);
     };
     StrategyEngine engine(cfg);
@@ -782,8 +781,8 @@ TEST(StrategyEngineTest, RestartedPrivateSnapshotStaysMissingUntilValidAccountDa
     ASSERT_TRUE(engine.EnqueueAccountSnapshot(account));
     ASSERT_TRUE(WaitUntil(
         [&] {
-            return writer.RenderSnapshot(2).find(
-                       "\"strategy_risk\":{\"quality\":\"ok\"") != std::string::npos;
+            return writer.RenderSnapshot(2).find("\"strategy_risk\":{\"quality\":\"ok\"") !=
+                   std::string::npos;
         },
         std::chrono::milliseconds(500)));
 
@@ -823,8 +822,7 @@ TEST(StrategyEngineTest, RiskObserverFailureDoesNotOverloadOrStopOrderDispatch) 
     ASSERT_TRUE(WaitUntil(
         [&] {
             std::lock_guard<std::mutex> lock(probe.mutex);
-            return ContainsEvent(probe.observed_order_events,
-                                 "outer:observer-failure-order");
+            return ContainsEvent(probe.observed_order_events, "outer:observer-failure-order");
         },
         std::chrono::milliseconds(500)));
     EXPECT_FALSE(engine.GetHealth().overloaded);
@@ -1152,9 +1150,8 @@ class ReliableProbeStrategy final : public ILiveStrategy {
         const auto net_it = authoritative_net.find("hc2701");
         const auto avg_it = authoritative_avg_open.find("hc2701");
         probe_->seen.push_back(
-            "reconcile:" +
-            std::to_string(net_it == authoritative_net.end() ? 0 : net_it->second) + ":" +
-            std::to_string(avg_it == authoritative_avg_open.end() ? 0.0 : avg_it->second));
+            "reconcile:" + std::to_string(net_it == authoritative_net.end() ? 0 : net_it->second) +
+            ":" + std::to_string(avg_it == authoritative_avg_open.end() ? 0.0 : avg_it->second));
         return 0;
     }
     std::vector<SignalIntent> OnTimer(EpochNanos) override {
@@ -1251,17 +1248,15 @@ TEST(StrategyEngineTest, ReconcilePositionSnapshotIsAcceptedAndProcessedThroughF
         engine.EnqueueReconcilePositions("", {{"hc2701", -16}}, {{"hc2701", 3368.0}});
     ASSERT_TRUE(reconcile);
     EXPECT_GT(reconcile.sequence, 0U);
-    const auto rejected_reconcile =
-        engine.EnqueueReconcilePositions("", {{"hc2701", 0}}, {});
+    const auto rejected_reconcile = engine.EnqueueReconcilePositions("", {{"hc2701", 0}}, {});
     EXPECT_EQ(rejected_reconcile.status, StrategyEnqueueStatus::kQueueFull);
 
     ReleaseReliableProbe(probe);
     ASSERT_TRUE(engine.WaitUntilDrained(1000));
     engine.Stop();
 
-    EXPECT_EQ(probe->seen,
-              (std::vector<std::string>{"state:1", "order:fill-before-reconcile",
-                                        "reconcile:-16:3368.000000"}));
+    EXPECT_EQ(probe->seen, (std::vector<std::string>{"state:1", "order:fill-before-reconcile",
+                                                     "reconcile:-16:3368.000000"}));
     EXPECT_EQ(engine.GetStats().rejected_reliable_events, 1U);
 }
 
@@ -1446,4 +1441,145 @@ TEST(StrategyEngineTest, MarketGapEvidenceRejectsPartialBarsAndStaleGenerationAc
     EXPECT_FALSE(restarted.Suppresses("rb"));
 }
 
+}  // namespace quant_hft
+
+namespace quant_hft {
+namespace {
+TEST(StrategyEngineTest, VersionedStateRejectsWrongParameterHashAndPreservesEnvelope) {
+    std::string error;
+    const auto factory = UniqueFactoryName();
+    ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
+        factory, [] { return std::make_unique<RecordingStrategy>(); }, &error));
+    auto persistence = std::make_shared<TestStatePersistence>();
+    StrategyContext ctx;
+    ctx.account_id = "acc";
+    ctx.metadata = {
+        {"strategy_release", "r1"}, {"parameter_hash", "p1"}, {"state_schema_version", "1"}};
+    StrategyState state = {{"loaded", "1"},
+                           {"__host.instance_id", "A"},
+                           {"__host.account_id", "acc"},
+                           {"__host.strategy_release", "r1"},
+                           {"__host.parameter_hash", "wrong"},
+                           {"__host.state_schema_version", "1"}};
+    persistence->Seed("acc:A", state);
+    StrategyEngineConfig cfg;
+    cfg.state_persistence = persistence;
+    cfg.load_state_on_start = true;
+    StrategyEngine engine(cfg);
+    EXPECT_FALSE(engine.Start({"A"}, factory, ctx, &error));
+    EXPECT_NE(error.find("parameter_hash"), std::string::npos);
+    state["__host.parameter_hash"] = "p1";
+    persistence->Seed("acc:A", state);
+    ASSERT_TRUE(engine.Start({"A"}, factory, ctx, &error)) << error;
+    engine.Stop();
+    ASSERT_TRUE(persistence->LoadStrategyState("acc", "A", &state, &error));
+    EXPECT_EQ(state["__host.parameter_hash"], "p1");
+    EXPECT_EQ(state["__host.instance_id"], "A");
+    EXPECT_FALSE(engine.Start({"A", "A"}, factory, ctx, &error));
+}
+struct OwnedViews {
+    std::unordered_map<std::string, double> capital;
+    std::unordered_map<std::string, int> quantities;
+};
+class OwnedViewStrategy final : public ILiveStrategy {
+   public:
+    explicit OwnedViewStrategy(std::shared_ptr<OwnedViews> views) : views_(std::move(views)) {}
+    void Initialize(const StrategyContext& c) override { id_ = c.strategy_id; }
+    std::vector<SignalIntent> OnState(const StateSnapshot7D&) override { return {}; }
+    void OnOrderEvent(const OrderEvent&) override {}
+    void OnAccountSnapshot(const TradingAccountSnapshot& s) override {
+        views_->capital[id_] = s.balance;
+    }
+    std::size_t ReconcileOwnedPositions(const std::vector<Position>& own,
+                                        std::vector<std::string>*) override {
+        int n = 0;
+        for (const auto& p : own) n += p.long_qty - p.short_qty;
+        views_->quantities[id_] = n;
+        return own.size();
+    }
+    std::vector<SignalIntent> OnTimer(EpochNanos) override { return {}; }
+    void Shutdown() override {}
+
+   private:
+    std::shared_ptr<OwnedViews> views_;
+    std::string id_;
+};
+TEST(StrategyEngineTest, IndependentInstancesReceiveOnlyOwnCapitalAndPositions) {
+    auto views = std::make_shared<OwnedViews>();
+    const auto factory = UniqueFactoryName();
+    std::string error;
+    ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
+        factory, [views] { return std::make_unique<OwnedViewStrategy>(views); }, &error));
+    StrategyEngineConfig cfg;
+    cfg.owned_position_resolver = [](const std::string& a, const std::string& id,
+                                     std::vector<Position>* out, std::string*) {
+        Position p;
+        p.account_id = a;
+        p.strategy_id = id;
+        p.symbol = "rb";
+        if (id == "A")
+            p.long_qty = 2;
+        else
+            p.short_qty = 3;
+        *out = {p};
+        return true;
+    };
+    cfg.capital_snapshot_resolver = [](const std::string& a, const std::string& id,
+                                       TradingAccountSnapshot* s, std::string*) {
+        s->account_id = a;
+        s->balance = id == "A" ? 40000 : 60000;
+        return true;
+    };
+    StrategyEngine engine(cfg);
+    StrategyContext ctx;
+    ctx.account_id = "acc";
+    ASSERT_TRUE(engine.Start({"A", "B"}, factory, ctx, &error));
+    TradingAccountSnapshot account;
+    account.account_id = "acc";
+    account.balance = 100000;
+    ASSERT_TRUE(engine.EnqueueAccountSnapshot(account));
+    ASSERT_TRUE(engine.EnqueueReconcilePositions("acc", {{"rb", 999}}, {{"rb", 9999}}));
+    ASSERT_TRUE(engine.WaitUntilDrained(1000));
+    engine.Stop();
+    EXPECT_DOUBLE_EQ(views->capital["A"], 40000);
+    EXPECT_DOUBLE_EQ(views->capital["B"], 60000);
+    EXPECT_EQ(views->quantities["A"], 2);
+    EXPECT_EQ(views->quantities["B"], -3);
+}
+}  // namespace
+}  // namespace quant_hft
+
+namespace quant_hft {
+namespace {
+TEST(StrategyEngineTest, MissingVersionedStateCannotSilentlyResetHeldInstance) {
+    const auto factory = UniqueFactoryName();
+    std::string error;
+    ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
+        factory, [] { return std::make_unique<RecordingStrategy>(); }, &error));
+    StrategyContext ctx;
+    ctx.account_id = "acc";
+    ctx.metadata = {
+        {"strategy_release", "r1"}, {"parameter_hash", "p1"}, {"state_schema_version", "1"}};
+    auto persistence = std::make_shared<TestStatePersistence>();
+    StrategyEngineConfig cfg;
+    cfg.state_persistence = persistence;
+    cfg.load_state_on_start = true;
+    int held = 1;
+    cfg.owned_position_resolver = [&](const std::string& account, const std::string& id,
+                                      std::vector<Position>* out, std::string*) {
+        Position p;
+        p.account_id = account;
+        p.strategy_id = id;
+        p.long_qty = held;
+        *out = {p};
+        return true;
+    };
+    StrategyEngine engine(cfg);
+    EXPECT_FALSE(engine.Start({"A"}, factory, ctx, &error));
+    EXPECT_NE(error.find("held-position"), std::string::npos);
+    held = 0;
+    ASSERT_TRUE(engine.Start({"A"}, factory, ctx, &error)) << error;
+    engine.Stop();
+}
+}  // namespace
 }  // namespace quant_hft

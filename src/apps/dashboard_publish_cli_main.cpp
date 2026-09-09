@@ -1,3 +1,4 @@
+#include "quant_hft/core/host_adapters/host_clock.h"
 #include <chrono>
 #include <csignal>
 #include <iostream>
@@ -20,6 +21,7 @@ std::int64_t Integer(const std::string& value) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    quant_hft::BindOnlineHostClocks();
     quant_hft::dashboard::PublisherOptions options;
     int watch_seconds = 1;
     try {

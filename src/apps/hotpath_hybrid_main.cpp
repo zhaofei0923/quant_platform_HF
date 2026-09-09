@@ -1,3 +1,5 @@
+#include "quant_hft/core/host_adapters/host_clock.h"
+#include "quant_hft/core/host_adapters/filesystem_configuration_reader.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -66,6 +68,8 @@ std::string JsonEscape(const std::string& input) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    quant_hft::BindOnlineHostClocks();
+    quant_hft::BindFilesystemConfigurationReader();
     std::size_t tick_rate = 2000;
     std::size_t order_rate = 20;
     std::int64_t duration_sec = 60;

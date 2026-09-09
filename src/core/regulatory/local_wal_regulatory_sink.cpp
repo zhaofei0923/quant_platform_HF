@@ -190,6 +190,7 @@ WalReceipt LocalWalRegulatorySink::Append(const char* kind, const char* event_ty
         << "\"account_id\":\"" << EscapeJsonString(event.account_id) << "\","
         << "\"broker_id\":\"" << EscapeJsonString(event.broker_id) << "\","
         << "\"strategy_id\":\"" << EscapeJsonString(event.strategy_id) << "\","
+        << (event.component_id.empty() ? std::string() : "\"component_id\":\"" + EscapeJsonString(event.component_id) + "\",")
         << "\"client_order_id\":\"" << EscapeJsonString(event.client_order_id) << "\","
         << "\"exchange_order_id\":\"" << EscapeJsonString(event.exchange_order_id) << "\","
         << "\"instrument_id\":\"" << EscapeJsonString(event.instrument_id) << "\","
@@ -238,6 +239,7 @@ WalReceipt LocalWalRegulatorySink::AppendMapping(const CtpOrderSubmitMapping& ma
         << "\"submit_ts_ns\":" << mapping.submit_ts_ns << ","
         << "\"account_id\":\"" << EscapeJsonString(mapping.account_id) << "\","
         << "\"strategy_id\":\"" << EscapeJsonString(mapping.strategy_id) << "\","
+        << (mapping.component_id.empty() ? std::string() : "\"component_id\":\"" + EscapeJsonString(mapping.component_id) + "\",")
         << "\"trace_id\":\"" << EscapeJsonString(mapping.trace_id) << "\","
         << "\"client_order_id\":\"" << EscapeJsonString(mapping.client_order_id) << "\","
         << "\"instrument_id\":\"" << EscapeJsonString(mapping.instrument_id) << "\","

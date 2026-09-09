@@ -11,6 +11,8 @@
 #include <thread>
 #include <unordered_set>
 
+#include "quant_hft/model/independent_strategy_books.h"
+
 namespace quant_hft {
 
 namespace {
@@ -105,6 +107,8 @@ bool TradingDomainStoreClientAdapter::UpsertOrder(const Order& order, std::strin
         {"order_ref", order.order_id},
         {"account_id", order.account_id},
         {"strategy_id", order.strategy_id},
+        {"component_id", order.component_id},
+        {"hedge_flag", std::to_string(static_cast<int>(order.hedge_flag))},
         {"instrument_id", order.symbol},
         {"exchange_id", order.exchange},
         {"order_type", ToOrderTypeCode(order.order_type)},
@@ -135,7 +139,8 @@ bool TradingDomainStoreClientAdapter::UpsertOrder(const Order& order, std::strin
                 const auto account = existing.find("account_id");
                 if (account == existing.end() || account->second != order.account_id) continue;
                 if (existing.at("strategy_id") != order.strategy_id ||
-                    existing.at("instrument_id") != order.symbol) {
+                    existing.at("instrument_id") != order.symbol ||
+                    ParseIntOrDefault(existing, "hedge_flag", 0) != static_cast<int>(order.hedge_flag)) {
                     *e = "order reference identity conflict";
                     return false;
                 }
@@ -614,6 +619,8 @@ std::string Fingerprint(const Trade& trade) {
     std::ostringstream out;
     out << std::setprecision(std::numeric_limits<double>::max_digits10);
     for (const auto& text : {trade.strategy_id, trade.symbol}) out << text.size() << ':' << text;
+    if (!trade.component_id.empty())
+        out << ":component:" << trade.component_id.size() << ':' << trade.component_id;
     out << ':' << static_cast<int>(trade.side) << ':' << static_cast<int>(trade.offset) << ':'
         << static_cast<int>(trade.hedge_flag) << ':' << trade.price << ':' << trade.quantity;
     return out.str();
@@ -677,6 +684,51 @@ bool AckReceipt(ITimescaleSqlClient& tx, const std::string& schema, const WalRec
                         {"stream_id"}, {"next_sequence"}, error);
 }
 
+int StrategyReservationRemaining(const DomainRow& row) {
+    const int bound = Field(row, "terminal") == "true"
+                          ? ParseIntOrDefault(row, "reported_filled", 0)
+                          : ParseIntOrDefault(row, "quantity", 0);
+    return std::max(0, bound - ParseIntOrDefault(row, "booked_qty", 0));
+}
+Position ReadPhysical(const DomainRow& row) {
+    Position p;
+    p.account_id = Field(row, "account_id");
+    p.strategy_id = "__physical__";
+    p.symbol = Field(row, "instrument_id");
+    p.exchange = Field(row, "exchange_id");
+    p.hedge_flag = static_cast<HedgeFlag>(ParseIntOrDefault(row, "hedge_flag", 0));
+    p.trading_day = Field(row, "trading_day");
+    p.long_qty = ParseIntOrDefault(row, "long_qty", 0);
+    p.short_qty = ParseIntOrDefault(row, "short_qty", 0);
+    p.long_today_qty = ParseIntOrDefault(row, "long_today_qty", 0);
+    p.short_today_qty = ParseIntOrDefault(row, "short_today_qty", 0);
+    p.long_yd_qty = ParseIntOrDefault(row, "long_yd_qty", 0);
+    p.short_yd_qty = ParseIntOrDefault(row, "short_yd_qty", 0);
+    p.version = Field(row, "version").empty() ? 0 : std::stoull(Field(row, "version"));
+    return p;
+}
+bool SavePhysical(ITimescaleSqlClient& tx, const std::string& table, const Position& p,
+                  std::string* error) {
+    const DomainRow row{{"account_id", p.account_id},
+                        {"instrument_id", p.symbol},
+                        {"exchange_id", p.exchange},
+                        {"hedge_flag", std::to_string(static_cast<int>(p.hedge_flag))},
+                        {"trading_day", p.trading_day},
+                        {"version", std::to_string(p.version)},
+                        {"long_qty", std::to_string(p.long_qty)},
+                        {"short_qty", std::to_string(p.short_qty)},
+                        {"long_today_qty", std::to_string(p.long_today_qty)},
+                        {"short_today_qty", std::to_string(p.short_today_qty)},
+                        {"long_yd_qty", std::to_string(p.long_yd_qty)},
+                        {"short_yd_qty", std::to_string(p.short_yd_qty)}};
+    return tx.UpsertRow(table, row, {"account_id", "instrument_id", "exchange_id", "hedge_flag"},
+                        {}, error);
+}
+std::string PhysicalKey(const Position& p) {
+    return std::to_string(p.exchange.size()) + ":" + p.exchange + ":" +
+           std::to_string(p.symbol.size()) + ":" + p.symbol + ":" +
+           std::to_string(static_cast<int>(p.hedge_flag));
+}
 bool SameBook(const DomainRow& lot, const Trade& trade) {
     return Field(lot, "strategy_id") == trade.strategy_id &&
            Field(lot, "instrument_id") == trade.symbol &&
@@ -817,6 +869,24 @@ bool TradingDomainStoreClientAdapter::AdvanceTradingDay(const std::string& accou
                     {"acknowledged", "false"}};
                 if (!tx.InsertRow(TableName("trade_outbox"), row, e)) return false;
             }
+            const auto physical_rows =
+                tx.QueryRows(TableName("broker_position_summary"), "account_id", account, e);
+            if (!e->empty()) return false;
+            for (const auto& row : physical_rows) {
+                auto p = ReadPhysical(row);
+                if (p.trading_day > day) {
+                    *e = "cannot reverse physical trading day";
+                    return false;
+                }
+                if (p.trading_day == day) continue;
+                p.long_yd_qty += p.long_today_qty;
+                p.long_today_qty = 0;
+                p.short_yd_qty += p.short_today_qty;
+                p.short_today_qty = 0;
+                p.trading_day = day;
+                ++p.version;
+                if (!SavePhysical(tx, TableName("broker_position_summary"), p, e)) return false;
+            }
             if (!changed) return true;
             auto lots = tx.QueryRows(TableName("position_detail"), "account_id", account, e);
             if (!e->empty()) return false;
@@ -847,6 +917,610 @@ bool TradingDomainStoreClientAdapter::AdvanceTradingDay(const std::string& accou
                                 {"account_id"}, {"commit_sequence"}, e);
         },
         error);
+}
+
+bool TradingDomainStoreClientAdapter::TransferStrategyCapital(
+    const std::string& account, const std::string& transfer_id, const std::string& from,
+    const std::string& to, double amount, const std::string& reason, std::string* error) {
+    std::string local;
+    if (!error) error = &local;
+    error->clear();
+    if (!client_ || account.empty() || transfer_id.empty() || from.empty() || to.empty() ||
+        from == to || !std::isfinite(amount) || amount <= 0 || reason.empty()) {
+        *error = "explicit valid capital transfer required";
+        return false;
+    }
+    return client_->RunInTransaction(
+        [&](ITimescaleSqlClient& tx, std::string* e) {
+            if (!tx.LockTransactionKey("domain-account:" + account, e)) return false;
+            const auto prior = tx.QueryRows(TableName("strategy_capital_transfers"), "transfer_id",
+                                            transfer_id, e);
+            if (!e->empty()) return false;
+            if (!prior.empty()) {
+                const auto& p = prior.front();
+                if (Field(p, "account_id") != account || Field(p, "from_strategy") != from ||
+                    Field(p, "to_strategy") != to || Field(p, "reason") != reason ||
+                    ParseDoubleOrDefault(p, "amount", 0) != amount) {
+                    *e = "capital transfer identity conflict";
+                    return false;
+                }
+                return true;
+            }
+            const auto rows = tx.QueryRows(TableName("strategy_capital"), "account_id", account, e);
+            if (!e->empty()) return false;
+            DomainRow debit, credit;
+            for (const auto& row : rows) {
+                if (Field(row, "strategy_id") == from) debit = row;
+                if (Field(row, "strategy_id") == to) credit = row;
+            }
+            if (debit.empty() || credit.empty()) {
+                *e = "capital transfer owner is unallocated";
+                return false;
+            }
+            const auto positions =
+                tx.QueryRows(TableName("position_summary"), "account_id", account, e);
+            if (!e->empty()) return false;
+            for (const auto& p : positions)
+                if ((Field(p, "strategy_id") == from || Field(p, "strategy_id") == to) &&
+                    (ParseIntOrDefault(p, "long_volume", 0) != 0 ||
+                     ParseIntOrDefault(p, "short_volume", 0) != 0)) {
+                    *e = "capital transfer requires affected instances naturally flat";
+                    return false;
+                }
+            const auto orders = tx.QueryRows(TableName("orders"), "account_id", account, e);
+            if (!e->empty()) return false;
+            for (const auto& o : orders)
+                if (Field(o, "strategy_id") == from || Field(o, "strategy_id") == to) {
+                    const auto status =
+                        static_cast<OrderStatus>(ParseIntOrDefault(o, "order_status", 0));
+                    if (status != OrderStatus::kCanceled && status != OrderStatus::kRejected &&
+                        status != OrderStatus::kFilled) {
+                        *e = "capital transfer requires no active orders";
+                        return false;
+                    }
+                }
+            for (const auto* reservation_table :
+                 {"strategy_close_reservations", "strategy_open_reservations"}) {
+                const auto reservations =
+                    tx.QueryRows(TableName(reservation_table), "account_id", account, e);
+                if (!e->empty()) return false;
+                for (const auto& r : reservations)
+                    if ((Field(r, "strategy_id") == from || Field(r, "strategy_id") == to) &&
+                        StrategyReservationRemaining(r) > 0) {
+                        *e = "capital transfer awaits committed fills";
+                        return false;
+                    }
+            }
+            const double from_adjustment = ParseDoubleOrDefault(debit, "capital_adjustment", 0);
+            const double available = ParseDoubleOrDefault(debit, "initial_capital", 0) +
+                                     from_adjustment +
+                                     ParseDoubleOrDefault(debit, "realized_pnl", 0) -
+                                     ParseDoubleOrDefault(debit, "commission", 0);
+            if (amount > available) {
+                *e = "capital transfer exceeds source equity";
+                return false;
+            }
+            debit["capital_adjustment"] = ToString(from_adjustment - amount);
+            credit["capital_adjustment"] =
+                ToString(ParseDoubleOrDefault(credit, "capital_adjustment", 0) + amount);
+            if (!tx.UpsertRow(TableName("strategy_capital"), debit, {"account_id", "strategy_id"},
+                              {"capital_adjustment"}, e) ||
+                !tx.UpsertRow(TableName("strategy_capital"), credit, {"account_id", "strategy_id"},
+                              {"capital_adjustment"}, e))
+                return false;
+            return tx.InsertRow(TableName("strategy_capital_transfers"),
+                                {{"transfer_id", transfer_id},
+                                 {"account_id", account},
+                                 {"from_strategy", from},
+                                 {"to_strategy", to},
+                                 {"amount", ToString(amount)},
+                                 {"reason", reason},
+                                 {"recorded_ts_ns", std::to_string(NowEpochNanos())}},
+                                e);
+        },
+        error);
+}
+bool TradingDomainStoreClientAdapter::AppendCapitalReconciliation(
+    const CapitalReconciliationSnapshot& s, std::string* error) {
+    std::string local;
+    if (!error) error = &local;
+    error->clear();
+    const double values[] = {s.broker_equity,       s.broker_realized,    s.broker_unrealized,
+                             s.broker_commission,   s.strategy_allocated, s.strategy_realized,
+                             s.strategy_unrealized, s.strategy_commission};
+    if (!client_ || s.account_id.empty() || s.observed_ts_ns <= 0 ||
+        !std::all_of(std::begin(values), std::end(values),
+                     [](double v) { return std::isfinite(v); })) {
+        *error = "complete finite capital reconciliation required";
+        return false;
+    }
+    const double strategy_equity =
+        s.strategy_allocated + s.strategy_realized + s.strategy_unrealized - s.strategy_commission;
+    const double realized_difference = s.broker_realized - s.strategy_realized;
+    const double floating_difference = s.broker_unrealized - s.strategy_unrealized;
+    const double fee_difference = s.broker_commission - s.strategy_commission;
+    const double cash_settlement_bridge = s.broker_equity - s.broker_realized -
+                                          s.broker_unrealized + s.broker_commission -
+                                          s.strategy_allocated;
+    return InsertWithRetry("strategy_capital_reconciliations",
+                           {{"account_id", s.account_id},
+                            {"observed_ts_ns", std::to_string(s.observed_ts_ns)},
+                            {"trading_day", s.trading_day},
+                            {"broker_equity", ToString(s.broker_equity)},
+                            {"strategy_equity", ToString(strategy_equity)},
+                            {"strategy_allocated", ToString(s.strategy_allocated)},
+                            {"strategy_realized", ToString(s.strategy_realized)},
+                            {"strategy_unrealized", ToString(s.strategy_unrealized)},
+                            {"strategy_commission", ToString(s.strategy_commission)},
+                            {"realized_basis_difference", ToString(realized_difference)},
+                            {"floating_basis_difference", ToString(floating_difference)},
+                            {"fee_basis_difference", ToString(fee_difference)},
+                            {"cash_and_settlement_bridge", ToString(cash_settlement_bridge)},
+                            {"total_difference", ToString(s.broker_equity - strategy_equity)},
+                            {"basis", "broker_reported_vs_strategy_opening_lots_v1"},
+                            {"automatic_allocation", "false"}},
+                           error);
+}
+
+bool TradingDomainStoreClientAdapter::ReserveStrategyOpen(
+    const StrategyOpenReservationRequest& request, std::string* error) {
+    std::string local;
+    if (!error) error = &local;
+    error->clear();
+    const auto& i = request.intent;
+    if (!client_ || i.offset != OffsetFlag::kOpen || i.client_order_id.empty() ||
+        i.account_id.empty() || i.strategy_id.empty() || i.volume <= 0 || !std::isfinite(i.price) ||
+        i.price <= 0) {
+        *error = "valid attributed open intent required";
+        return false;
+    }
+    return client_->RunInTransaction(
+        [&](ITimescaleSqlClient& tx, std::string* e) {
+            if (!tx.LockTransactionKey("domain-account:" + i.account_id, e)) return false;
+            const auto reservations = tx.QueryRows(TableName("strategy_open_reservations"),
+                                                   "account_id", i.account_id, e);
+            if (!e->empty()) return false;
+            double frozen = 0, account_frozen = 0;
+            for (const auto& r : reservations) {
+                if (Field(r, "order_ref") == i.client_order_id) {
+                    if (Field(r, "strategy_id") != i.strategy_id ||
+                        Field(r, "instrument_id") != i.instrument_id ||
+                        ParseIntOrDefault(r, "quantity", 0) != i.volume ||
+                        ParseDoubleOrDefault(r, "price", 0) != i.price ||
+                        ParseIntOrDefault(r, "side", -1) != static_cast<int>(i.side) ||
+                        ParseIntOrDefault(r, "hedge_flag", 0) != static_cast<int>(i.hedge_flag)) {
+                        *e = "strategy open reservation identity conflict";
+                        return false;
+                    }
+                    return true;
+                }
+                const double funds =
+                    StrategyReservationRemaining(r) * ParseDoubleOrDefault(r, "unit_funds", 0);
+                account_frozen += funds;
+                if (Field(r, "strategy_id") == i.strategy_id) frozen += funds;
+            }
+            if (request.recovery_existing_only) {
+                *e = "recovered open order has no durable strategy reservation";
+                return false;
+            }
+            if (!std::isfinite(request.new_margin_and_fee) || request.new_margin_and_fee <= 0 ||
+                !std::isfinite(request.max_margin_to_equity_ratio) ||
+                request.max_margin_to_equity_ratio <= 0 || request.max_margin_to_equity_ratio > 1) {
+                *e = "invalid strategy fund request";
+                return false;
+            }
+            auto alias = std::shared_ptr<ITimescaleSqlClient>(&tx, [](ITimescaleSqlClient*) {});
+            TradingDomainStoreClientAdapter store(alias, {}, schema_);
+            StrategyCapitalSnapshot capital;
+            std::vector<Position> own;
+            if (!store.LoadStrategyCapital(i.account_id, i.strategy_id, &capital, e) ||
+                !store.LoadPositionSummary(i.account_id, i.strategy_id, &own, e))
+                return false;
+            std::unordered_map<std::string, double> marks, multipliers;
+            for (const auto& item : request.instruments) {
+                marks[item.first] = item.second.mark;
+                multipliers[item.first] = item.second.multiplier;
+            }
+            double equity = 0, unrealized = 0, margin = 0;
+            if (!MarkStrategyCapital(capital, own, marks, multipliers, &equity, &unrealized, e) ||
+                !StrategyGrossMargin(own, request.instruments, &margin, e))
+                return false;
+            if (!std::isfinite(frozen) || frozen < 0 || equity <= 0 ||
+                margin + frozen + request.new_margin_and_fee >
+                    equity * request.max_margin_to_equity_ratio) {
+                *e = "strategy margin budget exhausted including pending and unbooked fills";
+                return false;
+            }
+            if (request.account_equity != 0 || request.max_account_margin_to_equity_ratio != 0) {
+                if (!std::isfinite(request.account_equity) || request.account_equity <= 0 ||
+                    !std::isfinite(request.max_account_margin_to_equity_ratio) ||
+                    request.max_account_margin_to_equity_ratio <= 0 ||
+                    request.max_account_margin_to_equity_ratio > 1 ||
+                    !std::isfinite(account_frozen) || account_frozen < 0) {
+                    *e = "valid broker equity and gross account ratio required";
+                    return false;
+                }
+                std::vector<Position> account_positions;
+                double gross_account_margin = 0;
+                if (!store.LoadPositionSummary(i.account_id, "", &account_positions, e) ||
+                    !StrategyGrossMargin(account_positions, request.instruments,
+                                         &gross_account_margin, e)) return false;
+                if (gross_account_margin + account_frozen + request.new_margin_and_fee >
+                    request.account_equity * request.max_account_margin_to_equity_ratio) {
+                    *e = "gross account margin budget exhausted including all strategy reservations";
+                    return false;
+                }
+            }
+            return tx.InsertRow(TableName("strategy_open_reservations"),
+                                {{"account_id", i.account_id},
+                                 {"strategy_id", i.strategy_id},
+                                 {"order_ref", i.client_order_id},
+                                 {"instrument_id", i.instrument_id},
+                                 {"side", std::to_string(static_cast<int>(i.side))},
+                                 {"hedge_flag", std::to_string(static_cast<int>(i.hedge_flag))},
+                                 {"price", ToString(i.price)},
+                                 {"quantity", std::to_string(i.volume)},
+                                 {"unit_funds", ToString(request.new_margin_and_fee / i.volume)},
+                                 {"reported_filled", "0"},
+                                 {"booked_qty", "0"},
+                                 {"terminal", "false"}},
+                                e);
+        },
+        error);
+}
+
+bool TradingDomainStoreClientAdapter::ReserveStrategyClose(const OrderIntent& intent,
+                                                           std::string* error) {
+    std::string local;
+    if (!error) error = &local;
+    error->clear();
+    if (!client_ || intent.offset == OffsetFlag::kOpen || intent.client_order_id.empty() ||
+        intent.account_id.empty() || intent.strategy_id.empty() || intent.volume <= 0) {
+        *error = "valid attributed close intent required";
+        return false;
+    }
+    return client_->RunInTransaction(
+        [&](ITimescaleSqlClient& tx, std::string* e) {
+            if (!tx.LockTransactionKey("domain-account:" + intent.account_id, e)) return false;
+            auto alias = std::shared_ptr<ITimescaleSqlClient>(&tx, [](ITimescaleSqlClient*) {});
+            TradingDomainStoreClientAdapter store(alias, {}, schema_);
+            std::vector<Position> own;
+            if (!store.LoadPositionSummary(intent.account_id, intent.strategy_id, &own, e))
+                return false;
+            int already_booked = 0;
+            const auto history =
+                tx.QueryRows(TableName("trade_outbox"), "account_id", intent.account_id, e);
+            if (!e->empty()) return false;
+            for (const auto& row : history)
+                if (Field(row, "order_ref") == intent.client_order_id &&
+                    Field(row, "event_kind") != "position_rollover") {
+                    if (Field(row, "strategy_id") != intent.strategy_id) {
+                        *e = "recovered order owner mismatch";
+                        return false;
+                    }
+                    already_booked += ParseIntOrDefault(row, "quantity", 0);
+                }
+            if (already_booked > intent.volume) {
+                *e = "recovered order volume below committed fills";
+                return false;
+            }
+            int quantity = 0;
+            for (const auto& p : own)
+                if (p.symbol == intent.instrument_id && p.hedge_flag == intent.hedge_flag)
+                    quantity += intent.side == Side::kSell ? p.long_qty : p.short_qty;
+            const auto reservations = tx.QueryRows(TableName("strategy_close_reservations"),
+                                                   "account_id", intent.account_id, e);
+            if (!e->empty()) return false;
+            for (const auto& row : reservations) {
+                if (Field(row, "order_ref") == intent.client_order_id) {
+                    if (Field(row, "strategy_id") == intent.strategy_id &&
+                        Field(row, "instrument_id") == intent.instrument_id &&
+                        ParseIntOrDefault(row, "quantity", 0) == intent.volume &&
+                        ParseIntOrDefault(row, "hedge_flag", -1) ==
+                            static_cast<int>(intent.hedge_flag) &&
+                        ParseIntOrDefault(row, "side", -1) == static_cast<int>(intent.side))
+                        return true;
+                    *e = "strategy close reservation identity conflict";
+                    return false;
+                }
+                if (Field(row, "strategy_id") == intent.strategy_id &&
+                    Field(row, "instrument_id") == intent.instrument_id &&
+                    ParseIntOrDefault(row, "side", -1) == static_cast<int>(intent.side) &&
+                    ParseIntOrDefault(row, "hedge_flag", -1) == static_cast<int>(intent.hedge_flag))
+                    quantity -= StrategyReservationRemaining(row);
+            }
+            if (intent.volume - already_booked > quantity) {
+                *e = "strategy close exceeds unfrozen owned position";
+                return false;
+            }
+            return tx.InsertRow(
+                TableName("strategy_close_reservations"),
+                {{"account_id", intent.account_id},
+                 {"strategy_id", intent.strategy_id},
+                 {"order_ref", intent.client_order_id},
+                 {"instrument_id", intent.instrument_id},
+                 {"side", std::to_string(static_cast<int>(intent.side))},
+                 {"hedge_flag", std::to_string(static_cast<int>(intent.hedge_flag))},
+                 {"quantity", std::to_string(intent.volume)},
+                 {"reported_filled", std::to_string(already_booked)},
+                 {"booked_qty", std::to_string(already_booked)},
+                 {"terminal", "false"}},
+                e);
+        },
+        error);
+}
+bool TradingDomainStoreClientAdapter::ObserveStrategyOrderEvent(const OrderEvent& event,
+                                                                std::string* error) {
+    std::string local;
+    if (!error) error = &local;
+    error->clear();
+    if (!client_ || event.account_id.empty()) {
+        *error = "account identity required";
+        return false;
+    }
+    // Rejected cancellation leaves the original order live. Its action status
+    // cannot release the original order's cash or inventory reservation.
+    if (event.event_source == "OnRspOrderAction" || event.event_source == "OnErrRtnOrderAction")
+        return true;
+    return client_->RunInTransaction(
+        [&](ITimescaleSqlClient& tx, std::string* e) {
+            if (!tx.LockTransactionKey("domain-account:" + event.account_id, e)) return false;
+            for (const auto* reservation_table :
+                 {"strategy_close_reservations", "strategy_open_reservations"}) {
+                const auto rows =
+                    tx.QueryRows(TableName(reservation_table), "account_id", event.account_id, e);
+                if (!e->empty()) return false;
+                for (auto row : rows)
+                    if (Field(row, "order_ref") == event.client_order_id) {
+                        if (!event.strategy_id.empty() &&
+                            Field(row, "strategy_id") != event.strategy_id) {
+                            *e = "strategy close reservation owner conflict";
+                            return false;
+                        }
+                        const int filled = std::max(ParseIntOrDefault(row, "reported_filled", 0),
+                                                    event.filled_volume);
+                        if (filled > ParseIntOrDefault(row, "quantity", 0)) {
+                            *e = "reservation cumulative overfill";
+                            return false;
+                        }
+                        row["reported_filled"] = std::to_string(filled);
+                        if (event.status == OrderStatus::kCanceled ||
+                            event.status == OrderStatus::kRejected ||
+                            event.status == OrderStatus::kFilled)
+                            row["terminal"] = "true";
+                        if (!tx.UpsertRow(TableName(reservation_table), row,
+                                          {"account_id", "order_ref"},
+                                          {"reported_filled", "terminal"}, e))
+                            return false;
+                    }
+            }
+            return true;
+        },
+        error);
+}
+bool TradingDomainStoreClientAdapter::LoadStrategyCloseReserved(const std::string& account,
+                                                                const std::string& strategy,
+                                                                const std::string& instrument,
+                                                                Side side, std::int32_t* out,
+                                                                std::string* error) const {
+    std::string local;
+    if (!error) error = &local;
+    error->clear();
+    if (!client_ || !out) {
+        *error = "client and output required";
+        return false;
+    }
+    const auto rows =
+        client_->QueryRows(TableName("strategy_close_reservations"), "account_id", account, error);
+    if (!error->empty()) return false;
+    *out = 0;
+    for (const auto& row : rows)
+        if (Field(row, "strategy_id") == strategy && Field(row, "instrument_id") == instrument &&
+            ParseIntOrDefault(row, "side", -1) == static_cast<int>(side))
+            *out += StrategyReservationRemaining(row);
+    return true;
+}
+
+bool TradingDomainStoreClientAdapter::LoadStrategyCloseReserved(
+    const std::string& account, const std::string& strategy, const std::string& instrument,
+    Side side, HedgeFlag hedge_flag, std::int32_t* out, std::string* error) const {
+    std::string local;
+    if (!error) error = &local;
+    error->clear();
+    if (!client_ || !out) {
+        *error = "client and output required";
+        return false;
+    }
+    const auto rows =
+        client_->QueryRows(TableName("strategy_close_reservations"), "account_id", account, error);
+    if (!error->empty()) return false;
+    *out = 0;
+    for (const auto& row : rows)
+        if (Field(row, "strategy_id") == strategy && Field(row, "instrument_id") == instrument &&
+            ParseIntOrDefault(row, "side", -1) == static_cast<int>(side) &&
+            ParseIntOrDefault(row, "hedge_flag", -1) == static_cast<int>(hedge_flag))
+            *out += StrategyReservationRemaining(row);
+    return true;
+}
+
+bool TradingDomainStoreClientAdapter::ConfigureIndependentStrategyBooks(
+    const std::string& account, const std::unordered_map<std::string, double>& allocations,
+    std::string* error) {
+    std::string local;
+    if (!error) error = &local;
+    error->clear();
+    if (!client_ || account.empty() || allocations.empty()) {
+        *error = "account and allocations required";
+        return false;
+    }
+    for (const auto& a : allocations)
+        if (a.first.empty() || a.first.rfind("__", 0) == 0 || !std::isfinite(a.second) ||
+            a.second <= 0) {
+            *error = "nonempty owner and positive finite allocation required";
+            return false;
+        }
+    return client_->RunInTransaction(
+        [&](ITimescaleSqlClient& tx, std::string* e) {
+            if (!tx.LockTransactionKey("domain-account:" + account, e)) return false;
+            const auto current =
+                tx.QueryRows(TableName("strategy_capital"), "account_id", account, e);
+            if (!e->empty()) return false;
+            if (!current.empty()) {
+                if (current.size() != allocations.size()) {
+                    *e = "capital allocation changes require explicit migration";
+                    return false;
+                }
+                for (const auto& row : current) {
+                    const auto a = allocations.find(Field(row, "strategy_id"));
+                    if (a == allocations.end() ||
+                        a->second != ParseDoubleOrDefault(row, "initial_capital", 0)) {
+                        *e = "capital allocation changes require explicit migration";
+                        return false;
+                    }
+                }
+                return true;
+            }
+            auto alias = std::shared_ptr<ITimescaleSqlClient>(&tx, [](ITimescaleSqlClient*) {});
+            TradingDomainStoreClientAdapter store(alias, {}, schema_);
+            std::vector<Position> positions;
+            if (!store.LoadPositionSummary(account, "", &positions, e)) return false;
+            std::unordered_map<std::string, Position> physical;
+            for (const auto& p : positions) {
+                if (!allocations.count(p.strategy_id) || p.version == 0 || p.trading_day.empty()) {
+                    *e = "unallocated or unversioned existing position blocks independent books";
+                    return false;
+                }
+                auto& total = physical[PhysicalKey(p)];
+                if (!total.trading_day.empty() && total.trading_day != p.trading_day) {
+                    *e = "strategy books require aligned trading day before migration";
+                    return false;
+                }
+                total.account_id = account;
+                total.strategy_id = "__physical__";
+                total.symbol = p.symbol;
+                total.exchange = p.exchange;
+                total.hedge_flag = p.hedge_flag;
+                total.trading_day = p.trading_day;
+                total.version += p.version;
+                total.long_qty += p.long_qty;
+                total.short_qty += p.short_qty;
+                total.long_today_qty += p.long_today_qty;
+                total.short_today_qty += p.short_today_qty;
+                total.long_yd_qty += p.long_yd_qty;
+                total.short_yd_qty += p.short_yd_qty;
+            }
+            std::vector<TradeOutboxRecord> history;
+            if (!store.LoadTradeHistory(account, "", &history, e)) return false;
+            std::unordered_map<std::string, double> pnl, fees;
+            for (const auto& r : history) {
+                if (!allocations.count(r.strategy_id) || !r.trade.valuation_complete) {
+                    *e = "unallocated or unvalued history requires explicit capital migration";
+                    return false;
+                }
+                pnl[r.strategy_id] += r.trade.profit;
+                fees[r.strategy_id] += r.trade.commission;
+            }
+            for (const auto& a : allocations)
+                if (!tx.InsertRow(TableName("strategy_capital"),
+                                  {{"account_id", account},
+                                   {"strategy_id", a.first},
+                                   {"initial_capital", ToString(a.second)},
+                                   {"realized_pnl", ToString(pnl[a.first])},
+                                   {"commission", ToString(fees[a.first])}},
+                                  e))
+                    return false;
+            for (const auto& p : physical)
+                if (!SavePhysical(tx, TableName("broker_position_summary"), p.second, e))
+                    return false;
+            return true;
+        },
+        error);
+}
+bool TradingDomainStoreClientAdapter::LoadBrokerPositionSummary(const std::string& account,
+                                                                std::vector<Position>* out,
+                                                                std::string* error) const {
+    std::string local;
+    if (!error) error = &local;
+    error->clear();
+    if (!client_ || !out) {
+        *error = "client and output required";
+        return false;
+    }
+    const auto capital =
+        client_->QueryRows(TableName("strategy_capital"), "account_id", account, error);
+    if (!error->empty()) return false;
+    if (capital.empty()) return LoadPositionSummary(account, "", out, error);
+    const auto rows =
+        client_->QueryRows(TableName("broker_position_summary"), "account_id", account, error);
+    if (!error->empty()) return false;
+    out->clear();
+    for (const auto& row : rows) out->push_back(ReadPhysical(row));
+    return true;
+}
+bool TradingDomainStoreClientAdapter::LoadStrategyBook(const std::string& account,
+                                                       const std::string& strategy,
+                                                       StrategyCapitalSnapshot* capital,
+                                                       std::vector<Position>* positions,
+                                                       std::string* error) const {
+    std::string local;
+    if (!error) error = &local;
+    error->clear();
+    if (!client_) {
+        *error = "SQL client required";
+        return false;
+    }
+    return client_->RunInTransaction(
+        [&](ITimescaleSqlClient& tx, std::string* e) {
+            if (!tx.LockTransactionKey("domain-account:" + account, e)) return false;
+            auto alias = std::shared_ptr<ITimescaleSqlClient>(&tx, [](ITimescaleSqlClient*) {});
+            TradingDomainStoreClientAdapter store(alias, {}, schema_);
+            return store.LoadStrategyCapital(account, strategy, capital, e) &&
+                   store.LoadPositionSummary(account, strategy, positions, e);
+        },
+        error);
+}
+
+bool TradingDomainStoreClientAdapter::LoadStrategyCapital(const std::string& account,
+                                                          const std::string& strategy,
+                                                          StrategyCapitalSnapshot* out,
+                                                          std::string* error) const {
+    std::string local;
+    if (!error) error = &local;
+    error->clear();
+    if (!client_ || !out) {
+        *error = "client and output required";
+        return false;
+    }
+    const auto rows =
+        client_->QueryRows(TableName("strategy_capital"), "account_id", account, error);
+    if (!error->empty()) return false;
+    for (const auto& row : rows)
+        if (Field(row, "strategy_id") == strategy) {
+            *out = {};
+            out->account_id = account;
+            out->strategy_id = strategy;
+            out->initial_capital = ParseDoubleOrDefault(row, "initial_capital", 0);
+            out->realized_pnl = ParseDoubleOrDefault(row, "realized_pnl", 0);
+            out->commission = ParseDoubleOrDefault(row, "commission", 0);
+            out->capital_adjustment = ParseDoubleOrDefault(row, "capital_adjustment", 0);
+            const auto reservations = client_->QueryRows(TableName("strategy_open_reservations"),
+                                                         "account_id", account, error);
+            if (!error->empty()) return false;
+            for (const auto& reservation : reservations)
+                if (Field(reservation, "strategy_id") == strategy)
+                    out->reserved_open_funds += StrategyReservationRemaining(reservation) *
+                                                ParseDoubleOrDefault(reservation, "unit_funds", 0);
+            if (!std::isfinite(out->reserved_open_funds) || out->reserved_open_funds < 0) {
+                *error = "invalid strategy reserved funds";
+                return false;
+            }
+
+            out->equity_before_marks = out->initial_capital + out->capital_adjustment +
+                                       out->realized_pnl - out->commission;
+            return true;
+        }
+    *error = "strategy has no capital allocation";
+    return false;
 }
 
 bool TradingDomainStoreClientAdapter::ApplyTrade(const TradeApplyRequest& request,
@@ -947,6 +1621,15 @@ bool TradingDomainStoreClientAdapter::ApplyTrade(const TradeApplyRequest& reques
                     committed.close_allocation = {
                         ParseIntOrDefault(projection.front(), "close_today", 0),
                         ParseIntOrDefault(projection.front(), "close_yesterday", 0)};
+                    committed.independent_books =
+                        Field(projection.front(), "independent_books") == "true";
+                    committed.broker_close_allocation =
+                        committed.independent_books
+                            ? CloseAllocation{ParseIntOrDefault(projection.front(),
+                                                                "broker_close_today", 0),
+                                              ParseIntOrDefault(projection.front(),
+                                                                "broker_close_yesterday", 0)}
+                            : committed.close_allocation;
                     committed.commit_sequence =
                         std::stoull(Field(projection.front(), "commit_sequence"));
                     committed.close_rule_source = Field(projection.front(), "close_rule_source");
@@ -964,6 +1647,34 @@ bool TradingDomainStoreClientAdapter::ApplyTrade(const TradeApplyRequest& reques
             StorageRetryPolicy once;
             once.max_attempts = 1;
             TradingDomainStoreClientAdapter store(alias, once, schema_);
+            const auto capital_rows = tx.QueryRows(TableName("strategy_capital"), "account_id",
+                                                   trade.account_id, tx_error);
+            if (!tx_error->empty()) return false;
+            committed.independent_books = !capital_rows.empty();
+            DomainRow owner_capital;
+            for (const auto& row : capital_rows)
+                if (Field(row, "strategy_id") == trade.strategy_id) owner_capital = row;
+            if (committed.independent_books && owner_capital.empty())
+                return conflict("unallocated trade owner blocks independent account booking");
+            Position physical;
+            if (committed.independent_books) {
+                std::vector<Position> physical_rows;
+                if (!store.LoadBrokerPositionSummary(trade.account_id, &physical_rows, tx_error))
+                    return false;
+                for (const auto& p : physical_rows)
+                    if (p.symbol == trade.symbol && p.exchange == trade.exchange &&
+                        p.hedge_flag == trade.hedge_flag)
+                        physical = p;
+                if (!physical.trading_day.empty() && trade.trading_day < physical.trading_day)
+                    return conflict("trade precedes physical account trading day");
+                if (physical.trading_day < trade.trading_day) {
+                    physical.long_yd_qty += physical.long_today_qty;
+                    physical.long_today_qty = 0;
+                    physical.short_yd_qty += physical.short_today_qty;
+                    physical.short_today_qty = 0;
+                    physical.trading_day = trade.trading_day;
+                }
+            }
             std::vector<Position> summaries;
             if (!store.LoadPositionSummary(trade.account_id, trade.strategy_id, &summaries,
                                            tx_error))
@@ -1004,7 +1715,8 @@ bool TradingDomainStoreClientAdapter::ApplyTrade(const TradeApplyRequest& reques
             const bool valuation_verified =
                 policy.valuation_inputs_verified && std::isfinite(policy.contract_multiplier) &&
                 policy.contract_multiplier > 0 && fee_verified && !policy.valuation_source.empty();
-            if (request.require_verified_accounting && !valuation_verified) {
+            if ((request.require_verified_accounting || committed.independent_books) &&
+                !valuation_verified) {
                 *tx_error =
                     "new trade requires verified accounting policy evidence; WAL remains pending";
                 return false;
@@ -1064,7 +1776,23 @@ bool TradingDomainStoreClientAdapter::ApplyTrade(const TradeApplyRequest& reques
                     trade.side == Side::kSell ? position.long_yd_qty : position.short_yd_qty;
                 int td = 0;
                 int yd = 0;
-                if (trade.offset == OffsetFlag::kCloseToday)
+                if (committed.independent_books) {
+                    CloseAllocation economic;
+                    if (!PlanIndependentClose(position, physical, trade,
+                                              policy.generic_close_priority, &economic,
+                                              &committed.broker_close_allocation, tx_error))
+                        return false;
+                    td = economic.today;
+                    yd = economic.yesterday;
+                    if (trade.offset == OffsetFlag::kClose && trade.exchange != "SHFE" &&
+                        trade.exchange != "INE") {
+                        if (policy.close_rule_source.empty() || policy.close_rule_version.empty())
+                            return conflict(
+                                "physical generic close requires verified policy evidence");
+                        committed.close_rule_source = policy.close_rule_source;
+                        committed.close_rule_version = policy.close_rule_version;
+                    }
+                } else if (trade.offset == OffsetFlag::kCloseToday)
                     td = trade.quantity;
                 else if (trade.offset == OffsetFlag::kCloseYesterday)
                     yd = trade.quantity;
@@ -1158,8 +1886,28 @@ bool TradingDomainStoreClientAdapter::ApplyTrade(const TradeApplyRequest& reques
                 if (qty == 0)
                     (trade.side == Side::kSell ? position.avg_long_price
                                                : position.avg_short_price) = 0;
+                else if (committed.independent_books) {
+                    const auto remaining_lots = tx.QueryRows(
+                        TableName("position_detail"), "account_id", trade.account_id, tx_error);
+                    if (!tx_error->empty()) return false;
+                    double cost = 0;
+                    int count = 0;
+                    for (const auto& lot : remaining_lots) {
+                        if (!SameBook(lot, trade) ||
+                            Field(lot, "side") == std::to_string(static_cast<int>(trade.side)))
+                            continue;
+                        const int n = ParseIntOrDefault(lot, "remaining_qty", 0);
+                        cost += n * ParseDoubleOrDefault(lot, "open_price", 0);
+                        count += n;
+                    }
+                    if (count != qty) return conflict("economic FIFO residual quantity mismatch");
+                    (trade.side == Side::kSell ? position.avg_long_price
+                                               : position.avg_short_price) = cost / count;
+                }
                 committed.close_allocation = {td, yd};
             }
+            if (!committed.independent_books)
+                committed.broker_close_allocation = committed.close_allocation;
             if (valuation_verified && policy.fee_model == TradeFeeModel::kMoneyPlusVolumeV1) {
                 const auto cost = [&](const TradeFeeRate& rate, int quantity) {
                     return static_cast<long double>(trade.price) * policy.contract_multiplier *
@@ -1169,16 +1917,66 @@ bool TradingDomainStoreClientAdapter::ApplyTrade(const TradeApplyRequest& reques
                 const long double commission =
                     trade.offset == OffsetFlag::kOpen
                         ? cost(policy.open_fee, trade.quantity)
-                        : cost(policy.close_today_fee, committed.close_allocation.today) +
-                              cost(policy.close_fee, committed.close_allocation.yesterday);
+                        : cost(policy.close_today_fee, committed.broker_close_allocation.today) +
+                              cost(policy.close_fee, committed.broker_close_allocation.yesterday);
                 trade.commission = static_cast<double>(commission);
                 if (!std::isfinite(trade.commission) || trade.commission < 0)
                     trade.valuation_complete = false;
             }
             if (!std::isfinite(trade.profit)) trade.valuation_complete = false;
-            if (request.require_verified_accounting && !trade.valuation_complete) {
+            if ((request.require_verified_accounting || committed.independent_books) &&
+                !trade.valuation_complete) {
                 *tx_error = "verified trade valuation is incomplete; WAL remains pending";
                 return false;
+            }
+            if (committed.independent_books) {
+                if (!ApplyPhysicalFill(&physical, trade, committed.broker_close_allocation,
+                                       tx_error) ||
+                    !SavePhysical(tx, TableName("broker_position_summary"), physical, tx_error))
+                    return false;
+                {
+                    const auto reservation_table = trade.offset == OffsetFlag::kOpen
+                                                       ? "strategy_open_reservations"
+                                                       : "strategy_close_reservations";
+                    const auto reservations = tx.QueryRows(
+                        TableName(reservation_table), "account_id", trade.account_id, tx_error);
+                    if (!tx_error->empty()) return false;
+                    for (auto row : reservations)
+                        if (Field(row, "order_ref") == trade.order_id) {
+                            if (Field(row, "strategy_id") != trade.strategy_id ||
+                                Field(row, "instrument_id") != trade.symbol ||
+                                ParseIntOrDefault(row, "side", -1) != static_cast<int>(trade.side) ||
+                                ParseIntOrDefault(row, "hedge_flag", 0) != static_cast<int>(trade.hedge_flag)) {
+                                *tx_error = "fill reservation owner, instrument, side or hedge mismatch";
+                                return false;
+                            }
+                            const int booked =
+                                ParseIntOrDefault(row, "booked_qty", 0) + trade.quantity;
+                            if (booked > ParseIntOrDefault(row, "quantity", 0)) {
+                                *tx_error = "strategy reservation overfill";
+                                return false;
+                            }
+                            row["booked_qty"] = std::to_string(booked);
+                            if (!tx.UpsertRow(TableName(reservation_table), row,
+                                              {"account_id", "order_ref"}, {"booked_qty"},
+                                              tx_error))
+                                return false;
+                        }
+                }
+                const double realized =
+                    ParseDoubleOrDefault(owner_capital, "realized_pnl", 0) + trade.profit;
+                const double fees =
+                    ParseDoubleOrDefault(owner_capital, "commission", 0) + trade.commission;
+                if (!std::isfinite(realized) || !std::isfinite(fees)) {
+                    *tx_error = "nonfinite strategy capital";
+                    return false;
+                }
+                owner_capital["realized_pnl"] = ToString(realized);
+                owner_capital["commission"] = ToString(fees);
+                if (!tx.UpsertRow(TableName("strategy_capital"), owner_capital,
+                                  {"account_id", "strategy_id"}, {"realized_pnl", "commission"},
+                                  tx_error))
+                    return false;
             }
             ++position.version;
             position.update_time_ns = trade.trade_ts_ns;
@@ -1200,6 +1998,7 @@ bool TradingDomainStoreClientAdapter::ApplyTrade(const TradeApplyRequest& reques
                                  {"order_ref", trade.order_id},
                                  {"account_id", trade.account_id},
                                  {"strategy_id", trade.strategy_id},
+                                 {"component_id", trade.component_id},
                                  {"instrument_id", trade.symbol},
                                  {"exchange_id", trade.exchange},
                                  {"direction", ToDirectionCode(trade.side)},
@@ -1224,6 +2023,7 @@ bool TradingDomainStoreClientAdapter::ApplyTrade(const TradeApplyRequest& reques
                      {"identity_key", key},
                      {"account_id", trade.account_id},
                      {"strategy_id", trade.strategy_id},
+                     {"component_id", trade.component_id},
                      {"commit_sequence", std::to_string(commit_sequence)},
                      {"instrument_id", trade.symbol},
                      {"position_version", std::to_string(position.version)},
@@ -1243,6 +2043,11 @@ bool TradingDomainStoreClientAdapter::ApplyTrade(const TradeApplyRequest& reques
                      {"commission", ToString(trade.commission)},
                      {"profit", ToString(trade.profit)},
                      {"valuation_complete", trade.valuation_complete ? "true" : "false"},
+                     {"independent_books", committed.independent_books ? "true" : "false"},
+                     {"broker_close_today",
+                      std::to_string(committed.broker_close_allocation.today)},
+                     {"broker_close_yesterday",
+                      std::to_string(committed.broker_close_allocation.yesterday)},
                      {"close_today", std::to_string(committed.close_allocation.today)},
                      {"close_yesterday", std::to_string(committed.close_allocation.yesterday)},
                      {"close_rule_source", committed.close_rule_source},
@@ -1304,7 +2109,7 @@ bool TradingDomainStoreClientAdapter::InstallPositionBaseline(const PositionBase
             if (!tx.LockTransactionKey("domain-account:" + baseline.account_id, e)) return false;
             // A snapshot cannot overwrite an existing booked ledger. Reconcile it instead.
             for (const auto* table : {"position_baselines", "trade_applications",
-                                      "position_summary", "position_detail"}) {
+                                      "position_summary", "position_detail", "strategy_capital"}) {
                 auto rows = tx.QueryRows(TableName(table), "account_id", baseline.account_id, e);
                 if (!e->empty()) return false;
                 if (!rows.empty()) {
@@ -1505,6 +2310,12 @@ bool TradingDomainStoreClientAdapter::LoadPendingOutboxForConsumer(
         record.commit_sequence = std::stoull(Field(row, "commit_sequence"));
         record.close_allocation = {ParseIntOrDefault(row, "close_today", 0),
                                    ParseIntOrDefault(row, "close_yesterday", 0)};
+        record.independent_books = Field(row, "independent_books") == "true";
+        record.broker_close_allocation =
+            record.independent_books
+                ? CloseAllocation{ParseIntOrDefault(row, "broker_close_today", 0),
+                                  ParseIntOrDefault(row, "broker_close_yesterday", 0)}
+                : record.close_allocation;
         record.close_rule_source = Field(row, "close_rule_source");
         record.close_rule_version = Field(row, "close_rule_version");
         record.valuation_source = Field(row, "valuation_source");
@@ -1516,6 +2327,7 @@ bool TradingDomainStoreClientAdapter::LoadPendingOutboxForConsumer(
         trade.trade_id = record.identity_key;
         trade.account_id = record.account_id;
         trade.strategy_id = record.strategy_id;
+        trade.component_id = Field(row, "component_id");
         trade.symbol = record.instrument_id;
         trade.broker_id = Field(row, "broker_id");
         trade.trading_day = Field(row, "trading_day");

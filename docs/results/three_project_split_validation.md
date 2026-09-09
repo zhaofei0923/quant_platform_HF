@@ -1,0 +1,47 @@
+# 三项目拆分交付验证
+
+本记录覆盖隔离代码与离线验证。现有SimNow服务、实盘账户、原仓配置及状态没有切换。
+
+## 目录与固定依赖
+
+| 项目 | 独立目录 |
+|---|---|
+| 在线交易 | `/home/kevin/worktrees/quant_platform_HF-split` |
+| 策略与指标 | `/home/kevin/quant_strategies` |
+| 回测研究 | `/home/kevin/quant_research` |
+
+两个宿主消费同一份QuantStrategies 1.0.0静态包，包含Contracts、Model、Indicators、Strategies四个目标。
+
+- 策略源码提交：`32cb073`。
+- 发布包：`/home/kevin/quant_packages/releases/quant_strategies-1.0.0-Linux.tar.gz`。
+- 包SHA256：`e4b9eefe601b351992778e5e009e7bc20ba676989f9db37b25366ec3bbcceadb`。
+- Manifest SHA256：`c13b174e0aed50002c85c61026613d1937ac554255d3ae6f203159fd9fef6cd4`。
+- 原始有效源码基线：`a211023`；被忽略规则遮蔽的原测试补充基线：`428e1f4`。
+
+## 已执行验证
+
+| 验证 | 实际结果 | 证据 |
+|---|---|---|
+| 在线完整构建与CTest | 503项：492通过、11跳过、0失败 | `quant_split_evidence/20260909/online_final_build.log`、`online_final_ctest.log` |
+| 真实CTP SDK编译与链接 | v6.7.11编译通过，未连接柜台 | [真实SDK与数据库验证](online_real_and_postgres_validation.md) |
+| 实际PostgreSQL事务 | 8/8通过；应用004/007/008/009；临时数据库已关闭 | [事务日志](p4_postgres_atomic_tests.log) |
+| 两账户三个策略实例启动 | 两个stub进程同时启动并正常退出；同名实例跨账户隔离，全天禁止开仓 | `quant_split_evidence/20260909/formal_stub_smoke/report.json` |
+| 配置与状态迁移 | 真正LoadDeploymentConfig后迁移成功，原payload与水位不变；拒绝归属、来源和参数不一致 | DeploymentFixture、StateMigrationFixture |
+| 策略包独立源码导出 | 47/47 CTest目标通过；99个安装文件与包逐项一致；解压后的外部消费者通过 | `quant_split_evidence/20260909/strategy_release_verification.json` |
+| Tick结构迁移一致性 | 3,601 Tick；116订单记录、58成交、58持仓快照、日权益与WAL一致 | `quant_split_evidence/20260909/golden_tick/comparison.json` |
+| 研究Arrow与Python | 当前264项C++：260通过、4跳过；Python 88/88通过 | 研究项目验证记录 |
+| 原生Bar策略联调 | 同一KAMA/Composite处理675条合成1分钟Bar、4次成交；CSV/真实Parquet结果和状态一致 | 研究项目原生Bar联调证据 |
+| 源码、依赖与配置边界 | purity、doc purity、dependency audit、三项目边界及23个配置的文档覆盖通过 | 构建脚本和配置目录 |
+
+在线CTest的11个跳过为8项需外部数据库的测试及3项需指定Web基础设施的测试。前8项已在独立PostgreSQL中另行全部运行通过；权限测试也在隔离的root临时目录实际通过。Nginx/Authelia部署仍需指定目标环境。研究的4个跳过保留在其报告中，不计作相应功能验收。
+
+完整源码快照与补充测试均有SHA台账，原目录934项初次捕获源码复核无变化，原HEAD保持15909d4。详见证据目录的 `original_source_verification.json`、`baseline_addendum_verification.json` 和 `restored_script_test_verification.json`。
+
+## 尚未完成的外部验收
+
+1. **EDB全市场365天数据**：目标仍为E盘、大商所/郑商所/上期所商品期货。当前Windows没有识别E盘，旧样本暂不可读取。全量下载、历史主力映射、交易日历与会话覆盖仍需完成；合成测试和旧样本不代表全市场覆盖。
+2. **隔离SimNow连续五个交易日**：用户已说明有独立账户，但尚未给出部署配置和仓库外凭据路径。未启动该账户、未提交交易委托，未生成五日验收结论。
+3. **现有账户状态迁移与实盘切换**：迁移器和数据库结构已验证，但没有操作运行账户的数据。正式迁移必须核对owner、资金、今昨仓、成交身份和水位；实盘作为单独发布步骤。
+4. **非投机开仓与跨主机主备**：非投机开仓在保证金口径未核验时明确拒绝；既有套保持仓和成交保留标记。首版绑定单活动主机，本地锁不替代分布式租约。
+
+回滚规则、配置命令和新账户systemd模板见[迁移和发布说明](../ops/three_project_migration.md)。离线发布包不是SimNow五日签收或实盘许可。

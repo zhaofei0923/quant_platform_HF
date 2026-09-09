@@ -1,5 +1,5 @@
 [Unit]
-Description=Quant HFT Tencent SimNow Configured-Universe Trading Supervisor (user unit)
+Description=Quant SimNow account deployment (user unit)
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=300
@@ -8,21 +8,14 @@ StartLimitBurst=5
 [Service]
 Type=simple
 WorkingDirectory=%h
-Environment=QUANT_HFT_ENV=simnow
-Environment=QUANT_ROOT=%h/workspace/quant_platform_HF
-Environment=QUANT_HFT_INSTANCE=simnow-200k-reset-20260907
-Environment=SIMNOW_EXPECTED_INITIAL_BALANCE=200000
-Environment=SIMNOW_EXPECTED_INITIAL_TRADING_DAY=20260908
-Environment=SIMNOW_INITIAL_BALANCE_TOLERANCE=0.01
-Environment=SIMNOW_INITIAL_MARGIN_TOLERANCE=0.01
-Environment=SIMNOW_EPOCH_FIRST_TRADING_DAY=20260908
+# Paths and selected account only; credentials remain behind deployment credential_ref.
+EnvironmentFile=%h/.config/quant_platform_HF/simnow-host.env
 Environment=TZ=Asia/Shanghai
-# The wrapper sources only ${QUANT_ROOT}/.env and reasserts the controlled universe/build/schedule.
-ExecStart=/bin/bash -c 'exec "${QUANT_ROOT}/scripts/ops/run_tencent_simnow_schedule.sh"'
+ExecStart=/bin/bash -c 'exec "${QUANT_ROOT}/scripts/ops/run_account_deployment.sh"'
 Restart=on-failure
 RestartSec=30
 KillSignal=SIGTERM
-TimeoutStopSec=45
+TimeoutStopSec=120
 UMask=0077
 StandardOutput=journal
 StandardError=journal

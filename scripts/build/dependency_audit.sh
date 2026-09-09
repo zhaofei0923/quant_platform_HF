@@ -158,10 +158,7 @@ timescale_external_enabled="$(cache_value QUANT_HFT_ENABLE_TIMESCALE_EXTERNAL)"
 metrics_enabled="$(cache_value QUANT_HFT_WITH_METRICS)"
 
 if bool_on "${arrow_enabled}"; then
-  require_pkg_version "arrow" "12"
-  require_pkg_version "parquet" "12"
-else
-  echo "[skip] arrow/parquet checks (QUANT_HFT_ENABLE_ARROW_PARQUET=${arrow_enabled:-OFF})"
+  failures+=("Arrow/Parquet belongs in quant_research, not the online host")
 fi
 
 if bool_on "${timescale_external_enabled}"; then
@@ -176,11 +173,8 @@ else
   echo "[skip] hiredis check (QUANT_HFT_ENABLE_REDIS_EXTERNAL=${redis_external_enabled:-OFF})"
 fi
 
-if bool_on "${redis_external_enabled}" || bool_on "${timescale_external_enabled}"; then
-  require_pkg_version "openssl" "1.1"
-else
-  echo "[skip] openssl check (no external Redis/Timescale enabled)"
-fi
+require_pkg_version "openssl" "1.1"
+require_pkg_version "yaml-cpp" "0.7"
 
 if bool_on "${metrics_enabled}"; then
   prometheus_include_dir="$(cache_value PrometheusCpp_INCLUDE_DIR)"

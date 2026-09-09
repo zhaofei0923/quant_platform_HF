@@ -10,6 +10,9 @@
 #include <string>
 #include <vector>
 
+#include "quant_hft/core/host_adapters/filesystem_configuration_reader.h"
+#include "quant_hft/core/host_adapters/host_clock.h"
+
 namespace {
 
 std::string Trim(std::string text) {
@@ -87,7 +90,11 @@ std::vector<std::string> ParseCppStructFields(const std::string& path, const std
             function_depth += brace_change();
             continue;
         }
-        if (line.find('(') != std::string::npos || line.rfind("struct ", 0) == 0) {
+        const auto paren = line.find('(');
+        const auto initializer = line.find('{');
+        if ((paren != std::string::npos &&
+             (initializer == std::string::npos || paren < initializer)) ||
+            line.rfind("struct ", 0) == 0) {
             function_depth = brace_change();
             continue;
         }
@@ -178,6 +185,8 @@ bool AssertFieldSetEqual(const std::vector<std::string>& actual,
 }  // namespace
 
 int main() {
+    quant_hft::BindOnlineHostClocks();
+    quant_hft::BindFilesystemConfigurationReader();
     try {
         const std::map<std::string, std::vector<std::string>> expected_fields = {
             {"Exchange", {"id", "name"}},
@@ -194,12 +203,29 @@ int main() {
             {"Order",
              {"order_id", "account_id", "strategy_id", "symbol", "exchange", "side", "offset",
               "order_type", "price", "quantity", "filled_quantity", "avg_fill_price", "status",
-              "created_at_ns", "updated_at_ns", "commission", "message"}},
+              "created_at_ns", "updated_at_ns", "commission", "message", "component_id",
+              "hedge_flag"}},
             {"Trade",
-             {"trade_id", "order_id", "account_id", "strategy_id", "symbol", "exchange", "side",
-              "offset", "price", "quantity", "trade_ts_ns", "commission", "profit", "trading_day",
-              "raw_trade_id", "exchange_order_id", "hedge_flag", "broker_id",
-              "valuation_complete"}},
+             {"trade_id",
+              "order_id",
+              "account_id",
+              "strategy_id",
+              "symbol",
+              "exchange",
+              "side",
+              "offset",
+              "price",
+              "quantity",
+              "trade_ts_ns",
+              "commission",
+              "profit",
+              "trading_day",
+              "raw_trade_id",
+              "exchange_order_id",
+              "hedge_flag",
+              "broker_id",
+              "valuation_complete",
+              "component_id"}},
             {"TradeIdentity",
              {"version", "account_id", "trading_day", "exchange_id", "raw_trade_id", "side",
               "broker_id"}},
@@ -242,11 +268,18 @@ int main() {
               "market_regime",
               "market_state_bars_seen",
               "market_state_decision_reason",
+              "analysis_bar_open",
+              "analysis_bar_high",
+              "analysis_bar_low",
+              "analysis_bar_close",
+              "market_state_adx",
+              "market_state_kama_er",
+              "market_state_atr_ratio",
               "ts_ns"}},
             {"SignalIntent",
              {"strategy_id", "instrument_id", "signal_type", "side", "offset", "volume",
               "limit_price", "ts_ns", "trace_id", "generated_ts_ns", "product_id",
-              "contract_generation"}},
+              "contract_generation", "component_id", "hedge_flag"}},
             {"RiskDecision",
              {"action", "rule_id", "rule_group", "rule_version", "policy_id", "policy_scope",
               "observed_value", "threshold_value", "decision_tags", "reason", "decision_ts_ns"}},
@@ -292,7 +325,8 @@ int main() {
               "venue",
               "route_id",
               "slippage_bps",
-              "impact_cost"}},
+              "impact_cost",
+              "component_id"}},
             {"OrderIntent", {"account_id",     "client_order_id",
                              "strategy_id",    "instrument_id",
                              "side",           "offset",
@@ -302,7 +336,8 @@ int main() {
                              "ts_ns",          "trace_id",
                              "exchange_id",    "trading_day",
                              "signal_ts_ns",   "market_recv_ts_ns",
-                             "product_id",     "contract_generation"}},
+                             "product_id",     "contract_generation",
+                             "component_id"}},
             {"TradingAccountSnapshot",
              {"account_id", "investor_id", "balance", "available", "curr_margin", "frozen_margin",
               "frozen_cash", "frozen_commission", "commission", "close_profit", "position_profit",
@@ -338,21 +373,8 @@ int main() {
               "product_class", "ts_ns", "source"}},
         };
 
-        const auto resolve_path = [](const std::string& relative_path) {
-            const std::filesystem::path cwd = std::filesystem::current_path();
-            const std::filesystem::path direct = cwd / relative_path;
-            if (std::filesystem::exists(direct)) {
-                return direct.string();
-            }
-            const std::filesystem::path parent = cwd.parent_path() / relative_path;
-            if (std::filesystem::exists(parent)) {
-                return parent.string();
-            }
-            return direct.string();
-        };
-
-        const std::string cpp_path = resolve_path("include/quant_hft/contracts/types.h");
-        const std::string proto_path = resolve_path("proto/quant_hft/v1/contracts.proto");
+        const std::string cpp_path = QUANT_STRATEGIES_CPP_CONTRACT;
+        const std::string proto_path = QUANT_STRATEGIES_PROTO_CONTRACT;
 
         for (const auto& [contract, expected] : expected_fields) {
             const std::vector<std::string> cpp_fields =

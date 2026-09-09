@@ -15,6 +15,7 @@ struct PendingExitKey {
     std::string strategy_id;
     std::string instrument_id;
     PositionDirection position_side{PositionDirection::kLong};
+    HedgeFlag hedge_flag{HedgeFlag::kSpeculation};
 
     bool operator==(const PendingExitKey& rhs) const;
     bool operator<(const PendingExitKey& rhs) const;
@@ -43,6 +44,11 @@ class PendingExitStore {
     bool RemoveAfterBrokerFlat(const PendingExitKey& key, std::int32_t broker_position_volume,
                                EpochNanos completed_ts_ns, std::string* error = nullptr);
 
+    // An instance may finish exiting while other instances keep broker positions open.
+    bool RemoveAfterStrategyFlat(const PendingExitKey& key, std::int32_t owned_volume,
+                                 std::int32_t reserved_volume, bool account_projection_reconciled,
+                                 EpochNanos completed_ts_ns, std::string* error = nullptr);
+
     std::optional<PendingExit> Get(const PendingExitKey& key) const;
     std::vector<PendingExit> List() const;
     std::size_t Size() const;
@@ -51,6 +57,7 @@ class PendingExitStore {
     static int Priority(SignalType signal_type);
 
    private:
+    bool RemoveConfirmed(const PendingExitKey& key, EpochNanos completed_ts_ns, std::string* error);
     bool AppendDurable(const std::string& record, std::string* error) const;
 
     const std::string wal_path_;

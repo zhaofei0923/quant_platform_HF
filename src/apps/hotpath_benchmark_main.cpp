@@ -1,3 +1,5 @@
+#include "quant_hft/core/host_adapters/host_clock.h"
+#include "quant_hft/core/host_adapters/filesystem_configuration_reader.h"
 #include <chrono>
 #include <cstdint>
 #include <iostream>
@@ -43,6 +45,8 @@ std::uint64_t RunPooled(std::size_t iterations,
 }  // namespace
 
 int main(int argc, char** argv) {
+    quant_hft::BindOnlineHostClocks();
+    quant_hft::BindFilesystemConfigurationReader();
     std::size_t iterations = 100000;
     std::size_t buffer_size = 256;
     std::size_t pool_capacity = 1024;

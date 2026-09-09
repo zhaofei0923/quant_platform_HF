@@ -12,6 +12,7 @@
 
 #include "quant_hft/core/ctp_account_identity.h"
 #include "quant_hft/core/ctp_text.h"
+#include "quant_hft/services/account_funds_query_guard.h"
 
 namespace quant_hft {
 
@@ -35,6 +36,69 @@ class CtpGatewayAdapterTestPeer {
                                              adapter.instrument_meta_snapshot_callback_);
     }
 };
+
+TEST(AccountFundsQueryGuardTest, RequiresQuiescentUnchangedQueryWindowAndConsumesOnce) {
+    AccountFundsQueryGuard guard;
+    QueryResultMetadata result;
+    result.request_id = 1;
+    result.generation = 4;
+    result.query_name = "trading_account";
+    result.complete = result.success = result.full_account = true;
+    WalReceipt wal;
+    wal.stream_id = "account-stream";
+    wal.sequence = 8;
+    wal.checksum = 42;
+    wal.durable = true;
+    guard.Begin(1, 4, wal, 7);
+    EXPECT_FALSE(guard.Consume(result, wal, 8, true));  // a concurrent local reservation
+    guard.Begin(1, 4, wal, 7);
+    auto received = wal;
+    ++received.sequence;
+    EXPECT_FALSE(guard.Consume(result, received, 7, true));  // undelivered broker fact
+    guard.Begin(1, 4, wal, 7);
+    EXPECT_FALSE(guard.Consume(result, wal, 7, false));  // active or unbooked order
+    guard.Begin(1, 4, wal, 7);
+    auto stale = result;
+    stale.generation = 3;
+    EXPECT_FALSE(guard.Consume(stale, wal, 7, true));
+    EXPECT_TRUE(guard.Consume(result, wal, 7, true));
+    EXPECT_FALSE(guard.Consume(result, wal, 7, true));
+    guard.Begin(1, 4, wal, 7);
+    result.success = false;
+    EXPECT_FALSE(guard.Consume(result, wal, 7, true));
+}
+
+TEST(CtpGatewayAdapterTest, AccountQueryPublishesMatchingStartAndCompleteMetadata) {
+    CtpGatewayAdapter adapter(100);
+    MarketDataConnectConfig config;
+    config.market_front_address = "tcp://sim-md";
+    config.trader_front_address = "tcp://sim-td";
+    config.broker_id = "9999";
+    config.user_id = "test-account";
+    config.investor_id = "test-account";
+    config.password = "test-placeholder";
+    ASSERT_TRUE(adapter.Connect(config));
+    std::vector<std::string> events;
+    std::uint64_t started_generation = 0;
+    adapter.RegisterTradingAccountQueryStartCallback([&](int request, std::uint64_t generation) {
+        EXPECT_EQ(request, 701);
+        started_generation = generation;
+        events.push_back("start");
+    });
+    adapter.RegisterTradingAccountQueryCallback([&](const auto& result) {
+        events.push_back("complete");
+        EXPECT_EQ(result.metadata.request_id, 701);
+        EXPECT_EQ(result.metadata.generation, started_generation);
+        EXPECT_TRUE(result.metadata.complete);
+        EXPECT_TRUE(result.metadata.success);
+        EXPECT_TRUE(result.metadata.full_account);
+        ASSERT_EQ(result.rows.size(), 1U);
+        EXPECT_EQ(result.rows.front().investor_id, config.investor_id);
+    });
+    ASSERT_TRUE(adapter.EnqueueTradingAccountQuery(701));
+    EXPECT_EQ(events, (std::vector<std::string>{"start", "complete"}));
+    adapter.Disconnect();
+}
 
 TEST(CtpGatewayAdapterTest, FailedQueryBatchDoesNotExposePartialOrMixedCache) {
     CtpGatewayAdapter adapter;

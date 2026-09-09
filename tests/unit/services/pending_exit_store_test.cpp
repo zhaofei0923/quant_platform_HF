@@ -163,6 +163,12 @@ TEST(PendingExitStoreTest, IgnoresOnlyTornFinalRecordDuringRecovery) {
     PendingExitStore recovered(path.string());
     ASSERT_TRUE(recovered.Recover());
     EXPECT_EQ(recovered.Size(), 1U);
+    auto next = MakePending();
+    next.strategy_id = "other-instance";
+    ASSERT_EQ(recovered.Upsert(next), PendingExitUpsertResult::kInserted);
+    PendingExitStore second_restart(path.string());
+    ASSERT_TRUE(second_restart.Recover());
+    EXPECT_EQ(second_restart.Size(), 2U);
     std::filesystem::remove_all(path.parent_path());
 }
 
@@ -178,6 +184,52 @@ TEST(PendingExitStoreTest, RejectsCorruptCompleteRecord) {
     EXPECT_FALSE(store.Recover(&error));
     EXPECT_NE(error.find("line 1"), std::string::npos);
     EXPECT_FALSE(store.IsRecovered());
+    std::filesystem::remove_all(path.parent_path());
+}
+
+TEST(PendingExitStoreTest, RecoversComponentAndSeparatesHedgeFromSpeculation) {
+    const auto path = MakeWalPath("component_hedge");
+    auto spec = MakePending();
+    spec.component_id = "trend/\"alpha\"";
+    auto hedge = spec;
+    hedge.hedge_flag = HedgeFlag::kHedge;
+    hedge.component_id = "trend/beta";
+    {
+        PendingExitStore store(path.string());
+        ASSERT_TRUE(store.Recover());
+        ASSERT_EQ(store.Upsert(spec), PendingExitUpsertResult::kInserted);
+        ASSERT_EQ(store.Upsert(hedge), PendingExitUpsertResult::kInserted);
+    }
+    PendingExitStore restarted(path.string());
+    ASSERT_TRUE(restarted.Recover());
+    ASSERT_EQ(restarted.Size(), 2U);
+    EXPECT_EQ(restarted.Get(PendingExitStore::MakeKey(spec))->component_id, spec.component_id);
+    EXPECT_EQ(restarted.Get(PendingExitStore::MakeKey(hedge))->component_id, hedge.component_id);
+    EXPECT_TRUE(restarted.RemoveAfterStrategyFlat(PendingExitStore::MakeKey(spec), 0, 0, true, 1));
+    EXPECT_TRUE(restarted.Get(PendingExitStore::MakeKey(hedge)).has_value());
+    std::filesystem::remove_all(path.parent_path());
+}
+
+TEST(PendingExitStoreTest, LegacyV2PendingExitUsesSpeculationAndKeepsIdentity) {
+    const auto path = MakeWalPath("legacy_v2");
+    std::filesystem::create_directories(path.parent_path());
+    {
+        std::ofstream output(path);
+        output
+            << R"({"schema_version":2,"namespace":"__pending_exit_v2","op":"upsert","account_id":"acc-1","strategy_id":"kama","instrument_id":"SHFE.hc2610","position_side":"long","signal_type":"stop_loss","trace_id":"legacy","trigger_ts_ns":"1"})"
+            << '\n';
+    }
+    PendingExitStore store(path.string());
+    ASSERT_TRUE(store.Recover());
+    const auto value = store.Get(PendingExitStore::MakeKey(MakePending()));
+    ASSERT_TRUE(value);
+    EXPECT_EQ(value->trace_id, "legacy");
+    EXPECT_EQ(value->hedge_flag, HedgeFlag::kSpeculation);
+    EXPECT_TRUE(value->component_id.empty());
+    ASSERT_TRUE(store.RemoveAfterStrategyFlat(PendingExitStore::MakeKey(*value), 0, 0, true, 2));
+    PendingExitStore restarted(path.string());
+    ASSERT_TRUE(restarted.Recover());
+    EXPECT_EQ(restarted.Size(), 0U);
     std::filesystem::remove_all(path.parent_path());
 }
 
@@ -202,4 +254,28 @@ TEST(PendingExitStoreTest, ConcurrentDuplicateCandidatesRemainSingleIntent) {
     std::filesystem::remove_all(path.parent_path());
 }
 
+}  // namespace quant_hft
+
+namespace quant_hft {
+TEST(PendingExitStoreTest, InstanceExitCompletesWithoutFlatteningOtherInstances) {
+    const auto path = MakeWalPath("owned_flat");
+    PendingExitStore store(path.string());
+    ASSERT_TRUE(store.Recover());
+    auto a = MakePending();
+    a.strategy_id = "A";
+    auto b = MakePending();
+    b.strategy_id = "B";
+    ASSERT_EQ(store.Upsert(a), PendingExitUpsertResult::kInserted);
+    ASSERT_EQ(store.Upsert(b), PendingExitUpsertResult::kInserted);
+    auto key = PendingExitStore::MakeKey(a);
+    EXPECT_FALSE(store.RemoveAfterStrategyFlat(key, 0, 1, true, 1));
+    EXPECT_FALSE(store.RemoveAfterStrategyFlat(key, 0, 0, false, 1));
+    ASSERT_TRUE(store.RemoveAfterStrategyFlat(key, 0, 0, true, 1));
+    EXPECT_FALSE(store.Get(key));
+    EXPECT_TRUE(store.Get(PendingExitStore::MakeKey(b)));
+    PendingExitStore restarted(path.string());
+    ASSERT_TRUE(restarted.Recover());
+    EXPECT_EQ(restarted.Size(), 1U);
+    std::filesystem::remove_all(path.parent_path());
+}
 }  // namespace quant_hft

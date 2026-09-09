@@ -1,0 +1,23 @@
+[Unit]
+Description=Quant online account %i
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=quant
+Group=quant
+WorkingDirectory=/opt/quant_platform_HF/current
+# This restricted file contains only deployment paths and host settings, never passwords.
+EnvironmentFile=/etc/quant_platform_HF/accounts/%i.env
+Environment=QUANT_HFT_DEPLOYMENT_ACCOUNT=%i
+ExecStart=/bin/bash /opt/quant_platform_HF/current/scripts/ops/run_account_deployment.sh
+Restart=on-failure
+RestartSec=15
+UMask=0077
+NoNewPrivileges=true
+TimeoutStopSec=120
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

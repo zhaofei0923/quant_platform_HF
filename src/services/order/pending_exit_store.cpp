@@ -17,8 +17,8 @@
 namespace quant_hft {
 namespace {
 
-constexpr int kSchemaVersion = 2;
-constexpr const char* kNamespace = "__pending_exit_v2";
+constexpr int kSchemaVersion = 3;
+constexpr const char* kNamespace = "__pending_exit_v3";
 
 void SetError(std::string* error, const std::string& message) {
     if (error != nullptr) {
@@ -155,7 +155,8 @@ std::string SerializeKeyFields(const PendingExitKey& key) {
     out << "\"account_id\":\"" << JsonEscape(key.account_id) << "\","
         << "\"strategy_id\":\"" << JsonEscape(key.strategy_id) << "\","
         << "\"instrument_id\":\"" << JsonEscape(key.instrument_id) << "\","
-        << "\"position_side\":\"" << PositionSideName(key.position_side) << "\"";
+        << "\"position_side\":\"" << PositionSideName(key.position_side) << "\","
+        << "\"hedge_flag\":" << static_cast<int>(key.hedge_flag);
     return out.str();
 }
 
@@ -164,7 +165,8 @@ std::string SerializeUpsert(const PendingExit& pending_exit) {
     out << "{\"schema_version\":" << kSchemaVersion << ",\"namespace\":\"" << kNamespace
         << "\",\"op\":\"upsert\"," << SerializeKeyFields(PendingExitStore::MakeKey(pending_exit))
         << ",\"signal_type\":\"" << SignalTypeName(pending_exit.signal_type) << "\",\"trace_id\":\""
-        << JsonEscape(pending_exit.trace_id) << "\",\"trigger_ts_ns\":\""
+        << JsonEscape(pending_exit.trace_id) << "\",\"component_id\":\""
+        << JsonEscape(pending_exit.component_id) << "\",\"trigger_ts_ns\":\""
         << pending_exit.trigger_ts_ns << "\"}\n";
     return out.str();
 }
@@ -188,13 +190,15 @@ bool ParseRecord(const std::string& line, std::string* op, PendingExitKey* key,
     }
     const auto* schema = root.Find("schema_version");
     if (schema == nullptr || !schema->IsNumber() ||
-        static_cast<int>(schema->number_value) != kSchemaVersion) {
+        (schema->number_value != 2 && schema->number_value != kSchemaVersion)) {
         SetError(error, "unsupported pending-exit schema version");
         return false;
     }
     std::string name_space;
     std::string position_side;
-    if (!ReadRequiredString(root, "namespace", &name_space, error) || name_space != kNamespace ||
+    const bool legacy = schema->number_value == 2;
+    if (!ReadRequiredString(root, "namespace", &name_space, error) ||
+        name_space != (legacy ? "__pending_exit_v2" : kNamespace) ||
         !ReadRequiredString(root, "op", op, error) ||
         !ReadRequiredString(root, "account_id", &key->account_id, error) ||
         !ReadRequiredString(root, "strategy_id", &key->strategy_id, error) ||
@@ -205,6 +209,17 @@ bool ParseRecord(const std::string& line, std::string* op, PendingExitKey* key,
             *error = "invalid pending-exit identity";
         }
         return false;
+    }
+    if (!legacy) {
+        const auto* hedge = root.Find("hedge_flag");
+        if (hedge == nullptr || !hedge->IsNumber() ||
+            (hedge->number_value != static_cast<int>(HedgeFlag::kSpeculation) &&
+             hedge->number_value != static_cast<int>(HedgeFlag::kHedge) &&
+             hedge->number_value != static_cast<int>(HedgeFlag::kArbitrage))) {
+            SetError(error, "invalid pending-exit hedge flag");
+            return false;
+        }
+        key->hedge_flag = static_cast<HedgeFlag>(static_cast<int>(hedge->number_value));
     }
     if (*op == "remove") {
         EpochNanos completed_ts_ns = 0;
@@ -220,6 +235,9 @@ bool ParseRecord(const std::string& line, std::string* op, PendingExitKey* key,
     pending_exit->strategy_id = key->strategy_id;
     pending_exit->instrument_id = key->instrument_id;
     pending_exit->position_side = key->position_side;
+    pending_exit->hedge_flag = key->hedge_flag;
+    if (!legacy && !ReadRequiredString(root, "component_id", &pending_exit->component_id, error))
+        return false;
     if (!ReadRequiredString(root, "signal_type", &signal_type, error) ||
         !ParseSignalType(signal_type, &pending_exit->signal_type) ||
         !ReadRequiredString(root, "trace_id", &pending_exit->trace_id, error) ||
@@ -236,12 +254,14 @@ bool ParseRecord(const std::string& line, std::string* op, PendingExitKey* key,
 
 bool PendingExitKey::operator==(const PendingExitKey& rhs) const {
     return account_id == rhs.account_id && strategy_id == rhs.strategy_id &&
-           instrument_id == rhs.instrument_id && position_side == rhs.position_side;
+           instrument_id == rhs.instrument_id && position_side == rhs.position_side &&
+           hedge_flag == rhs.hedge_flag;
 }
 
 bool PendingExitKey::operator<(const PendingExitKey& rhs) const {
-    return std::tie(account_id, strategy_id, instrument_id, position_side) <
-           std::tie(rhs.account_id, rhs.strategy_id, rhs.instrument_id, rhs.position_side);
+    return std::tie(account_id, strategy_id, instrument_id, position_side, hedge_flag) <
+           std::tie(rhs.account_id, rhs.strategy_id, rhs.instrument_id, rhs.position_side,
+                    rhs.hedge_flag);
 }
 
 PendingExitStore::PendingExitStore(std::string wal_path) : wal_path_(std::move(wal_path)) {}
@@ -273,6 +293,24 @@ bool PendingExitStore::Recover(std::string* error) {
         ++line_number;
         const auto newline = text.find('\n', begin);
         const bool is_torn_tail = newline == std::string::npos;
+        if (is_torn_tail) {
+            // A durable record ends with a newline. Remove the incomplete append before
+            // allowing subsequent writes; otherwise the next record joins the corrupt tail.
+            const int fd = ::open(wal_path_.c_str(), O_WRONLY | O_CLOEXEC);
+            if (fd < 0 || ::ftruncate(fd, static_cast<off_t>(begin)) != 0 || ::fsync(fd) != 0) {
+                const auto message = std::string(std::strerror(errno));
+                if (fd >= 0) ::close(fd);
+                SetError(error, "failed to repair torn pending-exit WAL tail: " + message);
+                recovered_ = false;
+                return false;
+            }
+            if (::close(fd) != 0) {
+                SetError(error, "failed to close repaired pending-exit WAL");
+                recovered_ = false;
+                return false;
+            }
+            break;
+        }
         const auto end = is_torn_tail ? text.size() : newline;
         const auto line = text.substr(begin, end - begin);
         begin = is_torn_tail ? text.size() : newline + 1;
@@ -285,9 +323,6 @@ bool PendingExitStore::Recover(std::string* error) {
         PendingExit pending_exit;
         std::string parse_error;
         if (!ParseRecord(line, &op, &key, &pending_exit, &parse_error)) {
-            if (is_torn_tail) {
-                break;
-            }
             SetError(error, "invalid pending-exit WAL line " + std::to_string(line_number) + ": " +
                                 parse_error);
             recovered_ = false;
@@ -361,6 +396,23 @@ bool PendingExitStore::RemoveAfterBrokerFlat(const PendingExitKey& key,
         SetError(error, "pending exit cannot be removed before broker position is flat");
         return false;
     }
+    return RemoveConfirmed(key, completed_ts_ns, error);
+}
+
+bool PendingExitStore::RemoveAfterStrategyFlat(const PendingExitKey& key, std::int32_t owned_volume,
+                                               std::int32_t reserved_volume,
+                                               bool account_projection_reconciled,
+                                               EpochNanos completed_ts_ns, std::string* error) {
+    if (!ValidateIdentity(key, error)) return false;
+    if (owned_volume != 0 || reserved_volume != 0 || !account_projection_reconciled) {
+        SetError(error, "pending exit requires own flat, no reservation, and reconciled account");
+        return false;
+    }
+    return RemoveConfirmed(key, completed_ts_ns, error);
+}
+
+bool PendingExitStore::RemoveConfirmed(const PendingExitKey& key, EpochNanos completed_ts_ns,
+                                       std::string* error) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!recovered_) {
         SetError(error, "pending-exit WAL must be recovered before mutation");
@@ -407,7 +459,8 @@ std::size_t PendingExitStore::Size() const {
 
 PendingExitKey PendingExitStore::MakeKey(const PendingExit& pending_exit) {
     return PendingExitKey{pending_exit.account_id, pending_exit.strategy_id,
-                          pending_exit.instrument_id, pending_exit.position_side};
+                          pending_exit.instrument_id, pending_exit.position_side,
+                          pending_exit.hedge_flag};
 }
 
 int PendingExitStore::Priority(SignalType signal_type) {

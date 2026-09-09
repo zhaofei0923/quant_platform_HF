@@ -1,0 +1,57 @@
+[
+  {
+    "path": "src/strategy/atomic/atomic_param_parsing.h",
+    "sha256": "5978f9357d02341b9e588d80c40c9bf1c3432e4c202bee35df8956ef18e68d1f",
+    "reason": "migrated shared helper; only formatting differs, original hash retained"
+  },
+  {
+    "path": "src/strategy/atomic/atr_take_profit.cpp",
+    "sha256": "3b6937c2ecc318a5797fe72e498039d3c15ac30fb57d10f5429dccf61be6fe61",
+    "reason": "retired legacy component absent from baseline build and registry; recoverable from baseline Git commit"
+  },
+  {
+    "path": "src/strategy/atomic/trend_opening.cpp",
+    "sha256": "646bd1c2877b41667a9fa38dbf054bc6444e5d8844563a05f8f0fc95a154d863",
+    "reason": "retired legacy component absent from baseline build and registry; recoverable from baseline Git commit"
+  },
+  {
+    "path": "src/strategy/atomic/trailing_stop_loss.cpp",
+    "sha256": "5b846abed1ef0ca1ab349781df6cb6b806f05bbab8d4890472cdbafa20331e9b",
+    "reason": "retired legacy component absent from baseline build and registry; recoverable from baseline Git commit"
+  },
+  {
+    "path": "src/strategy/atomic/atr_stop_loss.cpp",
+    "sha256": "75a09683857e7c56b16d6341de9f894a0a4ac32069477212f9d4e5c2235d0e3f",
+    "reason": "retired legacy component absent from baseline build and registry; recoverable from baseline Git commit"
+  },
+  {
+    "path": "src/strategy/atomic/kama_trend_opening.cpp",
+    "sha256": "9cc1cc4dbdbb2a21b4705fcc29e6918224a537324ff0deb6ee8e7f933078b8f1",
+    "reason": "retired legacy component absent from baseline build and registry; recoverable from baseline Git commit"
+  },
+  {
+    "path": "include/quant_hft/strategy/atomic/atr_take_profit.h",
+    "sha256": "a13773889863cc701f58682f1b995f4fc4578f52a6910ff59117229f9902e552",
+    "reason": "retired legacy component absent from baseline build and registry; recoverable from baseline Git commit"
+  },
+  {
+    "path": "include/quant_hft/strategy/atomic/atr_stop_loss.h",
+    "sha256": "821fbc22d51d4c90ea326e662230898a37512571a942d4ab8378345153fc4049",
+    "reason": "retired legacy component absent from baseline build and registry; recoverable from baseline Git commit"
+  },
+  {
+    "path": "include/quant_hft/strategy/atomic/trend_opening.h",
+    "sha256": "35478ea8b814e233cee4fa798dcd09f6eeb35b8605128563636ce67e49678531",
+    "reason": "retired legacy component absent from baseline build and registry; recoverable from baseline Git commit"
+  },
+  {
+    "path": "include/quant_hft/strategy/atomic/kama_trend_opening.h",
+    "sha256": "33681cd8a76c99de355ce718a9b15e58df4d71ba2bf41820f3e8d8b83740e1a4",
+    "reason": "retired legacy component absent from baseline build and registry; recoverable from baseline Git commit"
+  },
+  {
+    "path": "include/quant_hft/strategy/atomic/trailing_stop_loss.h",
+    "sha256": "9dac108e364a7d39e144b7182e4ec592c254a2a8e834570a3fa786b3d10fe126",
+    "reason": "retired legacy component absent from baseline build and registry; recoverable from baseline Git commit"
+  }
+]

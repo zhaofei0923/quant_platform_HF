@@ -1,3 +1,5 @@
+#include "quant_hft/core/host_adapters/host_clock.h"
+#include "quant_hft/core/host_adapters/filesystem_configuration_reader.h"
 #include <iostream>
 #include <map>
 #include <set>
@@ -38,6 +40,8 @@ bool ParseRequiredExchanges(const std::string& text, std::set<std::string>* exch
 }  // namespace
 
 int main(int argc, char** argv) {
+    quant_hft::BindOnlineHostClocks();
+    quant_hft::BindFilesystemConfigurationReader();
     if (argc != 5 || std::string(argv[1]) != "--file" ||
         std::string(argv[3]) != "--required-exchanges") {
         std::cerr << "usage: simnow_accounting_policy_check_cli --file PATH "

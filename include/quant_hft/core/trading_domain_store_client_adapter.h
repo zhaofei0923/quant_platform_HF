@@ -22,6 +22,31 @@ class TradingDomainStoreClientAdapter : public ITradingDomainStore {
     bool AdvanceTradingDay(const std::string& account, const std::string& broker,
                            const std::string& day, std::string* error) override;
 
+    bool TransferStrategyCapital(const std::string& account, const std::string& transfer_id,
+                                 const std::string& from, const std::string& to, double amount,
+                                 const std::string& reason, std::string* error) override;
+    bool AppendCapitalReconciliation(const CapitalReconciliationSnapshot& snapshot,
+                                     std::string* error) override;
+    bool ReserveStrategyOpen(const StrategyOpenReservationRequest& request,
+                             std::string* error) override;
+    bool ReserveStrategyClose(const OrderIntent& intent, std::string* error) override;
+    bool ObserveStrategyOrderEvent(const OrderEvent& event, std::string* error) override;
+    bool LoadStrategyCloseReserved(const std::string& account, const std::string& strategy,
+                                   const std::string& instrument, Side side, std::int32_t* out,
+                                   std::string* error) const override;
+    bool LoadStrategyCloseReserved(const std::string& account, const std::string& strategy,
+                                   const std::string& instrument, Side side, HedgeFlag hedge_flag,
+                                   std::int32_t* out, std::string* error) const;
+    bool ConfigureIndependentStrategyBooks(
+        const std::string& account, const std::unordered_map<std::string, double>& allocations,
+        std::string* error) override;
+    bool LoadBrokerPositionSummary(const std::string& account, std::vector<Position>* out,
+                                   std::string* error) const override;
+    bool LoadStrategyBook(const std::string& account, const std::string& strategy,
+                          StrategyCapitalSnapshot* capital, std::vector<Position>* positions,
+                          std::string* error) const override;
+    bool LoadStrategyCapital(const std::string& account, const std::string& strategy,
+                             StrategyCapitalSnapshot* out, std::string* error) const override;
     bool ApplyTrade(const TradeApplyRequest& request, TradeApplyResult* result,
                     std::string* error) override;
     bool InstallPositionBaseline(const PositionBaseline& baseline, std::string* error) override;

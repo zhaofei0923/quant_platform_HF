@@ -72,6 +72,8 @@ class CTPTraderAdapter : public IExecutionGateway {
     using OrderSubmitMappingCallback = CtpGatewayAdapter::OrderSubmitMappingCallback;
     using OrderSubmitPrepareCallback = CtpGatewayAdapter::OrderSubmitPrepareCallback;
     using TradingAccountSnapshotCallback = CtpGatewayAdapter::TradingAccountSnapshotCallback;
+    using TradingAccountQueryStartCallback = CtpGatewayAdapter::TradingAccountQueryStartCallback;
+    using TradingAccountQueryCallback = CtpGatewayAdapter::TradingAccountQueryCallback;
     using InvestorPositionSnapshotCallback = CtpGatewayAdapter::InvestorPositionSnapshotCallback;
     using InvestorPositionQueryCallback = CtpGatewayAdapter::InvestorPositionQueryCallback;
     using InstrumentMetaQueryCallback = CtpGatewayAdapter::InstrumentMetaQueryCallback;
@@ -159,6 +161,8 @@ class CTPTraderAdapter : public IExecutionGateway {
     void RegisterOrderSubmitMappingCallback(OrderSubmitMappingCallback callback);
     void RegisterOrderSubmitPrepareCallback(OrderSubmitPrepareCallback callback);
     void RegisterTradingAccountSnapshotCallback(TradingAccountSnapshotCallback callback);
+    void RegisterTradingAccountQueryStartCallback(TradingAccountQueryStartCallback callback);
+    void RegisterTradingAccountQueryCallback(TradingAccountQueryCallback callback);
     void RegisterInvestorPositionSnapshotCallback(InvestorPositionSnapshotCallback callback);
     void RegisterInvestorPositionQueryCallback(InvestorPositionQueryCallback callback);
     void RegisterInstrumentMetaQueryCallback(InstrumentMetaQueryCallback callback);
@@ -220,6 +224,8 @@ class CTPTraderAdapter : public IExecutionGateway {
     OrderSubmitMappingCallback user_order_submit_mapping_callback_;
     OrderSubmitPrepareCallback user_order_submit_prepare_callback_;
     TradingAccountSnapshotCallback user_trading_account_callback_;
+    TradingAccountQueryStartCallback user_trading_account_query_start_callback_;
+    TradingAccountQueryCallback user_trading_account_query_callback_;
     InvestorPositionSnapshotCallback user_investor_position_callback_;
     InvestorPositionQueryCallback user_investor_position_query_callback_;
     InstrumentMetaQueryCallback user_instrument_meta_query_callback_;

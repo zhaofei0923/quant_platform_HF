@@ -1,3 +1,5 @@
+#include "quant_hft/core/host_adapters/host_clock.h"
+#include "quant_hft/core/host_adapters/filesystem_configuration_reader.h"
 #include <unistd.h>
 
 #include <algorithm>
@@ -4156,6 +4158,8 @@ bool WriteDashboard(const DashboardOptions& options, const DashboardState& state
 }  // namespace
 
 int main(int argc, char** argv) {
+    quant_hft::BindOnlineHostClocks();
+    quant_hft::BindFilesystemConfigurationReader();
     std::string error;
     const DashboardOptions options = ParseOptions(argc, argv, &error);
     if (!error.empty()) {

@@ -1,0 +1,244 @@
+Internal ctest changing into directory: /home/kevin/worktrees/quant_platform_HF-split/build-split
+Test project /home/kevin/worktrees/quant_platform_HF-split/build-split
+        Start 262: PendingExitStoreTest.PersistsAndRecoversHighestPriorityForIdempotencyKey
+        Start 272: PendingExitStoreTest.InstanceExitCompletesWithoutFlatteningOtherInstances
+        Start 265: PendingExitStoreTest.PositionSideIsPartOfStableKey
+        Start 271: PendingExitStoreTest.ConcurrentDuplicateCandidatesRemainSingleIntent
+  1/119 Test #265: PendingExitStoreTest.PositionSideIsPartOfStableKey ....................................................................   Passed    0.01 sec
+        Start 263: PendingExitStoreTest.RemoveIsDurableAndIdempotent
+  2/119 Test #262: PendingExitStoreTest.PersistsAndRecoversHighestPriorityForIdempotencyKey ..............................................   Passed    0.01 sec
+        Start 266: PendingExitStoreTest.EscapedIdentityAndTraceRoundTrip
+  3/119 Test #272: PendingExitStoreTest.InstanceExitCompletesWithoutFlatteningOtherInstances .............................................   Passed    0.01 sec
+        Start 264: PendingExitStoreTest.RefusesRemovalUntilBrokerAuthoritativelyReportsFlat
+  4/119 Test #271: PendingExitStoreTest.ConcurrentDuplicateCandidatesRemainSingleIntent ..................................................   Passed    0.01 sec
+        Start 267: PendingExitStoreTest.IgnoresOnlyTornFinalRecordDuringRecovery
+  5/119 Test #264: PendingExitStoreTest.RefusesRemovalUntilBrokerAuthoritativelyReportsFlat ..............................................   Passed    0.01 sec
+        Start 199: TradingDomainStoreClientAdapterTest.ConcurrentSameAccountFillsDoNotLoseUpdates
+  6/119 Test #263: PendingExitStoreTest.RemoveIsDurableAndIdempotent .....................................................................   Passed    0.01 sec
+        Start 233: TradingDomainStoreClientAdapterTest.IndependentFillWriteFailurePreservesPhysicalCapitalAndFreeze
+  7/119 Test #266: PendingExitStoreTest.EscapedIdentityAndTraceRoundTrip .................................................................   Passed    0.01 sec
+        Start 234: TradingDomainStoreClientAdapterTest.BrokerBaselineCannotBypassConfiguredIndependentBooks
+  8/119 Test #267: PendingExitStoreTest.IgnoresOnlyTornFinalRecordDuringRecovery .........................................................   Passed    0.01 sec
+        Start 198: TradingDomainStoreClientAdapterTest.EveryApplyWriteFailureRollsBackAndCanBeReplayed
+  9/119 Test #199: TradingDomainStoreClientAdapterTest.ConcurrentSameAccountFillsDoNotLoseUpdates ........................................   Passed    0.00 sec
+        Start 224: TradingDomainStoreClientAdapterTest.ParallelIndependentOpenFundsCannotOversubscribe
+ 10/119 Test #234: TradingDomainStoreClientAdapterTest.BrokerBaselineCannotBypassConfiguredIndependentBooks ..............................   Passed    0.00 sec
+        Start 231: TradingDomainStoreClientAdapterTest.CapitalTransferJournalFailureRollsBackBothOwners
+ 11/119 Test #233: TradingDomainStoreClientAdapterTest.IndependentFillWriteFailurePreservesPhysicalCapitalAndFreeze ......................   Passed    0.01 sec
+        Start 225: TradingDomainStoreClientAdapterTest.OpenFundsStayFrozenUntilLateFillCommitsThenConvertToMargin
+ 12/119 Test #198: TradingDomainStoreClientAdapterTest.EveryApplyWriteFailureRollsBackAndCanBeReplayed ...................................   Passed    0.00 sec
+        Start 200: TradingDomainStoreClientAdapterTest.OutboxConsumersAcknowledgeIndependently
+ 13/119 Test #224: TradingDomainStoreClientAdapterTest.ParallelIndependentOpenFundsCannotOversubscribe ...................................   Passed    0.00 sec
+        Start 230: TradingDomainStoreClientAdapterTest.ExplicitCapitalTransferIsIdempotentAndConservesTotal
+ 14/119 Test #231: TradingDomainStoreClientAdapterTest.CapitalTransferJournalFailureRollsBackBothOwners ..................................   Passed    0.00 sec
+        Start 268: PendingExitStoreTest.RejectsCorruptCompleteRecord
+ 15/119 Test #225: TradingDomainStoreClientAdapterTest.OpenFundsStayFrozenUntilLateFillCommitsThenConvertToMargin ........................   Passed    0.00 sec
+        Start 212: TradingDomainStoreClientAdapterTest.VerifiedMixedCloseFeesUseCommittedAllocationAndReplayRawPayload
+ 16/119 Test #200: TradingDomainStoreClientAdapterTest.OutboxConsumersAcknowledgeIndependently ...........................................   Passed    0.00 sec
+        Start 221: TradingDomainStoreClientAdapterTest.IndependentEconomicLotsAndPhysicalDatesRemainSeparate
+ 17/119 Test #230: TradingDomainStoreClientAdapterTest.ExplicitCapitalTransferIsIdempotentAndConservesTotal ..............................   Passed    0.00 sec
+        Start 232: TradingDomainStoreClientAdapterTest.ReconciliationBridgeExplainsDifferenceWithoutAllocation
+ 18/119 Test #268: PendingExitStoreTest.RejectsCorruptCompleteRecord .....................................................................   Passed    0.00 sec
+        Start 235: IndependentStrategyGuardTest.RejectsOnlyNewCrossingOrderAndEnforcesDeploymentLimits
+ 19/119 Test #212: TradingDomainStoreClientAdapterTest.VerifiedMixedCloseFeesUseCommittedAllocationAndReplayRawPayload ...................   Passed    0.00 sec
+        Start 206: TradingDomainStoreClientAdapterTest.ExactCloseAllocationKeepsSidesAndHedgeBucketsSeparate
+ 20/119 Test #221: TradingDomainStoreClientAdapterTest.IndependentEconomicLotsAndPhysicalDatesRemainSeparate .............................   Passed    0.00 sec
+        Start 205: TradingDomainStoreClientAdapterTest.DirectionAndTradingDayArePartOfIdentity
+ 21/119 Test #232: TradingDomainStoreClientAdapterTest.ReconciliationBridgeExplainsDifferenceWithoutAllocation ...........................   Passed    0.00 sec
+        Start 223: TradingDomainStoreClientAdapterTest.IndependentCloseReservationsAreAtomicAndRetainUnbookedFills
+ 22/119 Test #235: IndependentStrategyGuardTest.RejectsOnlyNewCrossingOrderAndEnforcesDeploymentLimits ...................................   Passed    0.00 sec
+        Start 207: TradingDomainStoreClientAdapterTest.CloseCannotConsumeAnotherHedgeBook
+ 23/119 Test #206: TradingDomainStoreClientAdapterTest.ExactCloseAllocationKeepsSidesAndHedgeBucketsSeparate .............................   Passed    0.00 sec
+        Start 210: TradingDomainStoreClientAdapterTest.LiveGenericCloseRequiresRuleAndUsesItsExactAllocation
+ 24/119 Test #205: TradingDomainStoreClientAdapterTest.DirectionAndTradingDayArePartOfIdentity ...........................................   Passed    0.00 sec
+        Start 211: TradingDomainStoreClientAdapterTest.VerifiedOpeningPriceValuationPersistsComputedProfitWithoutBlockingUnvaluedFacts
+ 25/119 Test #223: TradingDomainStoreClientAdapterTest.IndependentCloseReservationsAreAtomicAndRetainUnbookedFills .......................   Passed    0.00 sec
+        Start 208: TradingDomainStoreClientAdapterTest.RuntimeAccountRejectsRawBackfillAndUnattributedTrade
+ 26/119 Test #207: TradingDomainStoreClientAdapterTest.CloseCannotConsumeAnotherHedgeBook ................................................   Passed    0.00 sec
+        Start 203: TradingDomainStoreClientAdapterTest.ReceiptGapsAdvanceOnlyWhenEveryRecordIsApplied
+ 27/119 Test #210: TradingDomainStoreClientAdapterTest.LiveGenericCloseRequiresRuleAndUsesItsExactAllocation .............................   Passed    0.00 sec
+        Start 217: TradingDomainStoreClientAdapterTest.OrderLifecycleUpdatesOneAccountScopedRow
+ 28/119 Test #211: TradingDomainStoreClientAdapterTest.VerifiedOpeningPriceValuationPersistsComputedProfitWithoutBlockingUnvaluedFacts ...   Passed    0.00 sec
+        Start 222: TradingDomainStoreClientAdapterTest.IndependentOpposingPositionsCannotCloseAnotherOwner
+ 29/119 Test #208: TradingDomainStoreClientAdapterTest.RuntimeAccountRejectsRawBackfillAndUnattributedTrade ..............................   Passed    0.00 sec
+        Start 261: PendingExitStoreTest.NeverPersistsOpenSignalsForLaterChasing
+ 30/119 Test #203: TradingDomainStoreClientAdapterTest.ReceiptGapsAdvanceOnlyWhenEveryRecordIsApplied ....................................   Passed    0.00 sec
+        Start 204: TradingDomainStoreClientAdapterTest.ReceiptCannotBeReboundToAnotherTradeOrChecksum
+ 31/119 Test #217: TradingDomainStoreClientAdapterTest.OrderLifecycleUpdatesOneAccountScopedRow ..........................................   Passed    0.00 sec
+        Start 215: TradingDomainStoreClientAdapterTest.TradingDayAdvanceIsAtomicIdempotentAndEmitsPositionOutbox
+ 32/119 Test #222: TradingDomainStoreClientAdapterTest.IndependentOpposingPositionsCannotCloseAnotherOwner ...............................   Passed    0.00 sec
+        Start 202: TradingDomainStoreClientAdapterTest.AtomicApplyDeduplicatesAndQuarantinesPayloadConflict
+ 33/119 Test #261: PendingExitStoreTest.NeverPersistsOpenSignalsForLaterChasing ..........................................................   Passed    0.00 sec
+        Start 209: TradingDomainStoreClientAdapterTest.BrokerBaselineCoversHistoryWithoutAddingAgain
+ 34/119 Test #204: TradingDomainStoreClientAdapterTest.ReceiptCannotBeReboundToAnotherTradeOrChecksum ....................................   Passed    0.00 sec
+        Start 219: TradingDomainStoreClientAdapterTest.PersistsTimestampWithUtcOffsetSuffix
+ 35/119 Test #215: TradingDomainStoreClientAdapterTest.TradingDayAdvanceIsAtomicIdempotentAndEmitsPositionOutbox .........................   Passed    0.00 sec
+        Start 213: TradingDomainStoreClientAdapterTest.RequiredValuationLeavesUnknownNewFillAndWatermarkPending
+ 36/119 Test #202: TradingDomainStoreClientAdapterTest.AtomicApplyDeduplicatesAndQuarantinesPayloadConflict ..............................   Passed    0.00 sec
+        Start 218: TradingDomainStoreClientAdapterTest.RejectsMissingRequiredFields
+ 37/119 Test #209: TradingDomainStoreClientAdapterTest.BrokerBaselineCoversHistoryWithoutAddingAgain .....................................   Passed    0.00 sec
+        Start 216: TradingDomainStoreClientAdapterTest.WritesDomainRowsToConfiguredSchema
+ 38/119 Test #219: TradingDomainStoreClientAdapterTest.PersistsTimestampWithUtcOffsetSuffix ..............................................   Passed    0.00 sec
+        Start 220: TradingDomainStoreClientAdapterTest.SkipsDuplicateOrderAndTradeByBusinessKeys
+ 39/119 Test #213: TradingDomainStoreClientAdapterTest.RequiredValuationLeavesUnknownNewFillAndWatermarkPending ..........................   Passed    0.00 sec
+        Start 214: TradingDomainStoreClientAdapterTest.InMemoryTransactionRollsBackOnFalseAndException
+ 40/119 Test #218: TradingDomainStoreClientAdapterTest.RejectsMissingRequiredFields ......................................................   Passed    0.00 sec
+        Start 260: PendingExitStoreTest.RequiresRecoveryBeforeMutation
+ 41/119 Test #216: TradingDomainStoreClientAdapterTest.WritesDomainRowsToConfiguredSchema ................................................   Passed    0.00 sec
+        Start 201: TradingDomainStoreClientAdapterTest.RuntimeEnvironmentBindingCannotBeReusedAcrossBrokersOrEnvironments
+ 42/119 Test #220: TradingDomainStoreClientAdapterTest.SkipsDuplicateOrderAndTradeByBusinessKeys .........................................   Passed    0.00 sec
+        Start  71: CtpConfigLoaderTest.ResolveEnvVarsReplacesExistingEnvVar
+ 43/119 Test #214: TradingDomainStoreClientAdapterTest.InMemoryTransactionRollsBackOnFalseAndException ...................................   Passed    0.00 sec
+        Start  72: CtpConfigLoaderTest.ResolveEnvVarsLeavesUnknownVarEmpty
+ 44/119 Test #260: PendingExitStoreTest.RequiresRecoveryBeforeMutation ...................................................................   Passed    0.00 sec
+        Start  73: CtpConfigLoaderTest.LoadConfigWithEnvVarsSuccess
+ 45/119 Test #201: TradingDomainStoreClientAdapterTest.RuntimeEnvironmentBindingCannotBeReusedAcrossBrokersOrEnvironments ................   Passed    0.00 sec
+        Start  74: CtpConfigLoaderTest.LoadsValidSimConfigWithPasswordEnv
+ 46/119 Test  #71: CtpConfigLoaderTest.ResolveEnvVarsReplacesExistingEnvVar ..............................................................   Passed    0.00 sec
+        Start  75: CtpConfigLoaderTest.RejectsUnknownEnvironment
+ 47/119 Test  #72: CtpConfigLoaderTest.ResolveEnvVarsLeavesUnknownVarEmpty ...............................................................   Passed    0.00 sec
+        Start  76: CtpConfigLoaderTest.SupportsDisablingTerminalAuthInNonProduction
+ 48/119 Test  #73: CtpConfigLoaderTest.LoadConfigWithEnvVarsSuccess ......................................................................   Passed    0.00 sec
+        Start  77: CtpConfigLoaderTest.RejectsProductionConfigWhenTerminalAuthDisabled
+ 49/119 Test  #74: CtpConfigLoaderTest.LoadsValidSimConfigWithPasswordEnv ................................................................   Passed    0.00 sec
+        Start  78: CtpConfigLoaderTest.RejectsWhenPasswordCannotBeResolved
+ 50/119 Test  #75: CtpConfigLoaderTest.RejectsUnknownEnvironment .........................................................................   Passed    0.00 sec
+        Start  79: CtpConfigLoaderTest.LoadsStrategyEngineKeysAndSplitsLists
+ 51/119 Test  #76: CtpConfigLoaderTest.SupportsDisablingTerminalAuthInNonProduction ......................................................   Passed    0.00 sec
+        Start  80: CtpConfigLoaderTest.LoadsDominantRuntimeRecheckKeys
+ 52/119 Test  #77: CtpConfigLoaderTest.RejectsProductionConfigWhenTerminalAuthDisabled ...................................................   Passed    0.00 sec
+        Start  81: CtpConfigLoaderTest.LoadsDominantContractSelectionKeys
+ 53/119 Test  #78: CtpConfigLoaderTest.RejectsWhenPasswordCannotBeResolved ...............................................................   Passed    0.00 sec
+        Start  82: CtpConfigLoaderTest.LoadsStrategyStateAndMetricsConfigKeys
+ 54/119 Test  #79: CtpConfigLoaderTest.LoadsStrategyEngineKeysAndSplitsLists .............................................................   Passed    0.00 sec
+        Start  83: CtpConfigLoaderTest.RejectsNegativeStrategyMetricsEmitInterval
+ 55/119 Test  #80: CtpConfigLoaderTest.LoadsDominantRuntimeRecheckKeys ...................................................................   Passed    0.00 sec
+        Start  84: CtpConfigLoaderTest.RejectsInvalidRunType
+ 56/119 Test  #81: CtpConfigLoaderTest.LoadsDominantContractSelectionKeys ................................................................   Passed    0.00 sec
+        Start  85: CtpConfigLoaderTest.RequiresCompositeConfigPathWhenFactoryIsComposite
+ 57/119 Test  #82: CtpConfigLoaderTest.LoadsStrategyStateAndMetricsConfigKeys ............................................................   Passed    0.00 sec
+        Start  86: CtpConfigLoaderTest.ResolvesRelativeCompositeConfigPathFromYamlDirectory
+ 58/119 Test  #83: CtpConfigLoaderTest.RejectsNegativeStrategyMetricsEmitInterval ........................................................   Passed    0.00 sec
+        Start  87: CtpConfigLoaderTest.RejectsDeprecatedStrategyPollIntervalSetting
+ 59/119 Test  #84: CtpConfigLoaderTest.RejectsInvalidRunType .............................................................................   Passed    0.00 sec
+        Start  88: CtpConfigLoaderTest.LoadsExecutionAndRiskRuleConfigs
+ 60/119 Test  #85: CtpConfigLoaderTest.RequiresCompositeConfigPathWhenFactoryIsComposite .................................................   Passed    0.00 sec
+        Start  89: CtpConfigLoaderTest.RejectsInvalidMarginToEquityRatio
+ 61/119 Test  #86: CtpConfigLoaderTest.ResolvesRelativeCompositeConfigPathFromYamlDirectory ..............................................   Passed    0.00 sec
+        Start  90: CtpConfigLoaderTest.LoadsPerStrategyCompositeConfigMap
+ 62/119 Test  #87: CtpConfigLoaderTest.RejectsDeprecatedStrategyPollIntervalSetting ......................................................   Passed    0.00 sec
+        Start  91: CtpConfigLoaderTest.DefaultsAccountIdToUserIdWhenNotConfigured
+ 63/119 Test  #88: CtpConfigLoaderTest.LoadsExecutionAndRiskRuleConfigs ..................................................................   Passed    0.00 sec
+        Start  92: CtpConfigLoaderTest.RejectsInvalidCancelExecutionConfigs
+ 64/119 Test  #89: CtpConfigLoaderTest.RejectsInvalidMarginToEquityRatio .................................................................   Passed    0.00 sec
+        Start  93: CtpConfigLoaderTest.LoadsAndValidatesCtpQueryIntervals
+ 65/119 Test  #90: CtpConfigLoaderTest.LoadsPerStrategyCompositeConfigMap ................................................................   Passed    0.00 sec
+        Start  94: CtpConfigLoaderTest.LoadsFlowBreakerAndAuditSettings
+ 66/119 Test  #91: CtpConfigLoaderTest.DefaultsAccountIdToUserIdWhenNotConfigured ........................................................   Passed    0.00 sec
+        Start  95: CtpConfigLoaderTest.LoadsAndValidatesLoggingSettings
+ 67/119 Test  #92: CtpConfigLoaderTest.RejectsInvalidCancelExecutionConfigs ..............................................................   Passed    0.00 sec
+        Start  96: CtpConfigLoaderTest.LoadsNestedMarketStateDetectorConfig
+ 68/119 Test  #93: CtpConfigLoaderTest.LoadsAndValidatesCtpQueryIntervals ................................................................   Passed    0.00 sec
+        Start  97: CtpConfigLoaderTest.IgnoresDeprecatedMarketStateFlatGateKeys
+ 69/119 Test  #94: CtpConfigLoaderTest.LoadsFlowBreakerAndAuditSettings ..................................................................   Passed    0.00 sec
+        Start  98: CtpConfigLoaderTest.RejectsInvalidMarketStateDetectorConfig
+ 70/119 Test  #95: CtpConfigLoaderTest.LoadsAndValidatesLoggingSettings ..................................................................   Passed    0.00 sec
+        Start  99: CtpConfigLoaderTest.LoadsMarketStateDetectorByProductOverrides
+ 71/119 Test  #96: CtpConfigLoaderTest.LoadsNestedMarketStateDetectorConfig ..............................................................   Passed    0.00 sec
+        Start 100: CtpConfigLoaderTest.RejectsInvalidMarketStateDetectorByProductConfig
+ 72/119 Test  #97: CtpConfigLoaderTest.IgnoresDeprecatedMarketStateFlatGateKeys ..........................................................   Passed    0.00 sec
+        Start 101: CtpConfigLoaderTest.InvestorIdentityDefaultsAccountWithoutUsingTheLoginOperator
+ 73/119 Test  #98: CtpConfigLoaderTest.RejectsInvalidMarketStateDetectorConfig ...........................................................   Passed    0.00 sec
+        Start 102: CtpConfigLoaderTest.RealApiDoesNotInferInvestorFromTheLoginOperator
+ 74/119 Test  #99: CtpConfigLoaderTest.LoadsMarketStateDetectorByProductOverrides ........................................................   Passed    0.00 sec
+        Start 105: AccountFundsQueryGuardTest.RequiresQuiescentUnchangedQueryWindowAndConsumesOnce
+ 75/119 Test #100: CtpConfigLoaderTest.RejectsInvalidMarketStateDetectorByProductConfig ..................................................   Passed    0.00 sec
+        Start 106: CtpGatewayAdapterTest.AccountQueryPublishesMatchingStartAndCompleteMetadata
+ 76/119 Test #101: CtpConfigLoaderTest.InvestorIdentityDefaultsAccountWithoutUsingTheLoginOperator .......................................   Passed    0.00 sec
+        Start 107: CtpGatewayAdapterTest.FailedQueryBatchDoesNotExposePartialOrMixedCache
+ 77/119 Test #102: CtpConfigLoaderTest.RealApiDoesNotInferInvestorFromTheLoginOperator ...................................................   Passed    0.00 sec
+        Start 108: CtpGatewayAdapterTest.EmptyFilteredBatchRemovesOnlyItsScopeAndRejectsOldGeneration
+ 78/119 Test #105: AccountFundsQueryGuardTest.RequiresQuiescentUnchangedQueryWindowAndConsumesOnce .......................................   Passed    0.00 sec
+        Start 109: CtpGatewayAdapterTest.ConnectSubscribeAndOrderFlow
+ 79/119 Test #106: CtpGatewayAdapterTest.AccountQueryPublishesMatchingStartAndCompleteMetadata ...........................................   Passed    0.00 sec
+        Start 110: CtpGatewayAdapterTest.PlaceOrderEmitsSubmitMappingBeforeOrderCallback
+ 80/119 Test #107: CtpGatewayAdapterTest.FailedQueryBatchDoesNotExposePartialOrMixedCache ................................................   Passed    0.00 sec
+        Start 111: CtpGatewayAdapterTest.DurablePrepareFailureProducesNoSubmissionOrOrderCallback
+ 81/119 Test #108: CtpGatewayAdapterTest.EmptyFilteredBatchRemovesOnlyItsScopeAndRejectsOldGeneration ....................................   Passed    0.00 sec
+        Start 112: CtpGatewayAdapterTest.ConnectionStateListenersAreIndependentAndRemovable
+ 82/119 Test #109: CtpGatewayAdapterTest.ConnectSubscribeAndOrderFlow ....................................................................   Passed    0.00 sec
+        Start 113: CtpGatewayAdapterTest.QueryAndOffsetApplySrc
+ 83/119 Test #110: CtpGatewayAdapterTest.PlaceOrderEmitsSubmitMappingBeforeOrderCallback .................................................   Passed    0.00 sec
+        Start 114: CtpGatewayAdapterTest.QuerySnapshotsInSimulatedMode
+ 84/119 Test #111: CtpGatewayAdapterTest.DurablePrepareFailureProducesNoSubmissionOrOrderCallback ........................................   Passed    0.00 sec
+        Start 115: CtpGatewayAdapterTest.CallbackCanReenterCancelOrderWithoutLockContention
+ 85/119 Test #112: CtpGatewayAdapterTest.ConnectionStateListenersAreIndependentAndRemovable ..............................................   Passed    0.00 sec
+        Start 116: CtpGatewayAdapterTest.ConnectFailureExposesDiagnostic
+ 86/119 Test #113: CtpGatewayAdapterTest.QueryAndOffsetApplySrc ..........................................................................   Passed    0.00 sec
+        Start 117: CtpGatewayAdapterTest.SuccessfulConnectClearsDiagnostic
+ 87/119 Test #114: CtpGatewayAdapterTest.QuerySnapshotsInSimulatedMode ...................................................................   Passed    0.00 sec
+        Start 118: CtpGatewayAdapterTest.NormalizeMarketSnapshotCleansInvalidValuesAndFallbacks
+ 88/119 Test #115: CtpGatewayAdapterTest.CallbackCanReenterCancelOrderWithoutLockContention ..............................................   Passed    0.00 sec
+        Start 119: CtpGatewayAdapterTest.NormalizeMarketSnapshotKeepsValidValues
+ 89/119 Test #116: CtpGatewayAdapterTest.ConnectFailureExposesDiagnostic .................................................................   Passed    0.00 sec
+        Start 120: CtpGatewayAdapterTest.ParsesExchangeTimestampAsAsiaShanghaiWithMilliseconds
+ 90/119 Test #117: CtpGatewayAdapterTest.SuccessfulConnectClearsDiagnostic ...............................................................   Passed    0.00 sec
+        Start 121: CtpGatewayAdapterTest.AccountIdentityUsesInvestorAcrossSimulatedSnapshotsAndMappings
+ 91/119 Test #118: CtpGatewayAdapterTest.NormalizeMarketSnapshotCleansInvalidValuesAndFallbacks ..........................................   Passed    0.00 sec
+        Start 122: CtpGatewayAdapterTest.RealConnectionRejectsAnUnconfirmedInvestorBeforeSdkAccess
+ 92/119 Test #119: CtpGatewayAdapterTest.NormalizeMarketSnapshotKeepsValidValues .........................................................   Passed    0.00 sec
+        Start 123: CtpGatewayAdapterTest.RawInvestorIdentityHasPriorityAndUnknownIdentityStaysUnknown
+ 93/119 Test #120: CtpGatewayAdapterTest.ParsesExchangeTimestampAsAsiaShanghaiWithMilliseconds ...........................................   Passed    0.00 sec
+        Start 124: CtpGatewayAdapterTest.SimulatedTradingDayIsExplicitAndCopiedIntoPositionQueryMetadata
+ 94/119 Test #121: CtpGatewayAdapterTest.AccountIdentityUsesInvestorAcrossSimulatedSnapshotsAndMappings ..................................   Passed    0.00 sec
+        Start 126: CTPTraderAdapterTest.AccountQueryMetadataSurvivesAdapterDispatch
+ 95/119 Test #122: CtpGatewayAdapterTest.RealConnectionRejectsAnUnconfirmedInvestorBeforeSdkAccess .......................................   Passed    0.00 sec
+        Start 127: CTPTraderAdapterTest.DisconnectTriggersReconnectScheduling
+ 96/119 Test #123: CtpGatewayAdapterTest.RawInvestorIdentityHasPriorityAndUnknownIdentityStaysUnknown ....................................   Passed    0.00 sec
+        Start 128: CTPTraderAdapterTest.ReadinessSnapshotReflectsDisconnectedRecoveryState
+ 97/119 Test #124: CtpGatewayAdapterTest.SimulatedTradingDayIsExplicitAndCopiedIntoPositionQueryMetadata .................................   Passed    0.00 sec
+        Start 129: CTPTraderAdapterTest.ReconnectPerformsLoginAndConfirmSettlement
+ 98/119 Test #128: CTPTraderAdapterTest.ReadinessSnapshotReflectsDisconnectedRecoveryState ...............................................   Passed    0.00 sec
+        Start 130: CTPTraderAdapterTest.ReconnectAttemptLimitUsesConnectConfig
+ 99/119 Test #126: CTPTraderAdapterTest.AccountQueryMetadataSurvivesAdapterDispatch ......................................................   Passed    0.01 sec
+        Start 131: CTPTraderAdapterTest.GatewayHealthyAfterExhaustionRestoresReadyState
+100/119 Test #130: CTPTraderAdapterTest.ReconnectAttemptLimitUsesConnectConfig ...........................................................   Passed    0.01 sec
+        Start 132: CTPTraderAdapterTest.GatewayOwnedLoginIsNotRepeatedDuringRecoveryCycles
+101/119 Test #132: CTPTraderAdapterTest.GatewayOwnedLoginIsNotRepeatedDuringRecoveryCycles ...............................................   Passed    0.01 sec
+        Start 133: CTPTraderAdapterTest.DisconnectCancelsPendingReconnectTimer
+102/119 Test #131: CTPTraderAdapterTest.GatewayHealthyAfterExhaustionRestoresReadyState ..................................................   Passed    0.02 sec
+        Start 134: CTPTraderAdapterTest.RecoverOrdersAndTradesQueriesCtp
+103/119 Test #134: CTPTraderAdapterTest.RecoverOrdersAndTradesQueriesCtp .................................................................   Passed    0.00 sec
+        Start 135: CTPTraderAdapterTest.DisconnectRejectsPendingLoginPromise
+104/119 Test #135: CTPTraderAdapterTest.DisconnectRejectsPendingLoginPromise .............................................................   Passed    0.00 sec
+        Start 136: CTPTraderAdapterTest.LoginAsyncReturnsFutureAndResolvesOnSuccess
+105/119 Test #136: CTPTraderAdapterTest.LoginAsyncReturnsFutureAndResolvesOnSuccess ......................................................   Passed    0.00 sec
+        Start 137: CTPTraderAdapterTest.LoginAsyncTimesOut
+106/119 Test #137: CTPTraderAdapterTest.LoginAsyncTimesOut ...............................................................................   Passed    0.09 sec
+        Start 138: CTPTraderAdapterTest.PlaceOrderWithRefReturnsNonEmptyString
+107/119 Test #138: CTPTraderAdapterTest.PlaceOrderWithRefReturnsNonEmptyString ...........................................................   Passed    0.00 sec
+        Start 139: CTPTraderAdapterTest.FinalDeliveryStopJoinsCallbackBeforeCapturedStateCanDie
+108/119 Test #139: CTPTraderAdapterTest.FinalDeliveryStopJoinsCallbackBeforeCapturedStateCanDie ..........................................   Passed    0.03 sec
+        Start 140: CTPTraderAdapterTest.CriticalDispatchTimeoutTriggersCircuitBreakerCallback
+109/119 Test #140: CTPTraderAdapterTest.CriticalDispatchTimeoutTriggersCircuitBreakerCallback ............................................   Passed    0.13 sec
+        Start 141: CTPTraderAdapterTest.AccountingQueryMetadataSurvivesReliableCallbackDelivery
+110/119 Test #141: CTPTraderAdapterTest.AccountingQueryMetadataSurvivesReliableCallbackDelivery ..........................................   Passed    0.00 sec
+        Start 226: TradingDomainStoreClientAdapterTest.CancelActionRejectionKeepsLiveOrderReservations
+111/119 Test #226: TradingDomainStoreClientAdapterTest.CancelActionRejectionKeepsLiveOrderReservations ...................................   Passed    0.00 sec
+        Start 227: TradingDomainStoreClientAdapterTest.AccountGrossBudgetIncludesOtherStrategiesReservations
+112/119 Test #227: TradingDomainStoreClientAdapterTest.AccountGrossBudgetIncludesOtherStrategiesReservations .............................   Passed    0.00 sec
+        Start 228: TradingDomainStoreClientAdapterTest.AccountZeroNetStillConsumesGrossLongAndShortBudget
+113/119 Test #228: TradingDomainStoreClientAdapterTest.AccountZeroNetStillConsumesGrossLongAndShortBudget ................................   Passed    0.00 sec
+        Start 229: TradingDomainStoreClientAdapterTest.FillCannotConsumeDifferentReservationInstrumentOrHedge
+114/119 Test #229: TradingDomainStoreClientAdapterTest.FillCannotConsumeDifferentReservationInstrumentOrHedge ............................   Passed    0.00 sec
+        Start 269: PendingExitStoreTest.RecoversComponentAndSeparatesHedgeFromSpeculation
+115/119 Test #269: PendingExitStoreTest.RecoversComponentAndSeparatesHedgeFromSpeculation ................................................   Passed    0.01 sec
+        Start 270: PendingExitStoreTest.LegacyV2PendingExitUsesSpeculationAndKeepsIdentity
+116/119 Test #270: PendingExitStoreTest.LegacyV2PendingExitUsesSpeculationAndKeepsIdentity ...............................................   Passed    0.01 sec
+117/119 Test #127: CTPTraderAdapterTest.DisconnectTriggersReconnectScheduling ............................................................   Passed    0.51 sec
+118/119 Test #129: CTPTraderAdapterTest.ReconnectPerformsLoginAndConfirmSettlement .......................................................   Passed    0.51 sec
+119/119 Test #133: CTPTraderAdapterTest.DisconnectCancelsPendingReconnectTimer ...........................................................   Passed    1.41 sec
+
+100% tests passed, 0 tests failed out of 119
+
+Total Test time (real) =   1.58 sec

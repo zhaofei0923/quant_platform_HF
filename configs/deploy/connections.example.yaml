@@ -1,0 +1,17 @@
+# Connection-only template. Algorithm and instance identities belong to deployment.
+ctp:
+  environment: simnow
+  enable_real_api: true
+  is_production_mode: false
+  broker_id: ${CTP_SIM_BROKER_ID}
+  user_id: ${CTP_SIM_USER_ID}
+  investor_id: ${CTP_SIM_INVESTOR_ID}
+  password: ${CTP_SIM_PASSWORD}
+  auth_code: ${CTP_SIM_AUTH_CODE}
+  app_id: ${CTP_SIM_APP_ID}
+  md_front: ${CTP_SIM_MARKET_FRONT}
+  td_front: ${CTP_SIM_TRADER_FRONT}
+  active_contract_mode: dominant_open_interest
+  dominant_contract_switch_mode: flat_only
+  strategy_factory: composite
+  run_type: sim

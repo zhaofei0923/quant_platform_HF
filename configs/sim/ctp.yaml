@@ -1,9 +1,9 @@
+# Instance identity and parameter sets are resolved from configs/deploy manifests.
 # CONFIG DOC
 # Purpose: SimNow 联调/压测配置（由环境变量选择交易时段或 7x24）。
 # Consumer: core_engine / simnow_compare_cli
 # Field dictionary: docs/ops/config_catalog.md (`configs/sim/ctp.yaml`)
 # Notes:
-#   1) strategy_factory=composite 时必须配置 strategy_composite_config。
 #   2) risk_rule_<group>_* 为分组风控模板字段，键名需与 risk_rule_groups 对齐。
 
 ctp:
@@ -97,11 +97,8 @@ ctp:
   dominant_contract_switch_timeout_ms: 30000
   dominant_contract_require_complete_baseline: true
   dominant_contract_switch_mode: "flat_only"   # startup_only | dry_run | flat_only
-  strategy_ids: "kama_trend_production"
   strategy_factory: "composite"
-  strategy_composite_config: "configs/strategies/main_backtest_production.yaml"
   # Optional per-strategy overrides for multi-product runs:
-  # strategy_composite_config_map:
   #   kama_trend_c: "configs/strategies/main_backtest_production_c.yaml"
   #   kama_trend_rb: "configs/strategies/main_backtest_production_rb.yaml"
   strategy_queue_capacity: 8192

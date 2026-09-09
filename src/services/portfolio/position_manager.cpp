@@ -58,6 +58,10 @@ bool PositionManager::RefreshAccountProjection(const std::string& account_id, st
     std::unordered_map<std::string, Position> aggregates;
     for (const auto& position : positions) {
         latest_positions_[PositionMapKey(position)] = position;
+    }
+    std::vector<Position> physical;
+    if (!domain_store_->LoadBrokerPositionSummary(account_id, &physical, error)) return false;
+    for (const auto& position : physical) {
         auto& total = aggregates[position.symbol];
         total.account_id = account_id;
         total.symbol = position.symbol;

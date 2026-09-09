@@ -1,76 +1,64 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-RAW_VERSION="${1:-$(date -u +%Y%m%dT%H%M%SZ)}"
-VERSION="${RAW_VERSION//\//-}"
-VERSION="${VERSION//:/-}"
-OUT_DIR="${2:-$ROOT_DIR/dist}"
-
-if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9]+)*$ ]] && \
-   [[ ! "$VERSION" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then
-  echo "error: version must be semver (vX.Y.Z) or UTC timestamp (YYYYMMDDTHHMMSSZ)" >&2
-  exit 2
-fi
-
-BUNDLE_NAME="quant-hft-cpp-${VERSION}"
-STAGE_DIR="$(mktemp -d)"
-PAYLOAD_DIR="$STAGE_DIR/$BUNDLE_NAME"
-trap 'rm -rf "$STAGE_DIR"' EXIT
-
-mkdir -p "$OUT_DIR"
-mkdir -p "$PAYLOAD_DIR"/{bin,configs/sim,docs,scripts/build,scripts/ops}
-
-cp "$ROOT_DIR/README.md" "$PAYLOAD_DIR/"
-cp "$ROOT_DIR/configs/sim/ctp.yaml" "$PAYLOAD_DIR/configs/sim/"
-cp "$ROOT_DIR/scripts/build/bootstrap.sh" "$PAYLOAD_DIR/scripts/build/"
-cp "$ROOT_DIR/scripts/build/package_nonhotpath_release.sh" "$PAYLOAD_DIR/scripts/build/"
-cp "$ROOT_DIR/scripts/ops/run_v3_acceptance.sh" "$PAYLOAD_DIR/scripts/ops/"
-
-for bin in \
-  core_engine \
-  daily_settlement \
-  hotpath_benchmark \
-  wal_replay_tool \
-  backtest_cli \
-  factor_eval_cli \
-  backtest_benchmark_cli \
-  csv_parquet_compare_cli \
-  csv_to_parquet_cli \
-  simnow_compare_cli \
-  simnow_dashboard_cli \
-  simnow_weekly_stress_cli \
-  reconnect_evidence_cli \
-  ops_health_report_cli \
-  ops_alert_report_cli \
-  ctp_cutover_orchestrator_cli \
-  verify_contract_sync_cli \
-  verify_develop_requirements_cli; do
-  if [[ -f "$ROOT_DIR/build/$bin" ]]; then
-    cp "$ROOT_DIR/build/$bin" "$PAYLOAD_DIR/bin/"
-  fi
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+version="${1:?usage: package_nonhotpath_release.sh vX.Y.Z [output-dir] [build-dir]}"
+output_dir="${2:-$repo_root/dist}"
+build_dir="${3:-$repo_root/build}"
+[[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9]+)*$ ]] || {
+    echo "invalid release version" >&2; exit 2;
+}
+test -s "$repo_root/dependencies.lock.json"
+test -s "$build_dir/CMakeCache.txt"
+bundle="quant-platform-hf-$version"
+mkdir -p "$output_dir"
+archive="$output_dir/$bundle.tar.gz"
+[[ ! -e "$archive" && ! -e "$archive.sha256" ]] || {
+    echo "release output already exists" >&2; exit 1;
+}
+stage="$(mktemp -d)"
+trap 'rm -rf -- "$stage"' EXIT
+payload="$stage/$bundle"
+mkdir -p "$payload"/{bin,configs/deploy,docs,infra,scripts/ops}
+for executable in core_engine quant_config_cli strategy_state_migrate_cli daily_settlement \
+    wal_replay_tool simnow_probe runtime_paths_cli simnow_accounting_policy_check_cli \
+    simnow_wal_export_cli simnow_dashboard_cli reconnect_evidence_cli \
+    ops_health_report_cli ops_alert_report_cli dashboard_publish_cli; do
+    test -x "$build_dir/$executable"
+    cp "$build_dir/$executable" "$payload/bin/"
 done
-
-BUILD_TS_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-if GIT_COMMIT="$(git -C "$ROOT_DIR" rev-parse --short=12 HEAD 2>/dev/null)"; then
-  :
-else
-  GIT_COMMIT="unknown"
+# Only public example inputs are packaged. No account credentials or runtime snapshots.
+cp "$repo_root/README.md" "$repo_root/dependencies.lock.json" "$payload/"
+cp "$repo_root/configs/deploy/instances.example.yaml" \
+   "$repo_root/configs/deploy/connections.example.yaml" "$payload/configs/deploy/"
+cp "$repo_root/docs/ops/three_project_migration.md" "$payload/docs/"
+cp "$repo_root/docs/independent_strategy_books.md" "$payload/docs/"
+cp "$repo_root/infra/timescale/init/009_independent_strategy_books.sql" "$payload/infra/"
+cp "$repo_root/scripts/ops/run_simnow_preflight_check.sh" "$payload/scripts/ops/"
+cp "$repo_root/scripts/ops/run_account_deployment.sh" "$payload/scripts/ops/"
+cp "$repo_root/infra/systemd/quant-hft-account@.service" "$payload/infra/"
+git_commit="$(git -C "$repo_root" rev-parse HEAD)"
+dirty=false
+[[ -z "$(git -C "$repo_root" status --porcelain --untracked-files=normal)" ]] || dirty=true
+real_api=false
+if grep -q '^QUANT_HFT_ENABLE_CTP_REAL_API:BOOL=ON$' "$build_dir/CMakeCache.txt"; then
+    real_api=true
 fi
-
-cat >"$PAYLOAD_DIR/deploy_manifest.json" <<EOF
+cat > "$payload/deploy_manifest.json" <<EOF
 {
-  "release_version": "$VERSION",
-  "build_ts_utc": "$BUILD_TS_UTC",
-  "git_commit": "$GIT_COMMIT",
-  "bundle_name": "$BUNDLE_NAME",
-  "language_runtime": "cpp-only"
+  "release_version": "$version",
+  "git_commit": "$git_commit",
+  "working_tree_dirty": $dirty,
+  "language_runtime": "cpp-only",
+  "ctp_real_api_compiled": $real_api,
+  "simnow_five_day_accepted": false,
+  "live_cutover_authorized": false,
+  "runtime_requirements": "Install the locked strategy data package and matching system/CTP shared libraries. Materialize account deployment references outside the release tree."
 }
 EOF
-
-ARCHIVE_PATH="$OUT_DIR/$BUNDLE_NAME.tar.gz"
-tar -C "$STAGE_DIR" -czf "$ARCHIVE_PATH" "$BUNDLE_NAME"
-sha256sum "$ARCHIVE_PATH" >"$ARCHIVE_PATH.sha256"
-
-echo "$ARCHIVE_PATH"
-echo "$ARCHIVE_PATH.sha256"
+(
+    cd "$payload"
+    find . -type f ! -name SHA256SUMS -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS
+)
+tar -C "$stage" -czf "$archive" "$bundle"
+sha256sum "$archive" > "$archive.sha256"
+echo "$archive"

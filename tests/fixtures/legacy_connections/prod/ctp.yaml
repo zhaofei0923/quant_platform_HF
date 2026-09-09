@@ -1,0 +1,109 @@
+# CONFIG DOC
+# Purpose: 生产环境 CTP 运行配置。
+# Consumer: core_engine / CtpConfigLoader
+# Field dictionary: docs/ops/config_catalog.md (`configs/prod/ctp.yaml`)
+# Notes:
+#   1) run_type=live + enable_real_api=true 表示实盘链路，修改需走变更审批。
+#   2) strategy_factory=composite 时必须配置 strategy_composite_config。
+
+ctp:
+  # --- identity & runtime mode ---
+  profile: "prod"
+  environment: prod
+  run_type: live
+  is_production_mode: true
+  enable_real_api: true
+  enable_terminal_auth: true
+
+  # --- connection & auth ---
+  # SimNow trading-hours fronts (look-through, production key mode)
+  # Primary group (configured): TD=30001, MD=30011
+  # Auto-failover: runtime will automatically try
+  #   group2 TD=30002, MD=30012
+  #   group3 TD=30003, MD=30013
+  broker_id: "${CTP_PROD_BROKER_ID}"
+  user_id: "${CTP_PROD_USER_ID}"
+  investor_id: "${CTP_PROD_INVESTOR_ID}"
+  market_front: "${CTP_PROD_MARKET_FRONT}"
+  trader_front: "${CTP_PROD_TRADER_FRONT}"
+
+  password: "${CTP_PROD_PASSWORD}"
+  auth_code: "${CTP_PROD_AUTH_CODE}"
+  app_id: "${CTP_PROD_APP_ID}"
+
+  # --- rate limit & retries ---
+  query_rate_limit_qps: 10
+  query_rate_per_sec: 5
+  settlement_query_rate_per_sec: 2
+  order_insert_rate_per_sec: 50
+  order_cancel_rate_per_sec: 50
+  order_bucket_capacity: 20
+  cancel_bucket_capacity: 20
+  query_bucket_capacity: 5
+  settlement_query_bucket_capacity: 2
+  settlement_retry_max: 3
+  settlement_retry_backoff_initial_ms: 1000
+  settlement_retry_backoff_max_ms: 5000
+  settlement_running_stale_timeout_ms: 300000
+  settlement_shadow_enabled: false
+  cancel_retry_max: 3
+  cancel_retry_base_ms: 1000
+  cancel_retry_max_delay_ms: 5000
+  cancel_wait_ack_timeout_ms: 1200
+  settlement_confirm_required: true
+
+  # --- observability & breaker ---
+  metrics_enabled: true
+  metrics_port: 8080
+  log_level: "info"
+  log_sink: "stderr"
+  breaker_failure_threshold: 5
+  breaker_timeout_ms: 1000
+  breaker_half_open_timeout_ms: 5000
+  breaker_strategy_enabled: true
+  breaker_account_enabled: true
+  breaker_system_enabled: true
+  recovery_quiet_period_ms: 3000
+  gateway_reconnect_cycle_cooldown_ms: 8000
+  session_gate_enabled: true
+  max_signal_age_ms: 2000
+  max_market_tick_age_ms: 6000
+  open_session_end_guard_ms: 30000
+  recovery_query_timeout_ms: 30000
+  open_reenable_stability_ms: 30000
+  market_bar_allowed_lateness_ms: 3500
+  market_bar_poll_interval_ms: 100
+  market_bar_checkpoint_interval_ms: 1000
+  market_event_delay_hard_ms: 5000
+  require_complete_timeframe_bar: true
+
+  # --- storage & audit ---
+  kafka_bootstrap_servers: "${KAFKA_BOOTSTRAP_SERVERS}"
+  kafka_topic_ticks: "market.ticks.v1"
+  clickhouse_dsn: "${CLICKHOUSE_DSN}"
+  audit_hot_days: 7
+  audit_cold_days: 180
+
+  # --- strategy factory ---
+  strategy_ids: "kama_trend_production"
+  strategy_factory: "composite"
+  strategy_composite_config: "configs/strategies/main_backtest_production.yaml"
+  connect_timeout_ms: 10000
+  reconnect_max_attempts: 8
+  reconnect_initial_backoff_ms: 500
+  reconnect_max_backoff_ms: 8000
+
+  # market_state_detector.* nested keys take precedence over legacy flat keys.
+  market_state_detector:
+    adx_period: 14
+    adx_strong_threshold: 40.0
+    adx_weak_lower: 25.0
+    adx_weak_upper: 40.0
+    kama_er_period: 10
+    kama_fast_period: 2
+    kama_slow_period: 30
+    kama_er_strong: 0.6
+    kama_er_weak_lower: 0.3
+    atr_period: 14
+    require_adx_for_trend: true
+    use_kama_er: true

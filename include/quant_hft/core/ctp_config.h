@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include "quant_hft/contracts/execution_config.h"
+
 namespace quant_hft {
 
 inline std::string GetEnvOrDefault(const char* var, const std::string& def) {
@@ -101,46 +103,6 @@ struct CtpFrontPair {
     std::string td_front;
 };
 
-enum class ExecutionMode {
-    kDirect,
-    kSliced,
-};
-
-enum class ExecutionAlgo {
-    kDirect,
-    kSliced,
-    kTwap,
-    kVwapLite,
-};
-
-enum class ExecutionPriceMode {
-    kSignalLimit,
-    kMarketableLimit,
-};
-
-struct ExecutionConfig {
-    ExecutionMode mode{ExecutionMode::kDirect};
-    ExecutionAlgo algo{ExecutionAlgo::kDirect};
-    ExecutionPriceMode price_mode{ExecutionPriceMode::kSignalLimit};
-    int slice_size{1};
-    int slice_interval_ms{200};
-    int twap_duration_ms{0};
-    int vwap_lookback_bars{20};
-    double throttle_reject_ratio{0.0};
-    std::string preferred_venue{"SIM"};
-    double participation_rate_limit{1.0};
-    double impact_cost_bps{0.0};
-    // 0 disables timeout-based cancel requests.
-    int cancel_after_ms{0};
-    int cancel_check_interval_ms{200};
-    bool session_gate_enabled{true};
-    int max_signal_age_ms{2'000};
-    int max_market_tick_age_ms{6'000};
-    int open_session_end_guard_ms{30'000};
-    int recovery_query_timeout_ms{30'000};
-    int open_reenable_stability_ms{30'000};
-};
-
 struct MarketBarRuntimeConfig {
     int allowed_lateness_ms{3'500};
     int poll_interval_ms{100};
@@ -156,48 +118,6 @@ struct MarketDataRecordingConfig {
     bool flush_each_write{false};
     bool partition_by_product{false};
     bool write_global_copy{false};
-};
-
-struct RiskRuleConfig {
-    std::string rule_id;
-    std::string rule_group;
-    std::string rule_version{"v1"};
-    std::string policy_id;
-    std::string policy_scope;
-    std::string decision_tags;
-    std::string account_id;
-    std::string instrument_id;
-    std::string exchange_id;
-    int window_start_hhmm{0};
-    int window_end_hhmm{2359};
-    int max_order_volume{200};
-    double max_order_notional{1'000'000.0};
-    int max_active_orders{0};
-    double max_position_notional{0.0};
-    int max_cancel_count{0};
-    double max_cancel_ratio{0.0};
-};
-
-struct RiskConfig {
-    int default_max_order_volume{200};
-    double default_max_order_notional{1'000'000.0};
-    int default_max_active_orders{0};
-    double default_max_position_notional{0.0};
-    double max_margin_to_equity_ratio{0.0};
-    int default_max_cancel_count{0};
-    double default_max_cancel_ratio{0.0};
-    bool sim_subaccount_enabled{false};
-    std::string sim_subaccount_id;
-    double sim_subaccount_initial_equity{0.0};
-    double sim_subaccount_max_margin{0.0};
-    double sim_subaccount_order_margin_rate{1.0};
-    double sim_subaccount_contract_multiplier{1.0};
-    std::string default_rule_group{"default"};
-    std::string default_rule_version{"v1"};
-    std::string default_policy_id{"policy.global"};
-    std::string default_policy_scope{"global"};
-    std::string default_decision_tags;
-    std::vector<RiskRuleConfig> rules;
 };
 
 // Build candidate front pairs for connection retries.

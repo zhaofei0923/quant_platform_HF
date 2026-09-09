@@ -1,3 +1,5 @@
+#include "quant_hft/core/host_adapters/host_clock.h"
+#include "quant_hft/core/host_adapters/filesystem_configuration_reader.h"
 #include <iostream>
 #include <string>
 
@@ -78,6 +80,8 @@ std::string ResolveArgAlias(const quant_hft::apps::ArgMap& args, const std::stri
 }  // namespace
 
 int main(int argc, char** argv) {
+    quant_hft::BindOnlineHostClocks();
+    quant_hft::BindFilesystemConfigurationReader();
     using namespace quant_hft::apps;
     const ArgMap args = ParseArgs(argc, argv);
 

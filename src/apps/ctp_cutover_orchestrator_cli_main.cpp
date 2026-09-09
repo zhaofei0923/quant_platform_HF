@@ -1,3 +1,5 @@
+#include "quant_hft/core/host_adapters/host_clock.h"
+#include "quant_hft/core/host_adapters/filesystem_configuration_reader.h"
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -183,6 +185,8 @@ bool ParseNonNegativeDouble(const std::string& raw, double* out, std::string* er
 }  // namespace
 
 int main(int argc, char** argv) {
+    quant_hft::BindOnlineHostClocks();
+    quant_hft::BindFilesystemConfigurationReader();
     using namespace quant_hft::apps;
     const ArgMap args = ParseArgs(argc, argv);
 

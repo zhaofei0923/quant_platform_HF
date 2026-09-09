@@ -5,9 +5,11 @@
 #include <cmath>
 #include <exception>
 #include <map>
+#include <unordered_set>
 #include <utility>
 
 #include "quant_hft/core/structured_log.h"
+#include "quant_hft/strategy/state_envelope.h"
 #include "quant_hft/strategy/strategy_registry.h"
 
 namespace quant_hft {
@@ -23,9 +25,8 @@ void EmitStrategyExceptionLog(const std::string& event, const std::string& phase
 }
 
 bool ValidTradingDay(const std::string& value) {
-    return value.size() == 8 && std::all_of(value.begin(), value.end(), [](char ch) {
-               return ch >= '0' && ch <= '9';
-           });
+    return value.size() == 8 &&
+           std::all_of(value.begin(), value.end(), [](char ch) { return ch >= '0' && ch <= '9'; });
 }
 
 }  // namespace
@@ -51,6 +52,20 @@ StrategyEngine::StrategyEngine(StrategyEngineConfig config, IntentSink intent_si
 }
 
 StrategyEngine::~StrategyEngine() { Stop(); }
+
+bool StrategyEngine::SaveEntryState(const StrategyEntry& entry, StrategyState* state,
+                                    std::string* error) const {
+    if (!entry.strategy->SaveState(state, error)) return false;
+    if (!entry.metadata.count("strategy_release")) return true;
+    const auto get = [&](const char* key) {
+        const auto it = entry.metadata.find(key);
+        return it == entry.metadata.end() ? std::string() : it->second;
+    };
+    return WrapStrategyState(*state,
+                             {entry.strategy_id, entry.account_id, get("strategy_release"),
+                              get("parameter_hash"), get("state_schema_version")},
+                             state, error);
+}
 
 bool StrategyEngine::Start(const std::vector<std::string>& strategy_ids,
                            const std::string& strategy_factory, const StrategyContext& base_context,
@@ -78,13 +93,15 @@ bool StrategyEngine::Start(const std::vector<StrategyLaunchSpec>& launch_specs,
         return false;
     }
 
+    std::unordered_set<std::string> launch_ids;
     std::vector<StrategyEntry> initialized;
     initialized.reserve(launch_specs.size());
     try {
         for (const StrategyLaunchSpec& spec : launch_specs) {
-            if (spec.strategy_id.empty()) {
+            if (spec.strategy_id.empty() ||
+                !launch_ids.insert(spec.context.account_id + "\n" + spec.strategy_id).second) {
                 if (error != nullptr) {
-                    *error = "strategy_id must not be empty";
+                    *error = "strategy_id must be nonempty and unique within account";
                 }
                 for (auto& entry : initialized) {
                     entry.strategy->Shutdown();
@@ -100,7 +117,11 @@ bool StrategyEngine::Start(const std::vector<StrategyLaunchSpec>& launch_specs,
                 }
                 return false;
             }
-            auto strategy = StrategyRegistry::Instance().Create(spec.strategy_factory);
+            std::unique_ptr<ILiveStrategy> strategy;
+            if (spec.definition)
+                strategy = std::make_unique<CompositeStrategy>(*spec.definition);
+            else
+                strategy = StrategyRegistry::Instance().Create(spec.strategy_factory);
             if (strategy == nullptr) {
                 if (error != nullptr) {
                     *error = "strategy_factory not found: " + spec.strategy_factory;
@@ -113,8 +134,8 @@ bool StrategyEngine::Start(const std::vector<StrategyLaunchSpec>& launch_specs,
             StrategyContext strategy_context = spec.context;
             strategy_context.strategy_id = spec.strategy_id;
             strategy->Initialize(strategy_context);
-            initialized.push_back(
-                StrategyEntry{spec.strategy_id, strategy_context.account_id, std::move(strategy)});
+            initialized.push_back(StrategyEntry{spec.strategy_id, strategy_context.account_id,
+                                                std::move(strategy), strategy_context.metadata});
         }
     } catch (const std::exception& ex) {
         if (error != nullptr) {
@@ -141,12 +162,47 @@ bool StrategyEngine::Start(const std::vector<StrategyLaunchSpec>& launch_specs,
             }
             StrategyState loaded_state;
             std::string load_error;
-            if (!config_.state_persistence->LoadStrategyState(entry.account_id, entry.strategy_id,
-                                                              &loaded_state, &load_error)) {
+            const bool loaded = config_.state_persistence->LoadStrategyState(
+                entry.account_id, entry.strategy_id, &loaded_state, &load_error);
+            const bool versioned = entry.metadata.count("strategy_release") != 0;
+            const bool missing = (!loaded && load_error.find("not found") != std::string::npos) ||
+                                 (loaded && loaded_state.empty());
+            if (versioned && missing) {
+                std::vector<Position> owned;
+                std::string ownership_error;
+                if (config_.owned_position_resolver &&
+                    (!config_.owned_position_resolver(entry.account_id, entry.strategy_id, &owned,
+                                                      &ownership_error) ||
+                     std::any_of(owned.begin(), owned.end(), [](const Position& p) {
+                         return p.long_qty != 0 || p.short_qty != 0;
+                     }))) {
+                    if (error)
+                        *error =
+                            "missing strategy state requires explicit held-position recovery: " +
+                            ownership_error;
+                    for (auto& shutdown_entry : initialized) shutdown_entry.strategy->Shutdown();
+                    return false;
+                }
+                continue;
+            }
+            if (!loaded) {
+                if (versioned) {
+                    if (error) *error = "state load failed: " + load_error;
+                    for (auto& shutdown_entry : initialized) shutdown_entry.strategy->Shutdown();
+                    return false;
+                }
                 continue;
             }
             std::string apply_error;
-            if (!entry.strategy->LoadState(loaded_state, &apply_error)) {
+            bool envelope_valid = true;
+            if (entry.metadata.count("strategy_release")) {
+                envelope_valid = UnwrapStrategyState(
+                    loaded_state,
+                    {entry.strategy_id, entry.account_id, entry.metadata["strategy_release"],
+                     entry.metadata["parameter_hash"], entry.metadata["state_schema_version"]},
+                    &loaded_state, &apply_error);
+            }
+            if (!envelope_valid || !entry.strategy->LoadState(loaded_state, &apply_error)) {
                 if (error != nullptr) {
                     *error = "failed to load strategy state for `" + entry.strategy_id +
                              "`: " + apply_error;
@@ -446,7 +502,7 @@ StrategyEngine::MarketGapRecoveryReport StrategyEngine::DispatchMarketGapRecover
         // A successful control receipt covers the rebuilt strategy snapshot as well.
         for (const auto& entry : strategies_) {
             StrategyState state;
-            if (!entry.strategy->SaveState(&state, &report.error) ||
+            if (!SaveEntryState(entry, &state, &report.error) ||
                 (config_.state_persistence &&
                  !config_.state_persistence->SaveStrategyState(entry.account_id, entry.strategy_id,
                                                                state, &report.error)))
@@ -775,7 +831,7 @@ void StrategyEngine::DispatchOrderEvent(const OrderEvent& event) {
             if (committed && config_.state_persistence != nullptr) {
                 StrategyState state;
                 std::string error;
-                if (!entry->strategy->SaveState(&state, &error) ||
+                if (!SaveEntryState(*entry, &state, &error) ||
                     !config_.state_persistence->SaveStrategyState(
                         entry->account_id, entry->strategy_id, state, &error)) {
                     throw std::runtime_error("committed strategy snapshot failed: " + error);
@@ -825,7 +881,15 @@ void StrategyEngine::DispatchAccountSnapshot(const TradingAccountSnapshot& snaps
     }
     for (auto& entry : strategies_) {
         try {
-            entry.strategy->OnAccountSnapshot(snapshot);
+            if (config_.capital_snapshot_resolver) {
+                TradingAccountSnapshot owned = snapshot;
+                std::string error;
+                if (!config_.capital_snapshot_resolver(entry.account_id, entry.strategy_id, &owned,
+                                                       &error))
+                    throw std::runtime_error("strategy capital unavailable: " + error);
+                entry.strategy->OnAccountSnapshot(owned);
+            } else
+                entry.strategy->OnAccountSnapshot(snapshot);
         } catch (const std::exception& ex) {
             EmitStrategyExceptionLog("strategy_callback_exception", "account_snapshot",
                                      entry.strategy_id, ex.what());
@@ -851,8 +915,18 @@ void StrategyEngine::DispatchReconcilePositions(
         }
         try {
             std::vector<std::string> adjustments;
-            const std::size_t adjusted = entry.strategy->ReconcileNetPositions(
-                authoritative_net, authoritative_avg_open, &adjustments);
+            std::size_t adjusted = 0;
+            if (config_.owned_position_resolver) {
+                std::vector<Position> owned;
+                std::string error;
+                if (!config_.owned_position_resolver(entry.account_id, entry.strategy_id, &owned,
+                                                     &error))
+                    throw std::runtime_error("strategy-owned position reconcile failed: " + error);
+                adjusted = entry.strategy->ReconcileOwnedPositions(owned, &adjustments);
+            } else {
+                adjusted = entry.strategy->ReconcileNetPositions(
+                    authoritative_net, authoritative_avg_open, &adjustments);
+            }
             if (adjusted > 0) {
                 std::string joined;
                 for (std::size_t i = 0; i < adjustments.size(); ++i) {
@@ -996,7 +1070,7 @@ void StrategyEngine::SnapshotStates(EpochNanos now_ns) {
     for (auto& entry : strategies_) {
         StrategyState state;
         std::string state_error;
-        if (!entry.strategy->SaveState(&state, &state_error)) {
+        if (!SaveEntryState(entry, &state, &state_error)) {
             ++failures;
             continue;
         }

@@ -1,3 +1,5 @@
+#include "quant_hft/core/host_adapters/host_clock.h"
+#include "quant_hft/core/host_adapters/filesystem_configuration_reader.h"
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
@@ -617,6 +619,8 @@ bool ParseOptions(int argc, char** argv, Options* out, std::string* error) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    quant_hft::BindOnlineHostClocks();
+    quant_hft::BindFilesystemConfigurationReader();
     Options options;
     std::string error;
     if (!ParseOptions(argc, argv, &options, &error)) {

@@ -11,6 +11,10 @@ command -v setpriv >/dev/null || { echo 'SKIP: setpriv unavailable'; exit 77; }
 for numeric_uid in 60321 60322 60323; do
   if getent passwd "$numeric_uid" >/dev/null; then echo 'SKIP: fixture UID is already in use'; exit 77; fi
 done
+STRATEGY_PREFIX="${QUANT_STRATEGIES_PREFIX:?Set the installed strategy package prefix for this test}"
+[[ -f "$STRATEGY_PREFIX/include/quant_hft/contracts/types.h" ]] || {
+  echo 'FAIL: installed strategy contracts are unavailable'; exit 1;
+}
 TMP="$(mktemp -d /tmp/quant-dashboard-permission-test.XXXXXX)"
 trap 'rm -rf -- "$TMP"' EXIT
 chmod 0755 "$TMP"
@@ -39,7 +43,9 @@ cat > "$TMP/create_wal.cpp" <<'CPP'
 #include <string>
 #include <iostream>
 #include "quant_hft/core/local_wal_regulatory_sink.h"
+#include "quant_hft/core/host_adapters/host_clock.h"
 int main(int argc, char** argv) {
+    quant_hft::BindOnlineHostClocks();
     if (argc != 2 && argc != 3) return 2;
     quant_hft::LocalWalRegulatorySink sink(argv[1]);
     std::string error;
@@ -52,7 +58,7 @@ int main(int argc, char** argv) {
     return enabled ? 0 : 5;
 }
 CPP
-"${DASHBOARD_TEST_CXX:-c++}" -std=c++17 -pthread -I "$ROOT/include" \
+"${DASHBOARD_TEST_CXX:-c++}" -std=c++17 -pthread -I "$ROOT/include" -I "$STRATEGY_PREFIX/include" \
   "$TMP/create_wal.cpp" "$ROOT/src/core/regulatory/local_wal_regulatory_sink.cpp" -o "$TMP/create-wal"
 chmod 0755 "$TMP/create-file"
 chmod 0755 "$TMP/create-wal"

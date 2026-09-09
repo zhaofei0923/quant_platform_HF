@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  cpp:
+    runs-on: ubuntu-latest
+    env:
+      ENABLE_PARQUET_SPEEDUP_GATE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Arrow/Parquet Deps
+        run: |
+          bash scripts/build/install_arrow_parquet_deps.sh
+      - name: Configure
+        run: cmake -S . -B build -DQUANT_HFT_BUILD_TESTS=ON -DQUANT_HFT_ENABLE_ARROW_PARQUET=ON
+      - name: Dependency Audit
+        run: bash scripts/build/dependency_audit.sh --build-dir build
+      - name: Build
+        run: cmake --build build -j
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: Backtest Consistency Gate
+        run: |
+          bash scripts/build/run_consistency_gates.sh \
+            --build-dir build \
+            --results-dir docs/results
+      - name: Perf Smoke
+        run: |
+          mkdir -p docs/results
+          bash scripts/build/generate_backtest_benchmark_csv.sh \
+            --output runtime/benchmarks/backtest/rb_perf_large.csv \
+            --ticks 120000
+          ./build/backtest_benchmark_cli \
+            --csv_path runtime/benchmarks/backtest/rb_perf_large.csv \
+            --runs 5 \
+            --min_ticks_read 1000 \
+            --result_json docs/results/backtest_benchmark_result.json
+      - name: CSV Parquet Speedup Gate
+        if: ${{ env.ENABLE_PARQUET_SPEEDUP_GATE == '1' }}
+        run: |
+          bash scripts/build/run_csv_parquet_speedup_gate.sh \
+            --build-dir build \
+            --csv-path runtime/benchmarks/backtest/rb_perf_large.csv \
+            --source rb \
+            --output-root runtime/benchmarks/backtest/parquet_v2_ci \
+            --results-dir docs/results \
+            --runs 3 \
+            --warmup-runs 1 \
+            --max-ticks 50000 \
+            --min-speedup 5.0 \
+            --symbol-count 20 \
+            --focus-symbol rb2405 \
+            --require-arrow-writer true
+      - name: Preprod Rehearsal Gate
+        run: |
+          bash scripts/build/run_preprod_rehearsal_gate.sh \
+            --build-dir build \
+            --results-dir docs/results
+      - name: Ops Smoke
+        run: |
+          mkdir -p docs/results runtime
+          ./build/reconnect_evidence_cli \
+            --report_file docs/results/reconnect_fault_result.md \
+            --health_json_file docs/results/ops_health_report.json \
+            --health_markdown_file docs/results/ops_health_report.md \
+            --alert_json_file docs/results/ops_alert_report.json \
+            --alert_markdown_file docs/results/ops_alert_report.md | tee runtime/ops_smoke.out
+          ./build/ctp_cutover_orchestrator_cli \
+            --cutover_env docs/results/cutover_result.env \
+            --rollback_env docs/results/rollback_result.env
+          grep -q -- "--strategy-engine-chain-status complete" runtime/ops_smoke.out
+          grep -q -- "quant_hft_strategy_engine_chain_integrity" docs/results/ops_health_report.md
+          test -f docs/results/ops_alert_report.json
+          test -f docs/results/ops_alert_report.md
+          test -f docs/results/cutover_result.env
+          test -f docs/results/rollback_result.env
+      - name: Repo Purity Check
+        run: bash scripts/build/repo_purity_check.sh --repo-root .
+      - name: Doc Purity Check
+        run: bash scripts/build/doc_purity_check.sh --repo-root .

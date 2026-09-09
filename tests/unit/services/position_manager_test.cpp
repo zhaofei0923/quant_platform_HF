@@ -146,3 +146,56 @@ TEST(PositionManagerTest, ReconcileWritesSnapshotToRedis) {
 
 }  // namespace
 }  // namespace quant_hft
+
+namespace quant_hft {
+namespace {
+TEST(PositionManagerTest, IndependentAccountRedisDatesUseBrokerPhysicalBuckets) {
+    auto sql = std::make_shared<InMemoryTimescaleSqlClient>();
+    auto store = std::make_shared<TradingDomainStoreClientAdapter>(sql, StorageRetryPolicy{});
+    auto redis = std::make_shared<InMemoryRedisHashClient>();
+    PositionManager manager(store, redis);
+    std::string error;
+    ASSERT_TRUE(
+        store->ConfigureIndependentStrategyBooks("acc1", {{"A", 50000}, {"B", 50000}}, &error));
+    TradeApplyRequest request;
+    request.allow_ephemeral = true;
+    request.trade = BuildOpenTrade("a", Side::kBuy, 2);
+    request.trade.exchange = "DCE";
+    request.trade.broker_id = "broker";
+    request.trade.symbol = "m2609";
+    request.trade.strategy_id = "A";
+    request.trade.trading_day = "20260907";
+    request.trade.price = 100;
+    request.accounting_policy.valuation_inputs_verified = true;
+    request.accounting_policy.contract_multiplier = 10;
+    request.accounting_policy.valuation_source = "test";
+    request.accounting_policy.generic_close_priority = GenericClosePriority::kYesterdayFirst;
+    request.accounting_policy.close_rule_source = "test";
+    request.accounting_policy.close_rule_version = "1";
+    TradeApplyResult result;
+    ASSERT_TRUE(store->ApplyTrade(request, &result, &error)) << error;
+    ASSERT_TRUE(store->AdvanceTradingDay("acc1", "broker", "20260908", &error)) << error;
+    request.trade.trade_id = "b";
+    request.trade.strategy_id = "B";
+    request.trade.trading_day = "20260908";
+    request.trade.price = 110;
+    ASSERT_TRUE(store->ApplyTrade(request, &result, &error)) << error;
+    request.trade.trade_id = "bclose";
+    request.trade.side = Side::kSell;
+    request.trade.offset = OffsetFlag::kClose;
+    request.trade.quantity = 1;
+    request.trade.price = 120;
+    ASSERT_TRUE(store->ApplyTrade(request, &result, &error)) << error;
+    ASSERT_TRUE(manager.DrainOutbox("acc1", &error)) << error;
+    std::unordered_map<std::string, std::string> fields;
+    ASSERT_TRUE(redis->HGetAll("position:acc1:m2609", &fields, &error));
+    EXPECT_EQ(fields.at("long_yd"), "1");
+    EXPECT_EQ(fields.at("long_today"), "2");
+    const auto own = manager.GetCurrentPositions("acc1");
+    ASSERT_EQ(own.size(), 2U);
+    int economic_yd = 0;
+    for (const auto& p : own) economic_yd += p.long_yd_qty;
+    EXPECT_EQ(economic_yd, 2);
+}
+}  // namespace
+}  // namespace quant_hft

@@ -46,6 +46,9 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
     using SettlementConfirmCallback =
         std::function<void(int request_id, int error_code, const std::string& error_msg)>;
     using TradingAccountSnapshotCallback = std::function<void(const TradingAccountSnapshot&)>;
+    using TradingAccountQueryStartCallback = std::function<void(int, std::uint64_t)>;
+    using TradingAccountQueryCallback =
+        std::function<void(const QueryResult<TradingAccountSnapshot>&)>;
     using InvestorPositionSnapshotCallback =
         std::function<void(const std::vector<InvestorPositionSnapshot>&)>;
     using InvestorPositionQueryCallback =
@@ -119,6 +122,8 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
     void RegisterTradingAccountSnapshotCallback(TradingAccountSnapshotCallback callback);
     void RegisterInvestorPositionSnapshotCallback(InvestorPositionSnapshotCallback callback);
     void RegisterInvestorPositionQueryCallback(InvestorPositionQueryCallback callback);
+    void RegisterTradingAccountQueryStartCallback(TradingAccountQueryStartCallback callback);
+    void RegisterTradingAccountQueryCallback(TradingAccountQueryCallback callback);
     void RegisterInstrumentMetaQueryCallback(InstrumentMetaQueryCallback callback);
     void RegisterInstrumentCommissionRateQueryCallback(
         InstrumentCommissionRateQueryCallback callback);
@@ -163,6 +168,7 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
     struct OrderMeta {
         std::string order_ref;
         std::string strategy_id;
+        std::string component_id;
         std::string instrument_id;
         Side side{Side::kBuy};
         OffsetFlag offset{OffsetFlag::kOpen};
@@ -226,6 +232,8 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
                 if (result->metadata.success) cache = result->rows.front();
             }
             if (result->metadata.success) callback = callback_slot;
+            if constexpr (std::is_same_v<Row, TradingAccountSnapshot>)
+                query_callback = trading_account_query_callback_;
             if constexpr (std::is_same_v<Row, InstrumentMetaSnapshot>)
                 query_callback = instrument_meta_query_callback_;
             if constexpr (std::is_same_v<Row, InstrumentCommissionRateSnapshot>)
@@ -285,6 +293,8 @@ class CtpGatewayAdapter : public IMarketDataGateway, public IOrderGateway {
     std::vector<InstrumentOrderCommRateSnapshot> instrument_order_comm_rate_snapshots_;
 
     TradingAccountSnapshotCallback trading_account_snapshot_callback_;
+    TradingAccountQueryStartCallback trading_account_query_start_callback_;
+    TradingAccountQueryCallback trading_account_query_callback_;
     InvestorPositionSnapshotCallback investor_position_snapshot_callback_;
     InvestorPositionQueryCallback investor_position_query_callback_;
     InstrumentMetaQueryCallback instrument_meta_query_callback_;

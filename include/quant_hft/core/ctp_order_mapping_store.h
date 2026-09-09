@@ -165,6 +165,7 @@ class CtpOrderMappingStore {
         if (event->strategy_id.empty()) {
             event->strategy_id = mapping.strategy_id;
         }
+        if (event->component_id.empty()) event->component_id = mapping.component_id;
         if (event->trace_id.empty()) {
             event->trace_id = mapping.trace_id;
         }

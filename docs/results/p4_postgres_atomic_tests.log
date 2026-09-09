@@ -1,0 +1,24 @@
+[==========] Running 8 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 8 tests from AtomicTradePostgresTest
+[ RUN      ] AtomicTradePostgresTest.SameConnectionRollbackIncludesEveryCallbackWrite
+[       OK ] AtomicTradePostgresTest.SameConnectionRollbackIncludesEveryCallbackWrite (14 ms)
+[ RUN      ] AtomicTradePostgresTest.LifecycleUpsertUpdatesExistingPartitionedOrder
+[       OK ] AtomicTradePostgresTest.LifecycleUpsertUpdatesExistingPartitionedOrder (16 ms)
+[ RUN      ] AtomicTradePostgresTest.ApplyDuplicateCloseAndReceiptConflictAreAtomic
+[       OK ] AtomicTradePostgresTest.ApplyDuplicateCloseAndReceiptConflictAreAtomic (40 ms)
+[ RUN      ] AtomicTradePostgresTest.SeparateConnectionsSerializeAccountAndPreserveEveryFill
+[       OK ] AtomicTradePostgresTest.SeparateConnectionsSerializeAccountAndPreserveEveryFill (60 ms)
+[ RUN      ] AtomicTradePostgresTest.VerifiedFeesAndTheirEvidenceCommitWithExactMixedCloseAllocation
+[       OK ] AtomicTradePostgresTest.VerifiedFeesAndTheirEvidenceCommitWithExactMixedCloseAllocation (40 ms)
+[ RUN      ] AtomicTradePostgresTest.TradingDayRolloverAndIndependentOutboxConsumersPersist
+[       OK ] AtomicTradePostgresTest.TradingDayRolloverAndIndependentOutboxConsumersPersist (39 ms)
+[ RUN      ] AtomicTradePostgresTest.IndependentEconomicOwnerAndPhysicalCloseDatesPersistSeparately
+[       OK ] AtomicTradePostgresTest.IndependentEconomicOwnerAndPhysicalCloseDatesPersistSeparately (53 ms)
+[ RUN      ] AtomicTradePostgresTest.AccountWideOpenReservationsSerializeAcrossIndependentOwners
+[       OK ] AtomicTradePostgresTest.AccountWideOpenReservationsSerializeAcrossIndependentOwners (29 ms)
+[----------] 8 tests from AtomicTradePostgresTest (296 ms total)
+
+[----------] Global test environment tear-down
+[==========] 8 tests from 1 test suite ran. (296 ms total)
+[  PASSED  ] 8 tests.

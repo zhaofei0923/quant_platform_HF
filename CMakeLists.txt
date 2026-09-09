@@ -20,7 +20,9 @@ option(QUANT_HFT_BUILD_TESTS "Build C++ unit tests" ON)
 option(QUANT_HFT_ENABLE_CTP_REAL_API "Enable CTP v6.7.11 real API integration" OFF)
 option(QUANT_HFT_ENABLE_REDIS_EXTERNAL "Enable external Redis driver path" OFF)
 option(QUANT_HFT_ENABLE_TIMESCALE_EXTERNAL "Enable external TimescaleDB driver path" OFF)
-option(QUANT_HFT_ENABLE_ARROW_PARQUET "Enable native Arrow/Parquet C++ reader" OFF)
+if(QUANT_HFT_ENABLE_ARROW_PARQUET)
+    message(FATAL_ERROR "Arrow/Parquet research moved to quant_research")
+endif()
 option(QUANT_HFT_WITH_METRICS "Enable Prometheus metrics exporter" OFF)
 set(QUANT_HFT_SANITIZER "none" CACHE STRING "Runtime checks: none, address-undefined, or thread")
 set_property(CACHE QUANT_HFT_SANITIZER PROPERTY STRINGS none address-undefined thread)
@@ -28,22 +30,26 @@ set(CTP_V6711_DIR "${CMAKE_SOURCE_DIR}/ctp_api/v6.7.11_20250617_api_traderapi_se
     CACHE PATH "Path to CTP v6.7.11 API directory")
 
 set(CMAKE_CXX_STANDARD 17)
-if(QUANT_HFT_ENABLE_ARROW_PARQUET)
-    set(CMAKE_CXX_STANDARD 20)
-endif()
+
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-if(QUANT_HFT_ENABLE_ARROW_PARQUET OR QUANT_HFT_ENABLE_REDIS_EXTERNAL OR
+if(QUANT_HFT_ENABLE_REDIS_EXTERNAL OR
    QUANT_HFT_ENABLE_TIMESCALE_EXTERNAL)
     find_package(PkgConfig REQUIRED)
 endif()
 
+find_package(QuantStrategies 1.0.0 EXACT CONFIG REQUIRED)
+include(cmake/VerifyStrategyPackage.cmake)
+find_package(yaml-cpp CONFIG REQUIRED)
+find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+
 # Shared header contracts; each implementation source compiles once.
 add_library(quant_hft_contracts INTERFACE)
 target_include_directories(quant_hft_contracts INTERFACE "${CMAKE_SOURCE_DIR}/include")
+target_link_libraries(quant_hft_contracts INTERFACE Quant::Contracts)
 add_library(quant_hft_build_options INTERFACE)
-target_link_libraries(quant_hft_build_options INTERFACE quant_hft_contracts pthread dl)
+target_link_libraries(quant_hft_build_options INTERFACE quant_hft_contracts Quant::Contracts pthread dl)
 if(QUANT_HFT_SANITIZER STREQUAL "address-undefined")
     target_compile_options(quant_hft_build_options INTERFACE
         -fsanitize=address,undefined -fno-omit-frame-pointer)
@@ -57,19 +63,20 @@ elseif(NOT QUANT_HFT_SANITIZER STREQUAL "none")
 endif()
 
 add_library(quant_hft_common STATIC
-    src/indicators/adx.cpp
-    src/indicators/atr.cpp
-    src/indicators/ema.cpp
-    src/indicators/kama.cpp
-    src/indicators/sma.cpp
+    src/core/host_adapters/flow_controller_wait.cpp
+    src/core/host_adapters/market_bar_checkpoint_io.cpp
+    src/core/host_adapters/dominant_contract_status_io.cpp
+    src/core/host_adapters/instrument_meta_write_io.cpp
+    src/core/host_adapters/runtime_semantics_ctp_validation.cpp
+
     src/core/common/callback_dispatcher.cpp
-    src/core/config/runtime_semantics_loader.cpp
+
     src/core/common/event_dispatcher.cpp
-    src/core/common/flow_controller.cpp
+
     src/core/common/circuit_breaker.cpp
-    src/core/common/fixed_decimal.cpp
+
     src/core/ctp/ctp_config.cpp
-    src/core/ctp/instrument_meta_cache.cpp
+
     src/core/market/kafka_market_bus_producer.cpp
     src/core/perf/object_pool.cpp
     src/core/perf/event_object_pool.cpp
@@ -102,53 +109,26 @@ add_library(quant_hft_wal_io STATIC
 )
 
 add_library(quant_hft_services STATIC
-    src/services/risk/basic_risk_engine.cpp
-    src/services/risk/risk_policy_engine.cpp
-    src/services/risk/self_trade_risk_engine.cpp
-    src/risk/risk_rule_executor.cpp
-    src/risk/risk_rule_registry.cpp
-    src/risk/risk_manager.cpp
-    src/services/order/execution_planner.cpp
-    src/services/order/execution_engine.cpp
-    src/services/order/order_manager.cpp
-    src/services/order/verified_trade_accounting_policy.cpp
-    src/services/order/execution_router.cpp
-    src/services/order/in_memory_order_gateway.cpp
-    src/services/order/order_state_machine.cpp
-    src/services/order/pending_exit_store.cpp
-    src/services/order/timeout_cancel_tracker.cpp
-    src/services/order/trading_permission_controller.cpp
-    src/services/settlement/settlement_price_provider.cpp
-    src/services/portfolio/ctp_account_ledger.cpp
-    src/services/portfolio/ctp_close_offset_resolver.cpp
-    src/services/portfolio/ctp_position_ledger.cpp
     src/services/portfolio/position_manager.cpp
-    src/services/portfolio/in_memory_portfolio_ledger.cpp
-    src/services/market_state/bar_aggregator.cpp
-    src/services/market_state/market_bar_pipeline.cpp
-    src/services/market_state/dominant_contract_coordinator.cpp
-    src/services/market_state/trading_session_calendar.cpp
+
+    src/services/order/execution_engine.cpp
+
+    src/services/order/in_memory_order_gateway.cpp
+
+    src/services/order/pending_exit_store.cpp
+
+    src/services/settlement/settlement_price_provider.cpp
+
     src/services/market_state/market_data_csv_recorder.cpp
-    src/services/market_state/market_state_detector.cpp
-    src/services/market_state/rule_market_state_engine.cpp
-    src/services/market_state/timeframe_state_fanout.cpp
+
 )
 
 add_library(quant_hft_strategy STATIC
-    src/strategy/strategy_registry.cpp
+
     src/strategy/strategy_engine.cpp
-    src/strategy/demo_live_strategy.cpp
-    src/strategy/atomic_factory.cpp
-    src/strategy/signal_merger.cpp
+
     src/strategy/state_persistence.cpp
-    src/strategy/composite_config_loader.cpp
-    src/strategy/strategy_main_config_loader.cpp
-    src/strategy/composite_strategy.cpp
-    src/strategy/atomic/kama_trend_strategy.cpp
-    src/strategy/atomic/trend_strategy.cpp
-    src/strategy/atomic/time_filter.cpp
-    src/strategy/atomic/max_position_risk_control.cpp
-    src/strategy/atomic/register_builtin_atomic_strategies.cpp
+
 )
 
 add_library(quant_hft_ctp STATIC
@@ -157,44 +137,6 @@ add_library(quant_hft_ctp STATIC
     src/core/ctp/ctp_gateway_adapter.cpp
     src/core/ctp/query_scheduler.cpp
     src/core/runtime/durable_order_event_inbox.cpp
-)
-
-add_library(quant_hft_backtest STATIC
-    src/backtest/broker.cpp
-    src/backtest/backtest_data_feed.cpp
-    src/backtest/engine.cpp
-    src/backtest/performance.cpp
-    src/backtest/backtest_metrics.cpp
-    src/backtest/replay_runtime.cpp
-    src/backtest/replay_helpers.cpp
-    src/backtest/live_data_feed.cpp
-    src/backtest/backtest_result_export.cpp
-    src/strategy/base_strategy.cpp
-    src/core/backtest/indicator_trace_csv_writer.cpp
-    src/core/backtest/indicator_trace_parquet_writer.cpp
-    src/core/backtest/contract_expiry_calendar.cpp
-    src/core/backtest/product_fee_config_loader.cpp
-    src/core/backtest/sub_strategy_indicator_trace_csv_writer.cpp
-    src/core/backtest/sub_strategy_indicator_trace_parquet_writer.cpp
-    src/core/backtest/parquet_data_feed.cpp
-)
-
-add_library(quant_hft_optim STATIC
-    src/optim/parameter_space.cpp
-    src/optim/grid_search.cpp
-    src/optim/random_search.cpp
-    src/optim/task_scheduler.cpp
-    src/optim/result_analyzer.cpp
-    src/optim/temp_config_generator.cpp
-)
-
-add_library(quant_hft_rolling STATIC
-    src/rolling/rolling_config.cpp
-    src/rolling/window_generator.cpp
-    src/rolling/metric_extractor.cpp
-    src/rolling/rolling_runner.cpp
-    src/rolling/oos_top10_validation.cpp
-    src/rolling/rolling_report_writer.cpp
 )
 
 add_library(quant_hft_online_runtime STATIC
@@ -209,41 +151,35 @@ add_library(quant_hft_online_runtime STATIC
 
 set(QUANT_HFT_MODULES
     quant_hft_common quant_hft_storage quant_hft_wal_io quant_hft_services
-    quant_hft_strategy quant_hft_ctp quant_hft_backtest quant_hft_optim
-    quant_hft_rolling quant_hft_online_runtime)
+    quant_hft_strategy quant_hft_ctp
+     quant_hft_online_runtime)
 foreach(module IN LISTS QUANT_HFT_MODULES)
     target_link_libraries(${module} PUBLIC quant_hft_build_options)
     target_compile_options(${module} PRIVATE -Wall -Wextra -Wpedantic)
     set_target_properties(${module} PROPERTIES POSITION_INDEPENDENT_CODE ON)
 endforeach()
+target_link_libraries(quant_hft_common PUBLIC Quant::Model Quant::Indicators)
+add_library(quant_hft_deployment STATIC src/core/config/deployment_config.cpp)
+target_compile_definitions(quant_hft_deployment PRIVATE
+    QUANT_STRATEGIES_EXPECTED_MANIFEST_HASH="${QUANT_STRATEGIES_MANIFEST_SHA256}")
+target_link_libraries(quant_hft_deployment PUBLIC quant_hft_build_options Quant::Strategies yaml-cpp OpenSSL::Crypto)
+target_link_libraries(quant_hft_online_runtime PUBLIC quant_hft_deployment)
+target_link_libraries(quant_hft_strategy PUBLIC Quant::Strategies)
 target_link_libraries(quant_hft_storage PUBLIC quant_hft_common)
 target_link_libraries(quant_hft_wal_io PUBLIC quant_hft_common)
 target_link_libraries(quant_hft_services PUBLIC quant_hft_storage quant_hft_common)
 target_link_libraries(quant_hft_strategy PUBLIC quant_hft_services quant_hft_common)
 target_link_libraries(quant_hft_ctp PUBLIC quant_hft_wal_io quant_hft_common)
-target_link_libraries(quant_hft_backtest PUBLIC quant_hft_strategy quant_hft_services)
-target_link_libraries(quant_hft_optim PUBLIC quant_hft_backtest)
-target_link_libraries(quant_hft_rolling PUBLIC quant_hft_optim quant_hft_backtest)
+
 target_link_libraries(quant_hft_online_runtime PUBLIC quant_hft_services quant_hft_ctp quant_hft_wal_io)
 
 # Source-compatible aggregate; no duplicate object compilation.
 add_library(quant_hft_core INTERFACE)
 target_link_libraries(quant_hft_core INTERFACE
-    quant_hft_online_runtime quant_hft_ctp quant_hft_rolling
+    quant_hft_online_runtime quant_hft_ctp
     quant_hft_strategy quant_hft_storage)
 
-
-if(QUANT_HFT_ENABLE_ARROW_PARQUET)
-    pkg_check_modules(ARROW REQUIRED arrow>=12.0)
-    pkg_check_modules(PARQUET REQUIRED parquet>=12.0)
-
-    target_compile_definitions(quant_hft_build_options INTERFACE QUANT_HFT_ENABLE_ARROW_PARQUET=1)
-    target_include_directories(quant_hft_backtest PUBLIC ${ARROW_INCLUDE_DIRS} ${PARQUET_INCLUDE_DIRS})
-    target_link_libraries(quant_hft_backtest PUBLIC ${ARROW_LIBRARIES} ${PARQUET_LIBRARIES})
-    target_link_directories(quant_hft_backtest PUBLIC ${ARROW_LIBRARY_DIRS} ${PARQUET_LIBRARY_DIRS})
-else()
-    target_compile_definitions(quant_hft_build_options INTERFACE QUANT_HFT_ENABLE_ARROW_PARQUET=0)
-endif()
+target_compile_definitions(quant_hft_build_options INTERFACE QUANT_HFT_ENABLE_ARROW_PARQUET=0)
 
 set(QUANT_HFT_METRICS_ACTIVE OFF)
 if(QUANT_HFT_WITH_METRICS)
@@ -295,6 +231,14 @@ else()
     target_compile_definitions(quant_hft_build_options INTERFACE QUANT_HFT_ENABLE_TIMESCALE_EXTERNAL=0)
 endif()
 
+add_executable(quant_config_cli src/apps/quant_config_cli_main.cpp)
+target_link_libraries(quant_config_cli PRIVATE quant_hft_deployment)
+
+add_library(quant_hft_state_migration STATIC src/core/config/strategy_state_migration.cpp)
+target_link_libraries(quant_hft_state_migration PUBLIC quant_hft_strategy quant_hft_deployment)
+add_executable(strategy_state_migrate_cli src/apps/strategy_state_migrate_cli_main.cpp)
+target_link_libraries(strategy_state_migrate_cli PRIVATE quant_hft_state_migration)
+
 add_executable(core_engine src/apps/core_engine_main.cpp)
 target_link_libraries(core_engine PRIVATE quant_hft_online_runtime quant_hft_ctp quant_hft_strategy)
 
@@ -323,36 +267,6 @@ target_link_libraries(hotpath_hybrid PRIVATE quant_hft_core)
 add_executable(daily_settlement src/apps/daily_settlement_main.cpp)
 target_link_libraries(daily_settlement PRIVATE quant_hft_online_runtime)
 
-add_executable(backtest_cli src/apps/backtest_cli_main.cpp)
-target_link_libraries(backtest_cli PRIVATE quant_hft_backtest)
-
-add_executable(parameter_optim_cli src/apps/parameter_optim_cli_main.cpp)
-target_link_libraries(parameter_optim_cli PRIVATE quant_hft_optim)
-
-add_executable(rolling_backtest_cli src/apps/rolling_backtest_cli_main.cpp)
-target_link_libraries(rolling_backtest_cli PRIVATE quant_hft_rolling)
-
-add_executable(oos_top10_validation_cli src/apps/oos_top10_validation_cli_main.cpp)
-target_link_libraries(oos_top10_validation_cli PRIVATE quant_hft_rolling)
-
-add_executable(backtest_consistency_cli src/apps/backtest_consistency_cli_main.cpp)
-target_link_libraries(backtest_consistency_cli PRIVATE quant_hft_backtest)
-
-add_executable(factor_eval_cli src/apps/factor_eval_cli_main.cpp)
-target_link_libraries(factor_eval_cli PRIVATE quant_hft_backtest)
-
-add_executable(backtest_benchmark_cli src/apps/backtest_benchmark_cli_main.cpp)
-target_link_libraries(backtest_benchmark_cli PRIVATE quant_hft_backtest)
-
-add_executable(csv_parquet_compare_cli src/apps/csv_parquet_compare_cli_main.cpp)
-target_link_libraries(csv_parquet_compare_cli PRIVATE quant_hft_backtest)
-
-add_executable(csv_to_parquet_cli src/apps/csv_to_parquet_cli_main.cpp)
-target_link_libraries(csv_to_parquet_cli PRIVATE quant_hft_backtest)
-
-add_executable(simnow_compare_cli src/apps/simnow_compare_cli_main.cpp)
-target_link_libraries(simnow_compare_cli PRIVATE quant_hft_backtest)
-
 add_executable(simnow_wal_export_cli src/apps/simnow_wal_export_cli_main.cpp)
 target_link_libraries(simnow_wal_export_cli PRIVATE quant_hft_core)
 
@@ -368,8 +282,6 @@ add_executable(dashboard_publish_cli
     src/apps/dashboard_publisher.cpp)
 target_link_libraries(dashboard_publish_cli PRIVATE quant_hft_contracts pthread)
 
-add_executable(simnow_weekly_stress_cli src/apps/simnow_weekly_stress_cli_main.cpp)
-target_link_libraries(simnow_weekly_stress_cli PRIVATE quant_hft_core)
 
 add_executable(reconnect_evidence_cli src/apps/reconnect_evidence_cli_main.cpp)
 target_link_libraries(reconnect_evidence_cli PRIVATE quant_hft_core)
@@ -385,6 +297,10 @@ target_link_libraries(ctp_cutover_orchestrator_cli PRIVATE quant_hft_core)
 
 add_executable(verify_contract_sync_cli src/apps/verify_contract_sync_cli_main.cpp)
 target_link_libraries(verify_contract_sync_cli PRIVATE quant_hft_core)
+get_filename_component(_quant_package_root "${QuantStrategies_DIR}/../../.." REALPATH)
+target_compile_definitions(verify_contract_sync_cli PRIVATE
+    QUANT_STRATEGIES_CPP_CONTRACT="${_quant_package_root}/include/quant_hft/contracts/types.h"
+    QUANT_STRATEGIES_PROTO_CONTRACT="${QuantStrategies_DATA_DIR}/proto/quant_hft/v1/contracts.proto")
 
 add_executable(verify_develop_requirements_cli src/apps/verify_develop_requirements_cli_main.cpp)
 target_link_libraries(verify_develop_requirements_cli PRIVATE quant_hft_core)
@@ -393,233 +309,155 @@ if(QUANT_HFT_BUILD_TESTS)
     include(CTest)
     enable_testing()
 
-    include(FetchContent)
-    if(POLICY CMP0135)
-        cmake_policy(SET CMP0135 NEW)
-    endif()
-    set(FETCHCONTENT_QUIET OFF)
-    FetchContent_Declare(
-      googletest
-      URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip
-    )
-    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-    FetchContent_MakeAvailable(googletest)
+    find_package(GTest CONFIG REQUIRED)
+    add_library(quant_hft_test_bootstrap STATIC tests/host_test_main.cpp)
+    target_link_libraries(quant_hft_test_bootstrap PUBLIC GTest::gtest Quant::Model)
+    target_include_directories(quant_hft_test_bootstrap PRIVATE include)
 
     add_executable(durable_order_event_inbox_test tests/unit/core/durable_order_event_inbox_test.cpp)
-    target_link_libraries(durable_order_event_inbox_test PRIVATE quant_hft_ctp GTest::gtest_main)
+    target_link_libraries(durable_order_event_inbox_test PRIVATE quant_hft_ctp quant_hft_test_bootstrap)
 
     add_executable(atomic_trade_postgres_test tests/integration/atomic_trade_postgres_test.cpp)
-    target_link_libraries(atomic_trade_postgres_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(verified_trade_accounting_policy_test tests/unit/services/verified_trade_accounting_policy_test.cpp)
-    target_link_libraries(verified_trade_accounting_policy_test PRIVATE quant_hft_services GTest::gtest_main)
+    target_link_libraries(atomic_trade_postgres_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(position_reconciliation_test tests/unit/services/position_reconciliation_test.cpp)
-    target_link_libraries(position_reconciliation_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(position_reconciliation_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(query_scheduler_test tests/unit/core/query_scheduler_test.cpp)
-    target_link_libraries(query_scheduler_test PRIVATE quant_hft_ctp GTest::gtest_main)
+    target_link_libraries(query_scheduler_test PRIVATE quant_hft_ctp quant_hft_test_bootstrap)
 
     add_executable(query_batch_collector_test tests/unit/core/query_batch_collector_test.cpp)
-    target_link_libraries(query_batch_collector_test PRIVATE quant_hft_ctp GTest::gtest_main)
-    add_executable(replay_market_parity_test tests/unit/apps/replay_market_parity_test.cpp)
-    target_link_libraries(replay_market_parity_test PRIVATE quant_hft_backtest GTest::gtest_main)
+    target_link_libraries(query_batch_collector_test PRIVATE quant_hft_ctp quant_hft_test_bootstrap)
+
     add_executable(account_execution_scheduler_test tests/unit/core/account_execution_scheduler_test.cpp)
-    target_link_libraries(account_execution_scheduler_test PRIVATE quant_hft_online_runtime GTest::gtest_main)
+    target_link_libraries(account_execution_scheduler_test PRIVATE quant_hft_online_runtime quant_hft_test_bootstrap)
     add_executable(runtime_paths_test tests/unit/core/runtime_paths_test.cpp)
-    target_link_libraries(runtime_paths_test PRIVATE quant_hft_online_runtime GTest::gtest_main)
+    target_link_libraries(runtime_paths_test PRIVATE quant_hft_online_runtime quant_hft_test_bootstrap)
 
     add_executable(runtime_identity_test tests/unit/core/runtime_identity_test.cpp)
-    target_link_libraries(runtime_identity_test PRIVATE quant_hft_online_runtime GTest::gtest_main)
+    target_link_libraries(runtime_identity_test PRIVATE quant_hft_online_runtime quant_hft_test_bootstrap)
 
     add_executable(ctp_config_test tests/unit/core/ctp_config_test.cpp)
-    target_link_libraries(ctp_config_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(ctp_config_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(ctp_config_loader_test tests/unit/core/ctp_config_loader_test.cpp)
-    target_link_libraries(ctp_config_loader_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(ctp_config_loader_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(configured_contract_probe_test
         tests/unit/core/configured_contract_probe_test.cpp)
-    target_link_libraries(configured_contract_probe_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(configured_contract_probe_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(instrument_meta_cache_test
         tests/unit/core/instrument_meta_cache_test.cpp)
-    target_link_libraries(instrument_meta_cache_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(instrument_meta_cache_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(ctp_gateway_adapter_test tests/unit/core/ctp_gateway_adapter_test.cpp)
-    target_link_libraries(ctp_gateway_adapter_test PRIVATE quant_hft_ctp GTest::gtest_main)
+    target_link_libraries(ctp_gateway_adapter_test PRIVATE quant_hft_ctp quant_hft_test_bootstrap)
 
     add_executable(ctp_trader_adapter_test tests/unit/core/ctp_trader_adapter_test.cpp)
-    target_link_libraries(ctp_trader_adapter_test PRIVATE quant_hft_ctp GTest::gtest_main)
+    target_link_libraries(ctp_trader_adapter_test PRIVATE quant_hft_ctp quant_hft_test_bootstrap)
 
     add_executable(ctp_md_adapter_test tests/unit/core/ctp_md_adapter_test.cpp)
-    target_link_libraries(ctp_md_adapter_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(ctp_md_adapter_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(wal_replay_loader_test tests/unit/core/wal_replay_loader_test.cpp)
-    target_link_libraries(wal_replay_loader_test PRIVATE quant_hft_online_runtime GTest::gtest_main)
+    target_link_libraries(wal_replay_loader_test PRIVATE quant_hft_online_runtime quant_hft_test_bootstrap)
 
     add_executable(redis_realtime_store_test tests/unit/core/redis_realtime_store_test.cpp)
-    target_link_libraries(redis_realtime_store_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(redis_realtime_store_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(timescale_event_store_test tests/unit/core/timescale_event_store_test.cpp)
-    target_link_libraries(timescale_event_store_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(timescale_event_store_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(redis_realtime_store_client_adapter_test tests/unit/core/redis_realtime_store_client_adapter_test.cpp)
-    target_link_libraries(redis_realtime_store_client_adapter_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(redis_realtime_store_client_adapter_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(timescale_event_store_client_adapter_test tests/unit/core/timescale_event_store_client_adapter_test.cpp)
-    target_link_libraries(timescale_event_store_client_adapter_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(timescale_event_store_client_adapter_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(storage_client_pool_test tests/unit/core/storage_client_pool_test.cpp)
-    target_link_libraries(storage_client_pool_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(storage_client_pool_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(timescale_buffered_event_store_test tests/unit/core/timescale_buffered_event_store_test.cpp)
-    target_link_libraries(timescale_buffered_event_store_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(timescale_buffered_event_store_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(storage_client_factory_test tests/unit/core/storage_client_factory_test.cpp)
-    target_link_libraries(storage_client_factory_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(storage_client_factory_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(tcp_redis_hash_client_test tests/unit/core/tcp_redis_hash_client_test.cpp)
-    target_link_libraries(tcp_redis_hash_client_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(tcp_redis_hash_client_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(libpq_timescale_sql_client_test tests/unit/core/libpq_timescale_sql_client_test.cpp)
-    target_link_libraries(libpq_timescale_sql_client_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(libpq_timescale_sql_client_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(trading_ledger_store_client_adapter_test tests/unit/core/trading_ledger_store_client_adapter_test.cpp)
-    target_link_libraries(trading_ledger_store_client_adapter_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(trading_ledger_store_client_adapter_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(trading_domain_store_client_adapter_test tests/unit/core/trading_domain_store_client_adapter_test.cpp)
-    target_link_libraries(trading_domain_store_client_adapter_test PRIVATE quant_hft_storage GTest::gtest_main)
+    target_link_libraries(trading_domain_store_client_adapter_test PRIVATE quant_hft_storage quant_hft_test_bootstrap)
 
     add_executable(object_pool_test tests/unit/core/object_pool_test.cpp)
-    target_link_libraries(object_pool_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(object_pool_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(event_object_pool_test tests/unit/core/event_object_pool_test.cpp)
-    target_link_libraries(event_object_pool_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(event_object_pool_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(market_bus_producer_test tests/unit/core/market_bus_producer_test.cpp)
-    target_link_libraries(market_bus_producer_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(market_bus_producer_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(event_dispatcher_test tests/unit/core/event_dispatcher_test.cpp)
-    target_link_libraries(event_dispatcher_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(event_dispatcher_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(callback_dispatcher_test tests/unit/core/callback_dispatcher_test.cpp)
-    target_link_libraries(callback_dispatcher_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(callback_dispatcher_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(flow_controller_test tests/unit/core/flow_controller_test.cpp)
-    target_link_libraries(flow_controller_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(flow_controller_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(circuit_breaker_test tests/unit/core/circuit_breaker_test.cpp)
-    target_link_libraries(circuit_breaker_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(circuit_breaker_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(fixed_decimal_test tests/unit/core/fixed_decimal_test.cpp)
-    target_link_libraries(fixed_decimal_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(basic_risk_engine_test tests/unit/services/basic_risk_engine_test.cpp)
-    target_link_libraries(basic_risk_engine_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(risk_policy_engine_test tests/unit/services/risk_policy_engine_test.cpp)
-    target_link_libraries(risk_policy_engine_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(in_memory_portfolio_ledger_test tests/unit/services/in_memory_portfolio_ledger_test.cpp)
-    target_link_libraries(in_memory_portfolio_ledger_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(ctp_position_ledger_test tests/unit/services/ctp_position_ledger_test.cpp)
-    target_link_libraries(ctp_position_ledger_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(ctp_close_offset_resolver_test tests/unit/services/ctp_close_offset_resolver_test.cpp)
-    target_link_libraries(ctp_close_offset_resolver_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(ctp_account_ledger_test tests/unit/services/ctp_account_ledger_test.cpp)
-    target_link_libraries(ctp_account_ledger_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(fixed_decimal_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(pending_exit_store_test tests/unit/services/pending_exit_store_test.cpp)
-    target_link_libraries(pending_exit_store_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(trading_permission_controller_test
-        tests/unit/services/trading_permission_controller_test.cpp)
-    target_link_libraries(trading_permission_controller_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(self_trade_risk_engine_test tests/unit/services/self_trade_risk_engine_test.cpp)
-    target_link_libraries(self_trade_risk_engine_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(risk_rule_executor_test tests/unit/risk/risk_rule_executor_test.cpp)
-    target_link_libraries(risk_rule_executor_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(rate_limiter_test tests/unit/risk/rate_limiter_test.cpp)
-    target_link_libraries(rate_limiter_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(risk_manager_test tests/unit/risk/risk_manager_test.cpp)
-    target_link_libraries(risk_manager_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(bar_aggregator_test tests/unit/services/bar_aggregator_test.cpp)
-    target_link_libraries(bar_aggregator_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(market_bar_pipeline_test tests/unit/services/market_bar_pipeline_test.cpp)
-    target_link_libraries(market_bar_pipeline_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(dominant_contract_coordinator_test
-        tests/unit/services/dominant_contract_coordinator_test.cpp)
-    target_link_libraries(dominant_contract_coordinator_test
-        PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(trading_session_calendar_test
-        tests/unit/services/trading_session_calendar_test.cpp)
-    target_link_libraries(trading_session_calendar_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(pending_exit_store_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(market_data_csv_recorder_test tests/unit/services/market_data_csv_recorder_test.cpp)
-    target_link_libraries(market_data_csv_recorder_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(timeframe_state_fanout_test tests/unit/services/timeframe_state_fanout_test.cpp)
-    target_link_libraries(timeframe_state_fanout_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(order_state_machine_test tests/unit/services/order_state_machine_test.cpp)
-    target_link_libraries(order_state_machine_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(timeout_cancel_tracker_test tests/unit/services/timeout_cancel_tracker_test.cpp)
-    target_link_libraries(timeout_cancel_tracker_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(execution_planner_test tests/unit/services/execution_planner_test.cpp)
-    target_link_libraries(execution_planner_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(execution_router_test tests/unit/services/execution_router_test.cpp)
-    target_link_libraries(execution_router_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(market_data_csv_recorder_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(execution_engine_test tests/unit/services/execution_engine_test.cpp)
-    target_link_libraries(execution_engine_test PRIVATE quant_hft_services quant_hft_ctp GTest::gtest_main)
+    target_link_libraries(execution_engine_test PRIVATE quant_hft_services quant_hft_ctp quant_hft_test_bootstrap)
 
     add_executable(order_manager_test tests/unit/services/order_manager_test.cpp)
-    target_link_libraries(order_manager_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(order_manager_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(position_manager_test tests/unit/services/position_manager_test.cpp)
-    target_link_libraries(position_manager_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(position_manager_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(settlement_query_client_test tests/unit/services/settlement_query_client_test.cpp)
-    target_link_libraries(settlement_query_client_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(settlement_query_client_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(settlement_price_provider_test tests/unit/services/settlement_price_provider_test.cpp)
-    target_link_libraries(settlement_price_provider_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(settlement_price_provider_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(daily_settlement_service_test tests/unit/services/daily_settlement_service_test.cpp)
-    target_link_libraries(daily_settlement_service_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(daily_settlement_service_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(rule_market_state_engine_test tests/unit/services/rule_market_state_engine_test.cpp)
-    target_link_libraries(rule_market_state_engine_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(market_state_detector_test tests/unit/services/market_state_detector_test.cpp)
-    target_link_libraries(market_state_detector_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(rule_market_state_engine_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(metric_registry_test tests/unit/monitoring/metric_registry_test.cpp)
-    target_link_libraries(metric_registry_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(metric_registry_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(dashboard_snapshot_test tests/unit/monitoring/dashboard_snapshot_test.cpp)
-    target_link_libraries(dashboard_snapshot_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(dashboard_snapshot_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(dashboard_wal_validation_test tests/unit/apps/dashboard_wal_validation_test.cpp)
-    target_link_libraries(dashboard_wal_validation_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(dashboard_wal_validation_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(dashboard_wal_permissions_test tests/unit/monitoring/dashboard_wal_permissions_test.cpp)
-    target_link_libraries(dashboard_wal_permissions_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(dashboard_wal_permissions_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(dashboard_publish_cli_test
         tests/unit/apps/dashboard_publish_cli_test.cpp
@@ -632,191 +470,51 @@ if(QUANT_HFT_BUILD_TESTS)
     add_test(NAME dashboard_permissions_test
              COMMAND bash ${CMAKE_SOURCE_DIR}/tests/unit/build/dashboard_permissions_test.sh)
     set_tests_properties(dashboard_permissions_test PROPERTIES SKIP_RETURN_CODE 77)
+    set_tests_properties(dashboard_permissions_test PROPERTIES
+        ENVIRONMENT "QUANT_STRATEGIES_PREFIX=${_quant_package_root}")
     add_test(NAME dashboard_session_lifetime_test
              COMMAND bash ${CMAKE_SOURCE_DIR}/tests/unit/build/dashboard_session_lifetime_test.sh)
     set_tests_properties(dashboard_session_lifetime_test PROPERTIES SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)
 
-    add_executable(parquet_data_feed_test tests/unit/backtest/parquet_data_feed_test.cpp)
-    target_link_libraries(parquet_data_feed_test PRIVATE quant_hft_backtest GTest::gtest_main)
-
-    add_executable(indicator_trace_parquet_writer_test
-                   tests/unit/backtest/indicator_trace_parquet_writer_test.cpp)
-    target_link_libraries(indicator_trace_parquet_writer_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(indicator_trace_csv_writer_test
-                   tests/unit/backtest/indicator_trace_csv_writer_test.cpp)
-    target_link_libraries(indicator_trace_csv_writer_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(sub_strategy_indicator_trace_parquet_writer_test
-                   tests/unit/backtest/sub_strategy_indicator_trace_parquet_writer_test.cpp)
-    target_link_libraries(sub_strategy_indicator_trace_parquet_writer_test
-                          PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(sub_strategy_indicator_trace_csv_writer_test
-                   tests/unit/backtest/sub_strategy_indicator_trace_csv_writer_test.cpp)
-    target_link_libraries(sub_strategy_indicator_trace_csv_writer_test
-                          PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(product_fee_config_loader_test
-                   tests/unit/backtest/product_fee_config_loader_test.cpp)
-    target_link_libraries(product_fee_config_loader_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(contract_expiry_calendar_test
-                   tests/unit/backtest/contract_expiry_calendar_test.cpp)
-    target_link_libraries(contract_expiry_calendar_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(backtest_data_feed_test tests/unit/backtest/backtest_data_feed_test.cpp)
-    target_link_libraries(backtest_data_feed_test PRIVATE quant_hft_backtest GTest::gtest_main)
-
-    add_executable(live_data_feed_test tests/unit/backtest/live_data_feed_test.cpp)
-    target_link_libraries(live_data_feed_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(broker_test tests/unit/backtest/broker_test.cpp)
-    target_link_libraries(broker_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(engine_test tests/unit/backtest/engine_test.cpp)
-    target_link_libraries(engine_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(performance_test tests/unit/backtest/performance_test.cpp)
-    target_link_libraries(performance_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(backtest_metrics_test tests/unit/apps/backtest_metrics_test.cpp)
-    target_link_libraries(backtest_metrics_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(backtest_result_export_test tests/unit/apps/backtest_result_export_test.cpp)
-    target_link_libraries(backtest_result_export_test PRIVATE quant_hft_backtest GTest::gtest_main)
-
-    add_executable(base_strategy_test tests/unit/strategy/base_strategy_test.cpp)
-    target_link_libraries(base_strategy_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(atomic_strategy_interface_test tests/unit/strategy/atomic_strategy_interface_test.cpp)
-    target_link_libraries(atomic_strategy_interface_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(atomic_factory_test tests/unit/strategy/atomic_factory_test.cpp)
-    target_link_libraries(atomic_factory_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(strategy_registry_test tests/unit/strategy/strategy_registry_test.cpp)
-    target_link_libraries(strategy_registry_test PRIVATE quant_hft_core GTest::gtest_main)
-
     add_executable(strategy_engine_test tests/unit/strategy/strategy_engine_test.cpp)
-    target_link_libraries(strategy_engine_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(signal_merger_test tests/unit/strategy/signal_merger_test.cpp)
-    target_link_libraries(signal_merger_test PRIVATE quant_hft_core GTest::gtest_main)
+    target_link_libraries(strategy_engine_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(state_persistence_test tests/unit/strategy/state_persistence_test.cpp)
-    target_link_libraries(state_persistence_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(demo_live_strategy_test tests/unit/strategy/demo_live_strategy_test.cpp)
-    target_link_libraries(demo_live_strategy_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(composite_config_loader_test tests/unit/strategy/composite_config_loader_test.cpp)
-    target_link_libraries(composite_config_loader_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(strategy_main_config_loader_test
-                   tests/unit/strategy/strategy_main_config_loader_test.cpp)
-    target_link_libraries(strategy_main_config_loader_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(composite_strategy_test tests/unit/strategy/composite_strategy_test.cpp)
-    target_link_libraries(composite_strategy_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(atomic_strategies_test tests/unit/strategy/atomic_strategies_test.cpp)
-    target_link_libraries(atomic_strategies_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(sma_test tests/unit/indicators/sma_test.cpp)
-    target_link_libraries(sma_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(ema_test tests/unit/indicators/ema_test.cpp)
-    target_link_libraries(ema_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(atr_test tests/unit/indicators/atr_test.cpp)
-    target_link_libraries(atr_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(kama_test tests/unit/indicators/kama_test.cpp)
-    target_link_libraries(kama_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(adx_test tests/unit/indicators/adx_test.cpp)
-    target_link_libraries(adx_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(backtest_replay_support_test tests/unit/apps/backtest_replay_support_test.cpp)
-    target_link_libraries(backtest_replay_support_test PRIVATE quant_hft_backtest GTest::gtest_main)
+    target_link_libraries(state_persistence_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(cli_support_test tests/unit/apps/cli_support_test.cpp)
-    target_link_libraries(cli_support_test PRIVATE quant_hft_core GTest::gtest_main)
-
-    add_executable(rolling_config_test tests/unit/apps/rolling_config_test.cpp)
-    target_link_libraries(rolling_config_test PRIVATE quant_hft_rolling GTest::gtest_main)
-
-    add_executable(window_generator_test tests/unit/apps/window_generator_test.cpp)
-    target_link_libraries(window_generator_test PRIVATE quant_hft_rolling GTest::gtest_main)
-
-    add_executable(metric_extractor_test tests/unit/apps/metric_extractor_test.cpp)
-    target_link_libraries(metric_extractor_test PRIVATE quant_hft_rolling GTest::gtest_main)
-
-    add_executable(rolling_runner_fixed_test tests/unit/apps/rolling_runner_fixed_test.cpp)
-    target_link_libraries(rolling_runner_fixed_test PRIVATE quant_hft_rolling GTest::gtest_main)
-
-    add_executable(rolling_runner_optimize_test tests/unit/apps/rolling_runner_optimize_test.cpp)
-    target_link_libraries(rolling_runner_optimize_test PRIVATE quant_hft_rolling GTest::gtest_main)
-
-    add_executable(oos_top10_validation_test tests/unit/apps/oos_top10_validation_test.cpp)
-    target_link_libraries(oos_top10_validation_test PRIVATE quant_hft_rolling GTest::gtest_main)
-
-    add_executable(run_backtest_spec_parallel_smoke_test
-                   tests/unit/apps/run_backtest_spec_parallel_smoke_test.cpp)
-    target_link_libraries(run_backtest_spec_parallel_smoke_test PRIVATE quant_hft_core
-                                                                         GTest::gtest_main)
-
-    add_executable(parameter_space_test tests/unit/optim/parameter_space_test.cpp)
-    target_link_libraries(parameter_space_test PRIVATE quant_hft_optim GTest::gtest_main)
-
-    add_executable(grid_search_test tests/unit/optim/grid_search_test.cpp)
-    target_link_libraries(grid_search_test PRIVATE quant_hft_optim GTest::gtest_main)
-
-    add_executable(random_search_test tests/unit/optim/random_search_test.cpp)
-    target_link_libraries(random_search_test PRIVATE quant_hft_optim GTest::gtest_main)
-
-    add_executable(task_scheduler_test tests/unit/optim/task_scheduler_test.cpp)
-    target_link_libraries(task_scheduler_test PRIVATE quant_hft_optim GTest::gtest_main)
-
-    add_executable(result_analyzer_test tests/unit/optim/result_analyzer_test.cpp)
-    target_link_libraries(result_analyzer_test PRIVATE quant_hft_optim GTest::gtest_main)
-
-    add_executable(temp_config_generator_test tests/unit/optim/temp_config_generator_test.cpp)
-    target_link_libraries(temp_config_generator_test PRIVATE quant_hft_optim GTest::gtest_main)
+    target_link_libraries(cli_support_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(ops_cli_test tests/unit/apps/ops_cli_test.cpp)
-    target_link_libraries(ops_cli_test PRIVATE GTest::gtest_main)
+    target_link_libraries(ops_cli_test PRIVATE quant_hft_test_bootstrap)
     target_compile_definitions(ops_cli_test PRIVATE QUANT_HFT_BUILD_DIR="${CMAKE_BINARY_DIR}")
+    target_compile_definitions(ops_cli_test PRIVATE
+        QUANT_STRATEGIES_CPP_CONTRACT="${_quant_package_root}/include/quant_hft/contracts/types.h"
+        QUANT_STRATEGIES_PROTO_CONTRACT="${QuantStrategies_DATA_DIR}/proto/quant_hft/v1/contracts.proto")
     add_dependencies(ops_cli_test market_data_repair_cli)
 
     add_executable(simnow_dashboard_cli_test tests/unit/apps/simnow_dashboard_cli_test.cpp)
-    target_link_libraries(simnow_dashboard_cli_test PRIVATE GTest::gtest_main)
+    target_link_libraries(simnow_dashboard_cli_test PRIVATE quant_hft_test_bootstrap)
     target_compile_definitions(simnow_dashboard_cli_test PRIVATE
                                QUANT_HFT_BUILD_DIR="${CMAKE_BINARY_DIR}")
 
     add_executable(simnow_wal_export_cli_test tests/unit/apps/simnow_wal_export_cli_test.cpp)
-    target_link_libraries(simnow_wal_export_cli_test PRIVATE GTest::gtest_main)
+    target_link_libraries(simnow_wal_export_cli_test PRIVATE quant_hft_test_bootstrap)
     target_compile_definitions(simnow_wal_export_cli_test PRIVATE
                                QUANT_HFT_BUILD_DIR="${CMAKE_BINARY_DIR}")
     add_dependencies(simnow_wal_export_cli_test simnow_wal_export_cli)
 
     add_executable(quality_gate_scripts_test tests/unit/build/quality_gate_scripts_test.cpp)
-    target_link_libraries(quality_gate_scripts_test PRIVATE GTest::gtest_main)
-
-    add_executable(consistency_gate_script_test tests/unit/build/consistency_gate_script_test.cpp)
-    target_link_libraries(consistency_gate_script_test PRIVATE GTest::gtest_main)
-    target_compile_definitions(consistency_gate_script_test PRIVATE
-                               QUANT_HFT_BUILD_DIR="${CMAKE_BINARY_DIR}")
+    target_link_libraries(quality_gate_scripts_test PRIVATE quant_hft_test_bootstrap)
 
     add_executable(simnow_supervisor_script_test
                    tests/unit/build/simnow_supervisor_script_test.cpp)
-    target_link_libraries(simnow_supervisor_script_test PRIVATE GTest::gtest_main)
+    target_link_libraries(simnow_supervisor_script_test PRIVATE quant_hft_test_bootstrap)
     add_dependencies(simnow_supervisor_script_test runtime_paths_cli)
 
     add_executable(simnow_preflight_script_test
                    tests/unit/build/simnow_preflight_script_test.cpp)
-    target_link_libraries(simnow_preflight_script_test PRIVATE GTest::gtest_main)
+    target_link_libraries(simnow_preflight_script_test PRIVATE quant_hft_test_bootstrap)
 
     add_test(NAME simnow_initial_balance_gate_shell_test
              COMMAND bash ${CMAKE_SOURCE_DIR}/tests/unit/build/simnow_initial_balance_gate_test.sh)
@@ -827,30 +525,22 @@ if(QUANT_HFT_BUILD_TESTS)
     set_tests_properties(tencent_simnow_schedule_shell_test
                          PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
-    add_executable(preprod_rehearsal_gate_script_test
-                   tests/unit/build/preprod_rehearsal_gate_script_test.cpp)
-    target_link_libraries(preprod_rehearsal_gate_script_test PRIVATE GTest::gtest_main)
-
-    add_executable(run_backtest_from_config_script_test
-                   tests/unit/build/run_backtest_from_config_script_test.cpp)
-    target_link_libraries(run_backtest_from_config_script_test PRIVATE GTest::gtest_main)
-
-    add_executable(run_backtest_with_validation_script_test
-                   tests/unit/build/run_backtest_with_validation_script_test.cpp)
-    target_link_libraries(run_backtest_with_validation_script_test PRIVATE GTest::gtest_main)
-
-    add_executable(run_rolling_backtest_script_test
-                   tests/unit/build/run_rolling_backtest_script_test.cpp)
-    target_link_libraries(run_rolling_backtest_script_test PRIVATE GTest::gtest_main)
-
     if(QUANT_HFT_METRICS_ACTIVE)
         add_executable(exporter_test tests/unit/monitoring/exporter_test.cpp)
-        target_link_libraries(exporter_test PRIVATE quant_hft_core GTest::gtest_main)
+        target_link_libraries(exporter_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
     endif()
+
+    add_executable(deployment_config_test tests/unit/core/deployment_config_test.cpp)
+    target_link_libraries(deployment_config_test PRIVATE quant_hft_deployment quant_hft_test_bootstrap)
+    add_executable(strategy_state_migration_test tests/unit/core/strategy_state_migration_test.cpp)
+    target_link_libraries(strategy_state_migration_test PRIVATE quant_hft_state_migration quant_hft_test_bootstrap)
+    add_executable(runtime_semantics_defaults_test tests/unit/core/runtime_semantics_defaults_test.cpp)
+    target_link_libraries(runtime_semantics_defaults_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     get_property(quant_hft_test_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
     foreach(test_target IN LISTS quant_hft_test_targets)
         if(test_target MATCHES "_test$")
+            target_link_libraries(${test_target} PRIVATE quant_hft_test_bootstrap Quant::Contracts)
             target_compile_definitions(${test_target} PRIVATE
                 QUANT_HFT_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
                 QUANT_HFT_BUILD_DIR="${CMAKE_BINARY_DIR}")
@@ -858,13 +548,16 @@ if(QUANT_HFT_BUILD_TESTS)
     endforeach()
 
     include(GoogleTest)
+    gtest_discover_tests(deployment_config_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    gtest_discover_tests(strategy_state_migration_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    gtest_discover_tests(runtime_semantics_defaults_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(durable_order_event_inbox_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(atomic_trade_postgres_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(verified_trade_accounting_policy_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
     gtest_discover_tests(position_reconciliation_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(query_scheduler_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(query_batch_collector_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(replay_market_parity_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
     gtest_discover_tests(account_execution_scheduler_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(runtime_paths_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(runtime_identity_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
@@ -895,28 +588,11 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(circuit_breaker_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(fixed_decimal_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(callback_dispatcher_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(basic_risk_engine_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(risk_policy_engine_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(in_memory_portfolio_ledger_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(ctp_position_ledger_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(ctp_close_offset_resolver_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(ctp_account_ledger_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
     gtest_discover_tests(pending_exit_store_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(trading_permission_controller_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(self_trade_risk_engine_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(risk_rule_executor_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(rate_limiter_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(risk_manager_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(bar_aggregator_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(market_bar_pipeline_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(dominant_contract_coordinator_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(trading_session_calendar_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
     gtest_discover_tests(market_data_csv_recorder_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(timeframe_state_fanout_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(order_state_machine_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(timeout_cancel_tracker_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(execution_planner_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(execution_router_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
     gtest_discover_tests(execution_engine_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(order_manager_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(position_manager_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
@@ -924,77 +600,29 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(settlement_price_provider_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(daily_settlement_service_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(rule_market_state_engine_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(market_state_detector_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
     gtest_discover_tests(metric_registry_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(dashboard_snapshot_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(dashboard_wal_validation_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(dashboard_wal_permissions_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(parquet_data_feed_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(indicator_trace_parquet_writer_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(indicator_trace_csv_writer_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(sub_strategy_indicator_trace_parquet_writer_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(sub_strategy_indicator_trace_csv_writer_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(product_fee_config_loader_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(contract_expiry_calendar_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(backtest_data_feed_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(live_data_feed_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(broker_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(engine_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(performance_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(backtest_metrics_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(base_strategy_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(atomic_strategy_interface_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(atomic_factory_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(strategy_registry_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
     gtest_discover_tests(strategy_engine_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(signal_merger_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
     gtest_discover_tests(state_persistence_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(demo_live_strategy_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(composite_config_loader_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(strategy_main_config_loader_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(composite_strategy_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(atomic_strategies_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(sma_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(ema_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(atr_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(kama_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(adx_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(backtest_replay_support_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
     gtest_discover_tests(cli_support_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(backtest_result_export_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(rolling_config_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(window_generator_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(metric_extractor_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(rolling_runner_fixed_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(rolling_runner_optimize_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(oos_top10_validation_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(run_backtest_spec_parallel_smoke_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(parameter_space_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(grid_search_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(random_search_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(task_scheduler_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(result_analyzer_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(temp_config_generator_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
     gtest_discover_tests(ops_cli_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(simnow_dashboard_cli_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(simnow_wal_export_cli_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(quality_gate_scripts_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(consistency_gate_script_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
     gtest_discover_tests(simnow_supervisor_script_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     # Preflight intentionally checks host-wide SimNow processes. It must not overlap
     # supervisor fixtures that start real test processes in other CTest cases.
     gtest_discover_tests(simnow_preflight_script_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
                          PROPERTIES RUN_SERIAL TRUE)
-    gtest_discover_tests(preprod_rehearsal_gate_script_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(run_backtest_from_config_script_test
-                         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-                         TEST_PREFIX "run_backtest_from_config_script_test.")
-    gtest_discover_tests(run_backtest_with_validation_script_test
-                         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-                         TEST_PREFIX "run_backtest_with_validation_script_test.")
-    gtest_discover_tests(run_rolling_backtest_script_test
-                         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-                         TEST_PREFIX "run_rolling_backtest_script_test.")
+
     if(QUANT_HFT_METRICS_ACTIVE)
         gtest_discover_tests(exporter_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     endif()

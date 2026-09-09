@@ -1,0 +1,97 @@
+# TEMPLATE ONLY: replace account identities and active_host before use. JSON is valid YAML.
+{
+  "schema_version": 1,
+  "package": {
+    "version": "1.0.0",
+    "manifest": {
+      "path": "/home/kevin/quant_packages/1.0.0/share/quant_strategies/1.0.0/manifest.json",
+      "sha256": "c13b174e0aed50002c85c61026613d1937ac554255d3ae6f203159fd9fef6cd4"
+    },
+    "parameter_schema": {
+      "path": "/home/kevin/quant_packages/1.0.0/share/quant_strategies/1.0.0/schemas/atomic_parameters.yaml",
+      "sha256": "1e684f40ae67b8a6d490c6f4b8adae0539822b50a275998e6a6855b68e9545d5"
+    }
+  },
+  "parameter_sets": {
+    "hc_5m_v001": {
+      "path": "/home/kevin/quant_packages/1.0.0/share/quant_strategies/1.0.0/parameter_sets/hc_5m_v001.yaml",
+      "sha256": "60362080b3e0cc987829873a09af8556fbc1648bffd874b5c1c4ade62dacf8d5"
+    }
+  },
+  "accounts": {
+    "simnow_a": {
+      "environment": "simnow",
+      "broker_id": "BROKER_ID",
+      "account_id": "SIMNOW_ACCOUNT_A",
+      "connection_config": "connections.example.yaml",
+      "credential_ref": "/home/kevin/.config/quant/simnow_a.env",
+      "runtime_root": "/home/kevin/quant_runtime",
+      "active_host": "SET_HOSTNAME",
+      "risk_profile_ref": "account_limits_v001"
+    },
+    "simnow_b": {
+      "environment": "simnow",
+      "broker_id": "BROKER_ID",
+      "account_id": "SIMNOW_ACCOUNT_B",
+      "connection_config": "connections.example.yaml",
+      "credential_ref": "/home/kevin/.config/quant/simnow_b.env",
+      "runtime_root": "/home/kevin/quant_runtime",
+      "active_host": "SET_HOSTNAME",
+      "risk_profile_ref": "account_limits_v001"
+    }
+  },
+  "risk_profiles": {
+    "trial_limits_v001": {
+      "max_order_volume": 1,
+      "max_order_notional": 100000,
+      "max_margin_to_equity_ratio": 0.3,
+      "forbid_open_windows": ""
+    },
+    "account_limits_v001": {
+      "max_order_volume": 2,
+      "max_order_notional": 100000,
+      "max_margin_to_equity_ratio": 0.5,
+      "forbid_open_windows": ""
+    }
+  },
+  "capital_allocations": {
+    "hc_trial_a": {
+      "account_ref": "simnow_a",
+      "initial_capital": 50000
+    },
+    "hc_trial_b": {
+      "account_ref": "simnow_a",
+      "initial_capital": 50000
+    },
+    "hc_trial_other": {
+      "account_ref": "simnow_b",
+      "initial_capital": 100000
+    }
+  },
+  "instances": [
+    {
+      "instance_id": "hc_kama_5m_a",
+      "account_ref": "simnow_a",
+      "strategy_release": "kama_trend@1.0.0",
+      "parameter_set": "hc_5m_v001",
+      "capital_allocation_ref": "hc_trial_a",
+      "risk_profile_ref": "trial_limits_v001"
+    },
+    {
+      "instance_id": "hc_kama_5m_b",
+      "account_ref": "simnow_a",
+      "strategy_release": "kama_trend@1.0.0",
+      "parameter_set": "hc_5m_v001",
+      "capital_allocation_ref": "hc_trial_b",
+      "risk_profile_ref": "trial_limits_v001"
+    },
+    {
+      "instance_id": "hc_kama_5m_a",
+      "account_ref": "simnow_b",
+      "strategy_release": "kama_trend@1.0.0",
+      "parameter_set": "hc_5m_v001",
+      "capital_allocation_ref": "hc_trial_other",
+      "risk_profile_ref": "trial_limits_v001"
+    }
+  ]
+}

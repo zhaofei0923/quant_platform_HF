@@ -1,3 +1,4 @@
+# Instance identity and parameter sets are resolved from configs/deploy manifests.
 # CONFIG DOC
 # Purpose: SimNow static configured-universe bounded simulation-trading profile.
 # Consumer: start_simnow_trading.sh / supervise_simnow_trading.sh / core_engine.
@@ -72,10 +73,7 @@ ctp:
   instruments: "${CTP_SIM_INSTRUMENTS}"
   product_ids: ""
   active_contract_mode: "static"
-  strategy_ids: "kama_candidate_hc"
   strategy_factory: "composite"
-  strategy_composite_config_map:
-    kama_candidate_hc: "configs/strategies/main_sim_trade_candidate_hc.yaml"
   strategy_queue_capacity: 8192
   strategy_state_persist_enabled: true
   strategy_state_backend: "file"

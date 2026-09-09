@@ -1,3 +1,5 @@
+#include "quant_hft/core/host_adapters/host_clock.h"
+#include "quant_hft/core/host_adapters/filesystem_configuration_reader.h"
 #include <iostream>
 #include <string>
 
@@ -5,6 +7,8 @@
 #include "quant_hft/runtime/runtime_paths.h"
 
 int main(int argc, char** argv) {
+    quant_hft::BindOnlineHostClocks();
+    quant_hft::BindFilesystemConfigurationReader();
     if (argc != 3 || std::string(argv[1]) != "--config") {
         std::cerr << "usage: runtime_paths_cli --config PATH\n";
         return 2;

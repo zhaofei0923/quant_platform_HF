@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "quant_hft/config/execution_profile.h"
 #include "quant_hft/core/ctp_config.h"
 #include "quant_hft/services/market_state_detector.h"
 
@@ -30,6 +31,8 @@ struct CtpFileConfig {
     bool dominant_contract_require_complete_baseline{true};
     std::string dominant_contract_switch_mode{"startup_only"};
     std::vector<std::string> strategy_ids;
+    std::unordered_map<std::string, double> strategy_initial_capital;
+    std::unordered_map<std::string, StrategyExecutionProfile> strategy_risk_profiles;
     std::string run_type{"live"};
     std::string strategy_factory{"demo"};
     std::string strategy_composite_config;
@@ -51,9 +54,16 @@ struct CtpFileConfig {
     MarketStateDetectorConfigByProduct market_state_detector_by_product;
 };
 
+struct CtpConfigLoadOptions {
+    // The caller must subsequently validate and inject a formal deployment.
+    // Standalone legacy consumers keep requiring their explicit composite file.
+    bool defer_strategy_definitions_to_deployment{false};
+};
+
 class CtpConfigLoader {
    public:
-    static bool LoadFromYaml(const std::string& path, CtpFileConfig* config, std::string* error);
+    static bool LoadFromYaml(const std::string& path, CtpFileConfig* config, std::string* error,
+                             CtpConfigLoadOptions options = {});
 };
 
 }  // namespace quant_hft

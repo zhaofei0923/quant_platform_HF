@@ -284,6 +284,7 @@ bool ParseWalLine(const std::string& line, OrderEvent* event, bool include_trade
     (void)ParseStringField(line, "account_id", &event->account_id);
     (void)ParseStringField(line, "broker_id", &event->broker_id);
     (void)ParseStringField(line, "strategy_id", &event->strategy_id);
+    (void)ParseStringField(line, "component_id", &event->component_id);
     (void)ParseStringField(line, "exchange_order_id", &event->exchange_order_id);
     (void)ParseStringField(line, "instrument_id", &event->instrument_id);
     (void)ParseStringField(line, "exchange_id", &event->exchange_id);
@@ -379,6 +380,7 @@ bool ParseCtpOrderSubmitMappingLine(const std::string& line, CtpOrderSubmitMappi
     (void)ParseStringField(line, "run_id", &mapping->run_id);
     (void)ParseStringField(line, "account_id", &mapping->account_id);
     (void)ParseStringField(line, "strategy_id", &mapping->strategy_id);
+    (void)ParseStringField(line, "component_id", &mapping->component_id);
     (void)ParseStringField(line, "trace_id", &mapping->trace_id);
     (void)ParseStringField(line, "instrument_id", &mapping->instrument_id);
     (void)ParseStringField(line, "exchange_id", &mapping->exchange_id);

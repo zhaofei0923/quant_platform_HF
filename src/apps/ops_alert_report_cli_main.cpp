@@ -1,3 +1,5 @@
+#include "quant_hft/core/host_adapters/host_clock.h"
+#include "quant_hft/core/host_adapters/filesystem_configuration_reader.h"
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -28,6 +30,8 @@ bool ReadFile(const std::string& path, std::string* out, std::string* error) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    quant_hft::BindOnlineHostClocks();
+    quant_hft::BindFilesystemConfigurationReader();
     using namespace quant_hft::apps;
     const ArgMap args = ParseArgs(argc, argv);
 

@@ -1,263 +1,45 @@
-# quant_platform_HF
+# quant_platform_HF — 在线交易宿主
 
-Quantitative trading platform bootstrap using a pure C++ execution and strategy stack.
+本项目负责 SimNow/实盘连接、一个账户一个进程、执行与账户风控、策略经济账与柜台实际账、持久化恢复和只读监控。回测研究在独立 Git 项目 `quant_research`；算法、自研指标及纯计算规则由独立 Git 项目 `quant_strategies` 发布。迁移在隔离工作树进行，原运行服务未升级。
 
-本次 CTP 修复的提交、验证和剩余验收事项见
-[研究与 SimNow 候选版本交付](docs/results/ctp_remediation_20260906/delivery.md)。
-另一台 Ubuntu 服务器的拉取、SDK 配置和交易时段启动命令见
-[Ubuntu SimNow 部署](docs/ops/ubuntu_simnow_handoff.md)。
+## 构建与依赖
 
-## Quick start
+在线宿主使用 C++17、GCC 11+、CMake 3.20+、OpenSSL、yaml-cpp。测试使用 GTest。先安装 `QuantStrategies 1.0.0` 静态包，构建会核对 `dependencies.lock.json` 和已安装文件校验和；不引用兄弟仓源码，不需要研究环境。
 
 ```bash
-./scripts/build/bootstrap.sh
-```
-
-在 Ubuntu 新机器上，脚本会自动安装缺失依赖并完成构建与测试。
-
-如需禁止自动安装（仅在依赖已齐全时使用）：
-
-```bash
-./scripts/build/bootstrap.sh --skip-install-deps
-```
-
-## Migration Note
-
-- 仓库已切换为纯 C++：旧语言桥接脚本与 pybind 绑定已移除。
-- 运行入口统一为 `build/` 下的 C++ CLI（如 `backtest_cli`、`simnow_compare_cli`、`reconnect_evidence_cli`）。
-- CI 与本地统一使用 `scripts/build/dependency_audit.sh` + `scripts/build/repo_purity_check.sh` 作为硬门禁。
-
-## Quality gates
-
-```bash
-bash scripts/build/dependency_audit.sh --build-dir build
-bash scripts/build/repo_purity_check.sh --repo-root .
-bash scripts/build/run_consistency_gates.sh --build-dir build --results-dir docs/results
-bash scripts/build/run_preprod_rehearsal_gate.sh --build-dir build --results-dir docs/results
-```
-
-## SimNow profiles
-
-- `configs/sim/ctp.yaml`: env-selected SimNow runtime profile; `.env.example` defaults to trading-hours fronts (`182.254.243.31:30011/30001`)
-- `configs/sim/ctp_trading_hours.yaml`: trading-hours-aligned SimNow (`182.254.243.31:30011/30001`)
-- `configs/sim/ctp_trading_hours_group2.yaml`: trading-hours group2 (`182.254.243.31:30012/30002`)
-- `configs/sim/ctp_trading_hours_group3.yaml`: trading-hours group3 (`182.254.243.31:30013/30003`)
-- `ctp_trading_hours` timeout in preflight may indicate out-of-session hours (service window follows production)
-- reconnect knobs are configurable in YAML:
-  - `connect_timeout_ms`
-  - `reconnect_max_attempts`
-  - `reconnect_initial_backoff_ms`
-  - `reconnect_max_backoff_ms`
-
-## 使用 .env 注入 CTP_SIM_*（推荐）
-
-真实账号密码放在本地 `.env`，不要写入 YAML。`.env` 已被 git 忽略，仓库只保留 `.env.example` 模板。
-
-1) 首次创建本地环境文件并填写账号（已有 `.env` 时保留原文件）：
-```bash
-cp -n .env.example .env
-```
-2) 加载到当前 shell：
-```bash
-set -a && source .env && set +a
-```
-3) 启动前快速检查：
-```bash
-for key in CTP_SIM_USER_ID CTP_SIM_INVESTOR_ID CTP_SIM_PASSWORD; do
-  if [[ -n "${!key:-}" ]]; then
-    printf '%s=set\n' "$key"
-  else
-    printf '%s=missing\n' "$key"
-  fi
-done
-```
-
-默认 `.env.example` 使用交易时段前置（30001/30011）和 `CTP_SIM_IS_PRODUCTION_MODE=true`。其他交易时段组为 30002/30012、30003/30013。仅做 7x24 API 测试时，可按模板注释切换 40001/40011 并设置 `CTP_SIM_IS_PRODUCTION_MODE=false`。
-
-也可直接通过系统环境变量注入（CI/systemd/k8s），YAML 中 `${CTP_SIM_*}` 会在加载时自动替换；主 SimNow 配置通过 `password_env: "CTP_SIM_PASSWORD"` 读取密码。
-
-## Core Engine config loading
-
-- `core_engine` now loads CTP runtime config from YAML at startup:
-```bash
-set -a && source .env && set +a
-./build/core_engine --config configs/sim/ctp.yaml
-```
-- Required config items are validated by `CtpConfigLoader + CtpConfigValidator`.
-- `is_production_mode` must be explicit in YAML.
-- `CtpGatewayAdapter` automatically retries known SimNow trading-hours front groups
-  (`30001/11 -> 30002/12 -> 30003/13`) on the same host when real-api connect fails.
-- terminal auth is configurable via `enable_terminal_auth` (default `true`).
-  When look-through front rejects handshake, try `enable_terminal_auth: false`.
-- Password resolution order:
-  1. `password` in YAML
-  2. `password_env` in YAML (fallback default `CTP_SIM_PASSWORD`)
-
-## Strategy Engine Closed Loop
-
-纯 C++ 主链路中，策略闭环已改为进程内执行：
-- `core_engine` 生成并分发 `StateSnapshot7D`
-- `StrategyEngine` 将状态与订单事件派发到 `ILiveStrategy` 实例
-- `SignalIntent` 进入既有 `ExecutionPlanner + Risk + ExecutionEngine`
-
-需要外部 Redis 存储时可开启 external 模式：
-
-```bash
-docker run --rm -p 6379:6379 redis:7-alpine
-
-cmake -S . -B build -DQUANT_HFT_BUILD_TESTS=ON -DQUANT_HFT_ENABLE_REDIS_EXTERNAL=ON
+cmake -S . -B build -DQUANT_HFT_BUILD_TESTS=ON -DCMAKE_PREFIX_PATH=/path/to/quant-strategies
 cmake --build build -j
-
-set -a && source .env && set +a
-export QUANT_HFT_REDIS_MODE=external
-export QUANT_HFT_REDIS_HOST=127.0.0.1
-export QUANT_HFT_REDIS_PORT=6379
-
-./build/core_engine --config configs/sim/ctp.yaml --run-seconds 30
+ctest --test-dir build --no-tests=error --output-on-failure
+bash scripts/build/three_project_boundary_check.sh --build-dir build
 ```
 
-### Strategy path smoke
+真实 CTP 使用 `-DQUANT_HFT_ENABLE_CTP_REAL_API=ON -DCTP_V6711_DIR=/external/sdk/path`，SDK和凭据不进入源码包。在线仓禁止启用 Arrow；相应构建目标在研究仓。
+
+## 账户与策略配置
+
+正式入口是部署清单。参数集属于策略库；账户、初始分配、风险限制及策略实例绑定属于本仓。请先根据 `configs/deploy/instances.example.yaml` 创建仓库外部署文件，填入真实账户引用、活动主机、安装包及参数集的校验和。示例不代表运行许可或当前账户。
 
 ```bash
-ctest --test-dir build -R "(StrategyRegistryTest|StrategyEngineTest|DemoLiveStrategyTest|CallbackDispatcherTest)" --output-on-failure
+build/quant_config_cli validate /restricted/deployment.yaml
+build/quant_config_cli resolve /restricted/deployment.yaml /review/resolved.json
+build/quant_config_cli list /restricted/deployment.yaml
+build/quant_config_cli launch /restricted/deployment.yaml simnow_a
 ```
 
-## Real CTP probe (optional)
+`launch` 是实际启动命令；本次实现验证不自动调用它。每次只启动一个明确账户，凭据文件须为当前用户所有且权限0600，内容只允许CTP环境变量赋值。工具不通过shell执行凭据文件。`validate/resolve/list`不读取凭据内容。
 
-6.7.11 Linux SDK 的来源、版本和文件校验见
-[SDK 验证记录](docs/results/ctp_remediation_20260906/baseline.md)。
-新版本的账户隔离、旧状态处理与五日 SimNow 验收要求见
-[恢复与验收](docs/ops/ctp_recovery_and_acceptance.md)。
-回测默认 `online_parity`，原研究换月协议需显式选择 `research`，详见
-[回测运行语义](docs/backtest_runtime_semantics.md)。
-构建目标和运行时边界见 [模块说明](docs/runtime_build_targets.md)。
+同一账户可运行同品种多个独立实例。意图、委托、成交、资金及状态以实例归属；组合内部component只标识信号来源。对手方向不净额合并，不自动撤销其他实例委托。未知归属、缺少资金或核算规则时开仓被阻止。
 
-```bash
-cmake -S . -B build-real -DQUANT_HFT_BUILD_TESTS=ON -DQUANT_HFT_ENABLE_CTP_REAL_API=ON
-cmake --build build-real -j
-set -a && source .env && set +a
+旧配置仅用于一次性迁移；`QUANT_HFT_ALLOW_LEGACY_CONFIG=1` 是显式兼容入口，不能与新部署入口混用为长期配置源。
 
-LD_LIBRARY_PATH=$PWD/ctp_api/v6.7.11_20250617_api_traderapi_se_linux64:$LD_LIBRARY_PATH \
-  ./build-real/simnow_probe configs/sim/ctp.yaml --monitor-seconds 30
-```
+## 模块
 
-Optional probe runtime flags:
-- `--monitor-seconds` (default `300`, use `<0` for no time limit)
-- `--health-interval-ms` (default `1000`)
-- `--instrument-timeout-seconds` (default `15`)
-- `--force-instrument-refresh` bypasses any same-day v2 candidate cache; the probe and
-  `core_engine` still perform the mandatory complete broker instrument query before opens.
-- Probe emits `[health] ts_ns=... state=healthy|unhealthy` lines for SLO analysis.
-- On connect failure, probe prints `Connect diagnostic:` with per-front attempt detail
-  and CTP `ErrorID/ErrorMsg` (when available).
+- `src/core/ctp`：行情、交易API与柜台查询。
+- `src/core/runtime`：账户串行调度、运行身份与路径。
+- `src/core/storage`：权威事务、资金划拨、两套持仓分配及成交去重。
+- `src/services`：在线执行、持久化冻结、恢复及退出。
+- `src/strategy`：宿主回调调度与状态持久化；没有具体算法的第二份实现。
+- `src/core/config`：严格部署解析、引用检查、来源/哈希及一次性迁移。
+- `dashboard`：独立只读展示，不控制交易进程。
 
-## Reconnect Fault Injection (SimNow)
-
-- Runbook: `docs/CTP_SIMNOW_RECONNECT_FAULT_INJECTION_RUNBOOK.md`
-- Result template: `docs/templates/RECONNECT_FAULT_INJECTION_RESULT.md`
-
-One-shot evidence generation:
-```bash
-mkdir -p docs/results
-./build/reconnect_evidence_cli \
-  --config-profile configs/sim/ctp.yaml \
-  --report_file docs/results/reconnect_fault_result.md \
-  --health_json_file docs/results/ops_health_report.json \
-  --health_markdown_file docs/results/ops_health_report.md \
-  --alert_json_file docs/results/ops_alert_report.json \
-  --alert_markdown_file docs/results/ops_alert_report.md
-```
-
-Independent health/alert reports:
-```bash
-./build/ops_health_report_cli \
-  --strategy-engine-chain-status complete \
-  --output_json docs/results/ops_health_report.json \
-  --output_md docs/results/ops_health_report.md
-
-./build/ops_alert_report_cli \
-  --health-json-file docs/results/ops_health_report.json \
-  --output_json docs/results/ops_alert_report.json \
-  --output_md docs/results/ops_alert_report.md
-```
-
-## WAL Replay Recovery
-
-- Loader: `quant_hft::WalReplayLoader`
-- CLI verification tool:
-```bash
-./build/wal_replay_tool runtime_events.wal
-```
-- `core_engine` startup automatically attempts WAL replay before live processing.
-
-## Backtest Replay Harness
-
-- Runbook: `docs/BACKTEST_REPLAY_HARNESS.md`
-- CLI:
-```bash
-mkdir -p docs/results
-./build/backtest_cli \
-  --engine_mode csv \
-  --csv_path backtest_data/rb.csv \
-  --max_ticks 5000 \
-  --output_json docs/results/backtest_cli_smoke.json \
-  --output_md docs/results/backtest_cli_smoke.md
-```
-
-## Architecture
-
-- `core_engine` (C++): market data, risk, order, portfolio, regulatory sink, market state rule engine.
-- `strategy_engine` (C++): strategy APIs (`Initialize`, `OnState`, `OnOrderEvent`, `OnTimer`) and in-process orchestration.
-- `proto/`: cross-process contracts with versioned Protobuf schema.
-
-## Release packaging (non-hotpath)
-
-- Build portable release bundle (tar + sha256):
-```bash
-bash scripts/build/package_nonhotpath_release.sh v0.1.0
-```
-- Output:
-  - `dist/quant-hft-nonhotpath-v0.1.0.tar.gz`
-  - `dist/quant-hft-nonhotpath-v0.1.0.tar.gz.sha256`
-- GitHub Actions workflow:
-  - `/.github/workflows/release-package.yml`
-  - triggers on `v*` tag push or manual `workflow_dispatch`
-
-## Data Adapters (Baseline)
-
-- Realtime cache adapter:
-  - `IRealtimeCache` + `RedisRealtimeStore` (`trade:order:*`, `market:tick:*`, `trade:position:*` key schema)
-- Timeseries adapter:
-  - `ITimeseriesStore` + `TimescaleEventStore` (market/order/risk decision append + query)
-- Client-backed path:
-  - `RedisRealtimeStoreClientAdapter` + `IRedisHashClient`
-  - `TimescaleEventStoreClientAdapter` + `ITimescaleSqlClient`
-  - shared `StorageRetryPolicy` for retry/backoff.
-- Pooling + async write path:
-  - `PooledRedisHashClient` / `RedisHashClientPool`
-  - `PooledTimescaleSqlClient` / `TimescaleSqlClientPool`
-  - `TimescaleBufferedEventStore` for batch flush in background thread.
-- Factory + runtime config:
-  - `StorageConnectionConfig::FromEnvironment()`
-  - `StorageClientFactory` with `in-memory`/`external` mode selection and optional fallback.
-- Build flags:
-  - `-DQUANT_HFT_ENABLE_REDIS_EXTERNAL=ON`
-  - `-DQUANT_HFT_ENABLE_TIMESCALE_EXTERNAL=ON`
-- Current stage defaults to in-memory clients for deterministic tests.
-- Redis external mode now uses `TcpRedisHashClient` (`PING/HSET/HGETALL` + optional `AUTH`).
-- Timescale external mode now uses `LibpqTimescaleSqlClient` (runtime `libpq` dynamic load + `SELECT 1` health check).
-- If external drivers are unavailable/unhealthy, factory fallback behavior is controlled by `QUANT_HFT_STORAGE_ALLOW_FALLBACK`.
-
-## Storage Env Vars
-
-- `QUANT_HFT_REDIS_MODE` = `in_memory|external`
-- `QUANT_HFT_REDIS_HOST`, `QUANT_HFT_REDIS_PORT`, `QUANT_HFT_REDIS_USER`, `QUANT_HFT_REDIS_PASSWORD`
-- `QUANT_HFT_REDIS_TLS` = `true|false`
-- `QUANT_HFT_REDIS_CONNECT_TIMEOUT_MS`, `QUANT_HFT_REDIS_READ_TIMEOUT_MS`
-- `QUANT_HFT_TIMESCALE_MODE` = `in_memory|external`
-- `QUANT_HFT_TIMESCALE_DSN` (or host/port/db/user/password fields)
-- `QUANT_HFT_TIMESCALE_HOST`, `QUANT_HFT_TIMESCALE_PORT`, `QUANT_HFT_TIMESCALE_DB`
-- `QUANT_HFT_TIMESCALE_USER`, `QUANT_HFT_TIMESCALE_PASSWORD`
-- `QUANT_HFT_TIMESCALE_SSLMODE`
-- `QUANT_HFT_TIMESCALE_CONNECT_TIMEOUT_MS`
-- `QUANT_HFT_STORAGE_ALLOW_FALLBACK` = `true|false`
+当前迁移和发布约束见 [三项目迁移说明](docs/ops/three_project_migration.md)。完整旧设计保存在Git基线与 `docs/archive`，不能据此认定新版本已通过实盘验收。

@@ -1,3 +1,5 @@
+#include "quant_hft/core/host_adapters/host_clock.h"
+#include "quant_hft/core/host_adapters/filesystem_configuration_reader.h"
 #include <openssl/evp.h>
 
 #include <algorithm>
@@ -688,6 +690,8 @@ std::string RenderMarkdown(const ValidationStats& stats, const std::string& stat
 }  // namespace
 
 int main(int argc, char** argv) {
+    quant_hft::BindOnlineHostClocks();
+    quant_hft::BindFilesystemConfigurationReader();
     const auto args = quant_hft::apps::ParseArgs(argc, argv);
     const fs::path repository_root =
         quant_hft::apps::GetArg(args, "repo-root", fs::current_path().string());

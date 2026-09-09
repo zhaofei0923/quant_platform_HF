@@ -1,3 +1,5 @@
+#include "quant_hft/core/host_adapters/host_clock.h"
+#include "quant_hft/core/host_adapters/filesystem_configuration_reader.h"
 #include <algorithm>
 #include <iostream>
 #include <memory>
@@ -142,6 +144,8 @@ bool ParseArgs(int argc, char** argv, std::string* config_path, std::string* tra
 }  // namespace
 
 int main(int argc, char** argv) {
+    quant_hft::BindOnlineHostClocks();
+    quant_hft::BindFilesystemConfigurationReader();
     using namespace quant_hft;
 
     CtpRuntimeConfig bootstrap_runtime;

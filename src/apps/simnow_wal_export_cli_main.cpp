@@ -1,3 +1,5 @@
+#include "quant_hft/core/host_adapters/host_clock.h"
+#include "quant_hft/core/host_adapters/filesystem_configuration_reader.h"
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -18,7 +20,7 @@
 #include <vector>
 
 #include "quant_hft/apps/cli_support.h"
-#include "quant_hft/backtest/product_fee_config_loader.h"
+#include "quant_hft/model/product_fee_config.h"
 #include "quant_hft/contracts/types.h"
 #include "quant_hft/core/storage_client_factory.h"
 #include "quant_hft/core/storage_connection_config.h"
@@ -854,7 +856,7 @@ ExportSpec ParseSpec(const quant_hft::apps::ArgMap& args) {
     spec.fee_config = quant_hft::apps::GetArgAny(
         args, {"fee-config", "fee_config"},
         GetEnvOrDefault("SIMNOW_FEE_CONFIG",
-                        DefaultPathFromRoot("configs/strategies/instrument_info.json")));
+                        DefaultPathFromRoot("configs/market/products.json")));
     spec.project_db =
         ParseBoolText(quant_hft::apps::GetArgAny(args, {"project-db", "project_db"}), false);
     spec.query_db =
@@ -1124,6 +1126,8 @@ int RunExport(const ExportSpec& spec) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    quant_hft::BindOnlineHostClocks();
+    quant_hft::BindFilesystemConfigurationReader();
     const auto args = quant_hft::apps::ParseArgs(argc, argv);
     if (quant_hft::apps::HasArg(args, "help") || quant_hft::apps::HasArg(args, "h")) {
         std::cout << "Usage: simnow_wal_export_cli --trading-day YYYYMMDD [--wal-file path] "

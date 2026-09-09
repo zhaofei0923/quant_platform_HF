@@ -1,0 +1,91 @@
+[1/67] Building CXX object CMakeFiles/quant_hft_common.dir/src/core/host_adapters/flow_controller_wait.cpp.o
+[2/67] Building CXX object CMakeFiles/quant_hft_common.dir/src/core/host_adapters/dominant_contract_status_io.cpp.o
+[3/67] Building CXX object CMakeFiles/quant_hft_common.dir/src/core/host_adapters/runtime_semantics_ctp_validation.cpp.o
+[4/67] Building CXX object CMakeFiles/quant_hft_common.dir/src/core/host_adapters/market_bar_checkpoint_io.cpp.o
+[5/67] Building CXX object CMakeFiles/quant_hft_common.dir/src/core/host_adapters/instrument_meta_write_io.cpp.o
+[6/67] Building CXX object CMakeFiles/quant_hft_common.dir/src/core/common/circuit_breaker.cpp.o
+[7/67] Building CXX object CMakeFiles/quant_hft_common.dir/src/core/common/callback_dispatcher.cpp.o
+[8/67] Building CXX object CMakeFiles/quant_hft_common.dir/src/core/perf/object_pool.cpp.o
+[9/67] Building CXX object CMakeFiles/quant_hft_common.dir/src/core/perf/event_object_pool.cpp.o
+[10/67] Building CXX object CMakeFiles/quant_hft_common.dir/src/core/common/event_dispatcher.cpp.o
+[11/67] Building CXX object CMakeFiles/quant_hft_common.dir/src/core/monitoring/metric_registry.cpp.o
+[12/67] Building CXX object CMakeFiles/quant_hft_common.dir/src/core/market/kafka_market_bus_producer.cpp.o
+[13/67] Building CXX object CMakeFiles/quant_hft_common.dir/src/core/ctp/ctp_config.cpp.o
+[14/67] Building CXX object CMakeFiles/quant_hft_common.dir/src/core/monitoring/exporter.cpp.o
+[15/67] Building CXX object CMakeFiles/quant_hft_storage.dir/src/core/storage/redis_hash_client.cpp.o
+[16/67] Building CXX object CMakeFiles/quant_hft_storage.dir/src/core/storage/redis_realtime_store.cpp.o
+[17/67] Building CXX object CMakeFiles/quant_hft_storage.dir/src/core/storage/storage_client_pool.cpp.o
+[18/67] Building CXX object CMakeFiles/quant_hft_storage.dir/src/core/storage/storage_connection_config.cpp.o
+[19/67] Building CXX object CMakeFiles/quant_hft_common.dir/src/core/monitoring/dashboard_snapshot.cpp.o
+[20/67] Linking CXX static library libquant_hft_common.a
+[21/67] Building CXX object CMakeFiles/quant_hft_storage.dir/src/core/storage/redis_realtime_store_client_adapter.cpp.o
+[22/67] Building CXX object CMakeFiles/quant_hft_storage.dir/src/core/storage/storage_client_factory.cpp.o
+[23/67] Building CXX object CMakeFiles/quant_hft_storage.dir/src/core/storage/libpq_timescale_sql_client.cpp.o
+[24/67] Building CXX object CMakeFiles/quant_hft_storage.dir/src/core/storage/tcp_redis_hash_client.cpp.o
+[25/67] Building CXX object CMakeFiles/quant_hft_storage.dir/src/core/storage/timescale_buffered_event_store.cpp.o
+[26/67] Building CXX object CMakeFiles/quant_hft_storage.dir/src/core/storage/trading_ledger_store_client_adapter.cpp.o
+[27/67] Building CXX object CMakeFiles/quant_hft_storage.dir/src/core/storage/timescale_event_store.cpp.o
+[28/67] Building CXX object CMakeFiles/quant_hft_storage.dir/src/core/storage/timescale_sql_client.cpp.o
+[29/67] Building CXX object CMakeFiles/quant_hft_storage.dir/src/core/storage/settlement_store_client_adapter.cpp.o
+[30/67] Building CXX object CMakeFiles/quant_hft_wal_io.dir/src/core/regulatory/local_wal_regulatory_sink.cpp.o
+[31/67] Building CXX object CMakeFiles/quant_hft_wal_io.dir/src/core/regulatory/wal_replay_loader.cpp.o
+[32/67] Linking CXX static library libquant_hft_wal_io.a
+[33/67] Building CXX object CMakeFiles/quant_hft_services.dir/src/services/portfolio/position_manager.cpp.o
+[34/67] Building CXX object CMakeFiles/quant_hft_services.dir/src/services/order/in_memory_order_gateway.cpp.o
+[35/67] Building CXX object CMakeFiles/quant_hft_storage.dir/src/core/storage/timescale_event_store_client_adapter.cpp.o
+[36/67] Building CXX object CMakeFiles/quant_hft_services.dir/src/services/order/pending_exit_store.cpp.o
+[37/67] Building CXX object CMakeFiles/quant_hft_services.dir/src/services/order/execution_engine.cpp.o
+/home/kevin/worktrees/quant_platform_HF-split/src/services/order/execution_engine.cpp: In member function ‘quant_hft::TradeApplyResult quant_hft::ExecutionEngine::ProcessOrderEvent(const quant_hft::OrderEvent&, const quant_hft::WalReceipt&, bool)’:
+/home/kevin/worktrees/quant_platform_HF-split/src/services/order/execution_engine.cpp:373:72: warning: missing initializer for member ‘quant_hft::TradeApplyRequest::accounting_policy’ [-Wmissing-field-initializers]
+  373 |                                   event.event_source == "OnRspQryTrade"};
+      |                                                                        ^
+[38/67] Building CXX object CMakeFiles/quant_hft_services.dir/src/services/market_state/market_data_csv_recorder.cpp.o
+[39/67] Building CXX object CMakeFiles/quant_hft_strategy.dir/src/strategy/state_persistence.cpp.o
+[40/67] Building CXX object CMakeFiles/quant_hft_services.dir/src/services/settlement/settlement_price_provider.cpp.o
+[41/67] Building CXX object CMakeFiles/quant_hft_ctp.dir/src/core/ctp/ctp_md_adapter.cpp.o
+[42/67] Building CXX object CMakeFiles/quant_hft_ctp.dir/src/core/ctp/query_scheduler.cpp.o
+[43/67] Building CXX object CMakeFiles/quant_hft_storage.dir/src/core/storage/trading_domain_store_client_adapter.cpp.o
+[44/67] Linking CXX static library libquant_hft_storage.a
+[45/67] Linking CXX static library libquant_hft_services.a
+[46/67] Building CXX object CMakeFiles/quant_hft_ctp.dir/src/core/runtime/durable_order_event_inbox.cpp.o
+[47/67] Building CXX object CMakeFiles/quant_hft_strategy.dir/src/strategy/strategy_engine.cpp.o
+[48/67] Linking CXX static library libquant_hft_strategy.a
+[49/67] Building CXX object CMakeFiles/quant_hft_online_runtime.dir/src/services/settlement/settlement_query_client.cpp.o
+[50/67] Building CXX object CMakeFiles/quant_hft_online_runtime.dir/src/core/runtime/account_execution_scheduler.cpp.o
+[51/67] Building CXX object CMakeFiles/quant_hft_ctp.dir/src/core/ctp/ctp_trader_adapter.cpp.o
+[52/67] Building CXX object CMakeFiles/quant_hft_online_runtime.dir/src/core/runtime/runtime_identity.cpp.o
+[53/67] Building CXX object CMakeFiles/quant_hft_online_runtime.dir/src/core/regulatory/wal_projection_replay.cpp.o
+[54/67] Building CXX object CMakeFiles/quant_hft_online_runtime.dir/src/core/runtime/runtime_paths.cpp.o
+[55/67] Building CXX object CMakeFiles/quant_hft_online_runtime.dir/src/services/settlement/daily_settlement_service.cpp.o
+[56/67] Building CXX object CMakeFiles/quant_hft_test_bootstrap.dir/tests/host_test_main.cpp.o
+[57/67] Linking CXX static library libquant_hft_test_bootstrap.a
+[58/67] Building CXX object CMakeFiles/quant_hft_online_runtime.dir/src/core/ctp/ctp_config_loader.cpp.o
+[59/67] Building CXX object CMakeFiles/atomic_trade_postgres_test.dir/tests/integration/atomic_trade_postgres_test.cpp.o
+[60/67] Building CXX object CMakeFiles/quant_hft_ctp.dir/src/core/ctp/ctp_gateway_adapter.cpp.o
+/home/kevin/worktrees/quant_platform_HF-split/src/core/ctp/ctp_gateway_adapter.cpp: In member function ‘virtual void quant_hft::CtpTdSpi::OnRspAuthenticate(CThostFtdcRspAuthenticateField*, CThostFtdcRspInfoField*, int, bool)’:
+/home/kevin/worktrees/quant_platform_HF-split/src/core/ctp/ctp_gateway_adapter.cpp:858:32: warning: unused parameter ‘n_request_id’ [-Wunused-parameter]
+  858 |                            int n_request_id, bool b_is_last) override {
+      |                            ~~~~^~~~~~~~~~~~
+/home/kevin/worktrees/quant_platform_HF-split/src/core/ctp/ctp_gateway_adapter.cpp: In member function ‘virtual void quant_hft::CtpTdSpi::OnRspQryUserSession(CThostFtdcUserSessionField*, CThostFtdcRspInfoField*, int, bool)’:
+/home/kevin/worktrees/quant_platform_HF-split/src/core/ctp/ctp_gateway_adapter.cpp:957:70: warning: unused parameter ‘n_request_id’ [-Wunused-parameter]
+  957 |                              CThostFtdcRspInfoField* p_rsp_info, int n_request_id, bool b_is_last) {
+      |                                                                  ~~~~^~~~~~~~~~~~
+/home/kevin/worktrees/quant_platform_HF-split/src/core/ctp/ctp_gateway_adapter.cpp: In member function ‘virtual void quant_hft::CtpTdSpi::OnRspQryOffsetSetting(CThostFtdcOffsetSettingField*, CThostFtdcRspInfoField*, int, bool)’:
+/home/kevin/worktrees/quant_platform_HF-split/src/core/ctp/ctp_gateway_adapter.cpp:1016:72: warning: unused parameter ‘n_request_id’ [-Wunused-parameter]
+ 1016 |                                CThostFtdcRspInfoField* p_rsp_info, int n_request_id,
+      |                                                                    ~~~~^~~~~~~~~~~~
+/home/kevin/worktrees/quant_platform_HF-split/src/core/ctp/ctp_gateway_adapter.cpp: In member function ‘virtual void quant_hft::CtpTdSpi::OnRspOrderInsert(CThostFtdcInputOrderField*, CThostFtdcRspInfoField*, int, bool)’:
+/home/kevin/worktrees/quant_platform_HF-split/src/core/ctp/ctp_gateway_adapter.cpp:1695:67: warning: unused parameter ‘n_request_id’ [-Wunused-parameter]
+ 1695 |                           CThostFtdcRspInfoField* p_rsp_info, int n_request_id,
+      |                                                               ~~~~^~~~~~~~~~~~
+/home/kevin/worktrees/quant_platform_HF-split/src/core/ctp/ctp_gateway_adapter.cpp: In member function ‘virtual void quant_hft::CtpTdSpi::OnRspOrderAction(CThostFtdcInputOrderActionField*, CThostFtdcRspInfoField*, int, bool)’:
+/home/kevin/worktrees/quant_platform_HF-split/src/core/ctp/ctp_gateway_adapter.cpp:1788:67: warning: unused parameter ‘n_request_id’ [-Wunused-parameter]
+ 1788 |                           CThostFtdcRspInfoField* p_rsp_info, int n_request_id,
+      |                                                               ~~~~^~~~~~~~~~~~
+[61/67] Linking CXX static library libquant_hft_ctp.a
+[62/67] Building CXX object CMakeFiles/quant_hft_deployment.dir/src/core/config/deployment_config.cpp.o
+[63/67] Linking CXX static library libquant_hft_deployment.a
+[64/67] Linking CXX static library libquant_hft_online_runtime.a
+[65/67] Linking CXX executable atomic_trade_postgres_test
+[66/67] Building CXX object CMakeFiles/core_engine.dir/src/apps/core_engine_main.cpp.o
+[67/67] Linking CXX executable core_engine

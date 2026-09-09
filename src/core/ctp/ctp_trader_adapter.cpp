@@ -157,6 +157,33 @@ CTPTraderAdapter::CTPTraderAdapter(std::shared_ptr<CtpGatewayAdapter> gateway,
             return callback == nullptr || callback(mapping, error);
         });
 
+    gateway_->RegisterTradingAccountQueryStartCallback([this](int request, std::uint64_t generation) {
+        TradingAccountQueryStartCallback callback;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            callback = user_trading_account_query_start_callback_;
+        }
+        if (callback) callback(request, generation);
+    });
+    gateway_->RegisterTradingAccountQueryCallback(
+        [this](const QueryResult<TradingAccountSnapshot>& result) {
+            if (!callback_dispatcher_.Post([this, result]() {
+                    if (result.metadata.generation != gateway_->GetQueryGeneration()) return;
+                    TradingAccountQueryCallback callback;
+                    {
+                        std::lock_guard<std::mutex> lock(mutex_);
+                        callback = user_trading_account_query_callback_;
+                    }
+                    if (callback) callback(result);
+                }, true)) {
+                std::function<void(bool)> breaker;
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    breaker = circuit_breaker_callback_;
+                }
+                if (breaker) breaker(true);
+            }
+        });
     gateway_->RegisterTradingAccountSnapshotCallback(
         [this](const TradingAccountSnapshot& snapshot) {
             TradingAccountSnapshot copied = snapshot;
@@ -1152,6 +1179,17 @@ void CTPTraderAdapter::RegisterTradingAccountSnapshotCallback(
     user_trading_account_callback_ = std::move(callback);
 }
 
+void CTPTraderAdapter::RegisterTradingAccountQueryStartCallback(
+    TradingAccountQueryStartCallback callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    user_trading_account_query_start_callback_ = std::move(callback);
+}
+
+void CTPTraderAdapter::RegisterTradingAccountQueryCallback(TradingAccountQueryCallback callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    user_trading_account_query_callback_ = std::move(callback);
+}
+
 void CTPTraderAdapter::RegisterInvestorPositionSnapshotCallback(
     InvestorPositionSnapshotCallback callback) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -1708,6 +1746,8 @@ void CTPTraderAdapter::UnregisterGatewayCallbacks() {
     gateway_->RegisterOrderSubmitMappingCallback(nullptr);
     gateway_->RegisterOrderSubmitPrepareCallback(nullptr);
     gateway_->RegisterTradingAccountSnapshotCallback(nullptr);
+    gateway_->RegisterTradingAccountQueryStartCallback(nullptr);
+    gateway_->RegisterTradingAccountQueryCallback(nullptr);
     gateway_->RegisterInvestorPositionSnapshotCallback(nullptr);
     gateway_->RegisterInvestorPositionQueryCallback(nullptr);
     gateway_->RegisterInstrumentMetaQueryCallback(nullptr);

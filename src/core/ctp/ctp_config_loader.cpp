@@ -375,7 +375,7 @@ bool ApplyMarketStateDetectorField(MarketStateDetectorConfig* detector, const st
 }  // namespace
 
 bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* config,
-                                   std::string* error) {
+                                   std::string* error, CtpConfigLoadOptions options) {
     if (config == nullptr) {
         if (error != nullptr) {
             *error = "output config pointer is null";
@@ -1233,6 +1233,24 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* confi
     if (!loaded.strategy_composite_config.empty()) {
         loaded.strategy_composite_config = resolve_composite_path(loaded.strategy_composite_config);
     }
+    loaded.strategy_initial_capital.clear();
+    const std::string capital_prefix = "strategy_initial_capital_map.";
+    for (const auto& entry : kv) {
+        if (entry.first.rfind(capital_prefix, 0) != 0) continue;
+        const auto id = entry.first.substr(capital_prefix.size());
+        double amount = 0;
+        std::size_t parsed = 0;
+        try {
+            amount = std::stod(entry.second, &parsed);
+        } catch (...) {
+            parsed = 0;
+        }
+        if (id.empty() || parsed != entry.second.size() || !std::isfinite(amount) || amount <= 0) {
+            if (error) *error = "invalid strategy_initial_capital_map entry";
+            return false;
+        }
+        loaded.strategy_initial_capital[id] = amount;
+    }
     loaded.strategy_composite_config_map.clear();
     constexpr const char* kCompositeMapPrefix = "strategy_composite_config_map.";
     for (const auto& [key, value] : kv) {
@@ -1251,7 +1269,8 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* confi
         }
         loaded.strategy_composite_config_map[strategy_id] = resolve_composite_path(config_path);
     }
-    if (Lowercase(loaded.strategy_factory) == "composite" &&
+    if (!options.defer_strategy_definitions_to_deployment &&
+        Lowercase(loaded.strategy_factory) == "composite" &&
         loaded.strategy_composite_config.empty() && loaded.strategy_composite_config_map.empty()) {
         if (error != nullptr) {
             *error =

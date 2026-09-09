@@ -1,0 +1,164 @@
+# CONFIG DOC
+# Purpose: SimNow 联调/压测配置（由环境变量选择交易时段或 7x24）。
+# Consumer: core_engine / simnow_compare_cli
+# Field dictionary: docs/ops/config_catalog.md (`configs/sim/ctp.yaml`)
+# Notes:
+#   1) strategy_factory=composite 时必须配置 strategy_composite_config。
+#   2) risk_rule_<group>_* 为分组风控模板字段，键名需与 risk_rule_groups 对齐。
+
+ctp:
+  # --- identity & runtime mode ---
+  profile: "simnow_env_selected"
+  environment: sim
+  run_type: sim
+  # 7x24 front(400xx) => false; trading-hours front(300xx) => true.
+  is_production_mode: "${CTP_SIM_IS_PRODUCTION_MODE}"
+  enable_real_api: "${CTP_SIM_ENABLE_REAL_API}"
+  enable_terminal_auth: true
+
+  # --- connection & auth ---
+  # Fronts are selected via environment variables.
+  # Trading-hours group1/2/3 are 30001/30011, 30002/30012, 30003/30013.
+  # 7x24 is 40001/40011.
+  broker_id: "${CTP_SIM_BROKER_ID}"
+  user_id: "${CTP_SIM_USER_ID}"
+  investor_id: "${CTP_SIM_INVESTOR_ID}"
+  market_front: "${CTP_SIM_MARKET_FRONT}"
+  trader_front: "${CTP_SIM_TRADER_FRONT}"
+
+  # Credentials should be injected from environment in real usage.
+  password_env: "CTP_SIM_PASSWORD"
+  auth_code: "${CTP_SIM_AUTH_CODE}"
+  app_id: "${CTP_SIM_APP_ID}"
+
+  # --- rate limit & retries ---
+  query_rate_limit_qps: 10
+  query_rate_per_sec: 5
+  order_insert_rate_per_sec: 50
+  order_cancel_rate_per_sec: 50
+  order_bucket_capacity: 20
+  cancel_bucket_capacity: 20
+  query_bucket_capacity: 5
+  cancel_retry_max: 3
+  cancel_retry_base_ms: 1000
+  cancel_retry_max_delay_ms: 5000
+  cancel_wait_ack_timeout_ms: 1200
+  settlement_confirm_required: true
+
+  # --- observability & breaker ---
+  metrics_enabled: false
+  metrics_port: 8080
+  log_level: "info"
+  log_sink: "stderr"
+  breaker_failure_threshold: 5
+  breaker_timeout_ms: 1000
+  breaker_half_open_timeout_ms: 5000
+  breaker_strategy_enabled: true
+  breaker_account_enabled: true
+  breaker_system_enabled: true
+  recovery_quiet_period_ms: 3000
+  gateway_reconnect_cycle_cooldown_ms: 8000
+  session_gate_enabled: true
+  max_signal_age_ms: 2000
+  max_market_tick_age_ms: 6000
+  open_session_end_guard_ms: 30000
+  recovery_query_timeout_ms: 30000
+  open_reenable_stability_ms: 30000
+  market_bar_allowed_lateness_ms: 3500
+  market_bar_poll_interval_ms: 100
+  market_bar_checkpoint_interval_ms: 1000
+  market_event_delay_hard_ms: 5000
+  require_complete_timeframe_bar: true
+
+  # --- storage & audit ---
+  kafka_bootstrap_servers: "${KAFKA_BOOTSTRAP_SERVERS}"
+  kafka_topic_ticks: "market.ticks.v1"
+  clickhouse_dsn: "${CLICKHOUSE_DSN}"
+  market_data_recording_enabled: true
+  market_data_recording_dir: "runtime/market_data"
+  market_data_recording_flush_each_write: true
+  market_data_recording_partition_by_product: false
+  market_data_recording_write_global_copy: false
+  audit_hot_days: 7
+  audit_cold_days: 180
+
+  # --- strategy/runtime pipeline ---
+  instruments: ""
+  product_ids: "c,hc"
+  active_contract_mode: "dominant_open_interest"   # static | dominant_open_interest
+  dominant_contract_wait_ms: 5000
+  dominant_contract_recheck_interval_ms: 60000
+  dominant_contract_min_lead_ratio: 0.15
+  dominant_contract_min_lead_windows: 3
+  dominant_contract_min_hold_ms: 900000
+  dominant_contract_cache_max_age_ms: 86400000
+  dominant_contract_max_tick_age_ms: 6000
+  dominant_contract_warmup_bars: 30
+  dominant_contract_switch_timeout_ms: 30000
+  dominant_contract_require_complete_baseline: true
+  dominant_contract_switch_mode: "flat_only"   # startup_only | dry_run | flat_only
+  strategy_ids: "kama_trend_production"
+  strategy_factory: "composite"
+  strategy_composite_config: "configs/strategies/main_backtest_production.yaml"
+  # Optional per-strategy overrides for multi-product runs:
+  # strategy_composite_config_map:
+  #   kama_trend_c: "configs/strategies/main_backtest_production_c.yaml"
+  #   kama_trend_rb: "configs/strategies/main_backtest_production_rb.yaml"
+  strategy_queue_capacity: 8192
+  # Use the real SimNow investor/account context instead of a capped logical subaccount.
+  account_id: "${CTP_SIM_INVESTOR_ID}"
+
+  # --- execution params ---
+  execution_mode: "direct"   # direct | sliced
+  execution_algo: "direct"   # direct | sliced | twap | vwap_lite
+  execution_price_mode: "marketable_limit"  # signal_limit | marketable_limit
+  slice_size: 2
+  slice_interval_ms: 120
+  twap_duration_ms: 0
+  vwap_lookback_bars: 20
+  throttle_reject_ratio: 0.0
+  cancel_after_ms: 2000       # 0 disables timeout-based cancel
+  cancel_check_interval_ms: 200
+
+  # --- default risk policy ---
+  risk_default_max_order_volume: 200
+  risk_default_max_order_notional: 1000000
+  risk_default_max_active_orders: 0
+  risk_default_max_position_notional: 0
+  # Disabled for live SimNow simulation: use the broker/account ledger returned by CTP.
+  risk_sim_subaccount_enabled: false
+  risk_sim_subaccount_id: ""
+  risk_sim_subaccount_initial_equity: 0
+  risk_sim_subaccount_max_margin: 0
+  risk_sim_subaccount_order_margin_rate: 1.0
+  risk_sim_subaccount_contract_multiplier: 1.0
+  risk_default_rule_group: "default"
+  risk_default_rule_version: "v1"
+  risk_default_policy_id: "policy.global"
+  risk_default_policy_scope: "global"
+  risk_default_decision_tags: "default-risk"
+
+  # --- custom risk rule groups ---
+  # Dominant-contract mode should not bind risk rules to a fixed instrument id.
+  risk_rule_groups: ""
+
+  # --- reconnect ---
+  connect_timeout_ms: 10000
+  reconnect_max_attempts: 8
+  reconnect_initial_backoff_ms: 500
+  reconnect_max_backoff_ms: 8000
+
+  # market_state_detector.* nested keys take precedence over legacy flat keys.
+  market_state_detector:
+    adx_period: 14
+    adx_strong_threshold: 40.0
+    adx_weak_lower: 25.0
+    adx_weak_upper: 40.0
+    kama_er_period: 10
+    kama_fast_period: 2
+    kama_slow_period: 30
+    kama_er_strong: 0.6
+    kama_er_weak_lower: 0.3
+    atr_period: 14
+    require_adx_for_trend: true
+    use_kama_er: true

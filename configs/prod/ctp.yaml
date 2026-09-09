@@ -1,10 +1,10 @@
+# Instance identity and parameter sets are resolved from configs/deploy manifests.
 # CONFIG DOC
 # Purpose: 生产环境 CTP 运行配置。
 # Consumer: core_engine / CtpConfigLoader
 # Field dictionary: docs/ops/config_catalog.md (`configs/prod/ctp.yaml`)
 # Notes:
 #   1) run_type=live + enable_real_api=true 表示实盘链路，修改需走变更审批。
-#   2) strategy_factory=composite 时必须配置 strategy_composite_config。
 
 ctp:
   # --- identity & runtime mode ---
@@ -85,9 +85,7 @@ ctp:
   audit_cold_days: 180
 
   # --- strategy factory ---
-  strategy_ids: "kama_trend_production"
   strategy_factory: "composite"
-  strategy_composite_config: "configs/strategies/main_backtest_production.yaml"
   connect_timeout_ms: 10000
   reconnect_max_attempts: 8
   reconnect_initial_backoff_ms: 500

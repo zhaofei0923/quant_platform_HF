@@ -178,7 +178,11 @@ int main(int argc, char** argv) {
                           {{"config_path", config_path}, {"error", config_error}});
         return 1;
     }
-    const auto& runtime = file_config.runtime;
+    auto runtime = file_config.runtime;
+    if (GetEnvOrDefault("QUANT_HFT_SUPERVISOR_BOUND", "0") == "1") {
+        const auto settlement_flow = GetEnvOrDefault("QUANT_HFT_SETTLEMENT_FLOW_PATH", "");
+        if (!settlement_flow.empty()) runtime.flow_path = settlement_flow;
+    }
 
     const auto storage_config = StorageConnectionConfig::FromEnvironment();
     auto sql_client = StorageClientFactory::CreateTimescaleClient(storage_config, &config_error);

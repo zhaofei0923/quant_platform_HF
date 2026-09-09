@@ -173,6 +173,10 @@ int main(int argc, char** argv) {
         return 3;
     }
     auto runtime = file_config.runtime;
+    if (GetEnvOrDefault("QUANT_HFT_SUPERVISOR_BOUND", "0") == "1") {
+        const auto probe_flow = GetEnvOrDefault("QUANT_HFT_PROBE_FLOW_PATH", "");
+        if (!probe_flow.empty()) runtime.flow_path = probe_flow;
+    }
     runtime.enable_real_api = true;
     const bool dominant_contract_mode =
         file_config.active_contract_mode == "dominant_open_interest";

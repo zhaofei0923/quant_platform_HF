@@ -323,9 +323,16 @@ TEST(AtomicStrategiesTest, KamaTrendStrategyExposesInitialAndTrailingRiskPrices)
     const auto& entry_levels = prices_after_entry.at("IF2406");
     ASSERT_TRUE(entry_levels.initial_stop.has_value());
     ASSERT_TRUE(entry_levels.trailing_stop.has_value());
+    ASSERT_TRUE(entry_levels.effective_stop.has_value());
     ASSERT_TRUE(entry_levels.take_profit.has_value());
+    EXPECT_EQ(entry_levels.stop_kind, StrategyStopKind::kTrailing);
+    EXPECT_EQ(entry_levels.effective_stop, entry_levels.trailing_stop);
+    EXPECT_EQ(entry_levels.as_of_ns, 3);
     const double initial_stop = entry_levels.initial_stop.value();
     const double trailing_stop_at_entry = entry_levels.trailing_stop.value();
+
+    // Observation alone does not make an old risk calculation look fresh.
+    EXPECT_EQ(risk_provider->RiskPricesByInstrument().at("IF2406").as_of_ns, 3);
 
     // A favorable tick ratchets the trailing stop up; the initial stop is fixed.
     // The tick may also emit a take-profit signal, which is irrelevant here.
@@ -339,6 +346,20 @@ TEST(AtomicStrategiesTest, KamaTrendStrategyExposesInitialAndTrailingRiskPrices)
     ASSERT_TRUE(rally_levels.trailing_stop.has_value());
     EXPECT_DOUBLE_EQ(rally_levels.initial_stop.value(), initial_stop);
     EXPECT_GT(rally_levels.trailing_stop.value(), trailing_stop_at_entry);
+    EXPECT_EQ(rally_levels.effective_stop, rally_levels.trailing_stop);
+    EXPECT_EQ(rally_levels.stop_kind, StrategyStopKind::kTrailing);
+    EXPECT_EQ(rally_levels.as_of_ns, 4);
+
+    AtomicState persisted;
+    std::string state_error;
+    ASSERT_TRUE(strategy.SaveState(&persisted, &state_error)) << state_error;
+    KamaTrendStrategy restored;
+    restored.Init(MakeKamaParams());
+    ASSERT_TRUE(restored.LoadState(persisted, &state_error)) << state_error;
+    ASSERT_EQ(restored.RiskPricesByInstrument().count("IF2406"), 1U);
+    EXPECT_EQ(restored.RiskPricesByInstrument().at("IF2406").as_of_ns, 0);
+    (void)restored.OnBacktestTick(MakeTick("IF2406", rally_tick_price, 5), ctx);
+    EXPECT_EQ(restored.RiskPricesByInstrument().at("IF2406").as_of_ns, 5);
 
     // Flattening the position clears all reported risk levels.
     ctx.net_positions["IF2406"] = 0;

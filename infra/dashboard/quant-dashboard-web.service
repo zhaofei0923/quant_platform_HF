@@ -1,0 +1,39 @@
+[Unit]
+Description=Quant Dashboard dedicated HTTPS static web service
+After=network.target quant-dashboard-auth.service
+Wants=quant-dashboard-auth.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=quant-dashboard-web
+Group=quant-dashboard-web
+ExecStartPre=/usr/sbin/nginx -t -c /etc/quant-dashboard/nginx.conf
+ExecStart=/usr/sbin/nginx -c /etc/quant-dashboard/nginx.conf -g "daemon off;"
+ExecReload=/usr/sbin/nginx -c /etc/quant-dashboard/nginx.conf -s reload
+KillSignal=SIGQUIT
+TimeoutStopSec=15
+RuntimeDirectory=quant-dashboard-web
+RuntimeDirectoryMode=0700
+LogsDirectory=quant-dashboard-web
+LogsDirectoryMode=0750
+UMask=0027
+Restart=on-failure
+RestartSec=5
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+CPUQuota=25%
+MemoryMax=128M
+TasksMax=32
+
+[Install]
+WantedBy=multi-user.target

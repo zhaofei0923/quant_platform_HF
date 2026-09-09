@@ -1,0 +1,89 @@
+worker_processes 1;
+pid @RUN_DIR@/nginx.pid;
+error_log stderr warn;
+events { worker_connections 128; }
+http {
+    include @MIME_TYPES@;
+    default_type application/octet-stream;
+    access_log @LOG_DIR@/access.log;
+    server_tokens off;
+    client_max_body_size 16k;
+    client_body_temp_path @RUN_DIR@/client;
+    proxy_temp_path @RUN_DIR@/proxy;
+    fastcgi_temp_path @RUN_DIR@/fastcgi;
+    uwsgi_temp_path @RUN_DIR@/uwsgi;
+    scgi_temp_path @RUN_DIR@/scgi;
+    limit_req_zone $binary_remote_addr zone=login:1m rate=6r/m;
+    limit_req_zone $server_name zone=login_global:1m rate=12r/m;
+    limit_req_zone $binary_remote_addr zone=dashboard:1m rate=10r/s;
+    limit_conn_zone $binary_remote_addr zone=connections:1m;
+    limit_conn_zone $server_name zone=login_workers:1m;
+    limit_req_status 429;
+    limit_conn_status 429;
+    server {
+        listen @HTTPS_PORT@ ssl;
+        server_name @DOMAIN@;
+        if ($host != @DOMAIN@) { return 444; }
+        if ($request_uri ~* "(^|/)(\.\.|%2e)(/|%2f|%2e|$)") { return 400; }
+        ssl_certificate @TLS_CERT@;
+        ssl_certificate_key @TLS_KEY@;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_session_cache shared:TLS:1m;
+        ssl_session_timeout 10m;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy no-referrer always;
+        add_header X-Frame-Options DENY always;
+        add_header Strict-Transport-Security "max-age=86400" always;
+        add_header Cache-Control "no-store" always;
+        root @WEB_ROOT@;
+        autoindex off;
+        disable_symlinks on;
+        # Authelia loads more than ten ES modules in parallel. HTTP/2 counts each
+        # concurrent request against limit_conn, so keep enough room for one login page.
+        limit_conn connections 64;
+
+        location = /auth { return 302 /auth/; }
+        location = /auth/api/firstfactor {
+            limit_req zone=login burst=3 nodelay;
+            limit_req zone=login_global burst=2 nodelay;
+            limit_conn login_workers 2;
+            include @AUTH_PROXY@;
+        }
+        location ^~ /auth/ {
+            include @AUTH_PROXY@;
+        }
+        location = /internal/authz {
+            internal;
+            proxy_pass http://127.0.0.1:@AUTH_PORT@/api/authz/auth-request;
+            proxy_pass_request_body off;
+            proxy_set_header Content-Length "";
+            proxy_set_header Authorization "";
+            proxy_set_header Proxy-Authorization "";
+            proxy_set_header X-Original-Method $request_method;
+            proxy_set_header X-Original-URL https://@DOMAIN@@PORT_SUFFIX@$request_uri;
+            proxy_set_header X-Forwarded-For $remote_addr;
+            proxy_set_header Cookie $http_cookie;
+            proxy_connect_timeout 2s;
+            proxy_read_timeout 5s;
+        }
+        location ~ (^|/)\. { return 404; }
+        location ~* \.(json|env|key|pem|wal|log|yml|yaml)$ { return 404; }
+        location ^~ /data/ {
+            auth_request /internal/authz;
+            # No login redirect here: the frontend handles a JSON request's 401.
+            limit_except GET { deny all; }
+            limit_req zone=dashboard burst=20 nodelay;
+            alias @DATA_ROOT@/;
+            default_type application/json;
+            if ($uri !~ "^/data/v1/((current|days)\.json|days/[0-9]{8}/(equity|orders|trades)\.json)$") { return 404; }
+        }
+        location / {
+            auth_request /internal/authz;
+            auth_request_set $login_url $upstream_http_location;
+            error_page 401 =302 $login_url;
+            limit_except GET { deny all; }
+            limit_req zone=dashboard burst=30 nodelay;
+            try_files $uri $uri/ /index.html;
+        }
+    }
+}

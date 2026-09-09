@@ -183,6 +183,7 @@ struct RiskConfig {
     double default_max_order_notional{1'000'000.0};
     int default_max_active_orders{0};
     double default_max_position_notional{0.0};
+    double max_margin_to_equity_ratio{0.0};
     int default_max_cancel_count{0};
     double default_max_cancel_ratio{0.0};
     bool sim_subaccount_enabled{false};

@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "quant_hft/contracts/dashboard_observation.h"
 #include "quant_hft/contracts/types.h"
 
 namespace quant_hft {
@@ -166,7 +167,10 @@ class IAtomicIndicatorTraceProvider {
 struct AtomicRiskPrices {
     std::optional<double> initial_stop;
     std::optional<double> trailing_stop;
+    std::optional<double> effective_stop;
+    StrategyStopKind stop_kind{StrategyStopKind::kNone};
     std::optional<double> take_profit;
+    EpochNanos as_of_ns{0};
 };
 
 class IAtomicRiskPriceProvider {

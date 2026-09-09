@@ -519,6 +519,7 @@ TEST(CtpConfigLoaderTest, LoadsExecutionAndRiskRuleConfigs) {
         "  risk_default_max_order_notional: 200000\n"
         "  risk_default_max_active_orders: 4\n"
         "  risk_default_max_position_notional: 900000\n"
+        "  risk_max_margin_to_equity_ratio: 0.30\n"
         "  risk_sim_subaccount_enabled: true\n"
         "  risk_sim_subaccount_id: \"sim-subaccount-200000\"\n"
         "  risk_sim_subaccount_initial_equity: 200000\n"
@@ -579,6 +580,7 @@ TEST(CtpConfigLoaderTest, LoadsExecutionAndRiskRuleConfigs) {
     EXPECT_DOUBLE_EQ(config.risk.default_max_order_notional, 200000.0);
     EXPECT_EQ(config.risk.default_max_active_orders, 4);
     EXPECT_DOUBLE_EQ(config.risk.default_max_position_notional, 900000.0);
+    EXPECT_DOUBLE_EQ(config.risk.max_margin_to_equity_ratio, 0.30);
     EXPECT_TRUE(config.risk.sim_subaccount_enabled);
     EXPECT_EQ(config.risk.sim_subaccount_id, "sim-subaccount-200000");
     EXPECT_DOUBLE_EQ(config.risk.sim_subaccount_initial_equity, 200000.0);
@@ -613,6 +615,29 @@ TEST(CtpConfigLoaderTest, LoadsExecutionAndRiskRuleConfigs) {
     EXPECT_DOUBLE_EQ(config.risk.rules[1].max_cancel_ratio, 0.45);
 
     std::filesystem::remove(config_path);
+}
+
+TEST(CtpConfigLoaderTest, RejectsInvalidMarginToEquityRatio) {
+    for (const std::string value : {"nan", "1.01", "-0.01"}) {
+        const auto config_path = WriteTempConfig(
+            "ctp:\n"
+            "  environment: sim\n"
+            "  is_production_mode: false\n"
+            "  broker_id: \"9999\"\n"
+            "  user_id: \"191202\"\n"
+            "  investor_id: \"191202\"\n"
+            "  market_front: \"tcp://127.0.0.1:40011\"\n"
+            "  trader_front: \"tcp://127.0.0.1:40001\"\n"
+            "  password: \"plain-secret\"\n"
+            "  risk_max_margin_to_equity_ratio: " +
+            value + "\n");
+
+        CtpFileConfig config;
+        std::string error;
+        EXPECT_FALSE(CtpConfigLoader::LoadFromYaml(config_path.string(), &config, &error));
+        EXPECT_NE(error.find("risk_max_margin_to_equity_ratio"), std::string::npos);
+        std::filesystem::remove(config_path);
+    }
 }
 
 TEST(CtpConfigLoaderTest, LoadsPerStrategyCompositeConfigMap) {

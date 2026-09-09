@@ -46,6 +46,7 @@
 #include "quant_hft/core/trading_domain_store_client_adapter.h"
 #include "quant_hft/core/trading_ledger_store_client_adapter.h"
 #include "quant_hft/core/wal_replay_loader.h"
+#include "quant_hft/monitoring/dashboard_snapshot.h"
 #include "quant_hft/monitoring/exporter.h"
 #include "quant_hft/monitoring/metric_registry.h"
 #include "quant_hft/risk/risk_manager.h"
@@ -1675,6 +1676,27 @@ int main(int argc, char** argv) {
                           {{"error", error}});
         return 7;
     }
+    // Optional observer: initialization failures only disable the dashboard. It does not
+    // participate in execution admission, broker queries, or trading permission decisions.
+    std::unique_ptr<DashboardSnapshotWriter> dashboard_snapshot_writer;
+    if (GetEnvOrDefault("QUANT_HFT_DASHBOARD_SNAPSHOT_ENABLE", "0") == "1") {
+        try {
+            auto writer = std::make_unique<DashboardSnapshotWriter>();
+            const auto dashboard_output = GetEnvOrDefault(
+                "QUANT_HFT_DASHBOARD_SNAPSHOT_FILE",
+                runtime_directory.Path("monitor/dashboard_private.json"));
+            std::string dashboard_error;
+            if (writer->Start(dashboard_output, runtime_identity, &dashboard_error)) {
+                dashboard_snapshot_writer = std::move(writer);
+            } else {
+                EmitStructuredLog(&config, "core_engine", "warn", "dashboard_snapshot_disabled",
+                                  {{"error", dashboard_error}});
+            }
+        } catch (...) {
+            EmitStructuredLog(&config, "core_engine", "warn", "dashboard_snapshot_disabled",
+                              {{"error", "observer initialization failed"}});
+        }
+    }
     const auto& wal_path = resolved_runtime_paths.wal_file;
     const auto& readiness_path = resolved_runtime_paths.readiness_file;
     const auto& pending_exit_path = resolved_runtime_paths.pending_exit_wal;
@@ -1816,7 +1838,7 @@ int main(int argc, char** argv) {
     InMemoryPortfolioLedger ledger;
     CtpPositionLedger ctp_position_ledger;
     ctp_position_ledger.UseCommittedTradeAccounting(true);
-    CtpAccountLedger ctp_account_ledger;
+    CtpAccountLedger ctp_account_ledger(file_config.risk.max_margin_to_equity_ratio);
     OrderStateMachine order_state_machine;
     CtpOrderMappingStore ctp_order_mapping_store;
     TradingPermissionController trading_permission_controller(
@@ -1826,17 +1848,69 @@ int main(int argc, char** argv) {
     VerifiedTradeAccountingPolicyRegistry accounting_policy_registry;
     std::mutex accounting_policy_mutex;
     const auto accounting_policy_file = GetEnvOrDefault("QUANT_HFT_ACCOUNTING_POLICY_FILE", "");
+    const bool simnow_broker_observed_accounting =
+        GetEnvOrDefault("QUANT_HFT_SIMNOW_BROKER_OBSERVED_ACCOUNTING", "0") == "1";
+    const bool simnow_allow_assumed_zero_order_fees =
+        GetEnvOrDefault("QUANT_HFT_SIMNOW_ALLOW_ASSUMED_ZERO_ORDER_FEES", "0") == "1";
+    const auto simnow_generic_close_policy_file =
+        GetEnvOrDefault("QUANT_HFT_SIMNOW_GENERIC_CLOSE_POLICY_FILE", "");
     const auto accounting_evidence_dir = runtime_directory.Path("state/accounting_policy_evidence");
     FileStrategyStatePersistence accounting_evidence_store(accounting_evidence_dir,
                                                            "accounting_policy", 0);
     StrategyState durable_accounting_evidence;
     std::string accounting_policy_error;
-    const bool accounting_policy_loaded =
-        config.enable_real_api && !accounting_policy_file.empty() &&
-        accounting_policy_registry.LoadFromFile(
+    bool accounting_policy_loaded = false;
+    if (config.enable_real_api && !accounting_policy_file.empty() &&
+        simnow_broker_observed_accounting) {
+        EmitStructuredLog(
+            &config, "core_engine", "critical", "accounting_policy_configuration_conflict",
+            {{"error", "file policy and SimNow broker-observed mode are mutually exclusive"}});
+        return 7;
+    }
+    if (config.enable_real_api && simnow_allow_assumed_zero_order_fees &&
+        !simnow_broker_observed_accounting) {
+        EmitStructuredLog(
+            &config, "core_engine", "critical", "accounting_policy_configuration_conflict",
+            {{"error", "assumed order fees require SimNow broker-observed accounting"}});
+        return 7;
+    }
+    if (config.enable_real_api && !simnow_generic_close_policy_file.empty() &&
+        !simnow_broker_observed_accounting) {
+        EmitStructuredLog(
+            &config, "core_engine", "critical", "accounting_policy_configuration_conflict",
+            {{"error", "generic-close policy requires SimNow broker-observed accounting"}});
+        return 7;
+    }
+    if (config.enable_real_api && !accounting_policy_file.empty()) {
+        accounting_policy_loaded = accounting_policy_registry.LoadFromFile(
             accounting_policy_file,
             {runtime_identity.environment, runtime_identity.broker_id, account_id},
             &accounting_policy_error);
+    } else if (config.enable_real_api && simnow_broker_observed_accounting) {
+        SimNowBrokerObservedAccountingOptions options;
+        options.allow_assumed_zero_order_fees = simnow_allow_assumed_zero_order_fees;
+        if (!simnow_generic_close_policy_file.empty() &&
+            !LoadSimNowGenericCloseConventionsFromFile(
+                simnow_generic_close_policy_file, &options.generic_close_conventions,
+                &accounting_policy_error)) {
+            EmitStructuredLog(&config, "core_engine", "critical",
+                              "simnow_generic_close_policy_load_failed",
+                              {{"error", accounting_policy_error}});
+            return 7;
+        }
+        accounting_policy_loaded = accounting_policy_registry.EnableSimNowBrokerObservedMode(
+            {runtime_identity.environment, runtime_identity.broker_id, account_id}, options,
+            &accounting_policy_error);
+        if (accounting_policy_loaded) {
+            EmitStructuredLog(
+                &config, "core_engine", "warn", "simnow_broker_observed_accounting_enabled",
+                {{"order_fee_basis", simnow_allow_assumed_zero_order_fees
+                                             ? "simnow_assumed_zero_if_missing"
+                                             : "ctp_verified_zero_required"},
+                 {"generic_close_convention_count",
+                  std::to_string(options.generic_close_conventions.size())}});
+        }
+    }
     if (accounting_policy_loaded) {
         if (!runtime_directory.BindArtifact(accounting_evidence_dir, true, &error)) return 7;
         StrategyState restored;
@@ -1849,9 +1923,9 @@ int main(int argc, char** argv) {
         }
     } else if (config.enable_real_api) {
         EmitStructuredLog(&config, "core_engine", "warn", "trade_semantics_unverified",
-                          {{"error", accounting_policy_file.empty()
-                                         ? "QUANT_HFT_ACCOUNTING_POLICY_FILE is not configured"
-                                         : accounting_policy_error}});
+                          {{"error", !accounting_policy_error.empty()
+                                         ? accounting_policy_error
+                                         : "no accounting policy mode is configured"}});
     }
     // Callers hold accounting_policy_mutex across matching and durable evidence publication.
     auto persist_accounting_evidence = [&](std::string* policy_error) {
@@ -2028,6 +2102,15 @@ int main(int argc, char** argv) {
         static_cast<EpochNanos>(file_config.strategy_state_snapshot_interval_ms) * 1'000'000;
     strategy_engine_config.metrics_collect_interval_ns =
         static_cast<EpochNanos>(file_config.strategy_metrics_emit_interval_ms) * 1'000'000;
+    if (dashboard_snapshot_writer) {
+        DashboardSnapshotWriter* observer = dashboard_snapshot_writer.get();
+        strategy_engine_config.risk_snapshot_interval_ns = 1'000'000'000;
+        strategy_engine_config.risk_snapshot_sink =
+            [observer](const std::vector<StrategyRiskSnapshot>& rows, EpochNanos as_of_ns,
+                       const std::string& trading_day) {
+                observer->CaptureStrategyRisk(rows, as_of_ns, trading_day);
+            };
+    }
     strategy_engine =
         std::make_unique<StrategyEngine>(strategy_engine_config, [&](const SignalIntent& signal) {
             if (process_signal_intent) {
@@ -2159,6 +2242,16 @@ int main(int argc, char** argv) {
                           {{"error", wal_sink.LastError()}});
         return 7;
     }
+    if (GetEnvOrDefault("QUANT_HFT_DASHBOARD_SNAPSHOT_ENABLE", "0") == "1") {
+        const auto observer_group = GetEnvOrDefault("QUANT_HFT_DASHBOARD_WAL_READ_GROUP", "");
+        if (!observer_group.empty()) {
+            std::string observer_error;
+            if (!wal_sink.EnableObserverReadAccess(observer_group, &observer_error)) {
+                EmitStructuredLog(&config, "core_engine", "warn", "dashboard_wal_read_disabled",
+                                  {{"error", observer_error}});
+            }
+        }
+    }
     PendingExitStore pending_exit_store(pending_exit_path);
     if (!pending_exit_store.Recover(&error)) {
         EmitStructuredLog(&config, "core_engine", "critical", "pending_exit_recovery_failed",
@@ -2184,6 +2277,10 @@ int main(int argc, char** argv) {
     }
     if (dominant_contract_mode) {
         market_data_recorder.SetAllowedInstrumentIds({});
+    } else {
+        // Static mode is an exact subscription scope. Keep the recorder fail-closed even if the
+        // market-data gateway delivers a stale or otherwise unsolicited contract callback.
+        market_data_recorder.SetAllowedInstrumentIds(instruments);
     }
 
     const auto replay_stats =
@@ -3315,6 +3412,7 @@ int main(int argc, char** argv) {
                         const auto ledger_intent = BuildCtpLedgerIntent(intent);
                         CtpOrderFundInputs fund_inputs;
                         fund_inputs.client_order_id = intent.client_order_id;
+                        fund_inputs.offset = intent.offset;
                         fund_inputs.price = intent.price;
                         fund_inputs.volume = intent.volume;
                         {
@@ -3330,6 +3428,7 @@ int main(int argc, char** argv) {
                                 margin_rate_by_instrument.find(intent.instrument_id);
                             if (intent.offset == OffsetFlag::kOpen &&
                                 margin_it != margin_rate_by_instrument.end()) {
+                                fund_inputs.margin_rate_is_relative = margin_it->second.is_relative;
                                 const auto direction = ResolveLedgerDirection(intent);
                                 if (direction == PositionDirection::kLong) {
                                     fund_inputs.margin_ratio_by_money =
@@ -3812,6 +3911,7 @@ int main(int argc, char** argv) {
                           {{"instrument_id", snapshot.instrument_id}, {"reason", reason}});
     });
     ctp_md->RegisterTickCallback([&](const MarketSnapshot& snapshot) {
+        if (dashboard_snapshot_writer) dashboard_snapshot_writer->CaptureMarket(snapshot);
         record_market_tick(snapshot);
         if (dominant_contract_mode) {
             dominant_contract_coordinator.UpdateLiveSnapshot(snapshot);
@@ -3873,6 +3973,7 @@ int main(int argc, char** argv) {
         }
     });
     ctp_trader->RegisterTradingAccountSnapshotCallback([&](const TradingAccountSnapshot& snapshot) {
+        if (dashboard_snapshot_writer) dashboard_snapshot_writer->CaptureAccount(snapshot);
         ctp_query_snapshot_store.AppendTradingAccountSnapshot(snapshot);
         if (snapshot.investor_id != account_id) {
             trading_permission_controller.SetBlocked("account_snapshot_identity_mismatch");
@@ -3912,6 +4013,9 @@ int main(int argc, char** argv) {
     bool authoritative_position_received = false;
     ctp_trader->RegisterInvestorPositionQueryCallback(
         [&](const quant_hft::QueryResult<InvestorPositionSnapshot>& result) {
+            // Observe the complete broker truth even when domain reconciliation below
+            // blocks trading. The observer independently checks identity and completeness.
+            if (dashboard_snapshot_writer) dashboard_snapshot_writer->CapturePositions(result);
             std::lock_guard<std::mutex> domain_lock(order_event_processing_mutex);
             if (!result.metadata.success || !result.metadata.complete ||
                 !result.metadata.full_account) {
@@ -4895,11 +4999,13 @@ int main(int argc, char** argv) {
     try {
         (void)execution_engine.QueryTradingAccountAsync().get();
     } catch (...) {
+        if (dashboard_snapshot_writer) dashboard_snapshot_writer->MarkAccountQueryFailed();
         EmitStructuredLog(&config, "core_engine", "warn", "initial_trading_account_query_failed");
     }
     try {
         (void)execution_engine.QueryInvestorPositionAsync().get();
     } catch (...) {
+        if (dashboard_snapshot_writer) dashboard_snapshot_writer->MarkPositionQueryFailed();
         EmitStructuredLog(&config, "core_engine", "warn", "initial_investor_position_query_failed");
     }
     bool initial_position_snapshot_complete = false;
@@ -4916,24 +5022,38 @@ int main(int argc, char** argv) {
             recovered_avg_open = authoritative_avg_open_by_instrument;
         }
         (void)drain_trade_outbox();
-        const bool strategy_barrier_drained =
-            strategy_engine->WaitUntilDrained(execution_config.recovery_query_timeout_ms);
+        const auto position_reconcile_enqueue = strategy_engine->EnqueueReconcilePositions(
+            account_id, recovered_net, recovered_avg_open);
         std::string permission_error;
-        if (!strategy_barrier_drained) {
+        if (!position_reconcile_enqueue) {
+            trading_permission_controller.SetBlocked(
+                "strategy_position_reconcile_enqueue_failed");
+            EmitStructuredLog(
+                &config, "core_engine", "critical",
+                "strategy_position_reconcile_enqueue_failed",
+                {{"phase", "initial_recovery"},
+                 {"status",
+                  std::to_string(static_cast<int>(position_reconcile_enqueue.status))}});
+        } else if (!strategy_engine->WaitUntilDrained(
+                       execution_config.recovery_query_timeout_ms)) {
             trading_permission_controller.SetBlocked("strategy_recovery_barrier_timeout");
             EmitStructuredLog(&config, "core_engine", "critical",
                               "strategy_recovery_barrier_timeout");
-        } else if (!trading_permission_controller.MarkRecoveryComplete(
-                       permission_recovery_generation.load(), NowEpochNanos(), &permission_error)) {
-            EmitStructuredLog(&config, "core_engine", "critical",
-                              "trading_permission_recovery_complete_failed",
-                              {{"error", permission_error}});
         } else {
-            EmitStructuredLog(
-                &config, "core_engine", "info", "trading_permission_changed",
-                {{"mode", "CloseOnly"},
-                 {"generation", std::to_string(permission_recovery_generation.load())},
-                 {"reason", "recovery_complete_stability_window"}});
+            trading_permission_controller.ClearReason(
+                "strategy_position_reconcile_enqueue_failed");
+            if (!trading_permission_controller.MarkRecoveryComplete(
+                    permission_recovery_generation.load(), NowEpochNanos(), &permission_error)) {
+                EmitStructuredLog(&config, "core_engine", "critical",
+                                  "trading_permission_recovery_complete_failed",
+                                  {{"error", permission_error}});
+            } else {
+                EmitStructuredLog(
+                    &config, "core_engine", "info", "trading_permission_changed",
+                    {{"mode", "CloseOnly"},
+                     {"generation", std::to_string(permission_recovery_generation.load())},
+                     {"reason", "recovery_complete_stability_window"}});
+            }
         }
     }
     for (const auto& instrument_id : instruments) {
@@ -4994,6 +5114,9 @@ int main(int argc, char** argv) {
                 try {
                     (void)execution_engine.QueryTradingAccountAsync().get();
                 } catch (...) {
+                    if (dashboard_snapshot_writer) {
+                        dashboard_snapshot_writer->MarkAccountQueryFailed();
+                    }
                 }
                 next_account_query = now + std::chrono::milliseconds(
                                                std::max(1, file_config.account_query_interval_ms));
@@ -5002,6 +5125,9 @@ int main(int argc, char** argv) {
                 try {
                     (void)execution_engine.QueryInvestorPositionAsync().get();
                 } catch (...) {
+                    if (dashboard_snapshot_writer) {
+                        dashboard_snapshot_writer->MarkPositionQueryFailed();
+                    }
                 }
                 next_position_query = now + std::chrono::milliseconds(std::max(
                                                 1, file_config.position_query_interval_ms));
@@ -5019,11 +5145,28 @@ int main(int argc, char** argv) {
                 }
                 if (received) {
                     (void)drain_trade_outbox();
-                    startup_reconcile_done = true;
-                    EmitStructuredLog(
-                        &config, "core_engine", "info", "startup_position_reconcile_enqueued",
-                        {{"account_id", account_id},
-                         {"instrument_count", std::to_string(authoritative_snapshot.size())}});
+                    const auto enqueue_result = strategy_engine->EnqueueReconcilePositions(
+                        account_id, authoritative_snapshot, authoritative_avg_open_snapshot);
+                    if (!enqueue_result) {
+                        trading_permission_controller.SetBlocked(
+                            "strategy_position_reconcile_enqueue_failed");
+                        EmitStructuredLog(
+                            &config, "core_engine", "critical",
+                            "strategy_position_reconcile_enqueue_failed",
+                            {{"phase", "startup_one_shot"},
+                             {"status", std::to_string(static_cast<int>(enqueue_result.status))}});
+                    } else {
+                        trading_permission_controller.ClearReason(
+                            "strategy_position_reconcile_enqueue_failed");
+                        startup_reconcile_done = true;
+                        EmitStructuredLog(
+                            &config, "core_engine", "info",
+                            "startup_position_reconcile_enqueued",
+                            {{"account_id", account_id},
+                             {"instrument_count",
+                              std::to_string(authoritative_snapshot.size())},
+                             {"sequence", std::to_string(enqueue_result.sequence)}});
+                    }
                 }
             }
             if (now >= next_instrument_query) {
@@ -5859,14 +6002,31 @@ int main(int argc, char** argv) {
                                 recovered_avg_open = authoritative_avg_open_by_instrument;
                             }
                             (void)drain_trade_outbox();
-                            const bool strategy_barrier_drained = strategy_engine->WaitUntilDrained(
-                                execution_config.recovery_query_timeout_ms);
-                            if (!strategy_barrier_drained) {
+                            const auto position_reconcile_enqueue =
+                                strategy_engine->EnqueueReconcilePositions(
+                                    account_id, recovered_net, recovered_avg_open);
+                            if (!position_reconcile_enqueue) {
+                                trading_permission_controller.SetBlocked(
+                                    "strategy_position_reconcile_enqueue_failed", now_ns);
+                                EmitStructuredLog(
+                                    &config, "core_engine", "critical",
+                                    "strategy_position_reconcile_enqueue_failed",
+                                    {{"phase", "session_recovery"},
+                                     {"status",
+                                      std::to_string(static_cast<int>(
+                                          position_reconcile_enqueue.status))}});
+                                next_permission_check = maintenance_now + std::chrono::seconds(1);
+                                continue;
+                            }
+                            if (!strategy_engine->WaitUntilDrained(
+                                    execution_config.recovery_query_timeout_ms)) {
                                 trading_permission_controller.SetBlocked(
                                     "strategy_recovery_barrier_timeout", now_ns);
                                 next_permission_check = maintenance_now + std::chrono::seconds(1);
                                 continue;
                             }
+                            trading_permission_controller.ClearReason(
+                                "strategy_position_reconcile_enqueue_failed", now_ns);
                             trading_permission_controller.ClearReason(
                                 "strategy_recovery_barrier_timeout", now_ns);
                             trading_permission_controller.ClearReason(

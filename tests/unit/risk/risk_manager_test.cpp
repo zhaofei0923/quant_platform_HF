@@ -169,6 +169,80 @@ TEST(RiskManagerTest, CheckOrderMaxVolumeExceededRejects) {
     EXPECT_EQ(result.violated_rule, RiskRuleType::MAX_ORDER_VOLUME);
 }
 
+TEST(RiskManagerTest, RuntimeMaxVolumeGuardStillAppliesWithRuleFile) {
+    namespace fs = std::filesystem;
+    const auto rule_path = fs::temp_directory_path() / "quant_hft_runtime_volume_guard.yaml";
+    {
+        std::ofstream out(rule_path);
+        out << "global:\n  max_order_volume: 100\n";
+    }
+
+    auto risk_manager = CreateRiskManager(nullptr, nullptr);
+    RiskManagerConfig config;
+    config.enable_dynamic_reload = false;
+    config.rule_file_path = rule_path.string();
+    config.default_max_order_volume = 5;
+    ASSERT_TRUE(risk_manager->Initialize(config));
+
+    const auto result =
+        risk_manager->CheckOrder(BuildIntent("ord-runtime-limit", Side::kBuy, 4000.0, 6),
+                                 BuildContext());
+    EXPECT_FALSE(result.allowed);
+    EXPECT_EQ(result.violated_rule, RiskRuleType::MAX_ORDER_VOLUME);
+    fs::remove(rule_path);
+}
+
+TEST(RiskManagerTest, PositionNotionalGuardUsesProjectedOpenExposureAndAllowsCloses) {
+    auto risk_manager = CreateRiskManager(nullptr, nullptr);
+    RiskManagerConfig config;
+    config.enable_dynamic_reload = false;
+    config.rule_file_path.clear();
+    config.default_max_order_volume = 100;
+    config.default_max_order_notional = 250000.0;
+    config.default_max_position_notional = 250000.0;
+    ASSERT_TRUE(risk_manager->Initialize(config));
+
+    auto context = BuildContext();
+    context.current_price = 5000.0;
+    context.current_position = 4.0;
+    auto projected_over_limit = BuildIntent("ord-position", Side::kBuy, 5000.0, 2);
+    auto result = risk_manager->CheckOrder(projected_over_limit, context);
+    EXPECT_FALSE(result.allowed);
+    EXPECT_EQ(result.violated_rule, RiskRuleType::MAX_POSITION_NOTIONAL);
+
+    context.current_position = 6.0;
+    auto reduce_only = BuildIntent("ord-close", Side::kSell, 5000.0, 2);
+    reduce_only.offset = OffsetFlag::kCloseToday;
+    EXPECT_TRUE(risk_manager->CheckOrder(reduce_only, context).allowed);
+}
+
+TEST(RiskManagerTest, PositionVolumeGuardChecksProjectedOpensButAllowsCloses) {
+    auto risk_manager = CreateRiskManager(nullptr, nullptr);
+    RiskManagerConfig config;
+    config.enable_dynamic_reload = false;
+    config.rule_file_path.clear();
+    ASSERT_TRUE(risk_manager->Initialize(config));
+
+    RiskRule position_rule;
+    position_rule.rule_id = "risk.test.max_position_per_instrument";
+    position_rule.type = RiskRuleType::MAX_POSITION_PER_INSTRUMENT;
+    position_rule.strategy_id = "trend_001";
+    position_rule.threshold = 5.0;
+    ASSERT_TRUE(risk_manager->ReloadRules({position_rule}));
+
+    auto context = BuildContext();
+    context.current_position = 4.0;
+    const auto open_result =
+        risk_manager->CheckOrder(BuildIntent("ord-add", Side::kBuy, 4000.0, 2), context);
+    EXPECT_FALSE(open_result.allowed);
+    EXPECT_EQ(open_result.violated_rule, RiskRuleType::MAX_POSITION_PER_INSTRUMENT);
+
+    context.current_position = 6.0;
+    auto close_intent = BuildIntent("ord-reduce", Side::kSell, 4000.0, 2);
+    close_intent.offset = OffsetFlag::kCloseYesterday;
+    EXPECT_TRUE(risk_manager->CheckOrder(close_intent, context).allowed);
+}
+
 TEST(RiskManagerTest, CheckOrderSelfTradePreventionCrossPriceRejects) {
     auto store = std::make_shared<FakeTradingDomainStore>();
     auto order_manager = std::make_shared<OrderManager>(store);

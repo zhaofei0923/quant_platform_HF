@@ -75,6 +75,7 @@ add_library(quant_hft_common STATIC
     src/core/perf/event_object_pool.cpp
     src/core/monitoring/metric_registry.cpp
     src/core/monitoring/exporter.cpp
+    src/core/monitoring/dashboard_snapshot.cpp
 )
 
 add_library(quant_hft_storage STATIC
@@ -263,22 +264,15 @@ if(QUANT_HFT_ENABLE_CTP_REAL_API)
         message(FATAL_ERROR "CTP .so files not found under ${CTP_V6711_DIR}")
     endif()
 
-    add_library(ctp_md_api SHARED IMPORTED GLOBAL)
-    set_target_properties(ctp_md_api PROPERTIES
-        IMPORTED_LOCATION "${CTP_V6711_DIR}/thostmduserapi_se.so")
-
-    add_library(ctp_trader_api SHARED IMPORTED GLOBAL)
-    set_target_properties(ctp_trader_api PROPERTIES
-        IMPORTED_LOCATION "${CTP_V6711_DIR}/thosttraderapi_se.so")
-
     target_compile_definitions(quant_hft_build_options INTERFACE QUANT_HFT_ENABLE_CTP_REAL_API=1)
     target_include_directories(quant_hft_ctp SYSTEM PUBLIC "${CTP_V6711_DIR}")
+    target_link_directories(quant_hft_ctp PUBLIC "${CTP_V6711_DIR}")
     target_link_libraries(quant_hft_ctp PUBLIC
-        ctp_md_api
-        ctp_trader_api
+        "-Wl,-l:thostmduserapi_se.so"
+        "-Wl,-l:thosttraderapi_se.so"
         dl
     )
-    set_target_properties(quant_hft_ctp PROPERTIES BUILD_RPATH "${CTP_V6711_DIR}")
+    target_link_options(quant_hft_ctp PUBLIC "-Wl,-rpath,${CTP_V6711_DIR}")
 else()
     target_compile_definitions(quant_hft_build_options INTERFACE QUANT_HFT_ENABLE_CTP_REAL_API=0)
 endif()
@@ -306,6 +300,10 @@ target_link_libraries(core_engine PRIVATE quant_hft_online_runtime quant_hft_ctp
 
 add_executable(runtime_paths_cli src/apps/runtime_paths_cli_main.cpp)
 target_link_libraries(runtime_paths_cli PRIVATE quant_hft_online_runtime)
+
+add_executable(simnow_accounting_policy_check_cli
+    src/apps/simnow_accounting_policy_check_cli_main.cpp)
+target_link_libraries(simnow_accounting_policy_check_cli PRIVATE quant_hft_services)
 
 add_executable(simnow_probe src/apps/simnow_probe_main.cpp)
 target_link_libraries(simnow_probe PRIVATE quant_hft_online_runtime quant_hft_ctp)
@@ -364,6 +362,11 @@ target_link_libraries(market_data_repair_cli PRIVATE quant_hft_core OpenSSL::Cry
 
 add_executable(simnow_dashboard_cli src/apps/simnow_dashboard_cli_main.cpp)
 target_link_libraries(simnow_dashboard_cli PRIVATE quant_hft_core)
+
+add_executable(dashboard_publish_cli
+    src/apps/dashboard_publish_cli_main.cpp
+    src/apps/dashboard_publisher.cpp)
+target_link_libraries(dashboard_publish_cli PRIVATE quant_hft_contracts pthread)
 
 add_executable(simnow_weekly_stress_cli src/apps/simnow_weekly_stress_cli_main.cpp)
 target_link_libraries(simnow_weekly_stress_cli PRIVATE quant_hft_core)
@@ -434,6 +437,10 @@ if(QUANT_HFT_BUILD_TESTS)
 
     add_executable(ctp_config_loader_test tests/unit/core/ctp_config_loader_test.cpp)
     target_link_libraries(ctp_config_loader_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(configured_contract_probe_test
+        tests/unit/core/configured_contract_probe_test.cpp)
+    target_link_libraries(configured_contract_probe_test PRIVATE quant_hft_core GTest::gtest_main)
 
     add_executable(instrument_meta_cache_test
         tests/unit/core/instrument_meta_cache_test.cpp)
@@ -604,6 +611,30 @@ if(QUANT_HFT_BUILD_TESTS)
 
     add_executable(metric_registry_test tests/unit/monitoring/metric_registry_test.cpp)
     target_link_libraries(metric_registry_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(dashboard_snapshot_test tests/unit/monitoring/dashboard_snapshot_test.cpp)
+    target_link_libraries(dashboard_snapshot_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(dashboard_wal_validation_test tests/unit/apps/dashboard_wal_validation_test.cpp)
+    target_link_libraries(dashboard_wal_validation_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(dashboard_wal_permissions_test tests/unit/monitoring/dashboard_wal_permissions_test.cpp)
+    target_link_libraries(dashboard_wal_permissions_test PRIVATE quant_hft_core GTest::gtest_main)
+
+    add_executable(dashboard_publish_cli_test
+        tests/unit/apps/dashboard_publish_cli_test.cpp
+        src/apps/dashboard_publisher.cpp)
+    target_link_libraries(dashboard_publish_cli_test PRIVATE quant_hft_contracts pthread)
+    add_test(NAME dashboard_publish_cli_test COMMAND dashboard_publish_cli_test)
+    add_test(NAME dashboard_deployment_test
+             COMMAND bash ${CMAKE_SOURCE_DIR}/tests/unit/build/dashboard_deployment_test.sh)
+    set_tests_properties(dashboard_deployment_test PROPERTIES SKIP_RETURN_CODE 77)
+    add_test(NAME dashboard_permissions_test
+             COMMAND bash ${CMAKE_SOURCE_DIR}/tests/unit/build/dashboard_permissions_test.sh)
+    set_tests_properties(dashboard_permissions_test PROPERTIES SKIP_RETURN_CODE 77)
+    add_test(NAME dashboard_session_lifetime_test
+             COMMAND bash ${CMAKE_SOURCE_DIR}/tests/unit/build/dashboard_session_lifetime_test.sh)
+    set_tests_properties(dashboard_session_lifetime_test PROPERTIES SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)
 
     add_executable(parquet_data_feed_test tests/unit/backtest/parquet_data_feed_test.cpp)
     target_link_libraries(parquet_data_feed_test PRIVATE quant_hft_backtest GTest::gtest_main)
@@ -787,6 +818,15 @@ if(QUANT_HFT_BUILD_TESTS)
                    tests/unit/build/simnow_preflight_script_test.cpp)
     target_link_libraries(simnow_preflight_script_test PRIVATE GTest::gtest_main)
 
+    add_test(NAME simnow_initial_balance_gate_shell_test
+             COMMAND bash ${CMAKE_SOURCE_DIR}/tests/unit/build/simnow_initial_balance_gate_test.sh)
+    set_tests_properties(simnow_initial_balance_gate_shell_test
+                         PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    add_test(NAME tencent_simnow_schedule_shell_test
+             COMMAND bash ${CMAKE_SOURCE_DIR}/tests/unit/build/tencent_simnow_schedule_script_test.sh)
+    set_tests_properties(tencent_simnow_schedule_shell_test
+                         PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
     add_executable(preprod_rehearsal_gate_script_test
                    tests/unit/build/preprod_rehearsal_gate_script_test.cpp)
     target_link_libraries(preprod_rehearsal_gate_script_test PRIVATE GTest::gtest_main)
@@ -830,6 +870,7 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(runtime_identity_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(ctp_config_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(ctp_config_loader_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    gtest_discover_tests(configured_contract_probe_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(instrument_meta_cache_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(ctp_gateway_adapter_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(ctp_trader_adapter_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
@@ -885,6 +926,9 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(rule_market_state_engine_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(market_state_detector_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(metric_registry_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    gtest_discover_tests(dashboard_snapshot_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    gtest_discover_tests(dashboard_wal_validation_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    gtest_discover_tests(dashboard_wal_permissions_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(parquet_data_feed_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(indicator_trace_parquet_writer_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(indicator_trace_csv_writer_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
@@ -937,7 +981,10 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(quality_gate_scripts_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(consistency_gate_script_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(simnow_supervisor_script_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    gtest_discover_tests(simnow_preflight_script_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    # Preflight intentionally checks host-wide SimNow processes. It must not overlap
+    # supervisor fixtures that start real test processes in other CTest cases.
+    gtest_discover_tests(simnow_preflight_script_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                         PROPERTIES RUN_SERIAL TRUE)
     gtest_discover_tests(preprod_rehearsal_gate_script_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(run_backtest_from_config_script_test
                          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}

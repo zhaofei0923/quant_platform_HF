@@ -31,6 +31,7 @@ struct RuntimeSemanticsConfig {
     double risk_default_max_order_notional{1'000'000};
     int risk_default_max_active_orders{0};
     double risk_default_max_position_notional{0};
+    double risk_max_margin_to_equity_ratio{0};
     std::string risk_rule_groups{""};
     std::string risk_rule_file_path{"configs/risk_rules.yaml"};
     std::string risk_rule_content_fingerprint;

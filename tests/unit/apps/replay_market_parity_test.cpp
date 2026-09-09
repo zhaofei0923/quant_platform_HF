@@ -366,13 +366,15 @@ TEST(ReplayMarketParityTest,
                       ("quant_hft_runtime_semantics.yaml_" +
                        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     std::ofstream(path) << "ctp:\n  password: ${DO_NOT_RESOLVE}\n  market_bar_poll_interval_ms: "
-                           "120\n  dominant_contract_recheck_interval_ms: 60000\n";
+                           "120\n  dominant_contract_recheck_interval_ms: 60000\n"
+                           "  risk_max_margin_to_equity_ratio: 0.30\n";
     RuntimeSemanticsConfig config;
     std::string error;
     ASSERT_TRUE(LoadRuntimeSemanticsConfig(path.string(), &config, &error)) << error;
     EXPECT_EQ(config.market_bar_poll_interval_ms, 120);
     EXPECT_EQ(config.execution_price_mode, "signal_limit");
     EXPECT_EQ(config.cancel_after_ms, 0);
+    EXPECT_DOUBLE_EQ(config.risk_max_margin_to_equity_ratio, 0.30);
     EXPECT_EQ(RenderRuntimeSemanticsJson(config).find("password"), std::string::npos);
     EXPECT_EQ(RenderRuntimeSemanticsJson(config).find("DO_NOT_RESOLVE"), std::string::npos);
     std::ofstream(path) << "ctp:\n  execution_mode: SLICED\n  execution_price_mode: market\n";
@@ -382,6 +384,12 @@ TEST(ReplayMarketParityTest,
     EXPECT_EQ(config.execution_price_mode, "marketable_limit");
     std::ofstream(path) << "ctp:\n  market_bar_poll_interval_ms: ${POLL_MS}\n";
     EXPECT_FALSE(LoadRuntimeSemanticsConfig(path.string(), &config, &error));
+    std::ofstream(path) << "ctp:\n  risk_max_margin_to_equity_ratio: 1.01\n";
+    EXPECT_FALSE(LoadRuntimeSemanticsConfig(path.string(), &config, &error));
+    EXPECT_NE(error.find("risk_max_margin_to_equity_ratio"), std::string::npos);
+    std::ofstream(path) << "ctp:\n  risk_max_margin_to_equity_ratio: -0.01\n";
+    EXPECT_FALSE(LoadRuntimeSemanticsConfig(path.string(), &config, &error));
+    EXPECT_NE(error.find("risk_max_margin_to_equity_ratio"), std::string::npos);
     std::filesystem::remove(path);
 }
 TEST(ReplayMarketParityTest, SharedRuntimeDefaultsMatchLiveLoaderAndRejectDecisionDrift) {
@@ -402,6 +410,10 @@ TEST(ReplayMarketParityTest, SharedRuntimeDefaultsMatchLiveLoaderAndRejectDecisi
     EXPECT_FALSE(ValidateRuntimeSemanticsAgainstCtpConfig(shared, live, &error));
     EXPECT_NE(error.find("dominant_contract_min_hold_ms"), std::string::npos);
     shared.dominant_contract_min_hold_ms = live.dominant_contract_min_hold_ms;
+    live.risk.max_margin_to_equity_ratio = 0.30;
+    EXPECT_FALSE(ValidateRuntimeSemanticsAgainstCtpConfig(shared, live, &error));
+    EXPECT_NE(error.find("risk_max_margin_to_equity_ratio"), std::string::npos);
+    shared.risk_max_margin_to_equity_ratio = 0.30;
     shared.risk_rule_groups = "group_a, group_b";
     live.risk.rules.resize(2);
     live.risk.rules[0].rule_group = "group_a";

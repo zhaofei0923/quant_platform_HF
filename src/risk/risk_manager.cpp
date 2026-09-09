@@ -462,6 +462,9 @@ class DefaultRiskManager final : public RiskManager {
 
     static std::vector<RiskRule> BuildRuntimeGuardRules(const RiskManagerConfig& config) {
         std::vector<RiskRule> rules;
+        AddThresholdRule(&rules, RiskRuleType::MAX_ORDER_VOLUME,
+                         "risk.runtime.max_order_volume", "",
+                         static_cast<double>(config.default_max_order_volume), 50);
         AddThresholdRule(&rules, RiskRuleType::MAX_ORDER_NOTIONAL,
                          "risk.runtime.max_order_notional", "", config.default_max_order_notional,
                          50);

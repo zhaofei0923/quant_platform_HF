@@ -1,0 +1,1 @@
+PASS: actual Nginx + Authelia config, HTTPS, login/logout routes, Secure/HttpOnly eight-hour cookie, Basic bypass rejection, auth-gated JSON, no-store, symlink/traversal denial, write denial, logout invalidation, rate limit, fail-closed auth outage, server-side inactivity rejection of explicitly replayed cookies.

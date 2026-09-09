@@ -38,12 +38,14 @@ TEST_F(RuntimePathsTest, ResolutionHasNoSideEffectsAndKeepsRunArtifactsOutsideRe
     EXPECT_EQ(first.recovery_root, (root / "runtime/simnow/b/a/default").string());
     EXPECT_EQ(first.run_root, (root / "runtime/runs/simnow/b/a/default").string());
     EXPECT_EQ(first.market_data_dir, first.recovery_root + "/market");
+    EXPECT_EQ(first.state_dir, first.recovery_root + "/state");
     EXPECT_FALSE(std::filesystem::exists(options.runtime_root));
     config.account_id = "other";
     ASSERT_TRUE(ResolveRuntimePaths(config, options, &restart, &error)) << error;
     EXPECT_NE(first.wal_file, restart.wal_file);
     EXPECT_NE(first.run_root, restart.run_root);
     EXPECT_NE(first.market_data_dir, restart.market_data_dir);
+    EXPECT_NE(first.state_dir, restart.state_dir);
 }
 
 TEST_F(RuntimePathsTest, ExplicitLegacyArtifactsRemainUnclaimedAndKeepTheirPaths) {

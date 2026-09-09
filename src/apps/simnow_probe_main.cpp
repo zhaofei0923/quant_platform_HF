@@ -13,6 +13,8 @@
 #include <unordered_set>
 #include <vector>
 
+#include "quant_hft/common/scope_exit.h"
+#include "quant_hft/core/configured_contract_probe.h"
 #include "quant_hft/core/ctp_config_loader.h"
 #include "quant_hft/core/ctp_md_adapter.h"
 #include "quant_hft/core/ctp_trader_adapter.h"
@@ -79,6 +81,38 @@ std::filesystem::path InstrumentMetaCachePath(const std::string& product_id) {
            (ToLowerAscii(product_id) + "_contracts.json");
 }
 
+template <typename Row>
+class QueryResultMailbox {
+   public:
+    void Publish(const quant_hft::QueryResult<Row>& result) {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            results_[result.metadata.request_id] = result;
+        }
+        cv_.notify_all();
+    }
+
+    bool WaitFor(int request_id, int timeout_seconds, quant_hft::QueryResult<Row>* result) {
+        if (request_id <= 0 || result == nullptr) {
+            return false;
+        }
+        std::unique_lock<std::mutex> lock(mutex_);
+        if (!cv_.wait_for(lock, std::chrono::seconds(timeout_seconds), [&]() {
+                return results_.find(request_id) != results_.end();
+            })) {
+            return false;
+        }
+        *result = std::move(results_.at(request_id));
+        results_.erase(request_id);
+        return true;
+    }
+
+   private:
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    std::unordered_map<int, quant_hft::QueryResult<Row>> results_;
+};
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -135,6 +169,27 @@ int main(int argc, char** argv) {
     runtime.enable_real_api = true;
     const bool dominant_contract_mode =
         file_config.active_contract_mode == "dominant_open_interest";
+    const auto instruments_env = GetEnvOrDefault("CTP_SIM_INSTRUMENTS", "");
+    const auto legacy_instrument_env = GetEnvOrDefault("CTP_SIM_INSTRUMENT", "");
+    std::vector<std::string> configured_instruments;
+    if (!ResolveConfiguredProbeInstruments(instruments_env, legacy_instrument_env,
+                                           file_config.instruments, "SHFE.ag2406",
+                                           &configured_instruments, &error)) {
+        EmitStructuredLog(&runtime, "simnow_probe", "error", "configured_universe_invalid",
+                          {{"reason", error}});
+        return 3;
+    }
+    const std::string instrument = configured_instruments.front();
+    std::vector<ConfiguredProbeProductScope> configured_product_scopes;
+    if (!dominant_contract_mode &&
+        !ResolveConfiguredProbeProductScopes(
+            GetEnvOrDefault("SIMNOW_PRODUCT_SCOPE", ""),
+            GetEnvOrDefault("SIMNOW_EXPECTED_CONTRACT_COUNT", ""), configured_instruments,
+            &configured_product_scopes, &error)) {
+        EmitStructuredLog(&runtime, "simnow_probe", "error", "configured_product_scope_invalid",
+                          {{"reason", error}});
+        return 3;
+    }
 
     MarketDataConnectConfig cfg;
     cfg.market_front_address = runtime.md_front;
@@ -171,9 +226,20 @@ int main(int argc, char** argv) {
     std::condition_variable market_snapshot_cv;
     std::unordered_map<std::string, MarketSnapshot> dominant_candidate_snapshots;
     std::unordered_set<std::string> dominant_candidate_ids;
+    QueryResultMailbox<InstrumentMetaSnapshot> instrument_query_mailbox;
+    QueryResultMailbox<InstrumentCommissionRateSnapshot> commission_query_mailbox;
+    QueryResultMailbox<InstrumentOrderCommRateSnapshot> order_comm_query_mailbox;
+    ScopeExit stop_callbacks([&]() {
+        md.StopEventDelivery();
+        trader.StopEventDelivery();
+        gateway->Disconnect();
+    });
 
     EmitStructuredLog(&runtime, "simnow_probe", "info", "probe_started",
-                      {{"config_path", config_path}});
+                      {{"config_path", config_path},
+                       {"configured_contract_count",
+                        std::to_string(configured_instruments.size())},
+                       {"read_only", "true"}});
 
     md.RegisterTickCallback([&](const MarketSnapshot& snapshot) {
         if (dominant_contract_mode) {
@@ -224,6 +290,18 @@ int main(int argc, char** argv) {
             }
             instrument_meta_cv.notify_all();
         });
+    trader.RegisterInstrumentMetaQueryCallback(
+        [&](const QueryResult<InstrumentMetaSnapshot>& result) {
+            instrument_query_mailbox.Publish(result);
+        });
+    trader.RegisterInstrumentCommissionRateQueryCallback(
+        [&](const QueryResult<InstrumentCommissionRateSnapshot>& result) {
+            commission_query_mailbox.Publish(result);
+        });
+    trader.RegisterInstrumentOrderCommRateQueryCallback(
+        [&](const QueryResult<InstrumentOrderCommRateSnapshot>& result) {
+            order_comm_query_mailbox.Publish(result);
+        });
     trader.RegisterDepthMarketSnapshotCallback([&](const std::vector<MarketSnapshot>& snapshots) {
         {
             std::lock_guard<std::mutex> lock(depth_market_mutex);
@@ -263,13 +341,10 @@ int main(int argc, char** argv) {
         &runtime, "simnow_probe", "info", "settlement_confirmed",
         {{"settlement_confirm_required", runtime.settlement_confirm_required ? "true" : "false"}});
 
-    std::string instrument =
-        std::getenv("CTP_SIM_INSTRUMENT") != nullptr
-            ? std::string(std::getenv("CTP_SIM_INSTRUMENT"))
-            : (!file_config.instruments.empty() ? file_config.instruments.front() : "SHFE.ag2406");
-    if (!dominant_contract_mode && !md.Subscribe({instrument})) {
+    if (!dominant_contract_mode && !md.Subscribe(configured_instruments)) {
         EmitStructuredLog(&runtime, "simnow_probe", "error", "subscribe_failed",
-                          {{"instrument_id", instrument}});
+                          {{"configured_contract_count",
+                            std::to_string(configured_instruments.size())}});
         return 5;
     }
 
@@ -316,49 +391,21 @@ int main(int argc, char** argv) {
                        {"trading_day", trading_account.trading_day},
                        {"source", trading_account.source}});
 
-    const auto product_ids = ResolveConfiguredProductIds(file_config, instrument);
+    const auto product_ids = dominant_contract_mode
+                                 ? ResolveConfiguredProductIds(file_config, instrument)
+                                 : CollectConfiguredProductIds(configured_instruments);
     if (product_ids.empty()) {
         EmitStructuredLog(&runtime, "simnow_probe", "error", "instrument_product_filter_missing",
                           {{"instrument_id", instrument}});
         return 7;
     }
 
-    auto query_single_instrument_meta = [&](const std::string& target_instrument_id,
-                                            const std::string& event_prefix) {
-        {
-            std::lock_guard<std::mutex> lock(instrument_meta_mutex);
-            instrument_meta_snapshots.clear();
-            instrument_meta_ready = false;
-        }
-        const int request_id = trader.EnqueueInstrumentQuery(target_instrument_id);
-        if (request_id < 0) {
-            EmitStructuredLog(
-                &runtime, "simnow_probe", "error", event_prefix + "_submit_failed",
-                {{"instrument_id", target_instrument_id}, {"reason", "enqueue_failed"}});
-            return false;
-        }
-        std::unique_lock<std::mutex> lock(instrument_meta_mutex);
-        if (!instrument_meta_cv.wait_for(
-                lock, std::chrono::seconds(instrument_timeout_seconds), [&]() {
-                    return instrument_meta_ready &&
-                           std::any_of(instrument_meta_snapshots.begin(),
-                                       instrument_meta_snapshots.end(), [&](const auto& snapshot) {
-                                           return snapshot.instrument_id == target_instrument_id;
-                                       });
-                })) {
-            EmitStructuredLog(&runtime, "simnow_probe", "error", event_prefix + "_timeout",
-                              {{"instrument_id", target_instrument_id},
-                               {"request_id", std::to_string(request_id)},
-                               {"timeout_seconds", std::to_string(instrument_timeout_seconds)}});
-            return false;
-        }
-        return true;
-    };
-
     std::vector<InstrumentMetaSnapshot> received_instrument_meta;
     const std::string broker_trading_day = !trading_account.trading_day.empty()
                                                ? trading_account.trading_day
                                                : trader.GetLastUserSession().trading_day;
+    std::vector<ConfiguredContractProbeEvidence> configured_universe_evidence;
+    bool configured_universe_validated = false;
     if (dominant_contract_mode) {
         if (broker_trading_day.size() != 8U) {
             EmitStructuredLog(&runtime, "simnow_probe", "error", "instrument_trading_day_missing");
@@ -442,8 +489,167 @@ int main(int argc, char** argv) {
                                {"contract_count", std::to_string(product_metadata.size())},
                                {"eligible_count", std::to_string(eligible.size())}});
         }
-    } else if (!query_single_instrument_meta(instrument, "instrument_meta_query")) {
-        return 7;
+    } else {
+        if (broker_trading_day.size() != 8U || trading_account.account_id.empty() ||
+            trading_account.investor_id.empty() || trading_account.source != "ctp") {
+            EmitStructuredLog(&runtime, "simnow_probe", "error",
+                              "configured_universe_identity_missing",
+                              {{"trading_day", broker_trading_day},
+                               {"account_identity_present",
+                                trading_account.account_id.empty() ? "false" : "true"},
+                               {"investor_identity_present",
+                                trading_account.investor_id.empty() ? "false" : "true"},
+                               {"source", trading_account.source}});
+            return 7;
+        }
+
+        configured_universe_evidence.reserve(configured_instruments.size());
+        for (const auto& target_instrument_id : configured_instruments) {
+            const auto product_id = ConfiguredContractProductId(target_instrument_id);
+
+            const int metadata_request_id = trader.EnqueueInstrumentQuery(target_instrument_id);
+            if (metadata_request_id < 0) {
+                EmitStructuredLog(&runtime, "simnow_probe", "error",
+                                  "configured_contract_instrument_query_submit_failed",
+                                  {{"instrument_id", target_instrument_id},
+                                   {"reason", "enqueue_failed"}});
+                return 7;
+            }
+            QueryResult<InstrumentMetaSnapshot> metadata_result;
+            if (!instrument_query_mailbox.WaitFor(metadata_request_id, instrument_timeout_seconds,
+                                                  &metadata_result)) {
+                EmitStructuredLog(
+                    &runtime, "simnow_probe", "error",
+                    "configured_contract_instrument_query_timeout",
+                    {{"instrument_id", target_instrument_id},
+                     {"request_id", std::to_string(metadata_request_id)},
+                     {"timeout_seconds", std::to_string(instrument_timeout_seconds)}});
+                return 7;
+            }
+
+            const int commission_request_id =
+                trader.EnqueueInstrumentCommissionRateQuery(target_instrument_id);
+            if (commission_request_id < 0) {
+                EmitStructuredLog(&runtime, "simnow_probe", "error",
+                                  "configured_contract_commission_query_submit_failed",
+                                  {{"instrument_id", target_instrument_id},
+                                   {"reason", "enqueue_failed"}});
+                return 7;
+            }
+            QueryResult<InstrumentCommissionRateSnapshot> commission_result;
+            if (!commission_query_mailbox.WaitFor(
+                    commission_request_id, instrument_timeout_seconds, &commission_result)) {
+                EmitStructuredLog(
+                    &runtime, "simnow_probe", "error",
+                    "configured_contract_commission_query_timeout",
+                    {{"instrument_id", target_instrument_id},
+                     {"request_id", std::to_string(commission_request_id)},
+                     {"timeout_seconds", std::to_string(instrument_timeout_seconds)}});
+                return 7;
+            }
+
+            const int order_comm_request_id =
+                trader.EnqueueInstrumentOrderCommRateQuery(target_instrument_id);
+            if (order_comm_request_id < 0) {
+                EmitStructuredLog(&runtime, "simnow_probe", "error",
+                                  "configured_contract_order_comm_query_submit_failed",
+                                  {{"instrument_id", target_instrument_id},
+                                   {"reason", "enqueue_failed"}});
+                return 7;
+            }
+            QueryResult<InstrumentOrderCommRateSnapshot> order_comm_result;
+            if (!order_comm_query_mailbox.WaitFor(
+                    order_comm_request_id, instrument_timeout_seconds, &order_comm_result)) {
+                EmitStructuredLog(
+                    &runtime, "simnow_probe", "error",
+                    "configured_contract_order_comm_query_timeout",
+                    {{"instrument_id", target_instrument_id},
+                     {"request_id", std::to_string(order_comm_request_id)},
+                     {"timeout_seconds", std::to_string(instrument_timeout_seconds)}});
+                return 7;
+            }
+
+            ConfiguredContractProbeContext context;
+            context.instrument_id = target_instrument_id;
+            context.product_id = product_id;
+            context.account_id = trading_account.account_id;
+            context.investor_id = trading_account.investor_id;
+            context.trading_day = broker_trading_day;
+            context.expected_exchange_id =
+                ExpectedExchangeForConfiguredProduct(configured_product_scopes, product_id);
+            ConfiguredContractProbeEvidence evidence;
+            std::string validation_error;
+            if (!ValidateConfiguredContractProbeEvidence(
+                    context, metadata_request_id, metadata_result, commission_request_id,
+                    commission_result, order_comm_request_id, order_comm_result, &evidence,
+                    &validation_error)) {
+                EmitStructuredLog(
+                    &runtime, "simnow_probe", "error", "configured_contract_probe_failed",
+                    {{"instrument_id", target_instrument_id},
+                     {"product_id", product_id},
+                     {"reason", validation_error},
+                     {"instrument_error_code",
+                      std::to_string(metadata_result.metadata.error_code)},
+                     {"instrument_error", metadata_result.metadata.error},
+                     {"commission_error_code",
+                      std::to_string(commission_result.metadata.error_code)},
+                     {"commission_error", commission_result.metadata.error},
+                     {"commission_row_count",
+                      std::to_string(commission_result.rows.size())},
+                     {"commission_instrument_id",
+                      commission_result.rows.empty()
+                          ? ""
+                          : commission_result.rows.front().instrument_id},
+                     {"commission_exchange_id",
+                      commission_result.rows.empty()
+                          ? ""
+                          : commission_result.rows.front().exchange_id},
+                     {"commission_account_match",
+                      !commission_result.rows.empty() &&
+                              commission_result.rows.front().account_id == context.account_id
+                          ? "true"
+                          : "false"},
+                     {"commission_investor_match",
+                      !commission_result.rows.empty() &&
+                              commission_result.rows.front().investor_id == context.investor_id
+                          ? "true"
+                          : "false"},
+                     {"commission_source",
+                      commission_result.rows.empty() ? ""
+                                                     : commission_result.rows.front().source},
+                     {"order_comm_error_code",
+                      std::to_string(order_comm_result.metadata.error_code)},
+                     {"order_comm_error", order_comm_result.metadata.error},
+                     {"order_comm_row_count",
+                      std::to_string(order_comm_result.rows.size())}});
+                return 7;
+            }
+
+            configured_universe_evidence.push_back(evidence);
+            EmitStructuredLog(
+                &runtime, "simnow_probe", "info", "configured_contract_probe_complete",
+                {{"instrument_id", evidence.instrument_id},
+                 {"product_id", evidence.product_id},
+                 {"exchange_id", evidence.exchange_id},
+                 {"metadata_rows", std::to_string(evidence.metadata_rows)},
+                 {"commission_rows", std::to_string(evidence.commission_rows)},
+                 {"commission_scope", evidence.commission_scope},
+                 {"order_comm_rows", std::to_string(evidence.order_comm_rows)},
+                 {"order_comm_status", evidence.order_comm_status}});
+        }
+
+        std::string universe_error;
+        if (!ConfiguredUniverseProbeReady(configured_instruments, configured_universe_evidence,
+                                          &universe_error) ||
+            !trader.IsReady() || !md.IsReady()) {
+            if (universe_error.empty()) {
+                universe_error = "CTP connection became unhealthy during configured probe";
+            }
+            EmitStructuredLog(&runtime, "simnow_probe", "error",
+                              "configured_universe_probe_failed", {{"reason", universe_error}});
+            return 7;
+        }
+        configured_universe_validated = true;
     }
     if (dominant_contract_mode) {
         DominantContractCoordinatorConfig coordinator_config;
@@ -623,17 +829,46 @@ int main(int argc, char** argv) {
         }
     }
 
+    ConfiguredUniverseProbeHealthLatch configured_health;
     const auto started_at = std::chrono::steady_clock::now();
     while (monitor_seconds < 0 || std::chrono::duration_cast<std::chrono::seconds>(
                                       std::chrono::steady_clock::now() - started_at)
                                           .count() < monitor_seconds) {
         const bool healthy = trader.IsReady() && md.IsReady();
+        if (!dominant_contract_mode) {
+            configured_health.Observe(healthy);
+        }
         EmitStructuredLog(&runtime, "simnow_probe", healthy ? "info" : "warn", "health_status",
                           {{"state", healthy ? "healthy" : "unhealthy"}});
+        if (!dominant_contract_mode && !healthy) {
+            EmitStructuredLog(
+                &runtime, "simnow_probe", "error", "configured_universe_probe_failed",
+                {{"reason", "CTP connection became unhealthy during configured probe monitor"}});
+            return 7;
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(std::max(100, health_interval_ms)));
     }
-    md.Disconnect();
-    trader.Disconnect();
+    if (!dominant_contract_mode) {
+        configured_health.Observe(trader.IsReady() && md.IsReady());
+        std::string universe_error;
+        if (!configured_universe_validated || !configured_health.all_healthy() ||
+            !ConfiguredUniverseProbeReady(configured_instruments, configured_universe_evidence,
+                                          &universe_error)) {
+            if (universe_error.empty()) {
+                universe_error = configured_universe_validated
+                                     ? "CTP connection is unhealthy after configured probe monitor"
+                                     : "configured contract evidence was not validated";
+            }
+            EmitStructuredLog(&runtime, "simnow_probe", "error",
+                              "configured_universe_probe_failed", {{"reason", universe_error}});
+            return 7;
+        }
+        EmitStructuredLog(
+            &runtime, "simnow_probe", "info", "configured_universe_probe_complete",
+            {{"contract_count", std::to_string(configured_universe_evidence.size())},
+             {"state", "ready"},
+             {"trading_day", broker_trading_day}});
+    }
     EmitStructuredLog(&runtime, "simnow_probe", "info", "probe_completed");
     return 0;
 }

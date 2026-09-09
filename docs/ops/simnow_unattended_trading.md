@@ -18,9 +18,10 @@ CTP_SIM_TRADER_FRONT=tcp://182.254.243.31:30001
 ```yaml
 account_id: "${CTP_SIM_INVESTOR_ID}"
 risk_sim_subaccount_enabled: false
+risk_max_margin_to_equity_ratio: 0.30
 ```
 
-因此交易资金约束来自 CTP 返回的真实 SimNow 账户资金、持仓、保证金和本地 CTP 账本，而不是固定 20 万子账户。
+因此交易资金约束来自 CTP 返回的真实 SimNow 账户资金、持仓、保证金和本地 CTP 账本，而不是固定 20 万子账户。启用 `risk_max_margin_to_equity_ratio` 后，开仓按 CTP 返回的方向性保证金率和合约乘数计算，预计总保证金超过实时账户权益 30% 时 fail-closed 拒绝；平仓不受此比例门禁阻断。
 
 `core_engine` 和 `simnow_probe` 需要已经构建完成：
 

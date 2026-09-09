@@ -144,6 +144,9 @@ bool ValidateRuntimeSemanticsAgainstCtpConfig(const RuntimeSemanticsConfig& shar
     if (!same(shared.risk_default_max_position_notional == live.risk.default_max_position_notional,
               "risk_default_max_position_notional"))
         return false;
+    if (!same(shared.risk_max_margin_to_equity_ratio == live.risk.max_margin_to_equity_ratio,
+              "risk_max_margin_to_equity_ratio"))
+        return false;
     if (!same(shared.risk_sim_subaccount_enabled == live.risk.sim_subaccount_enabled,
               "risk_sim_subaccount_enabled") ||
         !same(shared.order_insert_rate_per_sec == live.runtime.order_insert_rate_per_sec,
@@ -218,6 +221,7 @@ std::string RenderRuntimeSemanticsJson(const RuntimeSemanticsConfig& config) {
     out << ",\"risk_default_max_order_notional\":" << config.risk_default_max_order_notional;
     out << ",\"risk_default_max_active_orders\":" << config.risk_default_max_active_orders;
     out << ",\"risk_default_max_position_notional\":" << config.risk_default_max_position_notional;
+    out << ",\"risk_max_margin_to_equity_ratio\":" << config.risk_max_margin_to_equity_ratio;
     out << ",\"risk_rule_groups\":\"" << config.risk_rule_groups << "\"";
     out << ",\"risk_rule_file_path\":\"" << config.risk_rule_file_path << "\"";
     out << ",\"risk_rule_content_fingerprint\":\"" << config.risk_rule_content_fingerprint << "\"";
@@ -351,6 +355,10 @@ bool LoadRuntimeSemanticsConfig(const std::string& path, RuntimeSemanticsConfig*
             recognized = true;
             valid = Parse(Trim(line.substr(colon + 1)), &parsed.risk_default_max_position_notional);
         }
+        if (key == "risk_max_margin_to_equity_ratio") {
+            recognized = true;
+            valid = Parse(Trim(line.substr(colon + 1)), &parsed.risk_max_margin_to_equity_ratio);
+        }
         if (key == "risk_rule_groups") {
             recognized = true;
             valid = Parse(Trim(line.substr(colon + 1)), &parsed.risk_rule_groups);
@@ -410,6 +418,12 @@ bool LoadRuntimeSemanticsConfig(const std::string& path, RuntimeSemanticsConfig*
             *error =
                 "runtime semantics requires positive lead windows, warmup, poll, order limit and "
                 "gateway rates";
+        return false;
+    }
+    if (!std::isfinite(parsed.risk_max_margin_to_equity_ratio) ||
+        parsed.risk_max_margin_to_equity_ratio < 0.0 ||
+        parsed.risk_max_margin_to_equity_ratio > 1.0) {
+        if (error) *error = "risk_max_margin_to_equity_ratio must be in [0, 1]";
         return false;
     }
     if (!parsed.risk_rule_file_path.empty()) {

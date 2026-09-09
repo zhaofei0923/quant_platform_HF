@@ -1,0 +1,1 @@
+PASS: actual transient systemd Authelia service with numeric unprivileged UID, RuntimeMaxSec=8s, TimeoutStopSec=1s and Restart=always; continuously replayed cookie authorized 22 requests then permanently rejected (401) after process replacement; 7 fail-closed requests during restart. Production retains 8h cookie and 7h59min55s service bound + 5s stop timeout.

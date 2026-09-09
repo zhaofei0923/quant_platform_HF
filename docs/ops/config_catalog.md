@@ -20,6 +20,10 @@
 - `configs/prod/ctp.yaml`
 - `configs/sim/ctp.yaml`
 - `configs/sim/ctp_sim_trade_candidates.yaml`
+- `configs/sim/ctp_sim_trade_hc.yaml`
+- `configs/sim/calendars/hc_sessions_2026.csv`
+- `configs/sim/empty_delegated_runtime.env`
+- `configs/sim/tencent_simnow_universe.csv`
 - `configs/sim/ctp_trading_hours.yaml`
 - `configs/sim/ctp_trading_hours_group2.yaml`
 - `configs/sim/ctp_trading_hours_group3.yaml`
@@ -176,6 +180,7 @@
 | `ctp.risk_default_max_order_notional` | double | 否 | 程序默认 | `>0` | 默认单笔名义金额上限 | `1000000` |
 | `ctp.risk_default_max_active_orders` | int | 否 | 程序默认 | `>=0` | 默认活跃委托上限 | `0` |
 | `ctp.risk_default_max_position_notional` | double | 否 | 程序默认 | `>=0` | 默认持仓名义上限 | `0` |
+| `ctp.risk_max_margin_to_equity_ratio` | double | 否 | `0` | `[0,1]` | 开仓预计总保证金占 CTP 实时账户权益的硬上限；`0` 禁用，平仓不受阻断 | `0.30` |
 | `ctp.risk_sim_subaccount_enabled` | bool | 否 | 程序默认 | `true/false` | 是否启用 SimNow 仿真子账户资金池风控；真实 SimNow 账户资金交易应关闭 | `false` |
 | `ctp.risk_sim_subaccount_id` | string | 否 | `ctp.account_id` | 非空或空 | 仿真子账户标识，用于审计与日志关联；关闭子账户时留空 | `` |
 | `ctp.risk_sim_subaccount_initial_equity` | double | 否 | 程序默认 | `>=0` | 仿真子账户初始权益；关闭子账户时为 0 | `0` |
@@ -266,6 +271,30 @@
 - Purpose: SimNow 默认多品种候选参数联调配置，当前运行 `c/hc` 两个独立 Composite 实例。
 - Consumer: `core_engine` / `simnow_compare_cli`。
 - 字段说明: 见“CTP 通用字段字典”；重点字段为 `strategy_composite_config_map.<strategy_id>`、`product_ids` 与行情按品种分区开关。
+
+## `configs/sim/ctp_sim_trade_hc.yaml`
+
+- Purpose: 腾讯云 SimNow 受控合约范围的运行观察配置；订阅合约由受控清单通过 `CTP_SIM_INSTRUMENTS` 注入。
+- Consumer: `run_tencent_simnow_schedule.sh` / `start_simnow_trading.sh` / `supervise_simnow_trading.sh` / `core_engine`。
+- 字段说明: 见“CTP 通用字段字典”；连接身份引用环境变量，凭据不写入本文件。运行仍须通过会话、恢复对账、核算政策与风控门禁。
+
+## `configs/sim/calendars/hc_sessions_2026.csv`
+
+- Purpose: `hc:SHFE` 的显式会话日历，仅适用于文件列出的自然日期与会话，不将工作日自动视为可交易日。
+- Consumer: `run_tencent_simnow_schedule.sh` / `supervise_simnow_trading.sh`。
+- 字段说明: `natural_date` 为会话所在自然日，`session` 为 `day_am/day_pm/night`，`trading_day` 为对应交易日；`exchange` 和 `product` 与 `# product_scope=hc:SHFE` 保持一致。缺少日期、会话或产品范围时禁止新会话启动。
+
+## `configs/sim/empty_delegated_runtime.env`
+
+- Purpose: 调度入口已经加载受控运行环境后，供下层脚本引用的空环境文件，避免重复加载可变环境覆盖。
+- Consumer: `run_tencent_simnow_schedule.sh` 委派的启动与监督脚本。
+- 字段说明: 本文件有意不包含变量赋值；不得加入凭据、连接参数或策略覆盖。
+
+## `configs/sim/tencent_simnow_universe.csv`
+
+- Purpose: 腾讯云 SimNow 受控订阅合约与策略映射清单；清单只代表当前配置范围，不代表全市场覆盖。
+- Consumer: `run_tencent_simnow_schedule.sh`。
+- 字段说明: `instrument` 为明确合约，`product` 和 `exchange` 为品种及交易所，`strategy_id` 为策略标识，`strategy_config` 为对应策略配置路径；更换合约须同步核对日历范围与策略映射。
 
 ## `configs/sim/ctp_trading_hours.yaml`
 

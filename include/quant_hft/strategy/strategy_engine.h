@@ -55,6 +55,13 @@ struct StrategyEngineConfig {
     bool load_state_on_start{false};
     EpochNanos state_snapshot_interval_ns{0};
     EpochNanos metrics_collect_interval_ns{1'000'000'000};
+    // Optional observer. It is called only from the strategy worker, after a
+    // complete in-memory snapshot is built. Exceptions are isolated from
+    // strategy execution and trading permission.
+    std::function<void(const std::vector<StrategyRiskSnapshot>&, EpochNanos,
+                       const std::string&)>
+        risk_snapshot_sink;
+    EpochNanos risk_snapshot_interval_ns{1'000'000'000};
 };
 
 class StrategyEngine {
@@ -94,6 +101,8 @@ class StrategyEngine {
         std::uint64_t state_snapshot_runs{0};
         std::uint64_t state_snapshot_failures{0};
         std::uint64_t metrics_collection_runs{0};
+        std::uint64_t risk_snapshot_runs{0};
+        std::uint64_t risk_snapshot_failures{0};
     };
 
     using IntentSink = std::function<void(const SignalIntent&)>;
@@ -221,6 +230,7 @@ class StrategyEngine {
     void MaybeSnapshotStates(EpochNanos now_ns);
     void SnapshotStates(EpochNanos now_ns);
     void MaybeCollectMetrics(EpochNanos now_ns);
+    void MaybePublishRiskSnapshot(EpochNanos now_ns, bool force);
     void EmitIntents(const std::string& strategy_id, std::vector<SignalIntent> intents,
                      const std::string& product_id = {}, std::uint64_t contract_generation = 0);
 
@@ -244,6 +254,8 @@ class StrategyEngine {
     std::chrono::steady_clock::time_point pending_timer_deadline_;
     EpochNanos last_state_snapshot_ns_{0};
     EpochNanos last_metrics_collect_ns_{0};
+    EpochNanos last_risk_snapshot_ns_{0};
+    std::string last_trading_day_;
 
     std::thread worker_thread_;
     std::thread timer_thread_;

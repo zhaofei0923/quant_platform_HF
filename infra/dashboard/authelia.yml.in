@@ -1,0 +1,49 @@
+server:
+  address: 'tcp://127.0.0.1:@AUTH_PORT@/auth'
+  endpoints:
+    authz:
+      auth-request:
+        implementation: 'AuthRequest'
+        authn_strategies:
+          - name: 'CookieSession'
+log:
+  level: 'info'
+theme: 'dark'
+default_2fa_method: ''
+authentication_backend:
+  password_reset:
+    disable: true
+  password_change:
+    disable: true
+  file:
+    path: '@USERS_FILE@'
+    watch: false
+access_control:
+  default_policy: 'deny'
+  rules:
+    - domain: '@DOMAIN@'
+      subject: 'user:@USERNAME@'
+      policy: 'one_factor'
+session:
+  name: 'quant_dashboard_session'
+  same_site: 'lax'
+  inactivity: '15m'
+  expiration: '8h'
+  remember_me: -1
+  cookies:
+    - domain: '@DOMAIN@'
+      authelia_url: 'https://@DOMAIN@@PORT_SUFFIX@/auth/'
+      default_redirection_url: 'https://@DOMAIN@@PORT_SUFFIX@/'
+regulation:
+  modes: ['ip']
+  max_retries: 5
+  find_time: '2m'
+  ban_time: '15m'
+storage:
+  local:
+    path: '@AUTH_STATE@/db.sqlite3'
+notifier:
+  filesystem:
+    filename: '@AUTH_STATE@/notifications.txt'
+ntp:
+  disable_startup_check: true

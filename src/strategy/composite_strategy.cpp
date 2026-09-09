@@ -1002,6 +1002,73 @@ std::vector<StrategyMetric> CompositeStrategy::CollectMetrics() const {
     };
 }
 
+std::vector<StrategyRiskSnapshot> CompositeStrategy::CollectRiskSnapshot(
+    EpochNanos observation_now_ns) const {
+    (void)observation_now_ns;
+    std::unordered_map<std::string, std::unordered_map<std::string, AtomicRiskPrices>>
+        prices_by_owner;
+    for (const auto& slot : sub_strategies_) {
+        if (slot.strategy == nullptr) continue;
+        const auto* provider = dynamic_cast<const IAtomicRiskPriceProvider*>(slot.strategy);
+        if (provider != nullptr) {
+            prices_by_owner.emplace(slot.strategy_id, provider->RiskPricesByInstrument());
+        }
+    }
+
+    const auto finite_price = [](const std::optional<double>& value) -> std::optional<double> {
+        return value.has_value() && std::isfinite(*value) && *value > 0.0 ? value : std::nullopt;
+    };
+    std::vector<StrategyRiskSnapshot> rows;
+    rows.reserve(atomic_context_.net_positions.size());
+    for (const auto& [instrument_id, net] : atomic_context_.net_positions) {
+        if (instrument_id.empty() || net == 0) continue;
+        StrategyRiskSnapshot row;
+        row.strategy_id = strategy_context_.strategy_id;
+        row.instrument_id = instrument_id;
+        row.net = net;
+        if (const auto avg_it = atomic_context_.avg_open_prices.find(instrument_id);
+            avg_it != atomic_context_.avg_open_prices.end() && std::isfinite(avg_it->second) &&
+            avg_it->second > 0.0) {
+            row.avg_open = avg_it->second;
+        }
+        const auto owner_it = position_owner_by_instrument_.find(instrument_id);
+        if (owner_it != position_owner_by_instrument_.end()) {
+            row.owner_strategy_id = owner_it->second;
+        }
+        const auto provider_it = prices_by_owner.find(row.owner_strategy_id);
+        if (provider_it != prices_by_owner.end()) {
+            const auto prices_it = provider_it->second.find(instrument_id);
+            if (prices_it != provider_it->second.end()) {
+                row.initial_stop = finite_price(prices_it->second.initial_stop);
+                row.trailing_stop = finite_price(prices_it->second.trailing_stop);
+                row.take_profit = finite_price(prices_it->second.take_profit);
+                row.effective_stop = finite_price(prices_it->second.effective_stop);
+                row.stop_kind = prices_it->second.stop_kind;
+                row.as_of_ns = prices_it->second.as_of_ns;
+                const bool valid_kind =
+                    (row.stop_kind == StrategyStopKind::kTrailing &&
+                     row.trailing_stop.has_value() && row.effective_stop == row.trailing_stop) ||
+                    (row.stop_kind == StrategyStopKind::kInitial &&
+                     row.initial_stop.has_value() && row.effective_stop == row.initial_stop) ||
+                    (row.stop_kind == StrategyStopKind::kNone &&
+                     !row.effective_stop.has_value());
+                if (!valid_kind) {
+                    row.effective_stop.reset();
+                    row.stop_kind = StrategyStopKind::kNone;
+                }
+            }
+        }
+        rows.push_back(std::move(row));
+    }
+    std::sort(rows.begin(), rows.end(), [](const auto& lhs, const auto& rhs) {
+        if (lhs.strategy_id != rhs.strategy_id) return lhs.strategy_id < rhs.strategy_id;
+        if (lhs.owner_strategy_id != rhs.owner_strategy_id)
+            return lhs.owner_strategy_id < rhs.owner_strategy_id;
+        return lhs.instrument_id < rhs.instrument_id;
+    });
+    return rows;
+}
+
 bool CompositeStrategy::SaveState(StrategyState* out, std::string* error) const {
     if (out == nullptr) {
         if (error != nullptr) {

@@ -17,17 +17,21 @@ struct CtpMarginPriceInputs {
 
 struct CtpOrderFundInputs {
     std::string client_order_id;
+    OffsetFlag offset{OffsetFlag::kOpen};
     double price{0.0};
     std::int32_t volume{0};
     std::int32_t volume_multiple{0};
     double margin_ratio_by_money{0.0};
     double margin_ratio_by_volume{0.0};
+    bool margin_rate_is_relative{false};
     double commission_ratio_by_money{0.0};
     double commission_ratio_by_volume{0.0};
 };
 
 class CtpAccountLedger {
 public:
+    explicit CtpAccountLedger(double max_margin_to_equity_ratio = 0.0);
+
     static double ResolveMarginPrice(char margin_price_type,
                                      const CtpMarginPriceInputs& prices);
     static double ComputePositionMargin(char margin_price_type,
@@ -83,6 +87,7 @@ private:
     double daily_settlement_pnl_{0.0};
     std::string trading_day_;
     std::unordered_map<std::string, PendingOrderFunds> pending_order_funds_;
+    double max_margin_to_equity_ratio_{0.0};
 };
 
 }  // namespace quant_hft

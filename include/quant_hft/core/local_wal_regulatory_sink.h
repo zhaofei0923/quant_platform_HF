@@ -22,6 +22,12 @@ class LocalWalRegulatorySink : public IRegulatorySink {
     WalReceipt LastReceipt() const;
     std::string LastError() const;
 
+    // Explicit dashboard opt-in. Grants group-read only when the already-open regular
+    // WAL descriptor belongs to the named observer group. Failure leaves trading status
+    // and LastError unchanged; default WAL creation remains 0600.
+    bool EnableObserverReadAccess(const std::string& expected_group_name,
+                                  std::string* error) noexcept;
+
    private:
     static std::string EscapeJsonString(const std::string& input);
     static std::string GetEnvOrEmpty(const char* name);

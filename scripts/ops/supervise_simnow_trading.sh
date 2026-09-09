@@ -14,6 +14,7 @@ START_SCRIPT="${SIMNOW_START_SCRIPT:-${SCRIPT_DIR}/start_simnow_trading.sh}"
 DAILY_SETTLEMENT_SCRIPT="${SIMNOW_DAILY_SETTLEMENT_SCRIPT:-${SCRIPT_DIR}/run_daily_settlement.sh}"
 OPS_HEALTH_BIN="${OPS_HEALTH_BIN:-${BUILD_DIR}/ops_health_report_cli}"
 OPS_ALERT_BIN="${OPS_ALERT_BIN:-${BUILD_DIR}/ops_alert_report_cli}"
+POSITION_SNAPSHOT_BIN="${SIMNOW_POSITION_SNAPSHOT_BIN:-${BUILD_DIR}/simnow_flatten_positions}"
 EXPORT_SCRIPT="${SIMNOW_EXPORT_SCRIPT:-${SCRIPT_DIR}/export_simnow_trading_day.sh}"
 SIGNAL_MONITOR_SCRIPT="${SIMNOW_SIGNAL_MONITOR_SCRIPT:-${SCRIPT_DIR}/monitor_simnow_signal_execution.sh}"
 RUN_ROOT="${SIMNOW_RUN_ROOT:-}"
@@ -22,10 +23,14 @@ WAL_FILE="${SIMNOW_WAL_FILE:-${QUANT_HFT_WAL_FILE:-}}"
 EXPORT_ROOT="${SIMNOW_EXPORT_ROOT:-}"
 RECONCILE_ROOT="${SIMNOW_RECONCILE_ROOT:-}"
 REPORT_ROOT="${SIMNOW_REPORT_ROOT:-}"
-TRADING_WINDOWS="${SIMNOW_TRADING_WINDOWS:-night=20:55-02:35,day_am=08:55-11:35,day_pm=13:25-15:20}"
-TRADING_DAYS_FILE="${SIMNOW_TRADING_DAYS_FILE:-}"
+TRADING_WINDOWS="${SIMNOW_TRADING_WINDOWS:-night=21:00-23:05,day_am=09:00-11:35,day_pm=13:30-15:20}"
+PREWARM_WINDOWS="${SIMNOW_PREWARM_WINDOWS:-night=20:45-21:00,day_am=08:45-09:00,day_pm=13:25-13:30}"
+SESSION_CALENDAR_FILE="${SIMNOW_SESSION_CALENDAR_FILE:-}"
+PRODUCT_SCOPE="${SIMNOW_PRODUCT_SCOPE:-}"
 EOD_TIME="${SIMNOW_EOD_TIME:-15:25}"
 EOD_EXECUTE="${SIMNOW_EOD_EXECUTE:-1}"
+EOD_RETRY_INTERVAL_SECONDS="${SIMNOW_EOD_RETRY_INTERVAL_SECONDS:-300}"
+EPOCH_FIRST_TRADING_DAY="${SIMNOW_EPOCH_FIRST_TRADING_DAY:-}"
 EOD_PROJECT_DB="${SIMNOW_EOD_PROJECT_DB:-0}"
 EOD_QUERY_DB="${SIMNOW_EOD_QUERY_DB:-1}"
 STRICT_RECONCILE="${SIMNOW_STRICT_RECONCILE:-1}"
@@ -38,6 +43,7 @@ MIN_FREE_MB="${SIMNOW_MIN_FREE_MB:-2048}"
 LOG_MAX_BYTES="${SIMNOW_LOG_MAX_BYTES:-104857600}"
 LOG_RETENTION_DAYS="${SIMNOW_LOG_RETENTION_DAYS:-14}"
 HEALTH_GRACE_SECONDS="${SIMNOW_HEALTH_GRACE_SECONDS:-180}"
+READINESS_STALE_SECONDS="${SIMNOW_READINESS_STALE_SECONDS:-30}"
 TICK_STALE_SECONDS="${SIMNOW_TICK_STALE_SECONDS:-180}"
 BAR_STALE_SECONDS="${SIMNOW_BAR_STALE_SECONDS:-240}"
 FILL_STALE_SECONDS="${SIMNOW_FILL_STALE_SECONDS:-900}"
@@ -60,6 +66,9 @@ DRY_RUN=0
 NO_EOD=0
 NO_STOP_OUTSIDE=0
 WINDOWS_SET_BY_CLI=0
+PREWARM_WINDOWS_SET_BY_CLI=0
+SESSION_CALENDAR_FILE_SET_BY_CLI=0
+PRODUCT_SCOPE_SET_BY_CLI=0
 RUN_ROOT_SET_BY_CLI=0
 MARKET_DATA_DIR_SET_BY_CLI=0
 WAL_FILE_SET_BY_CLI=0
@@ -85,8 +94,11 @@ Options:
   --report-root <path>           EOD report root (default: ${REPORT_ROOT})
   --export-root <path>           EOD export root (default: ${EXPORT_ROOT})
   --reconcile-root <path>        EOD reconcile root (default: ${RECONCILE_ROOT})
-  --windows <spec>               Trading windows (default: ${TRADING_WINDOWS})
-  --trading-days-file <path>     Optional calendar, one YYYYMMDD or YYYY-MM-DD per line
+  --windows <spec>               Engine-active windows (default: ${TRADING_WINDOWS})
+  --prewarm-windows <spec>       Core CloseOnly prewarm windows (default: ${PREWARM_WINDOWS})
+  --session-calendar-file <path> Required CSV session calendar for every new session
+  --product-scope <spec>         Configured product/exchange list, e.g. hc:SHFE,c:DCE
+  --trading-days-file <path>     Deprecated alias for --session-calendar-file
   --eod-time <HH:MM>             End-of-day chain trigger time (default: ${EOD_TIME})
   --check-interval-seconds <int> Supervisor loop interval (default: ${CHECK_INTERVAL_SECONDS})
   --max-restarts <int>           Max crash restarts per session window (default: ${MAX_RESTARTS_PER_WINDOW})
@@ -101,8 +113,19 @@ Options:
   -h, --help                     Show this help
 
 Window spec examples:
-  night=20:55-02:35,day_am=08:55-11:35,day_pm=13:25-15:20
-  09:00-11:30,13:30-15:00
+  --prewarm-windows night=20:45-21:00,day_am=08:45-09:00,day_pm=13:25-13:30
+  --windows night=21:00-23:05,day_am=09:00-11:35,day_pm=13:30-15:20
+
+Session calendar format (exact header; dates may be YYYYMMDD or YYYY-MM-DD):
+  natural_date,session,trading_day,exchange,product
+  # product_scope=hc:SHFE,c:DCE
+  # session_scope.night=hc:SHFE,c:DCE
+  2026-09-07,day_am,2026-09-07,SHFE,hc
+  2026-09-07,day_am,2026-09-07,DCE,c
+
+The optional session_scope.<session> metadata narrows a session to products which actually
+trade then (for example, omit a no-night GFEX product from session_scope.night).  When absent,
+the legacy behavior remains: every product_scope member is required for that session.
 
 Alert hooks are inherited from start_simnow_trading.sh:
   SIMNOW_ALERT_WEBHOOK_URL, SIMNOW_ALERT_EMAIL_TO, SIMNOW_ALERT_COMMAND
@@ -216,8 +239,13 @@ time_to_minutes() {
   local time_text="$1"
   local hour_text="${time_text%:*}"
   local minute_text="${time_text#*:}"
+  local hour
+  local minute
   [[ "${hour_text}" =~ ^[0-9][0-9]?$ && "${minute_text}" =~ ^[0-9][0-9]$ ]] || return 1
-  printf '%d\n' $((10#${hour_text} * 60 + 10#${minute_text}))
+  hour=$((10#${hour_text}))
+  minute=$((10#${minute_text}))
+  (( hour <= 23 && minute <= 59 )) || return 1
+  printf '%d\n' $((hour * 60 + minute))
 }
 
 pid_is_alive() {
@@ -229,6 +257,20 @@ pid_is_alive() {
 current_pid() {
   [[ -f "${CURRENT_PID_FILE}" ]] || return 1
   tr -dc '0-9' < "${CURRENT_PID_FILE}"
+}
+
+remove_stale_current_pid() {
+  local process_pid
+
+  process_pid="$(current_pid || true)"
+  [[ -n "${process_pid}" ]] || return 0
+  if pid_is_alive "${process_pid}"; then
+    return 0
+  fi
+
+  rm -f "${CURRENT_PID_FILE}"
+  echo "[info] removed stale core_engine pid file pid=${process_pid}" | \
+    tee -a "${SUPERVISOR_LOG}"
 }
 
 current_engine_log() {
@@ -293,22 +335,6 @@ rotate_logs() {
     -mtime "+${LOG_RETENTION_DAYS}" -delete 2>/dev/null || true
 }
 
-is_trading_day_allowed() {
-  local compact_day="$1"
-  local dashed_day
-  local weekday
-
-  dashed_day="$(date -d "${compact_day}" +%F)"
-  if [[ -n "${TRADING_DAYS_FILE}" ]]; then
-    [[ -f "${TRADING_DAYS_FILE}" ]] || return 1
-    grep -Eq "^(${compact_day}|${dashed_day})([[:space:]]*(#.*)?)?$" "${TRADING_DAYS_FILE}"
-    return $?
-  fi
-
-  weekday="$(date -d "${compact_day}" +%u)"
-  [[ "${weekday}" =~ ^[1-5]$ ]]
-}
-
 now_date() {
   if [[ -n "${SIMNOW_FAKE_NOW:-}" ]]; then
     date -d "${SIMNOW_FAKE_NOW}" "$@"
@@ -317,28 +343,286 @@ now_date() {
   fi
 }
 
-next_allowed_trading_day_from() {
-  local start_compact="$1"
-  local start_dash
-  local offset
-  local candidate
+trim_calendar_field() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s\n' "${value}"
+}
 
-  start_dash="$(date -d "${start_compact}" +%F)" || return 1
-  for offset in $(seq 0 30); do
-    candidate="$(date -d "${start_dash} +${offset} day" +%Y%m%d)" || return 1
-    if is_trading_day_allowed "${candidate}"; then
-      printf '%s\n' "${candidate}"
+normalize_calendar_date() {
+  local raw_date="$1"
+  local compact_date
+  local dashed_date
+  local normalized_date
+
+  if [[ "${raw_date}" =~ ^[0-9]{8}$ ]]; then
+    compact_date="${raw_date}"
+  elif [[ "${raw_date}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+    compact_date="${raw_date//-/}"
+  else
+    return 1
+  fi
+  dashed_date="${compact_date:0:4}-${compact_date:4:2}-${compact_date:6:2}"
+  normalized_date="$(date -d "${dashed_date}" +%Y%m%d 2>/dev/null)" || return 1
+  [[ "${normalized_date}" == "${compact_date}" ]] || return 1
+  printf '%s\n' "${compact_date}"
+}
+
+normalize_product_scope() {
+  local raw_scope="$1"
+  local member=""
+  local product=""
+  local exchange=""
+  local normalized=""
+  local -A seen=()
+
+  IFS=',' read -r -a members <<< "${raw_scope}"
+  for member in "${members[@]}"; do
+    member="${member//[[:space:]]/}"
+    [[ "${member}" =~ ^([A-Za-z][A-Za-z0-9]*):([A-Z][A-Z0-9]*)$ ]] || return 1
+    product="${BASH_REMATCH[1]}"
+    exchange="${BASH_REMATCH[2]}"
+    [[ -z "${seen[${product}:${exchange}]+x}" ]] || return 1
+    seen["${product}:${exchange}"]=1
+    normalized="${normalized:+${normalized},}${product}:${exchange}"
+  done
+  [[ -n "${normalized}" ]] || return 1
+  printf '%s\n' "${normalized}"
+}
+
+scope_contains() {
+  local raw_scope="$1"
+  local product="$2"
+  local exchange="$3"
+  local member=""
+  local configured_product=""
+  local configured_exchange=""
+
+  IFS=',' read -r -a members <<< "${raw_scope}"
+  for member in "${members[@]}"; do
+    IFS=':' read -r configured_product configured_exchange <<< "${member}"
+    if [[ "${product}" == "${configured_product}" && \
+          "${exchange}" == "${configured_exchange}" ]]; then
       return 0
     fi
   done
   return 1
 }
 
-current_session_info() {
+product_scope_contains() {
+  scope_contains "${PRODUCT_SCOPE}" "$1" "$2"
+}
+
+session_calendar_trading_day() {
+  local target_natural_date="$1"
+  local target_session="$2"
+  local header=""
+  local row=""
+  local natural_date_raw=""
+  local session=""
+  local trading_day_raw=""
+  local exchange=""
+  local product=""
+  local natural_date=""
+  local trading_day=""
+  local row_key=""
+  local target_trading_day=""
+  local line_number=1
+  local target_rows=0
+  local configured_member=""
+  local configured_product=""
+  local configured_exchange=""
+  local metadata_scope=""
+  local metadata_scope_rows=0
+  local metadata_session_label=""
+  local metadata_session_value=""
+  local normalized_session_scope=""
+  local effective_row_scope=""
+  local required_target_scope=""
+  local scoped_member=""
+  local scoped_product=""
+  local scoped_exchange=""
+  local data_rows_started=0
+  local -A seen_rows=()
+  local -A target_scope_rows=()
+  local -A metadata_session_scopes=()
+  local -A metadata_session_scope_seen=()
+
+  if [[ -z "${SESSION_CALENDAR_FILE}" ]]; then
+    printf '%s\n' "calendar_file_missing"
+    return 2
+  fi
+  if [[ ! -f "${SESSION_CALENDAR_FILE}" || ! -r "${SESSION_CALENDAR_FILE}" ]]; then
+    printf '%s\n' "calendar_file_unreadable:${SESSION_CALENDAR_FILE}"
+    return 2
+  fi
+  if ! IFS= read -r header < "${SESSION_CALENDAR_FILE}"; then
+    printf '%s\n' "calendar_file_empty:${SESSION_CALENDAR_FILE}"
+    return 2
+  fi
+  header="${header%$'\r'}"
+  header="${header#$'\xef\xbb\xbf'}"
+  if [[ "${header}" != "natural_date,session,trading_day,exchange,product" ]]; then
+    printf '%s\n' "calendar_header_invalid"
+    return 2
+  fi
+
+  while IFS= read -r row || [[ -n "${row}" ]]; do
+    line_number=$((line_number + 1))
+    row="${row%$'\r'}"
+    if [[ "${row}" == "# product_scope="* ]]; then
+      metadata_scope_rows=$((metadata_scope_rows + 1))
+      if (( metadata_scope_rows > 1 )); then
+        printf '%s\n' "calendar_metadata_duplicate:line=${line_number}"
+        return 2
+      fi
+      metadata_scope="${row#\# product_scope=}"
+      continue
+    fi
+    if [[ "${row}" == "# session_scope."* ]]; then
+      if (( data_rows_started != 0 )); then
+        printf '%s\n' "calendar_session_metadata_after_data:line=${line_number}"
+        return 2
+      fi
+      metadata_session_label="${row#\# session_scope.}"
+      metadata_session_value="${metadata_session_label#*=}"
+      metadata_session_label="${metadata_session_label%%=*}"
+      if [[ "${metadata_session_label}" != "day_am" && \
+            "${metadata_session_label}" != "day_pm" && \
+            "${metadata_session_label}" != "night" ]]; then
+        printf '%s\n' "calendar_session_metadata_invalid:line=${line_number}"
+        return 2
+      fi
+      if [[ -n "${metadata_session_scope_seen[${metadata_session_label}]+x}" ]]; then
+        printf '%s\n' "calendar_session_metadata_duplicate:line=${line_number}"
+        return 2
+      fi
+      normalized_session_scope=""
+      if [[ -n "${metadata_session_value}" ]]; then
+        normalized_session_scope="$(normalize_product_scope "${metadata_session_value}" 2>/dev/null || true)"
+        if [[ -z "${normalized_session_scope}" ]]; then
+          printf '%s\n' "calendar_session_metadata_scope_invalid:line=${line_number}"
+          return 2
+        fi
+        IFS=',' read -r -a scoped_members <<< "${normalized_session_scope}"
+        for scoped_member in "${scoped_members[@]}"; do
+          IFS=':' read -r scoped_product scoped_exchange <<< "${scoped_member}"
+          if ! product_scope_contains "${scoped_product}" "${scoped_exchange}"; then
+            printf '%s\n' "calendar_session_metadata_scope_mismatch:line=${line_number}"
+            return 2
+          fi
+        done
+      fi
+      metadata_session_scope_seen["${metadata_session_label}"]=1
+      metadata_session_scopes["${metadata_session_label}"]="${normalized_session_scope}"
+      continue
+    fi
+    if [[ -z "${row}" || "${row}" == \#* ]]; then
+      printf '%s\n' "calendar_row_invalid:line=${line_number}"
+      return 2
+    fi
+    data_rows_started=1
+    if [[ ! "${row}" =~ ^[^,]*,[^,]*,[^,]*,[^,]*,[^,]*$ ]]; then
+      printf '%s\n' "calendar_column_count_invalid:line=${line_number}"
+      return 2
+    fi
+
+    IFS=',' read -r natural_date_raw session trading_day_raw exchange product <<< "${row}"
+    natural_date_raw="$(trim_calendar_field "${natural_date_raw}")"
+    session="$(trim_calendar_field "${session}")"
+    trading_day_raw="$(trim_calendar_field "${trading_day_raw}")"
+    exchange="$(trim_calendar_field "${exchange}")"
+    product="$(trim_calendar_field "${product}")"
+    natural_date="$(normalize_calendar_date "${natural_date_raw}" || true)"
+    trading_day="$(normalize_calendar_date "${trading_day_raw}" || true)"
+    if [[ -z "${natural_date}" || -z "${trading_day}" ]]; then
+      printf '%s\n' "calendar_date_invalid:line=${line_number}"
+      return 2
+    fi
+    if [[ "${session}" != "day_am" && "${session}" != "day_pm" && \
+          "${session}" != "night" ]]; then
+      printf '%s\n' "calendar_session_invalid:line=${line_number}"
+      return 2
+    fi
+    if [[ ! "${exchange}" =~ ^[A-Z][A-Z0-9]*$ || \
+          ! "${product}" =~ ^[A-Za-z][A-Za-z0-9]*$ ]]; then
+      printf '%s\n' "calendar_member_invalid:line=${line_number}"
+      return 2
+    fi
+    effective_row_scope="${PRODUCT_SCOPE}"
+    if [[ -n "${metadata_session_scope_seen[${session}]+x}" ]]; then
+      effective_row_scope="${metadata_session_scopes[${session}]}"
+    fi
+    if ! scope_contains "${effective_row_scope}" "${product}" "${exchange}"; then
+      printf '%s\n' "calendar_product_scope_mismatch:line=${line_number}"
+      return 2
+    fi
+    if [[ "${session}" == "night" ]]; then
+      if (( 10#${trading_day} <= 10#${natural_date} )); then
+        printf '%s\n' "calendar_night_trading_day_invalid:line=${line_number}"
+        return 2
+      fi
+    elif [[ "${trading_day}" != "${natural_date}" ]]; then
+      printf '%s\n' "calendar_day_trading_day_invalid:line=${line_number}"
+      return 2
+    fi
+
+    row_key="${natural_date}|${session}|${exchange}|${product}"
+    if [[ -n "${seen_rows[${row_key}]+x}" ]]; then
+      printf '%s\n' "calendar_row_duplicate:line=${line_number}"
+      return 2
+    fi
+    seen_rows["${row_key}"]="${trading_day}"
+
+    if [[ "${natural_date}" == "${target_natural_date}" && \
+          "${session}" == "${target_session}" ]]; then
+      target_rows=$((target_rows + 1))
+      target_scope_rows["${product}:${exchange}"]=$((
+        ${target_scope_rows["${product}:${exchange}"]:-0} + 1))
+      if [[ -z "${target_trading_day}" ]]; then
+        target_trading_day="${trading_day}"
+      elif [[ "${target_trading_day}" != "${trading_day}" ]]; then
+        printf '%s\n' "calendar_group_trading_day_mismatch"
+        return 2
+      fi
+    fi
+  done < <(tail -n +2 "${SESSION_CALENDAR_FILE}")
+
+  if (( metadata_scope_rows != 1 )) || \
+     [[ "$(normalize_product_scope "${metadata_scope}" 2>/dev/null || true)" != "${PRODUCT_SCOPE}" ]]; then
+    printf '%s\n' "calendar_product_scope_metadata_mismatch"
+    return 2
+  fi
+  required_target_scope="${PRODUCT_SCOPE}"
+  if [[ -n "${metadata_session_scope_seen[${target_session}]+x}" ]]; then
+    required_target_scope="${metadata_session_scopes[${target_session}]}"
+  fi
+  if [[ -z "${required_target_scope}" ]]; then
+    printf '%s\n' "calendar_session_not_applicable"
+    return 2
+  fi
+  if (( target_rows == 0 )); then
+    printf '%s\n' "calendar_session_out_of_coverage"
+    return 2
+  fi
+  IFS=',' read -r -a configured_members <<< "${required_target_scope}"
+  for configured_member in "${configured_members[@]}"; do
+    IFS=':' read -r configured_product configured_exchange <<< "${configured_member}"
+    if [[ "${target_scope_rows[${configured_product}:${configured_exchange}]:-0}" != "1" ]]; then
+      printf '%s\n' "calendar_group_incomplete:required=${configured_product}:${configured_exchange}"
+      return 2
+    fi
+  done
+  printf '%s\n' "${target_trading_day}"
+}
+
+current_window_info() {
+  local phase="$1"
+  local windows="$2"
   local now_minutes
   local today_dash
   local today_compact
-  local next_compact
   local previous_compact
   local window_index=0
   local window_specs
@@ -349,16 +633,14 @@ current_session_info() {
   local end_text
   local start_minutes
   local end_minutes
-  local candidate_day
-  local session_start_day
+  local natural_date
 
   now_minutes="$(time_to_minutes "$(now_date +%H:%M)")"
   today_dash="$(now_date +%F)"
   today_compact="$(now_date +%Y%m%d)"
-  next_compact="$(date -d "${today_dash} +1 day" +%Y%m%d)"
   previous_compact="$(date -d "${today_dash} -1 day" +%Y%m%d)"
 
-  IFS=',' read -r -a window_specs <<< "${TRADING_WINDOWS}"
+  IFS=',' read -r -a window_specs <<< "${windows}"
   for spec in "${window_specs[@]}"; do
     spec="${spec//[[:space:]]/}"
     [[ -n "${spec}" ]] || continue
@@ -374,28 +656,21 @@ current_session_info() {
     start_minutes="$(time_to_minutes "${start_text}")" || die "invalid trading window start time: ${range}"
     end_minutes="$(time_to_minutes "${end_text}")" || die "invalid trading window end time: ${range}"
 
-    candidate_day=""
-    session_start_day=""
+    natural_date=""
     if (( start_minutes <= end_minutes )); then
       if (( now_minutes >= start_minutes && now_minutes < end_minutes )); then
-        candidate_day="${today_compact}"
+        natural_date="${today_compact}"
       fi
     else
       if (( now_minutes >= start_minutes )); then
-        session_start_day="${today_compact}"
-        if is_trading_day_allowed "${session_start_day}"; then
-          candidate_day="$(next_allowed_trading_day_from "${next_compact}" || true)"
-        fi
+        natural_date="${today_compact}"
       elif (( now_minutes < end_minutes )); then
-        session_start_day="${previous_compact}"
-        if is_trading_day_allowed "${session_start_day}"; then
-          candidate_day="$(next_allowed_trading_day_from "${today_compact}" || true)"
-        fi
+        natural_date="${previous_compact}"
       fi
     fi
 
-    if [[ -n "${candidate_day}" ]] && is_trading_day_allowed "${candidate_day}"; then
-      printf '%s|%s|%s\n' "${label}" "${candidate_day}" "${range}"
+    if [[ -n "${natural_date}" ]]; then
+      printf '%s|%s|%s|%s\n' "${phase}" "${label}" "${natural_date}" "${range}"
       return 0
     fi
     window_index=$((window_index + 1))
@@ -403,20 +678,47 @@ current_session_info() {
   return 1
 }
 
+current_schedule_info() {
+  current_window_info "active" "${TRADING_WINDOWS}" && return 0
+  current_window_info "prewarm" "${PREWARM_WINDOWS}" && return 0
+  return 1
+}
+
 today_eod_due() {
+  local attempt_epoch
+  local attempt_file
+  local now_epoch
   local now_minutes
   local eod_minutes
   local today_compact
+  local mapped_trading_day
   local marker_file
+  local terminal_file
 
   [[ ${NO_EOD} -eq 0 ]] || return 1
   today_compact="$(now_date +%Y%m%d)"
-  is_trading_day_allowed "${today_compact}" || return 1
+  if [[ -n "${EPOCH_FIRST_TRADING_DAY}" && "${today_compact}" < "${EPOCH_FIRST_TRADING_DAY}" ]]; then
+    return 1
+  fi
+  mapped_trading_day="$(session_calendar_trading_day "${today_compact}" day_pm || true)"
+  [[ "${mapped_trading_day}" == "${today_compact}" ]] || return 1
   now_minutes="$(time_to_minutes "$(now_date +%H:%M)")"
   eod_minutes="$(time_to_minutes "${EOD_TIME}")" || die "invalid --eod-time: ${EOD_TIME}"
   (( now_minutes >= eod_minutes )) || return 1
   marker_file="${EOD_STATE_DIR}/${today_compact}.done"
-  [[ ! -f "${marker_file}" ]]
+  terminal_file="${EOD_STATE_DIR}/${today_compact}.terminal"
+  [[ ! -f "${marker_file}" && ! -f "${terminal_file}" ]] || return 1
+  attempt_file="${EOD_STATE_DIR}/${today_compact}.last_attempt_epoch"
+  if [[ -f "${attempt_file}" ]]; then
+    attempt_epoch="$(tr -dc '0-9' < "${attempt_file}")"
+    now_epoch="$(now_date +%s)"
+    if [[ "${attempt_epoch}" =~ ^[0-9]+$ ]] &&
+       (( now_epoch >= attempt_epoch &&
+          now_epoch - attempt_epoch < EOD_RETRY_INTERVAL_SECONDS )); then
+      return 1
+    fi
+  fi
+  return 0
 }
 
 newest_file_age_seconds() {
@@ -521,6 +823,45 @@ check_fill_freshness() {
   fi
 }
 
+check_core_readiness_health() {
+  local session_start_epoch="$1"
+  local readiness_file="${QUANT_HFT_READINESS_FILE:-}"
+  local now_epoch modified_epoch age_seconds content mode
+
+  now_epoch="$(date +%s)"
+  (( now_epoch - session_start_epoch >= HEALTH_GRACE_SECONDS )) || return 0
+  if [[ -z "${readiness_file}" || ! -s "${readiness_file}" ]]; then
+    send_alert_once "core_readiness_missing" "critical" \
+      "core readiness heartbeat is missing; automatic opens remain fail-closed"
+    return 1
+  fi
+  modified_epoch="$(stat -c %Y -- "${readiness_file}" 2>/dev/null || printf '0')"
+  [[ "${modified_epoch}" =~ ^[0-9]+$ ]] || modified_epoch=0
+  age_seconds=$((now_epoch - modified_epoch))
+  if (( age_seconds > READINESS_STALE_SECONDS )); then
+    send_alert_once "core_readiness_stale" "critical" \
+      "core readiness heartbeat is stale; automatic opens remain fail-closed"
+    return 1
+  fi
+
+  content="$(tr -d '\n\r' < "${readiness_file}")"
+  mode="$(printf '%s\n' "${content}" | \
+    LC_ALL=C sed -nE 's/.*"mode"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' | head -n 1)"
+  if grep -Eq '"mode"[[:space:]]*:[[:space:]]*"Ready"' <<< "${content}" &&
+     grep -Eq '"recovery_complete"[[:space:]]*:[[:space:]]*true' <<< "${content}" &&
+     grep -Eq '"trader_ready"[[:space:]]*:[[:space:]]*true' <<< "${content}" &&
+     grep -Eq '"gateway_healthy"[[:space:]]*:[[:space:]]*true' <<< "${content}" &&
+     grep -Eq '"settlement_confirmed"[[:space:]]*:[[:space:]]*true' <<< "${content}" &&
+     grep -Eq '"pending_exit_count"[[:space:]]*:[[:space:]]*0' <<< "${content}" &&
+     grep -Eq '"unresolved_mapping_count"[[:space:]]*:[[:space:]]*0' <<< "${content}"; then
+    return 0
+  fi
+  [[ -n "${mode}" ]] || mode="unknown"
+  send_alert_once "core_readiness_not_ready" "critical" \
+    "core readiness is ${mode}; automatic opens remain fail-closed"
+  return 1
+}
+
 stop_engine() {
   local reason="${1:-schedule_stop}"
   local process_pid
@@ -545,6 +886,102 @@ stop_engine() {
   rm -f "${CURRENT_PID_FILE}"
 }
 
+calendar_digest() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "${SESSION_CALENDAR_FILE}" | awk '{print "sha256:" $1}'
+  else
+    cksum "${SESSION_CALENDAR_FILE}" | awk '{print "cksum:" $1 ":" $2}'
+  fi
+}
+
+prewarm_marker_path() {
+  local session_label="$1"
+  local natural_date="$2"
+  local trading_day="$3"
+  printf '%s/%s.%s.%s.ok\n' "${PREWARM_STATE_DIR}" "${natural_date}" "${session_label}" \
+    "${trading_day}"
+}
+
+prewarm_marker_payload() {
+  local session_label="$1"
+  local natural_date="$2"
+  local trading_day="$3"
+  local digest
+
+  digest="$(calendar_digest)" || return 1
+  printf 'schema_version=1\n'
+  printf 'natural_date=%s\n' "${natural_date}"
+  printf 'session=%s\n' "${session_label}"
+  printf 'trading_day=%s\n' "${trading_day}"
+  printf 'product_scope=%s\n' "${PRODUCT_SCOPE}"
+  printf 'calendar_digest=%s\n' "${digest}"
+  printf 'local_checks=passed\n'
+}
+
+prewarm_marker_is_valid() {
+  local session_label="$1"
+  local natural_date="$2"
+  local trading_day="$3"
+  local marker_file
+
+  marker_file="$(prewarm_marker_path "${session_label}" "${natural_date}" "${trading_day}")"
+  [[ -f "${marker_file}" ]] || return 1
+  cmp -s "${marker_file}" <(prewarm_marker_payload "${session_label}" "${natural_date}" \
+    "${trading_day}")
+}
+
+prewarm_session() {
+  local session_label="$1"
+  local natural_date="$2"
+  local trading_day="$3"
+  local marker_file
+  local temporary_marker
+
+  marker_file="$(prewarm_marker_path "${session_label}" "${natural_date}" "${trading_day}")"
+  if [[ ${DRY_RUN} -eq 1 ]]; then
+    echo "[dry-run] prewarm: session=${session_label} natural_date=${natural_date} trading_day=${trading_day} product_scope=${PRODUCT_SCOPE}"
+    echo "[dry-run] prewarm-check: calendar=${SESSION_CALENDAR_FILE} config=${CONFIG_PATH} build_dir=${BUILD_DIR}"
+    return 0
+  fi
+  if prewarm_marker_is_valid "${session_label}" "${natural_date}" "${trading_day}"; then
+    return 0
+  fi
+
+  [[ -x "${START_SCRIPT}" ]] || {
+    send_alert_once "prewarm.start_script_missing" "critical" \
+      "prewarm start script is not executable: ${START_SCRIPT}"
+    return 1
+  }
+  [[ -f "${CONFIG_PATH}" ]] || {
+    send_alert_once "prewarm.config_missing" "critical" \
+      "prewarm config file is missing: ${CONFIG_PATH}"
+    return 1
+  }
+  [[ -x "${BUILD_DIR}/core_engine" ]] || {
+    send_alert_once "prewarm.core_engine_missing" "critical" \
+      "prewarm core_engine is not executable: ${BUILD_DIR}/core_engine"
+    return 1
+  }
+  [[ -x "${BUILD_DIR}/simnow_probe" ]] || {
+    send_alert_once "prewarm.simnow_probe_missing" "critical" \
+      "prewarm simnow_probe is not executable: ${BUILD_DIR}/simnow_probe"
+    return 1
+  }
+  check_free_disk "${RUN_ROOT}" "${MIN_FREE_MB}" || return 1
+  check_free_disk "${MARKET_DATA_DIR}" "${MIN_FREE_MB}" || return 1
+
+  mkdir -p "${PREWARM_STATE_DIR}"
+  temporary_marker="${marker_file}.tmp.${BASHPID}"
+  if ! prewarm_marker_payload "${session_label}" "${natural_date}" "${trading_day}" > \
+      "${temporary_marker}"; then
+    rm -f "${temporary_marker}"
+    return 1
+  fi
+  mv -f "${temporary_marker}" "${marker_file}"
+  echo "[info] prewarm passed session=${session_label} natural_date=${natural_date} trading_day=${trading_day}" | \
+    tee -a "${SUPERVISOR_LOG}"
+}
+
 start_engine_for_session() {
   local session_label="$1"
   local trading_day="$2"
@@ -557,6 +994,7 @@ start_engine_for_session() {
     "${START_SCRIPT}"
     --env-file "${ENV_FILE}"
     --config "${CONFIG_PATH}"
+    --build-dir "${BUILD_DIR}"
     --run-root "${RUN_ROOT}"
     --wal-file "${WAL_FILE}"
     --run-id "${run_id}"
@@ -718,15 +1156,50 @@ run_optional_analysis_command() {
   fi
 }
 
+run_readonly_broker_position_snapshot() {
+  local trading_day="$1"
+  local output_dir="$2"
+  local flow_dir="${RUN_ROOT}/eod/${trading_day}/position_snapshot_flow"
+  local status_file="${output_dir}/eod_fallback_status.env"
+
+  if [[ ! -x "${POSITION_SNAPSHOT_BIN}" ]]; then
+    printf 'schema_version=1\nmode=position_snapshot_only\nstatus=unavailable\nreason=binary_missing\n' \
+      > "${status_file}"
+    send_alert_once "position_snapshot_missing" "warning" \
+      "read-only broker position snapshot binary is missing: ${POSITION_SNAPSHOT_BIN}"
+    return 1
+  fi
+
+  mkdir -p "${flow_dir}"
+  if "${POSITION_SNAPSHOT_BIN}" --config "${CONFIG_PATH}" --flow-path "${flow_dir}" \
+      --query-timeout-seconds "${INSTRUMENT_TIMEOUT_SECONDS}" \
+      > "${output_dir}/broker_position_snapshot.log" 2>&1; then
+    printf 'schema_version=1\nmode=position_snapshot_only\nstatus=completed\nsettlement_completed=false\n' \
+      > "${status_file}"
+    send_alert_once "settlement_position_snapshot_only" "warning" \
+      "full settlement unavailable; read-only broker position snapshot completed for trading_day=${trading_day}"
+    return 0
+  fi
+
+  printf 'schema_version=1\nmode=position_snapshot_only\nstatus=failed\nsettlement_completed=false\n' \
+    > "${status_file}"
+  send_alert_once "position_snapshot_failed" "critical" \
+    "full settlement and read-only broker position snapshot both failed for trading_day=${trading_day}"
+  return 1
+}
+
 run_end_of_day_chain() {
   local trading_day="$1"
   local output_dir="${REPORT_ROOT}/${trading_day}"
   local marker_file="${EOD_STATE_DIR}/${trading_day}.done"
+  local terminal_file="${EOD_STATE_DIR}/${trading_day}.terminal"
+  local attempt_file="${EOD_STATE_DIR}/${trading_day}.last_attempt_epoch"
   local settlement_cmd
   local export_cmd
 
-  [[ -f "${marker_file}" ]] && return 0
+  [[ -f "${marker_file}" || -f "${terminal_file}" ]] && return 0
   mkdir -p "${output_dir}"
+  printf '%s\n' "$(now_date +%s)" > "${attempt_file}"
 
   echo "[step] running end-of-day chain for trading_day=${trading_day}"
   stop_engine "end_of_day"
@@ -744,10 +1217,19 @@ run_end_of_day_chain() {
     fi
     if ! "${settlement_cmd[@]}" > "${output_dir}/daily_settlement.log" 2>&1; then
       send_alert_once "settlement_failed" "critical" "daily settlement failed for trading_day=${trading_day}"
+      if run_readonly_broker_position_snapshot "${trading_day}" "${output_dir}"; then
+        printf 'terminal_at=%s\nsettlement_completed=false\nposition_snapshot_completed=true\n' \
+          "$(date -Is)" > "${terminal_file}"
+      fi
       return 1
     fi
   else
     send_alert_once "settlement_missing" "warning" "daily settlement script is not executable: ${DAILY_SETTLEMENT_SCRIPT}"
+    if run_readonly_broker_position_snapshot "${trading_day}" "${output_dir}"; then
+      printf 'terminal_at=%s\nsettlement_completed=false\nposition_snapshot_completed=true\n' \
+        "$(date -Is)" > "${terminal_file}"
+    fi
+    return 1
   fi
 
   if [[ -x "${EXPORT_SCRIPT}" ]]; then
@@ -813,11 +1295,19 @@ run_end_of_day_chain() {
 }
 
 print_dry_run_decision() {
-  local session_info
+  local schedule_info
+  local phase
+  local session_label
+  local natural_date
+  local session_range
+  local trading_day
   echo "[dry-run] root=${QUANT_ROOT}"
   echo "[dry-run] env_file=${ENV_FILE}"
   echo "[dry-run] config=${CONFIG_PATH}"
   echo "[dry-run] windows=${TRADING_WINDOWS}"
+  echo "[dry-run] prewarm_windows=${PREWARM_WINDOWS}"
+  echo "[dry-run] session_calendar_file=${SESSION_CALENDAR_FILE:-<missing>}"
+  echo "[dry-run] product_scope=${PRODUCT_SCOPE:-<missing>}"
   echo "[dry-run] eod_time=${EOD_TIME} eod_execute=${EOD_EXECUTE}"
   echo "[dry-run] run_root=${RUN_ROOT}"
   echo "[dry-run] market_data_dir=${MARKET_DATA_DIR}"
@@ -826,10 +1316,22 @@ print_dry_run_decision() {
   echo "[dry-run] export_root=${EXPORT_ROOT}"
   echo "[dry-run] reconcile_root=${RECONCILE_ROOT}"
   echo "[dry-run] eod_project_db=${EOD_PROJECT_DB} eod_query_db=${EOD_QUERY_DB} strict_reconcile=${STRICT_RECONCILE} convert_market_parquet=${CONVERT_MARKET_PARQUET}"
-  if session_info="$(current_session_info)"; then
-    IFS='|' read -r session_label trading_day session_range <<< "${session_info}"
-    echo "[dry-run] decision=start_or_keep_alive session=${session_label} trading_day=${trading_day} range=${session_range}"
-    start_engine_for_session "${session_label}" "${trading_day}" 0
+  if schedule_info="$(current_schedule_info)"; then
+    IFS='|' read -r phase session_label natural_date session_range <<< "${schedule_info}"
+    if trading_day="$(session_calendar_trading_day "${natural_date}" "${session_label}")"; then
+      if [[ "${phase}" == "prewarm" ]]; then
+        echo "[dry-run] decision=prewarm_start_or_keep_alive session=${session_label} natural_date=${natural_date} trading_day=${trading_day} range=${session_range} permission=CloseOnly"
+        prewarm_session "${session_label}" "${natural_date}" "${trading_day}"
+        start_engine_for_session "${session_label}" "${trading_day}" 0
+      else
+        echo "[dry-run] decision=start_or_keep_alive session=${session_label} natural_date=${natural_date} trading_day=${trading_day} range=${session_range}"
+        prewarm_session "${session_label}" "${natural_date}" "${trading_day}"
+        start_engine_for_session "${session_label}" "${trading_day}" 0
+      fi
+    else
+      echo "[dry-run] decision=fail_closed phase=${phase} session=${session_label} natural_date=${natural_date} reason=${trading_day}"
+      return 2
+    fi
   else
     echo "[dry-run] decision=outside_trading_window"
     if today_eod_due; then
@@ -849,6 +1351,7 @@ while [[ $# -gt 0 ]]; do
       BUILD_DIR="$2"
       OPS_HEALTH_BIN="${BUILD_DIR}/ops_health_report_cli"
       OPS_ALERT_BIN="${BUILD_DIR}/ops_alert_report_cli"
+      POSITION_SNAPSHOT_BIN="${BUILD_DIR}/simnow_flatten_positions"
       shift 2
       ;;
     --run-root) require_value "$1" "${2:-}"; RUN_ROOT="$2"; RUN_ROOT_SET_BY_CLI=1; shift 2 ;;
@@ -858,7 +1361,19 @@ while [[ $# -gt 0 ]]; do
     --export-root) require_value "$1" "${2:-}"; EXPORT_ROOT="$2"; EXPORT_ROOT_SET_BY_CLI=1; shift 2 ;;
     --reconcile-root) require_value "$1" "${2:-}"; RECONCILE_ROOT="$2"; RECONCILE_ROOT_SET_BY_CLI=1; shift 2 ;;
     --windows) require_value "$1" "${2:-}"; TRADING_WINDOWS="$2"; WINDOWS_SET_BY_CLI=1; shift 2 ;;
-    --trading-days-file) require_value "$1" "${2:-}"; TRADING_DAYS_FILE="$2"; shift 2 ;;
+    --prewarm-windows) require_value "$1" "${2:-}"; PREWARM_WINDOWS="$2"; PREWARM_WINDOWS_SET_BY_CLI=1; shift 2 ;;
+    --session-calendar-file|--trading-days-file)
+      require_value "$1" "${2:-}"
+      SESSION_CALENDAR_FILE="$2"
+      SESSION_CALENDAR_FILE_SET_BY_CLI=1
+      shift 2
+      ;;
+    --product-scope)
+      require_value "$1" "${2:-}"
+      PRODUCT_SCOPE="$2"
+      PRODUCT_SCOPE_SET_BY_CLI=1
+      shift 2
+      ;;
     --eod-time) require_value "$1" "${2:-}"; EOD_TIME="$2"; shift 2 ;;
     --check-interval-seconds) require_value "$1" "${2:-}"; CHECK_INTERVAL_SECONDS="$2"; shift 2 ;;
     --max-restarts) require_value "$1" "${2:-}"; MAX_RESTARTS_PER_WINDOW="$2"; shift 2 ;;
@@ -883,11 +1398,16 @@ is_positive_int "${MIN_FREE_MB}" || die "--min-free-mb must be positive"
 is_positive_int "${LOG_MAX_BYTES}" || die "SIMNOW_LOG_MAX_BYTES must be positive"
 is_non_negative_int "${LOG_RETENTION_DAYS}" || die "SIMNOW_LOG_RETENTION_DAYS must be non-negative"
 is_non_negative_int "${HEALTH_GRACE_SECONDS}" || die "SIMNOW_HEALTH_GRACE_SECONDS must be non-negative"
+is_positive_int "${READINESS_STALE_SECONDS}" || die "SIMNOW_READINESS_STALE_SECONDS must be positive"
 is_positive_int "${TICK_STALE_SECONDS}" || die "--tick-stale-seconds must be positive"
 is_positive_int "${BAR_STALE_SECONDS}" || die "--bar-stale-seconds must be positive"
 is_positive_int "${FILL_STALE_SECONDS}" || die "--fill-stale-seconds must be positive"
 is_bool_flag "${REQUIRE_FILL_HEARTBEAT}" || die "SIMNOW_REQUIRE_FILL_HEARTBEAT must be 0 or 1"
 is_bool_flag "${EOD_EXECUTE}" || die "SIMNOW_EOD_EXECUTE must be 0 or 1"
+is_positive_int "${EOD_RETRY_INTERVAL_SECONDS}" ||
+  die "SIMNOW_EOD_RETRY_INTERVAL_SECONDS must be positive"
+[[ -z "${EPOCH_FIRST_TRADING_DAY}" || "${EPOCH_FIRST_TRADING_DAY}" =~ ^[0-9]{8}$ ]] ||
+  die "SIMNOW_EPOCH_FIRST_TRADING_DAY must use YYYYMMDD"
 is_bool_flag "${EOD_PROJECT_DB}" || die "SIMNOW_EOD_PROJECT_DB must be 0 or 1"
 is_bool_flag "${EOD_QUERY_DB}" || die "SIMNOW_EOD_QUERY_DB must be 0 or 1"
 is_bool_flag "${STRICT_RECONCILE}" || die "SIMNOW_STRICT_RECONCILE must be 0 or 1"
@@ -904,6 +1424,20 @@ set +a
 if [[ ${WINDOWS_SET_BY_CLI} -eq 0 ]]; then
   TRADING_WINDOWS="${SIMNOW_TRADING_WINDOWS:-${TRADING_WINDOWS}}"
 fi
+if [[ ${PREWARM_WINDOWS_SET_BY_CLI} -eq 0 ]]; then
+  PREWARM_WINDOWS="${SIMNOW_PREWARM_WINDOWS:-${PREWARM_WINDOWS}}"
+fi
+if [[ ${SESSION_CALENDAR_FILE_SET_BY_CLI} -eq 0 ]]; then
+  SESSION_CALENDAR_FILE="${SIMNOW_SESSION_CALENDAR_FILE:-${SESSION_CALENDAR_FILE}}"
+fi
+if [[ ${PRODUCT_SCOPE_SET_BY_CLI} -eq 0 ]]; then
+  PRODUCT_SCOPE="${SIMNOW_PRODUCT_SCOPE:-${PRODUCT_SCOPE}}"
+fi
+if [[ -z "${PRODUCT_SCOPE}" && -r "${SESSION_CALENDAR_FILE}" ]]; then
+  PRODUCT_SCOPE="$(sed -n 's/^# product_scope=//p' "${SESSION_CALENDAR_FILE}" | head -n 1)"
+fi
+PRODUCT_SCOPE="$(normalize_product_scope "${PRODUCT_SCOPE}" 2>/dev/null || true)"
+export SIMNOW_PRODUCT_SCOPE="${PRODUCT_SCOPE}"
 if [[ ${RUN_ROOT_SET_BY_CLI} -eq 0 ]]; then
   RUN_ROOT="${SIMNOW_RUN_ROOT:-${RUN_ROOT}}"
 fi
@@ -996,6 +1530,7 @@ CURRENT_RUN_FILE="${SIMNOW_CURRENT_RUN_FILE:-${RUN_ROOT}/current_run_dir}"
 CURRENT_LOG_FILE="${SIMNOW_CURRENT_LOG_FILE:-${RUN_ROOT}/current_core_engine_log}"
 ALERT_STATE_DIR="${RUN_ROOT}/alert_state"
 EOD_STATE_DIR="${RUN_ROOT}/eod"
+PREWARM_STATE_DIR="${RUN_ROOT}/prewarm"
 SESSION_STATE_FILE="${RUN_ROOT}/current_session.env"
 SUPERVISOR_LOG="${RUN_ROOT}/supervisor.log"
 mkdir -p "${LOCK_DIR}" "${ALERT_STATE_DIR}" "${EOD_STATE_DIR}"
@@ -1014,8 +1549,12 @@ if [[ ${DRY_RUN} -eq 1 ]]; then
   exit 0
 fi
 
+remove_stale_current_pid
 echo "[info] SimNow supervisor started at $(date -Is)" | tee -a "${SUPERVISOR_LOG}"
 echo "[info] windows=${TRADING_WINDOWS}" | tee -a "${SUPERVISOR_LOG}"
+echo "[info] prewarm_windows=${PREWARM_WINDOWS}" | tee -a "${SUPERVISOR_LOG}"
+echo "[info] session_calendar_file=${SESSION_CALENDAR_FILE:-<missing>} product_scope=${PRODUCT_SCOPE}" | \
+  tee -a "${SUPERVISOR_LOG}"
 start_signal_execution_monitor || true
 
 active_session_key=""
@@ -1028,33 +1567,56 @@ while true; do
   check_free_disk "${RUN_ROOT}" "${MIN_FREE_MB}" || true
   check_free_disk "${MARKET_DATA_DIR}" "${MIN_FREE_MB}" || true
 
-  if session_info="$(current_session_info)"; then
-    IFS='|' read -r session_label trading_day session_range <<< "${session_info}"
-    session_key="${trading_day}.${session_label}.${session_range}"
-    if [[ "${session_key}" != "${active_session_key}" ]]; then
-      active_session_key="${session_key}"
-      restart_count=0
-      session_start_epoch="$(date +%s)"
-      echo "[info] entering session=${session_label} trading_day=${trading_day} range=${session_range}" | tee -a "${SUPERVISOR_LOG}"
-    fi
+  if schedule_info="$(current_schedule_info)"; then
+    IFS='|' read -r phase session_label natural_date session_range <<< "${schedule_info}"
+    if trading_day="$(session_calendar_trading_day "${natural_date}" "${session_label}")"; then
+      # Prewarm and active are separate retry budgets.  A temporarily unavailable broker at
+      # 20:45 must not exhaust all start attempts before the 21:00 market opens.
+      session_key="${trading_day}.${session_label}.${natural_date}.${phase}"
+      if [[ "${session_key}" != "${active_session_key}" ]]; then
+        active_session_key="${session_key}"
+        restart_count=0
+        session_start_epoch="$(date +%s)"
+        echo "[info] entering phase=${phase} session=${session_label} natural_date=${natural_date} trading_day=${trading_day} range=${session_range}" | \
+          tee -a "${SUPERVISOR_LOG}"
+      fi
 
-    process_pid="$(current_pid || true)"
-    if pid_is_alive "${process_pid}"; then
-      check_market_data_freshness "${session_start_epoch}"
-      check_fill_freshness "${session_start_epoch}"
-      check_signal_monitor_heartbeat "${session_start_epoch}" || true
-    else
-      if [[ -n "${process_pid}" ]]; then
-        send_alert_once "core_crashed" "critical" "core_engine pid=${process_pid} is no longer alive; session=${session_key}"
-      fi
-      if (( restart_count >= MAX_RESTARTS_PER_WINDOW )); then
-        send_alert_once "restart_budget_exhausted" "critical" \
-          "restart budget exhausted for ${session_key}; max=${MAX_RESTARTS_PER_WINDOW}"
+      if ! prewarm_session "${session_label}" "${natural_date}" "${trading_day}"; then
+        stop_engine "prewarm_authorization_failed"
+        send_alert_once "prewarm_authorization_failed.${natural_date}.${session_label}" \
+          "critical" \
+          "prewarm authorization unavailable for session=${session_label} natural_date=${natural_date} trading_day=${trading_day}"
       else
-        restart_count=$((restart_count + 1))
-        start_engine_for_session "${session_label}" "${trading_day}" "${restart_count}" || true
-        sleep "${RESTART_DELAY_SECONDS}"
+        process_pid="$(current_pid || true)"
+        if pid_is_alive "${process_pid}"; then
+          check_core_readiness_health "${session_start_epoch}" || true
+          if [[ "${phase}" == "active" ]]; then
+            check_market_data_freshness "${session_start_epoch}"
+            check_fill_freshness "${session_start_epoch}"
+            check_signal_monitor_heartbeat "${session_start_epoch}" || true
+          fi
+        else
+          if [[ -n "${process_pid}" ]]; then
+            send_alert_once "core_crashed" "critical" \
+              "core_engine pid=${process_pid} is no longer alive; session=${session_key}"
+          fi
+          if (( restart_count >= MAX_RESTARTS_PER_WINDOW )); then
+            send_alert_once "restart_budget_exhausted" "critical" \
+              "restart budget exhausted for ${session_key}; max=${MAX_RESTARTS_PER_WINDOW}"
+          else
+            restart_count=$((restart_count + 1))
+            start_engine_for_session "${session_label}" "${trading_day}" \
+              "${restart_count}" || true
+            sleep "${RESTART_DELAY_SECONDS}"
+          fi
+        fi
       fi
+    else
+      active_session_key=""
+      restart_count=0
+      stop_engine "session_calendar_fail_closed"
+      send_alert_once "session_calendar.${natural_date}.${session_label}" "critical" \
+        "session calendar rejected new session=${session_label} natural_date=${natural_date}: ${trading_day}"
     fi
   else
     active_session_key=""
@@ -1063,7 +1625,7 @@ while true; do
       stop_engine "outside_trading_window"
     fi
     if today_eod_due; then
-      run_end_of_day_chain "$(date +%Y%m%d)" || true
+      run_end_of_day_chain "$(now_date +%Y%m%d)" || true
     fi
   fi
 

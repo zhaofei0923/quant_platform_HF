@@ -1,0 +1,134 @@
+# CONFIG DOC
+# Purpose: SimNow static configured-universe bounded simulation-trading profile.
+# Consumer: start_simnow_trading.sh / supervise_simnow_trading.sh / core_engine.
+# Contracts are supplied by the controlled Tencent universe CSV through CTP_SIM_INSTRUMENTS.
+
+ctp:
+  profile: "simnow_trade_configured"
+  environment: sim
+  run_type: sim
+  is_production_mode: "${CTP_SIM_IS_PRODUCTION_MODE}"
+  enable_real_api: "${CTP_SIM_ENABLE_REAL_API}"
+  enable_terminal_auth: true
+
+  broker_id: "${CTP_SIM_BROKER_ID}"
+  user_id: "${CTP_SIM_USER_ID}"
+  investor_id: "${CTP_SIM_INVESTOR_ID}"
+  market_front: "${CTP_SIM_MARKET_FRONT}"
+  trader_front: "${CTP_SIM_TRADER_FRONT}"
+  flow_path: "./ctp_flow"
+  password_env: "CTP_SIM_PASSWORD"
+  auth_code: "${CTP_SIM_AUTH_CODE}"
+  app_id: "${CTP_SIM_APP_ID}"
+
+  query_rate_limit_qps: 10
+  query_rate_per_sec: 5
+  order_insert_rate_per_sec: 50
+  order_cancel_rate_per_sec: 50
+  order_bucket_capacity: 20
+  cancel_bucket_capacity: 5
+  query_bucket_capacity: 5
+  cancel_retry_max: 3
+  cancel_retry_base_ms: 1000
+  cancel_retry_max_delay_ms: 5000
+  cancel_wait_ack_timeout_ms: 1200
+  settlement_confirm_required: true
+
+  metrics_enabled: false
+  metrics_port: 8080
+  log_level: "info"
+  log_sink: "stderr"
+  breaker_failure_threshold: 5
+  breaker_timeout_ms: 1000
+  breaker_half_open_timeout_ms: 5000
+  breaker_strategy_enabled: true
+  breaker_account_enabled: true
+  breaker_system_enabled: true
+  recovery_quiet_period_ms: 3000
+  gateway_reconnect_cycle_cooldown_ms: 8000
+  session_gate_enabled: true
+  max_signal_age_ms: 2000
+  max_market_tick_age_ms: 6000
+  open_session_end_guard_ms: 30000
+  recovery_query_timeout_ms: 30000
+  open_reenable_stability_ms: 30000
+  market_bar_allowed_lateness_ms: 3500
+  market_bar_poll_interval_ms: 100
+  market_bar_checkpoint_interval_ms: 1000
+  market_event_delay_hard_ms: 5000
+  require_complete_timeframe_bar: true
+
+  kafka_bootstrap_servers: "${KAFKA_BOOTSTRAP_SERVERS}"
+  kafka_topic_ticks: "market.ticks.v1"
+  clickhouse_dsn: "${CLICKHOUSE_DSN}"
+  market_data_recording_enabled: true
+  market_data_recording_dir: "runtime/market_data"
+  market_data_recording_flush_each_write: true
+  market_data_recording_partition_by_product: true
+  market_data_recording_write_global_copy: false
+  audit_hot_days: 7
+  audit_cold_days: 180
+
+  instruments: "${CTP_SIM_INSTRUMENTS}"
+  product_ids: ""
+  active_contract_mode: "static"
+  strategy_ids: "kama_candidate_hc"
+  strategy_factory: "composite"
+  strategy_composite_config_map:
+    kama_candidate_hc: "configs/strategies/main_sim_trade_candidate_hc.yaml"
+  strategy_queue_capacity: 8192
+  strategy_state_persist_enabled: true
+  strategy_state_backend: "file"
+  strategy_state_snapshot_interval_ms: 5000
+  # Keep this exact default so RuntimePaths namespaces state by QUANT_HFT_INSTANCE.
+  strategy_state_file_dir: "runtime/trading/state"
+  account_id: "${CTP_SIM_INVESTOR_ID}"
+
+  execution_mode: "direct"
+  execution_algo: "direct"
+  execution_price_mode: "marketable_limit"
+  slice_size: 1
+  slice_interval_ms: 120
+  twap_duration_ms: 0
+  vwap_lookback_bars: 20
+  throttle_reject_ratio: 0.0
+  cancel_after_ms: 2000
+  cancel_check_interval_ms: 200
+
+  # Strategy sizing is dynamic; projected opening margin is capped at 30% of broker equity.
+  risk_default_max_order_volume: 100
+  risk_default_max_order_notional: 1000000
+  risk_default_max_active_orders: 1
+  risk_default_max_position_notional: 0
+  risk_max_margin_to_equity_ratio: 0.30
+  risk_sim_subaccount_enabled: false
+  risk_sim_subaccount_id: ""
+  risk_sim_subaccount_initial_equity: 0
+  risk_sim_subaccount_max_margin: 0
+  risk_sim_subaccount_order_margin_rate: 1.0
+  risk_sim_subaccount_contract_multiplier: 1.0
+  risk_default_rule_group: "default"
+  risk_default_rule_version: "v1"
+  risk_default_policy_id: "policy.global"
+  risk_default_policy_scope: "global"
+  risk_default_decision_tags: "default-risk"
+  risk_rule_groups: ""
+
+  connect_timeout_ms: 10000
+  reconnect_max_attempts: 8
+  reconnect_initial_backoff_ms: 500
+  reconnect_max_backoff_ms: 8000
+
+  market_state_detector:
+    adx_period: 14
+    adx_strong_threshold: 40.0
+    adx_weak_lower: 25.0
+    adx_weak_upper: 40.0
+    kama_er_period: 10
+    kama_fast_period: 2
+    kama_slow_period: 30
+    kama_er_strong: 0.6
+    kama_er_weak_lower: 0.3
+    atr_period: 14
+    require_adx_for_trend: false
+    use_kama_er: true

@@ -1,9 +1,12 @@
 #include "quant_hft/core/local_wal_regulatory_sink.h"
 
 #include <fcntl.h>
+#include <grp.h>
 #include <sys/file.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
+#include <array>
 #include <cctype>
 #include <cerrno>
 #include <cmath>
@@ -113,6 +116,43 @@ WalReceipt LocalWalRegulatorySink::LastReceipt() const {
 std::string LocalWalRegulatorySink::LastError() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return error_;
+}
+
+bool LocalWalRegulatorySink::EnableObserverReadAccess(const std::string& expected_group_name,
+                                                     std::string* error) noexcept {
+    auto fail = [&](const char* reason) noexcept {
+        try {
+            if (error != nullptr) *error = reason;
+        } catch (...) {
+        }
+        return false;
+    };
+    try {
+        if (expected_group_name.empty() || expected_group_name.size() > 128) {
+            return fail("observer group must be explicitly configured");
+        }
+        std::array<char, 16384> buffer{};
+        struct group entry {};
+        struct group* found = nullptr;
+        if (::getgrnam_r(expected_group_name.c_str(), &entry, buffer.data(), buffer.size(), &found) !=
+                0 ||
+            found == nullptr) {
+            return fail("observer group lookup failed");
+        }
+        std::lock_guard<std::mutex> lock(mutex_);
+        struct stat info {};
+        if (fd_ < 0 || !error_.empty() || ::fstat(fd_, &info) != 0 || !S_ISREG(info.st_mode)) {
+            return fail("observer WAL descriptor unavailable");
+        }
+        if (info.st_gid != entry.gr_gid) {
+            return fail("observer WAL group mismatch");
+        }
+        if (::fchmod(fd_, 0640) != 0) return fail("observer WAL read permission failed");
+        if (error != nullptr) error->clear();
+        return true;
+    } catch (...) {
+        return fail("observer WAL permission setup failed");
+    }
 }
 
 bool LocalWalRegulatorySink::Flush() {

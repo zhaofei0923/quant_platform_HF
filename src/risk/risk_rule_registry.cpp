@@ -94,10 +94,15 @@ void RegisterDefaultRiskRules(
     executor->RegisterRule(
         RiskRuleType::MAX_POSITION_NOTIONAL,
         [](const RiskRule& rule, const OrderIntent& intent, const OrderContext& context) {
+            if (!IsOpenOrder(intent)) {
+                return AllowResult();
+            }
             const double multiplier =
                 context.contract_multiplier > 0.0 ? context.contract_multiplier : 1.0;
+            const double projected_position =
+                std::fabs(context.current_position) + static_cast<double>(intent.volume);
             const double position_notional =
-                std::fabs(context.current_position) * std::fabs(intent.price) * multiplier;
+                projected_position * std::fabs(intent.price) * multiplier;
             if (rule.threshold > 0.0 && position_notional > rule.threshold) {
                 RiskCheckResult result;
                 result.allowed = false;
@@ -151,14 +156,19 @@ void RegisterDefaultRiskRules(
 
     executor->RegisterRule(
         RiskRuleType::MAX_POSITION_PER_INSTRUMENT,
-        [](const RiskRule& rule, const OrderIntent&, const OrderContext& context) {
-            if (rule.threshold > 0.0 && std::fabs(context.current_position) > rule.threshold) {
+        [](const RiskRule& rule, const OrderIntent& intent, const OrderContext& context) {
+            if (!IsOpenOrder(intent)) {
+                return AllowResult();
+            }
+            const double projected_position =
+                std::fabs(context.current_position) + static_cast<double>(intent.volume);
+            if (rule.threshold > 0.0 && projected_position > rule.threshold) {
                 RiskCheckResult result;
                 result.allowed = false;
                 result.violated_rule = RiskRuleType::MAX_POSITION_PER_INSTRUMENT;
                 result.reason = "单合约持仓超过上限";
                 result.limit_value = rule.threshold;
-                result.current_value = std::fabs(context.current_position);
+                result.current_value = projected_position;
                 return result;
             }
             return AllowResult();

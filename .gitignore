@@ -50,3 +50,6 @@ ctp_flow*.con
 /docs/results/backtest_runs/
 /configs/ops/docs/results/
 *.csv
+!configs/sim/calendars/
+!configs/sim/calendars/hc_sessions_2026.csv
+!configs/sim/tencent_simnow_universe.csv

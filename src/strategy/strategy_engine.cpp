@@ -22,6 +22,12 @@ void EmitStrategyExceptionLog(const std::string& event, const std::string& phase
                       {{"phase", phase}, {"strategy_id", strategy_id}, {"error", error}});
 }
 
+bool ValidTradingDay(const std::string& value) {
+    return value.size() == 8 && std::all_of(value.begin(), value.end(), [](char ch) {
+               return ch >= '0' && ch <= '9';
+           });
+}
+
 }  // namespace
 
 StrategyEngine::StrategyEngine(StrategyEngineConfig config, IntentSink intent_sink)
@@ -38,6 +44,9 @@ StrategyEngine::StrategyEngine(StrategyEngineConfig config, IntentSink intent_si
     }
     if (config_.metrics_collect_interval_ns < 0) {
         config_.metrics_collect_interval_ns = 0;
+    }
+    if (config_.risk_snapshot_interval_ns < 0) {
+        config_.risk_snapshot_interval_ns = 0;
     }
 }
 
@@ -158,6 +167,8 @@ bool StrategyEngine::Start(const std::vector<StrategyLaunchSpec>& launch_specs,
         stats_ = {};
         last_state_snapshot_ns_ = 0;
         last_metrics_collect_ns_ = 0;
+        last_risk_snapshot_ns_ = 0;
+        last_trading_day_.clear();
         running_ = true;
         stop_requested_ = false;
         dispatching_ = false;
@@ -168,6 +179,9 @@ bool StrategyEngine::Start(const std::vector<StrategyLaunchSpec>& launch_specs,
         last_worker_progress_ = std::chrono::steady_clock::now();
     }
 
+    // Attempt an initial observer update after optional state restoration. It remains
+    // missing until an account-bound trading day reaches the FIFO.
+    MaybePublishRiskSnapshot(NowEpochNanos(), true);
     worker_thread_ = std::thread(&StrategyEngine::WorkerLoop, this);
     timer_thread_ = std::thread(&StrategyEngine::TimerLoop, this);
     return true;
@@ -203,6 +217,8 @@ void StrategyEngine::Stop() {
         dispatching_ = false;
         last_state_snapshot_ns_ = 0;
         last_metrics_collect_ns_ = 0;
+        last_risk_snapshot_ns_ = 0;
+        last_trading_day_.clear();
     }
 
     for (auto& entry : strategies_to_shutdown) {
@@ -585,12 +601,15 @@ void StrategyEngine::WorkerLoop() {
                                    event.emit_intents);
             } else if (event.type == EventType::kOrderEvent) {
                 DispatchOrderEvent(event.order_event);
+                MaybePublishRiskSnapshot(NowEpochNanos(), true);
             } else if (event.type == EventType::kReconcilePositions) {
                 DispatchReconcilePositions(event.reconcile_account_id, event.reconcile_net,
                                            event.reconcile_avg_open);
+                MaybePublishRiskSnapshot(NowEpochNanos(), true);
             } else if (event.type == EventType::kContractSwitch) {
                 ContractSwitchReport report =
                     DispatchContractSwitch(event.contract_switch, event.warmup_states);
+                MaybePublishRiskSnapshot(NowEpochNanos(), true);
                 if (event.contract_switch_promise != nullptr) {
                     try {
                         event.contract_switch_promise->set_value(std::move(report));
@@ -599,6 +618,7 @@ void StrategyEngine::WorkerLoop() {
                 }
             } else if (event.type == EventType::kMarketGapRecovery) {
                 auto report = DispatchMarketGapRecovery(event.market_gap, event.warmup_states);
+                MaybePublishRiskSnapshot(NowEpochNanos(), true);
                 if (event.market_gap_promise) {
                     try {
                         event.market_gap_promise->set_value(std::move(report));
@@ -608,6 +628,7 @@ void StrategyEngine::WorkerLoop() {
             } else if (event.type == EventType::kContractWarmupState) {
                 const bool success =
                     DispatchState(event.state, event.product_id, event.contract_generation, false);
+                MaybePublishRiskSnapshot(NowEpochNanos(), true);
                 if (event.contract_warmup_promise != nullptr) {
                     try {
                         event.contract_warmup_promise->set_value(success);
@@ -794,6 +815,14 @@ void StrategyEngine::DispatchOrderEvent(const OrderEvent& event) {
 }
 
 void StrategyEngine::DispatchAccountSnapshot(const TradingAccountSnapshot& snapshot) {
+    const bool account_matches =
+        std::any_of(strategies_.begin(), strategies_.end(), [&](const auto& entry) {
+            return !entry.account_id.empty() && entry.account_id == snapshot.account_id;
+        });
+    if (account_matches && ValidTradingDay(snapshot.trading_day) &&
+        (last_trading_day_.empty() || snapshot.trading_day >= last_trading_day_)) {
+        last_trading_day_ = snapshot.trading_day;
+    }
     for (auto& entry : strategies_) {
         try {
             entry.strategy->OnAccountSnapshot(snapshot);
@@ -809,6 +838,7 @@ void StrategyEngine::DispatchAccountSnapshot(const TradingAccountSnapshot& snaps
             ++stats_.strategy_callback_exceptions;
         }
     }
+    MaybePublishRiskSnapshot(NowEpochNanos(), true);
 }
 
 void StrategyEngine::DispatchReconcilePositions(
@@ -937,6 +967,7 @@ void StrategyEngine::DispatchTimer(EpochNanos now_ns) {
     }
     MaybeCollectMetrics(now_ns);
     MaybeSnapshotStates(now_ns);
+    MaybePublishRiskSnapshot(now_ns, false);
 }
 
 void StrategyEngine::MaybeSnapshotStates(EpochNanos now_ns) {
@@ -1019,6 +1050,62 @@ void StrategyEngine::MaybeCollectMetrics(EpochNanos now_ns) {
         cached_metrics_ = std::move(collected);
         ++stats_.metrics_collection_runs;
     }
+}
+
+void StrategyEngine::MaybePublishRiskSnapshot(EpochNanos now_ns, bool force) {
+    if (!config_.risk_snapshot_sink || config_.risk_snapshot_interval_ns <= 0 || now_ns <= 0) {
+        return;
+    }
+    // Keep the private block missing across restart until a current, account-bound
+    // trading day has reached the strategy FIFO.
+    if (last_trading_day_.empty()) return;
+    if (!force && last_risk_snapshot_ns_ > 0 &&
+        (now_ns - last_risk_snapshot_ns_) < config_.risk_snapshot_interval_ns) {
+        return;
+    }
+    last_risk_snapshot_ns_ = now_ns;
+
+    std::vector<StrategyRiskSnapshot> rows;
+    bool complete = true;
+    for (auto& entry : strategies_) {
+        try {
+            auto strategy_rows = entry.strategy->CollectRiskSnapshot(now_ns);
+            for (auto& row : strategy_rows) {
+                // The engine entry is the stable outer strategy identity. A strategy
+                // implementation may only choose the optional owner sub-strategy.
+                row.account_id = entry.account_id;
+                row.strategy_id = entry.strategy_id;
+                rows.push_back(std::move(row));
+            }
+        } catch (const std::exception& ex) {
+            complete = false;
+            EmitStrategyExceptionLog("strategy_risk_snapshot_failed", "collect_risk",
+                                     entry.strategy_id, ex.what());
+        } catch (...) {
+            complete = false;
+            EmitStrategyExceptionLog("strategy_risk_snapshot_failed", "collect_risk",
+                                     entry.strategy_id, "unknown exception");
+        }
+    }
+
+    bool published = false;
+    if (complete) {
+        try {
+            config_.risk_snapshot_sink(rows, now_ns, last_trading_day_);
+            published = true;
+        } catch (const std::exception& ex) {
+            EmitStrategyExceptionLog("strategy_risk_snapshot_failed", "observer_sink", "",
+                                     ex.what());
+        } catch (...) {
+            EmitStrategyExceptionLog("strategy_risk_snapshot_failed", "observer_sink", "",
+                                     "unknown exception");
+        }
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (published)
+        ++stats_.risk_snapshot_runs;
+    else
+        ++stats_.risk_snapshot_failures;
 }
 
 void StrategyEngine::EmitIntents(const std::string& strategy_id, std::vector<SignalIntent> intents,

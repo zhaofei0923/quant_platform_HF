@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <limits>
+
 #include "quant_hft/services/ctp_account_ledger.h"
 
 namespace quant_hft {
@@ -83,6 +85,154 @@ TEST(CtpAccountLedgerTest, ReservesFundsAndReleasesUnfilledAmountOnCancel) {
     EXPECT_DOUBLE_EQ(ledger.available(), 899.0);
     EXPECT_DOUBLE_EQ(ledger.frozen_margin(), 0.0);
     EXPECT_DOUBLE_EQ(ledger.frozen_commission(), 0.0);
+}
+
+TEST(CtpAccountLedgerTest, CapsProjectedOpeningMarginAtAccountEquityRatio) {
+    TradingAccountSnapshot snapshot;
+    snapshot.account_id = "acc-1";
+    snapshot.balance = 200000.0;
+    snapshot.available = 194000.0;
+    snapshot.curr_margin = 5000.0;
+    snapshot.frozen_margin = 1000.0;
+
+    CtpOrderFundInputs inputs;
+    inputs.client_order_id = "ord-margin-pass";
+    inputs.offset = OffsetFlag::kOpen;
+    inputs.price = 3375.0;
+    inputs.volume = 10;
+    inputs.volume_multiple = 10;
+    inputs.margin_ratio_by_money = 0.16;
+
+    CtpAccountLedger passing_ledger(0.30);
+    passing_ledger.ApplyTradingAccountSnapshot(snapshot);
+    std::string error;
+    ASSERT_TRUE(passing_ledger.ReserveOrderFunds(inputs, &error)) << error;
+    EXPECT_DOUBLE_EQ(passing_ledger.current_margin(), 5000.0);
+    EXPECT_DOUBLE_EQ(passing_ledger.frozen_margin(), 55000.0);
+
+    CtpAccountLedger rejecting_ledger(0.30);
+    rejecting_ledger.ApplyTradingAccountSnapshot(snapshot);
+    inputs.client_order_id = "ord-margin-reject";
+    inputs.volume = 11;
+    EXPECT_FALSE(rejecting_ledger.ReserveOrderFunds(inputs, &error));
+    EXPECT_NE(error.find("projected opening margin exceeds"), std::string::npos);
+    EXPECT_DOUBLE_EQ(rejecting_ledger.frozen_margin(), 1000.0);
+
+    CtpAccountLedger close_ledger(0.30);
+    snapshot.curr_margin = 70000.0;
+    snapshot.frozen_margin = 0.0;
+    snapshot.available = 130000.0;
+    close_ledger.ApplyTradingAccountSnapshot(snapshot);
+    inputs.volume = 5;
+    inputs.margin_ratio_by_money = 0.0;
+    int close_index = 0;
+    for (const auto offset :
+         {OffsetFlag::kClose, OffsetFlag::kCloseToday, OffsetFlag::kCloseYesterday}) {
+        inputs.client_order_id = "ord-close-over-ratio-" + std::to_string(++close_index);
+        inputs.offset = offset;
+        EXPECT_TRUE(close_ledger.ReserveOrderFunds(inputs, &error)) << error;
+    }
+}
+
+TEST(CtpAccountLedgerTest, MarginRatioGateFailsClosedWithoutOpeningMargin) {
+    CtpAccountLedger ledger(0.30);
+    TradingAccountSnapshot snapshot;
+    snapshot.balance = 200000.0;
+    snapshot.available = 200000.0;
+    ledger.ApplyTradingAccountSnapshot(snapshot);
+
+    CtpOrderFundInputs inputs;
+    inputs.client_order_id = "ord-no-margin-rate";
+    inputs.offset = OffsetFlag::kOpen;
+    inputs.price = 3375.0;
+    inputs.volume = 1;
+    inputs.volume_multiple = 10;
+    std::string error;
+    EXPECT_FALSE(ledger.ReserveOrderFunds(inputs, &error));
+    EXPECT_NE(error.find("requires positive equity and order margin"), std::string::npos);
+
+    inputs.margin_ratio_by_money = 0.16;
+    snapshot.balance = 0.0;
+    ledger.ApplyTradingAccountSnapshot(snapshot);
+    inputs.client_order_id = "ord-no-equity";
+    EXPECT_FALSE(ledger.ReserveOrderFunds(inputs, &error));
+    EXPECT_NE(error.find("requires positive equity and order margin"), std::string::npos);
+
+    snapshot.balance = 200000.0;
+    snapshot.curr_margin = std::numeric_limits<double>::quiet_NaN();
+    ledger.ApplyTradingAccountSnapshot(snapshot);
+    inputs.client_order_id = "ord-invalid-current-margin";
+    EXPECT_FALSE(ledger.ReserveOrderFunds(inputs, &error));
+    EXPECT_NE(error.find("requires positive equity and order margin"), std::string::npos);
+
+    snapshot.curr_margin = 0.0;
+    ledger.ApplyTradingAccountSnapshot(snapshot);
+    inputs.client_order_id = "ord-invalid-money-rate";
+    inputs.margin_ratio_by_money = std::numeric_limits<double>::quiet_NaN();
+    inputs.margin_ratio_by_volume = 100.0;
+    EXPECT_FALSE(ledger.ReserveOrderFunds(inputs, &error));
+    EXPECT_NE(error.find("requires positive equity and order margin"), std::string::npos);
+
+    inputs.client_order_id = "ord-relative-margin-rate";
+    inputs.margin_ratio_by_money = 0.16;
+    inputs.margin_ratio_by_volume = 0.0;
+    inputs.margin_rate_is_relative = true;
+    EXPECT_FALSE(ledger.ReserveOrderFunds(inputs, &error));
+    EXPECT_NE(error.find("relative broker margin rate"), std::string::npos);
+}
+
+TEST(CtpAccountLedgerTest, MarginRatioGateUsesLatestBrokerEquity) {
+    CtpAccountLedger ledger(0.30);
+    TradingAccountSnapshot snapshot;
+    snapshot.balance = 200000.0;
+    snapshot.available = 180000.0;
+    snapshot.curr_margin = 20000.0;
+    ledger.ApplyTradingAccountSnapshot(snapshot);
+
+    CtpOrderFundInputs inputs;
+    inputs.client_order_id = "ord-current-equity";
+    inputs.offset = OffsetFlag::kOpen;
+    inputs.price = 3000.0;
+    inputs.volume = 10;
+    inputs.volume_multiple = 10;
+    inputs.margin_ratio_by_money = 0.10;
+    std::string error;
+    ASSERT_TRUE(ledger.ReserveOrderFunds(inputs, &error)) << error;
+
+    CtpAccountLedger lower_equity_ledger(0.30);
+    snapshot.balance = 100000.0;
+    snapshot.available = 80000.0;
+    lower_equity_ledger.ApplyTradingAccountSnapshot(snapshot);
+    inputs.client_order_id = "ord-lower-equity";
+    EXPECT_FALSE(lower_equity_ledger.ReserveOrderFunds(inputs, &error));
+    EXPECT_NE(error.find("projected_margin=50000"), std::string::npos);
+    EXPECT_NE(error.find("limit=30000"), std::string::npos);
+}
+
+TEST(CtpAccountLedgerTest, MarginRatioGateIncludesPreviouslyFrozenOpeningMargin) {
+    CtpAccountLedger ledger(0.30);
+    TradingAccountSnapshot snapshot;
+    snapshot.balance = 100000.0;
+    snapshot.available = 100000.0;
+    ledger.ApplyTradingAccountSnapshot(snapshot);
+
+    CtpOrderFundInputs inputs;
+    inputs.client_order_id = "ord-first-margin";
+    inputs.offset = OffsetFlag::kOpen;
+    inputs.price = 1000.0;
+    inputs.volume = 2;
+    inputs.volume_multiple = 10;
+    inputs.margin_ratio_by_money = 0.10;
+    std::string error;
+    ASSERT_TRUE(ledger.ReserveOrderFunds(inputs, &error)) << error;
+    EXPECT_DOUBLE_EQ(ledger.frozen_margin(), 2000.0);
+
+    inputs.client_order_id = "ord-second-margin";
+    inputs.volume = 29;
+    EXPECT_FALSE(ledger.ReserveOrderFunds(inputs, &error));
+    EXPECT_NE(error.find("projected_margin=31000"), std::string::npos);
+    EXPECT_NE(error.find("limit=30000"), std::string::npos);
+    EXPECT_DOUBLE_EQ(ledger.frozen_margin(), 2000.0);
 }
 
 TEST(CtpAccountLedgerTest, CancelActionRejectedDoesNotReleaseReservedFunds) {

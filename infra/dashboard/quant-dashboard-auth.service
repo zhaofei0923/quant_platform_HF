@@ -1,0 +1,38 @@
+[Unit]
+Description=Quant Dashboard private authentication service
+After=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=quant-dashboard-auth
+Group=quant-dashboard-auth
+ExecStart=/opt/quant-dashboard/current/bin/authelia --config /etc/quant-dashboard/auth/configuration.yml
+Environment=AUTHELIA_STORAGE_ENCRYPTION_KEY_FILE=/etc/quant-dashboard/auth/storage-key
+StateDirectory=quant-dashboard-auth
+StateDirectoryMode=0700
+UMask=0077
+# The upstream session TTL slides on requests. Recycle this memory-only service
+# so even continuously replayed cookies lose server state within eight hours.
+RuntimeMaxSec=7h59min55s
+TimeoutStopSec=5s
+Restart=always
+RestartSec=1s
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+CPUQuota=25%
+MemoryHigh=192M
+MemoryMax=256M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

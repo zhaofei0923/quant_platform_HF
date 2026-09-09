@@ -1,0 +1,1 @@
+PASS: real numeric-UID ACL isolation, private sources, new 0600 WAL + matching fd-group opt-in to 0640, wrong-group refusal, legacy 0600 preserved, WAL directory read-only, public setgid inheritance, web read-only, other-account denial.

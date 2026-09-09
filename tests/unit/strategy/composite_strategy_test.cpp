@@ -84,6 +84,7 @@ class ScriptedSubStrategy final : public ISubStrategy,
         risk_initial_stop_ = ParseOptionalDouble(params, "risk_initial_stop");
         risk_trailing_stop_ = ParseOptionalDouble(params, "risk_trailing_stop");
         risk_take_profit_ = ParseOptionalDouble(params, "risk_take_profit");
+        risk_as_of_ns_ = std::stoll(GetOrDefault(params, "risk_as_of_ns", "0"));
     }
 
     std::string GetId() const override { return id_; }
@@ -207,6 +208,14 @@ class ScriptedSubStrategy final : public ISubStrategy,
         levels.initial_stop = risk_initial_stop_;
         levels.trailing_stop = risk_trailing_stop_;
         levels.take_profit = risk_take_profit_;
+        if (levels.trailing_stop.has_value()) {
+            levels.effective_stop = levels.trailing_stop;
+            levels.stop_kind = StrategyStopKind::kTrailing;
+        } else if (levels.initial_stop.has_value()) {
+            levels.effective_stop = levels.initial_stop;
+            levels.stop_kind = StrategyStopKind::kInitial;
+        }
+        levels.as_of_ns = risk_as_of_ns_;
         prices[risk_instrument_] = levels;
         return prices;
     }
@@ -235,6 +244,7 @@ class ScriptedSubStrategy final : public ISubStrategy,
     std::optional<double> risk_initial_stop_;
     std::optional<double> risk_trailing_stop_;
     std::optional<double> risk_take_profit_;
+    EpochNanos risk_as_of_ns_{0};
 };
 
 std::string UniqueType(const std::string& stem) {
@@ -1563,6 +1573,51 @@ TEST(CompositeStrategyTest, SaveStateEmitsPerInstrumentRiskPriceLevels) {
     EXPECT_DOUBLE_EQ(std::stod(snapshot.at("init_stop.rb2405")), 4460.0);
     EXPECT_DOUBLE_EQ(std::stod(snapshot.at("trailing_stop.rb2405")), 4488.25);
     EXPECT_DOUBLE_EQ(std::stod(snapshot.at("take_profit.rb2405")), 4560.75);
+}
+
+TEST(CompositeStrategyTest, RiskSnapshotUsesOnlyActualPositionOwnerAndProviderTimestamp) {
+    const std::string owner_a_type = UniqueType("risk_owner_a");
+    const std::string owner_b_type = UniqueType("risk_owner_b");
+    RegisterScriptedType(owner_a_type);
+    RegisterScriptedType(owner_b_type);
+
+    CompositeStrategyDefinition definition;
+    definition.run_type = "backtest";
+    definition.sub_strategies = {
+        MakeSubStrategy("owner_a", owner_a_type,
+                        {{"id", "owner_a"},
+                         {"risk_instrument", "rb2405"},
+                         {"risk_initial_stop", "4460.0"},
+                         {"risk_trailing_stop", "4488.25"},
+                         {"risk_take_profit", "4560.75"},
+                         {"risk_as_of_ns", "123"}}),
+        MakeSubStrategy("owner_b", owner_b_type,
+                        {{"id", "owner_b"},
+                         {"risk_instrument", "rb2405"},
+                         {"risk_initial_stop", "4300.0"},
+                         {"risk_trailing_stop", "4320.0"},
+                         {"risk_take_profit", "4700.0"},
+                         {"risk_as_of_ns", "456"}}),
+    };
+
+    CompositeStrategy strategy(definition, &AtomicFactory::Instance());
+    strategy.Initialize(MakeStrategyContext());
+    strategy.OnOrderEvent(
+        MakeOrderEvent("owner_a", "rb2405", Side::kBuy, OffsetFlag::kOpen, 2, 4500.5,
+                       "risk-owner-open"));
+
+    const auto rows = strategy.CollectRiskSnapshot(999);
+    ASSERT_EQ(rows.size(), 1U);
+    const auto& row = rows.front();
+    EXPECT_EQ(row.strategy_id, "composite");
+    EXPECT_EQ(row.owner_strategy_id, "owner_a");
+    EXPECT_EQ(row.instrument_id, "rb2405");
+    EXPECT_EQ(row.net, 2);
+    EXPECT_DOUBLE_EQ(row.avg_open.value(), 4500.5);
+    EXPECT_DOUBLE_EQ(row.effective_stop.value(), 4488.25);
+    EXPECT_EQ(row.stop_kind, StrategyStopKind::kTrailing);
+    EXPECT_DOUBLE_EQ(row.take_profit.value(), 4560.75);
+    EXPECT_EQ(row.as_of_ns, 123);
 }
 
 TEST(CompositeStrategyTest, SaveStateOmitsRiskPriceLevelsWhenFlat) {

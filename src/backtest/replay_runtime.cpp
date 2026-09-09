@@ -1916,6 +1916,13 @@ bool RunBacktestSpec(const BacktestCliSpec& requested_spec, BacktestCliResult* o
                 "disabled-budget runtime or explicit research profile";
         return false;
     }
+    if (online_parity && runtime_semantics.risk_max_margin_to_equity_ratio > 0.0) {
+        if (error)
+            *error =
+                "online_parity does not support broker-equity margin-ratio budgets; provide a "
+                "runtime with risk_max_margin_to_equity_ratio disabled or use research profile";
+        return false;
+    }
     if (spec.initialization_policy != "cold_start") {
         if (error)
             *error = "unsupported initialization_policy; only flat cold_start is implemented";

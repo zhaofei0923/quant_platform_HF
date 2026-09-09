@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <sstream>
+#include <stdexcept>
 
 namespace quant_hft {
 
@@ -14,6 +16,14 @@ bool IsCancelActionFeedback(const OrderEvent& event) {
 }
 
 }  // namespace
+
+CtpAccountLedger::CtpAccountLedger(double max_margin_to_equity_ratio)
+    : max_margin_to_equity_ratio_(max_margin_to_equity_ratio) {
+    if (!std::isfinite(max_margin_to_equity_ratio_) || max_margin_to_equity_ratio_ < 0.0 ||
+        max_margin_to_equity_ratio_ > 1.0) {
+        throw std::invalid_argument("max margin to equity ratio must be in [0, 1]");
+    }
+}
 
 double CtpAccountLedger::ResolveMarginPrice(char margin_price_type,
                                             const CtpMarginPriceInputs& prices) {
@@ -129,6 +139,41 @@ bool CtpAccountLedger::ReserveOrderFunds(const CtpOrderFundInputs& inputs, std::
             *error = "duplicate fund reservation";
         }
         return false;
+    }
+    if (inputs.offset == OffsetFlag::kOpen && max_margin_to_equity_ratio_ > 0.0) {
+        if (inputs.margin_rate_is_relative) {
+            if (error != nullptr) {
+                *error = "relative broker margin rate is unsupported by account equity ratio gate";
+            }
+            return false;
+        }
+        const bool valid_margin_rates =
+            std::isfinite(inputs.margin_ratio_by_money) && inputs.margin_ratio_by_money >= 0.0 &&
+            std::isfinite(inputs.margin_ratio_by_volume) && inputs.margin_ratio_by_volume >= 0.0;
+        const bool valid_money_basis =
+            inputs.margin_ratio_by_money <= 0.0 ||
+            (std::isfinite(inputs.price) && inputs.price > 0.0 && inputs.volume_multiple > 0);
+        if (!std::isfinite(balance_) || balance_ <= 0.0 || !std::isfinite(current_margin_) ||
+            current_margin_ < 0.0 || !std::isfinite(frozen_margin_) || frozen_margin_ < 0.0 ||
+            !valid_margin_rates || !valid_money_basis || !std::isfinite(margin) || margin <= 0.0) {
+            if (error != nullptr) {
+                *error = "opening margin ratio gate requires positive equity and order margin";
+            }
+            return false;
+        }
+        const double margin_limit = balance_ * max_margin_to_equity_ratio_;
+        const double projected_margin = current_margin_ + frozen_margin_ + margin;
+        if (!std::isfinite(projected_margin) || projected_margin > margin_limit + 1e-9) {
+            if (error != nullptr) {
+                std::ostringstream detail;
+                detail << "projected opening margin exceeds account equity ratio limit"
+                       << ": projected_margin=" << projected_margin
+                       << " limit=" << margin_limit << " equity=" << balance_
+                       << " ratio=" << max_margin_to_equity_ratio_;
+                *error = detail.str();
+            }
+            return false;
+        }
     }
     if (available_ + 1e-9 < required) {
         if (error != nullptr) {

@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "quant_hft/contracts/dashboard_observation.h"
 #include "quant_hft/contracts/types.h"
 
 namespace quant_hft {
@@ -67,6 +68,13 @@ class ILiveStrategy {
     }
     virtual std::vector<SignalIntent> OnTimer(EpochNanos now_ns) = 0;
     virtual std::vector<StrategyMetric> CollectMetrics() const { return {}; }
+    // `observation_now_ns` schedules collection only. Each row keeps the source
+    // strategy's actual risk-calculation timestamp and must not copy this heartbeat.
+    virtual std::vector<StrategyRiskSnapshot> CollectRiskSnapshot(
+        EpochNanos observation_now_ns) const {
+        (void)observation_now_ns;
+        return {};
+    }
     virtual bool SaveState(StrategyState* out, std::string* error) const {
         (void)out;
         (void)error;

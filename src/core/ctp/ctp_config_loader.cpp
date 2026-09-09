@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -1650,6 +1651,23 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* confi
     if (loaded.risk.default_max_position_notional < 0.0) {
         if (error != nullptr) {
             *error = "risk_default_max_position_notional must be >= 0";
+        }
+        return false;
+    }
+    loaded.risk.max_margin_to_equity_ratio = 0.0;
+    SetOptionalDouble(kv, "risk_max_margin_to_equity_ratio",
+                      &loaded.risk.max_margin_to_equity_ratio, &load_error);
+    if (!load_error.empty()) {
+        if (error != nullptr) {
+            *error = load_error;
+        }
+        return false;
+    }
+    if (!std::isfinite(loaded.risk.max_margin_to_equity_ratio) ||
+        loaded.risk.max_margin_to_equity_ratio < 0.0 ||
+        loaded.risk.max_margin_to_equity_ratio > 1.0) {
+        if (error != nullptr) {
+            *error = "risk_max_margin_to_equity_ratio must be in [0, 1]";
         }
         return false;
     }

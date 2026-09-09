@@ -1,0 +1,9 @@
+Release: quant-dashboard-20260908-final-v4.tar.gz
+Workspace path: runtime/dashboard/releases/quant-dashboard-20260908-final-v4.tar.gz
+Absolute build-host path: /home/kevin/quant_platform_HF/runtime/dashboard/releases/quant-dashboard-20260908-final-v4.tar.gz
+SHA256: 78095ad2e42f5a89feb06f7ac12a4c6074dc6902a52794c41b7a4cf71aa0369f
+Per-file verification: all SHA256SUMS entries passed after extraction to a fresh private temporary directory.
+Frontend: index-DYFOESIH.js, EquityChart-DruRTui7.js, index-NJ5T5O1J.css.
+Includes: compiled dashboard_publish_cli, verified Authelia v4.39.22, frontend production dist, deployment templates/scripts, deployment runbook and data contract.
+Excludes: core_engine, credentials, account descriptor, runtime data, certificates/keys, source maps and demonstration JSON.
+State: manifest verified and deployed to Tencent Cloud as /opt/quant-dashboard/releases/20260907T232748-e34643cdf19e. Credential is active; browser login/logout and the first live core snapshot remain explicit acceptance items.

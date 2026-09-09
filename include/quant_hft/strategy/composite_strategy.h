@@ -83,6 +83,8 @@ class CompositeStrategy : public ILiveStrategy {
         std::vector<std::string>* adjustments) override;
     std::vector<SignalIntent> OnTimer(EpochNanos now_ns) override;
     std::vector<StrategyMetric> CollectMetrics() const override;
+    std::vector<StrategyRiskSnapshot> CollectRiskSnapshot(
+        EpochNanos observation_now_ns) const override;
     bool SaveState(StrategyState* out, std::string* error) const override;
     bool LoadState(const StrategyState& state, std::string* error) override;
     bool ResetForContractSwitch(const ContractSwitchContext& context, std::string* error) override;

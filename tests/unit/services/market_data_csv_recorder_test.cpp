@@ -408,5 +408,47 @@ TEST(MarketDataCsvRecorderTest, FiltersTicksAndBarsToAllowedInstruments) {
     std::filesystem::remove_all(root);
 }
 
+TEST(MarketDataCsvRecorderTest, FiltersRawCtpTicksToSingleStaticContract) {
+    const auto token = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto root =
+        std::filesystem::temp_directory_path() / ("quant_hft_market_data_hc_only_" + token);
+
+    MarketDataRecordingConfig config;
+    config.enabled = true;
+    config.output_dir = root.string();
+    config.flush_each_write = true;
+    config.partition_by_product = true;
+
+    MarketDataCsvRecorder recorder;
+    std::string error;
+    ASSERT_TRUE(recorder.Open(config, &error)) << error;
+    recorder.SetAllowedInstrumentIds({"hc2701"});
+
+    MarketSnapshot allowed_tick;
+    allowed_tick.instrument_id = "hc2701";
+    allowed_tick.exchange_id = "SHFE";
+    allowed_tick.trading_day = "20260907";
+    allowed_tick.action_day = "20260907";
+    allowed_tick.update_time = "09:30:01";
+    allowed_tick.last_price = 3200.0;
+    ASSERT_TRUE(recorder.AppendTick(allowed_tick, &error)) << error;
+
+    MarketSnapshot unsolicited_tick = allowed_tick;
+    unsolicited_tick.instrument_id = "rb2701";
+    unsolicited_tick.last_price = 3500.0;
+    ASSERT_TRUE(recorder.AppendTick(unsolicited_tick, &error)) << error;
+    ASSERT_TRUE(recorder.Close(&error)) << error;
+
+    EXPECT_EQ(recorder.ticks_written(), 1);
+    const auto tick_text =
+        ReadTextFile(root / "trading_day=20260907" / "varieties" / "hc" / "market" /
+                     "ticks.csv");
+    EXPECT_NE(tick_text.find("hc2701,SHFE,20260907"), std::string::npos);
+    EXPECT_EQ(tick_text.find("rb2701"), std::string::npos);
+    EXPECT_FALSE(std::filesystem::exists(root / "trading_day=20260907" / "varieties" / "rb"));
+
+    std::filesystem::remove_all(root);
+}
+
 }  // namespace
 }  // namespace quant_hft

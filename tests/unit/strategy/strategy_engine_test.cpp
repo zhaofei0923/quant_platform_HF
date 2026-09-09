@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -14,6 +15,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "quant_hft/monitoring/dashboard_snapshot.h"
 #include "quant_hft/strategy/live_strategy.h"
 #include "quant_hft/strategy/market_gap_recovery.h"
 #include "quant_hft/strategy/strategy_registry.h"
@@ -176,6 +178,22 @@ class RecordingStrategy final : public ILiveStrategy {
         return {StrategyMetric{"strategy_engine_test_metric",
                                loaded_from_state_ ? 1.0 : 0.0,
                                {{"strategy_id", strategy_id_}}}};
+    }
+
+    std::vector<StrategyRiskSnapshot> CollectRiskSnapshot(EpochNanos) const override {
+        StrategyRiskSnapshot row;
+        row.strategy_id = "implementation-cannot-spoof-outer-id";
+        row.owner_strategy_id = strategy_id_ + "_owner";
+        row.instrument_id = "hc2701";
+        row.net = 1;
+        row.avg_open = 3500.0;
+        row.initial_stop = 3450.0;
+        row.trailing_stop = 3475.0;
+        row.effective_stop = 3475.0;
+        row.stop_kind = StrategyStopKind::kTrailing;
+        row.take_profit = 3600.0;
+        row.as_of_ns = 77;
+        return {row};
     }
 
     bool ResetForContractSwitch(const ContractSwitchContext& context, std::string* error) override {
@@ -648,6 +666,173 @@ TEST(StrategyEngineTest, TriggersTimerCallbacks) {
     EXPECT_FALSE(probe.observed_timer_strategies.empty());
 }
 
+TEST(StrategyEngineTest, KeepsRiskMissingUntilAccountDayThenForcesAfterOrder) {
+    Probe probe;
+    g_probe = &probe;
+    ResetThrowingBehavior();
+    std::string error;
+    const auto factory_name = UniqueFactoryName();
+    ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
+        factory_name, []() { return std::make_unique<RecordingStrategy>(); }, &error));
+
+    std::mutex sink_mutex;
+    std::vector<std::vector<StrategyRiskSnapshot>> batches;
+    std::vector<EpochNanos> observed_at;
+    StrategyEngineConfig cfg;
+    cfg.timer_interval_ns = 10'000'000;
+    cfg.risk_snapshot_interval_ns = 60'000'000'000;
+    cfg.risk_snapshot_sink = [&](const std::vector<StrategyRiskSnapshot>& rows, EpochNanos as_of_ns,
+                                 const std::string&) {
+        std::lock_guard<std::mutex> lock(sink_mutex);
+        batches.push_back(rows);
+        observed_at.push_back(as_of_ns);
+    };
+    StrategyEngine engine(cfg);
+    StrategyContext context;
+    context.account_id = "sim-account";
+    ASSERT_TRUE(engine.Start({"outer"}, factory_name, context, &error)) << error;
+    {
+        std::lock_guard<std::mutex> lock(sink_mutex);
+        EXPECT_TRUE(batches.empty());
+    }
+
+    TradingAccountSnapshot foreign_account;
+    foreign_account.account_id = "another-account";
+    foreign_account.trading_day = "20260907";
+    ASSERT_TRUE(engine.EnqueueAccountSnapshot(foreign_account));
+    ASSERT_TRUE(engine.WaitUntilDrained(500));
+    {
+        std::lock_guard<std::mutex> lock(sink_mutex);
+        EXPECT_TRUE(batches.empty());
+    }
+
+    TradingAccountSnapshot account;
+    account.account_id = "sim-account";
+    account.trading_day = "20260907";
+    ASSERT_TRUE(engine.EnqueueAccountSnapshot(account));
+    ASSERT_TRUE(WaitUntil(
+        [&] {
+            std::lock_guard<std::mutex> lock(sink_mutex);
+            return batches.size() >= 1;
+        },
+        std::chrono::milliseconds(500)));
+
+    OrderEvent event;
+    event.account_id = "sim-account";
+    event.strategy_id = "outer";
+    event.client_order_id = "force-risk";
+    ASSERT_TRUE(engine.EnqueueOrderEvent(event));
+    ASSERT_TRUE(WaitUntil(
+        [&] {
+            std::lock_guard<std::mutex> lock(sink_mutex);
+            return batches.size() >= 2;
+        },
+        std::chrono::milliseconds(500)));
+    engine.Stop();
+    g_probe = nullptr;
+
+    std::lock_guard<std::mutex> lock(sink_mutex);
+    ASSERT_GE(batches.size(), 2U);
+    ASSERT_EQ(batches[0].size(), 1U);
+    EXPECT_EQ(batches[0][0].account_id, "sim-account");
+    EXPECT_EQ(batches[0][0].strategy_id, "outer");
+    EXPECT_EQ(batches[0][0].owner_strategy_id, "outer_owner");
+    EXPECT_EQ(batches[0][0].as_of_ns, 77);
+    EXPECT_EQ(batches[1][0].as_of_ns, 77);
+    EXPECT_GT(observed_at[1], observed_at[0]);
+    EXPECT_EQ(engine.GetStats().risk_snapshot_failures, 0U);
+}
+
+TEST(StrategyEngineTest, RestartedPrivateSnapshotStaysMissingUntilValidAccountDay) {
+    Probe probe;
+    g_probe = &probe;
+    ResetThrowingBehavior();
+    std::string error;
+    const auto factory_name = UniqueFactoryName();
+    ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
+        factory_name, []() { return std::make_unique<RecordingStrategy>(); }, &error));
+
+    const auto directory = std::filesystem::temp_directory_path() /
+                           ("quant-hft-risk-restart-" + factory_name);
+    std::filesystem::remove_all(directory);
+    DashboardSnapshotWriter writer;
+    RuntimeIdentity identity{"simnow", "9999", "sim-account", "risk-restart-test"};
+    ASSERT_TRUE(writer.Start((directory / "private.json").string(), identity, &error)) << error;
+
+    StrategyEngineConfig cfg;
+    cfg.timer_interval_ns = 5'000'000;
+    cfg.risk_snapshot_interval_ns = 5'000'000;
+    cfg.risk_snapshot_sink = [&](const std::vector<StrategyRiskSnapshot>& rows,
+                                 EpochNanos observed_at_ns,
+                                 const std::string& trading_day) {
+        writer.CaptureStrategyRisk(rows, observed_at_ns, trading_day);
+    };
+    StrategyEngine engine(cfg);
+    StrategyContext context;
+    context.account_id = identity.account_id;
+    ASSERT_TRUE(engine.Start({"outer"}, factory_name, context, &error)) << error;
+    ASSERT_TRUE(WaitUntil([&] { return engine.GetStats().timer_callbacks >= 2; },
+                          std::chrono::milliseconds(500)));
+    EXPECT_NE(writer.RenderSnapshot(1).find("\"strategy_risk\":{\"quality\":\"missing\""),
+              std::string::npos);
+
+    TradingAccountSnapshot account;
+    account.account_id = identity.account_id;
+    account.trading_day = "20260907";
+    ASSERT_TRUE(engine.EnqueueAccountSnapshot(account));
+    ASSERT_TRUE(WaitUntil(
+        [&] {
+            return writer.RenderSnapshot(2).find(
+                       "\"strategy_risk\":{\"quality\":\"ok\"") != std::string::npos;
+        },
+        std::chrono::milliseconds(500)));
+
+    engine.Stop();
+    writer.Stop();
+    std::filesystem::remove_all(directory);
+    g_probe = nullptr;
+}
+
+TEST(StrategyEngineTest, RiskObserverFailureDoesNotOverloadOrStopOrderDispatch) {
+    Probe probe;
+    g_probe = &probe;
+    ResetThrowingBehavior();
+    std::string error;
+    const auto factory_name = UniqueFactoryName();
+    ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
+        factory_name, []() { return std::make_unique<RecordingStrategy>(); }, &error));
+
+    StrategyEngineConfig cfg;
+    cfg.timer_interval_ns = 1'000'000'000;
+    cfg.risk_snapshot_sink = [](const std::vector<StrategyRiskSnapshot>&, EpochNanos,
+                                const std::string&) { throw std::runtime_error("observer down"); };
+    StrategyEngine engine(cfg);
+    StrategyContext context;
+    context.account_id = "sim-account";
+    ASSERT_TRUE(engine.Start({"outer"}, factory_name, context, &error)) << error;
+    TradingAccountSnapshot account;
+    account.account_id = "sim-account";
+    account.trading_day = "20260907";
+    ASSERT_TRUE(engine.EnqueueAccountSnapshot(account));
+    ASSERT_TRUE(WaitUntil([&] { return engine.GetStats().risk_snapshot_failures >= 1; },
+                          std::chrono::milliseconds(500)));
+    OrderEvent event;
+    event.strategy_id = "outer";
+    event.client_order_id = "observer-failure-order";
+    ASSERT_TRUE(engine.EnqueueOrderEvent(event));
+    ASSERT_TRUE(WaitUntil(
+        [&] {
+            std::lock_guard<std::mutex> lock(probe.mutex);
+            return ContainsEvent(probe.observed_order_events,
+                                 "outer:observer-failure-order");
+        },
+        std::chrono::milliseconds(500)));
+    EXPECT_FALSE(engine.GetHealth().overloaded);
+    EXPECT_GE(engine.GetStats().risk_snapshot_failures, 1U);
+    engine.Stop();
+    g_probe = nullptr;
+}
+
 TEST(StrategyEngineTest, DispatchesAccountSnapshotsToAllStrategies) {
     Probe probe;
     g_probe = &probe;
@@ -959,6 +1144,19 @@ class ReliableProbeStrategy final : public ILiveStrategy {
         std::lock_guard<std::mutex> lock(probe_->mutex);
         probe_->seen.push_back("order:" + event.client_order_id);
     }
+    std::size_t ReconcileNetPositions(
+        const std::unordered_map<std::string, std::int32_t>& authoritative_net,
+        const std::unordered_map<std::string, double>& authoritative_avg_open,
+        std::vector<std::string>*) override {
+        std::lock_guard<std::mutex> lock(probe_->mutex);
+        const auto net_it = authoritative_net.find("hc2701");
+        const auto avg_it = authoritative_avg_open.find("hc2701");
+        probe_->seen.push_back(
+            "reconcile:" +
+            std::to_string(net_it == authoritative_net.end() ? 0 : net_it->second) + ":" +
+            std::to_string(avg_it == authoritative_avg_open.end() ? 0.0 : avg_it->second));
+        return 0;
+    }
     std::vector<SignalIntent> OnTimer(EpochNanos) override {
         std::lock_guard<std::mutex> lock(probe_->mutex);
         probe_->seen.push_back("timer");
@@ -1026,6 +1224,45 @@ TEST(StrategyEngineTest, RetainsFilledOrderAndReportsReliableAdmissionOverflow) 
     EXPECT_EQ(engine.GetStats().dropped_oldest_events, 0U);
     EXPECT_EQ(engine.GetStats().rejected_reliable_events, 1U);
     EXPECT_EQ(engine.EnqueueOrderEvent(fill).status, StrategyEnqueueStatus::kStopped);
+}
+
+TEST(StrategyEngineTest, ReconcilePositionSnapshotIsAcceptedAndProcessedThroughFifo) {
+    auto probe = std::make_shared<ReliableProbe>();
+    StrategyEngineConfig config;
+    config.queue_capacity = 1;
+    config.reliable_queue_capacity = 1;
+    config.timer_interval_ns = 1'000'000'000;
+    StrategyEngine engine(config);
+    std::string error;
+    ASSERT_TRUE(engine.Start({"probe"}, RegisterReliableProbe(probe), {}, &error));
+
+    StateSnapshot7D state;
+    state.ts_ns = 1;
+    ASSERT_TRUE(engine.EnqueueState(state));
+    ASSERT_TRUE(WaitForReliableProbe(probe));
+
+    OrderEvent fill;
+    fill.client_order_id = "fill-before-reconcile";
+    fill.strategy_id = "probe";
+    fill.status = OrderStatus::kFilled;
+    fill.filled_volume = 1;
+    ASSERT_TRUE(engine.EnqueueOrderEvent(fill));
+    const auto reconcile =
+        engine.EnqueueReconcilePositions("", {{"hc2701", -16}}, {{"hc2701", 3368.0}});
+    ASSERT_TRUE(reconcile);
+    EXPECT_GT(reconcile.sequence, 0U);
+    const auto rejected_reconcile =
+        engine.EnqueueReconcilePositions("", {{"hc2701", 0}}, {});
+    EXPECT_EQ(rejected_reconcile.status, StrategyEnqueueStatus::kQueueFull);
+
+    ReleaseReliableProbe(probe);
+    ASSERT_TRUE(engine.WaitUntilDrained(1000));
+    engine.Stop();
+
+    EXPECT_EQ(probe->seen,
+              (std::vector<std::string>{"state:1", "order:fill-before-reconcile",
+                                        "reconcile:-16:3368.000000"}));
+    EXPECT_EQ(engine.GetStats().rejected_reliable_events, 1U);
 }
 
 TEST(StrategyEngineTest, DeadlineMarkerPreservesFifoAndHealthRemainsReadableWhileWorkerBlocked) {

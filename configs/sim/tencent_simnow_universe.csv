@@ -1,0 +1,2 @@
+instrument,product,exchange,strategy_id,strategy_config
+hc2701,hc,SHFE,kama_candidate_hc,configs/strategies/main_sim_trade_candidate_hc.yaml

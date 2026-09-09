@@ -96,7 +96,7 @@ void TrendStrategy::Init(const AtomicParams& params) {
         take_profit_atr_ = std::make_unique<ATR>(take_profit_atr_period_);
     }
     trailing_stop_by_instrument_.clear();
-    trailing_direction_by_instrument_.clear();
+    risk_runtime_by_instrument_.clear();
     initial_stop_by_instrument_.clear();
     take_profit_by_instrument_.clear();
     last_kama_.reset();
@@ -111,12 +111,12 @@ std::string TrendStrategy::GetId() const { return id_; }
 
 bool TrendStrategy::ResetForMarketGap() {
     auto saved_0 = std::move(trailing_stop_by_instrument_);
-    auto saved_1 = std::move(trailing_direction_by_instrument_);
+    auto saved_1 = std::move(risk_runtime_by_instrument_);
     auto saved_2 = std::move(initial_stop_by_instrument_);
     auto saved_3 = std::move(take_profit_by_instrument_);
     Reset();
     trailing_stop_by_instrument_ = std::move(saved_0);
-    trailing_direction_by_instrument_ = std::move(saved_1);
+    risk_runtime_by_instrument_ = std::move(saved_1);
     initial_stop_by_instrument_ = std::move(saved_2);
     take_profit_by_instrument_ = std::move(saved_3);
     return true;
@@ -133,7 +133,7 @@ void TrendStrategy::Reset() {
         take_profit_atr_->Reset();
     }
     trailing_stop_by_instrument_.clear();
-    trailing_direction_by_instrument_.clear();
+    risk_runtime_by_instrument_.clear();
     initial_stop_by_instrument_.clear();
     take_profit_by_instrument_.clear();
     last_kama_.reset();
@@ -216,6 +216,9 @@ std::vector<SignalIntent> TrendStrategy::OnState(const StateSnapshot7D& state,
         }
         const double avg_open_price = avg_price_it->second;
         const int direction = position > 0 ? 1 : -1;
+        auto [risk_runtime_it, runtime_inserted] =
+            risk_runtime_by_instrument_.try_emplace(state.instrument_id);
+        auto& risk_runtime = risk_runtime_it->second;
 
         if (stop_loss_mode_ == "trailing_atr" && last_stop_atr_.has_value() &&
             std::isfinite(*last_stop_atr_) && *last_stop_atr_ > 0.0) {
@@ -224,21 +227,17 @@ std::vector<SignalIntent> TrendStrategy::OnState(const StateSnapshot7D& state,
                 direction > 0 ? (avg_open_price - stop_distance) : (avg_open_price + stop_distance);
             double stop_price = base_stop;
             const auto stop_it = trailing_stop_by_instrument_.find(state.instrument_id);
-            const auto direction_it = trailing_direction_by_instrument_.find(state.instrument_id);
             const bool continuing = stop_it != trailing_stop_by_instrument_.end() &&
-                                    direction_it != trailing_direction_by_instrument_.end() &&
-                                    direction_it->second == direction;
+                                    !runtime_inserted && risk_runtime.direction == direction;
             if (continuing) {
                 stop_price = stop_it->second;
             } else {
                 initial_stop_by_instrument_[state.instrument_id] = base_stop;
             }
             trailing_stop_by_instrument_[state.instrument_id] = stop_price;
-            trailing_direction_by_instrument_[state.instrument_id] = direction;
             last_stop_loss_price_ = stop_price;
         } else if (stop_loss_mode_ != "trailing_atr") {
             trailing_stop_by_instrument_.erase(state.instrument_id);
-            trailing_direction_by_instrument_.erase(state.instrument_id);
             initial_stop_by_instrument_.erase(state.instrument_id);
         }
 
@@ -253,6 +252,9 @@ std::vector<SignalIntent> TrendStrategy::OnState(const StateSnapshot7D& state,
             take_profit_by_instrument_.erase(state.instrument_id);
         }
 
+        risk_runtime.direction = direction;
+        if (state.ts_ns > risk_runtime.as_of_ns) risk_runtime.as_of_ns = state.ts_ns;
+
         if (!has_entry_signal) {
             return {};
         }
@@ -264,7 +266,7 @@ std::vector<SignalIntent> TrendStrategy::OnState(const StateSnapshot7D& state,
     }
 
     trailing_stop_by_instrument_.erase(state.instrument_id);
-    trailing_direction_by_instrument_.erase(state.instrument_id);
+    risk_runtime_by_instrument_.erase(state.instrument_id);
     initial_stop_by_instrument_.erase(state.instrument_id);
     take_profit_by_instrument_.erase(state.instrument_id);
     if (!has_entry_signal) {
@@ -281,7 +283,7 @@ std::vector<SignalIntent> TrendStrategy::OnBacktestTick(const AtomicTickSnapshot
     const std::int32_t position = ResolvePosition(ctx, tick.instrument_id);
     if (position == 0) {
         trailing_stop_by_instrument_.erase(tick.instrument_id);
-        trailing_direction_by_instrument_.erase(tick.instrument_id);
+        risk_runtime_by_instrument_.erase(tick.instrument_id);
         initial_stop_by_instrument_.erase(tick.instrument_id);
         take_profit_by_instrument_.erase(tick.instrument_id);
         return {};
@@ -294,6 +296,9 @@ std::vector<SignalIntent> TrendStrategy::OnBacktestTick(const AtomicTickSnapshot
 
     const double avg_open_price = avg_price_it->second;
     const int direction = position > 0 ? 1 : -1;
+    auto [risk_runtime_it, runtime_inserted] =
+        risk_runtime_by_instrument_.try_emplace(tick.instrument_id);
+    auto& risk_runtime = risk_runtime_it->second;
     if (stop_loss_mode_ == "trailing_atr") {
         if (last_stop_atr_.has_value() && std::isfinite(*last_stop_atr_) && *last_stop_atr_ > 0.0) {
             const double stop_distance = stop_loss_atr_multiplier_ * (*last_stop_atr_);
@@ -301,10 +306,8 @@ std::vector<SignalIntent> TrendStrategy::OnBacktestTick(const AtomicTickSnapshot
                 direction > 0 ? (avg_open_price - stop_distance) : (avg_open_price + stop_distance);
             double stop_price = base_stop;
             const auto stop_it = trailing_stop_by_instrument_.find(tick.instrument_id);
-            const auto direction_it = trailing_direction_by_instrument_.find(tick.instrument_id);
             const bool continuing = stop_it != trailing_stop_by_instrument_.end() &&
-                                    direction_it != trailing_direction_by_instrument_.end() &&
-                                    direction_it->second == direction;
+                                    !runtime_inserted && risk_runtime.direction == direction;
             if (continuing) {
                 stop_price = stop_it->second;
             } else {
@@ -315,12 +318,10 @@ std::vector<SignalIntent> TrendStrategy::OnBacktestTick(const AtomicTickSnapshot
             stop_price =
                 direction > 0 ? std::max(stop_price, candidate) : std::min(stop_price, candidate);
             trailing_stop_by_instrument_[tick.instrument_id] = stop_price;
-            trailing_direction_by_instrument_[tick.instrument_id] = direction;
             last_stop_loss_price_ = stop_price;
         }
     } else {
         trailing_stop_by_instrument_.erase(tick.instrument_id);
-        trailing_direction_by_instrument_.erase(tick.instrument_id);
         initial_stop_by_instrument_.erase(tick.instrument_id);
         last_stop_loss_price_.reset();
     }
@@ -336,6 +337,9 @@ std::vector<SignalIntent> TrendStrategy::OnBacktestTick(const AtomicTickSnapshot
         last_take_profit_price_.reset();
         take_profit_by_instrument_.erase(tick.instrument_id);
     }
+
+    risk_runtime.direction = direction;
+    if (tick.ts_ns > risk_runtime.as_of_ns) risk_runtime.as_of_ns = tick.ts_ns;
 
     return EvaluateRiskSignals(ctx, tick.instrument_id, tick.last_price, tick.ts_ns);
 }
@@ -359,12 +363,21 @@ std::unordered_map<std::string, AtomicRiskPrices> TrendStrategy::RiskPricesByIns
     std::unordered_map<std::string, AtomicRiskPrices> prices;
     for (const auto& [instrument_id, stop_price] : trailing_stop_by_instrument_) {
         prices[instrument_id].trailing_stop = stop_price;
+        prices[instrument_id].effective_stop = stop_price;
+        prices[instrument_id].stop_kind = StrategyStopKind::kTrailing;
     }
     for (const auto& [instrument_id, stop_price] : initial_stop_by_instrument_) {
         prices[instrument_id].initial_stop = stop_price;
+        if (!prices[instrument_id].effective_stop.has_value()) {
+            prices[instrument_id].effective_stop = stop_price;
+            prices[instrument_id].stop_kind = StrategyStopKind::kInitial;
+        }
     }
     for (const auto& [instrument_id, take_price] : take_profit_by_instrument_) {
         prices[instrument_id].take_profit = take_price;
+    }
+    for (const auto& [instrument_id, runtime] : risk_runtime_by_instrument_) {
+        prices[instrument_id].as_of_ns = runtime.as_of_ns;
     }
     return prices;
 }

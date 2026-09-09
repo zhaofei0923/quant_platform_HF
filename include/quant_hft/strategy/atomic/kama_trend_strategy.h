@@ -40,6 +40,11 @@ class KamaTrendStrategy final : public ISubStrategy,
     bool LoadState(const AtomicState& state, std::string* error) override;
 
    private:
+    struct RiskRuntimeState {
+        int direction{0};
+        EpochNanos as_of_ns{0};
+    };
+
     int ClassifyDiff(double diff, double threshold) const;
     int ComputeOrderVolume(const AtomicStrategyContext& ctx, const std::string& instrument_id,
                            double atr_value) const;
@@ -79,7 +84,7 @@ class KamaTrendStrategy final : public ISubStrategy,
     double kama_window_sum_{0.0};
     double kama_window_sum_sq_{0.0};
     std::unordered_map<std::string, double> trailing_stop_by_instrument_;
-    std::unordered_map<std::string, int> trailing_direction_by_instrument_;
+    std::unordered_map<std::string, RiskRuntimeState> risk_runtime_by_instrument_;
     std::unordered_map<std::string, double> initial_stop_by_instrument_;
     std::unordered_map<std::string, double> take_profit_by_instrument_;
     std::optional<double> last_kama_;

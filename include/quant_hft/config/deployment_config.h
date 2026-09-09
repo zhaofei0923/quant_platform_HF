@@ -2,6 +2,7 @@
 
 #include <map>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "quant_hft/config/execution_profile.h"
@@ -28,6 +29,8 @@ struct ResolvedStrategyInstance {
     std::string parameter_set;
     std::string parameter_hash;
     std::string product_id;
+    // account_equity is allowed only for the sole instance of a physical account.
+    std::string capital_mode{"fixed"};
     double initial_capital{0.0};
     std::string state_namespace;
     StrategyExecutionProfile risk;
@@ -50,6 +53,9 @@ std::string ConfigContentSha256(const std::string& content);
 std::string ConfigParameterSha256(const ParameterSet& parameters);
 // Entry points must bind a resolved deployment to the exact statically linked package.
 bool VerifyDeploymentPackage(const DeploymentConfig& deployment, std::string* error);
+// Only fixed budgets become independent strategy capital books in the online host.
+std::unordered_map<std::string, double> FixedStrategyCapitalAllocations(
+    const DeploymentConfig& deployment, const std::string& account_ref);
 // Materializes the selected legacy mode once. It never changes source inputs.
 bool MigrateLegacyParameterSet(const std::string& path, const std::string& mode,
                                const std::string& parameter_id, const std::string& release,

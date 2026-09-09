@@ -198,6 +198,16 @@ bool VerifyDeploymentPackage(const DeploymentConfig& deployment, std::string* er
     return true;
 }
 
+std::unordered_map<std::string, double> FixedStrategyCapitalAllocations(
+    const DeploymentConfig& deployment, const std::string& account_ref) {
+    std::unordered_map<std::string, double> result;
+    for (const auto& instance : deployment.instances) {
+        if (instance.account_ref == account_ref && instance.capital_mode == "fixed")
+            result.emplace(instance.instance_id, instance.initial_capital);
+    }
+    return result;
+}
+
 bool LoadDeploymentConfig(const std::string& path, DeploymentConfig* out, std::string* error) {
     try {
         if (out == nullptr) throw std::runtime_error("null deployment output");
@@ -318,20 +328,42 @@ bool LoadDeploymentConfig(const std::string& path, DeploymentConfig* out, std::s
             resolved["accounts"][account.account_ref] = visible;
             result.accounts.emplace(account.account_ref, std::move(account));
         }
-        std::map<std::string, std::pair<std::string, double>> allocations;
+        struct Allocation {
+            std::string account_ref;
+            std::string mode;
+            double initial_capital{0.0};
+        };
+        std::map<std::string, Allocation> allocations;
+        std::map<std::string, std::size_t> allocation_counts;
+        std::set<std::string> account_equity_accounts;
         if (!root["capital_allocations"].IsMap())
             throw std::runtime_error("capital_allocations must be mapping");
         for (const auto& entry : root["capital_allocations"]) {
             const auto id = entry.first.as<std::string>();
             Identity(id);
-            Keys(entry.second, {"account_ref", "initial_capital"}, "capital allocation");
+            Keys(entry.second, {"account_ref", "mode", "initial_capital"}, "capital allocation");
             const auto account = Required(entry.second, "account_ref");
-            const double capital = Number(entry.second["initial_capital"], "initial_capital");
-            if (!result.accounts.count(account) || capital <= 0)
+            const auto mode = entry.second["mode"] ? Required(entry.second, "mode") : "fixed";
+            if (!result.accounts.count(account) || (mode != "fixed" && mode != "account_equity"))
                 throw std::runtime_error("invalid capital allocation");
-            allocations.emplace(id, std::make_pair(account, capital));
+            double capital = 0.0;
+            if (mode == "account_equity") {
+                if (entry.second["initial_capital"])
+                    throw std::runtime_error("account_equity forbids initial_capital");
+                account_equity_accounts.insert(account);
+            } else {
+                capital = Number(entry.second["initial_capital"], "initial_capital");
+                if (capital <= 0) throw std::runtime_error("invalid capital allocation");
+            }
+            ++allocation_counts[account];
+            allocations.emplace(id, Allocation{account, mode, capital});
         }
+        for (const auto& account : account_equity_accounts)
+            if (allocation_counts.at(account) != 1)
+                throw std::runtime_error(
+                    "account_equity requires one allocation; cannot mix account budgets");
         std::set<std::string> identities, used_allocations;
+        std::map<std::string, std::size_t> instance_counts;
         if (!root["instances"].IsSequence() || root["instances"].size() == 0)
             throw std::runtime_error("instances required");
         for (const auto& node : root["instances"]) {
@@ -353,10 +385,12 @@ bool LoadDeploymentConfig(const std::string& path, DeploymentConfig* out, std::s
                 throw std::runtime_error("instance/parameter strategy version mismatch");
             const auto allocation_ref = Required(node, "capital_allocation_ref");
             const auto& allocation = allocations.at(allocation_ref);
-            if (allocation.first != instance.account_ref ||
+            if (allocation.account_ref != instance.account_ref ||
                 !used_allocations.insert(allocation_ref).second)
                 throw std::runtime_error("allocation reused or belongs to another account");
-            instance.initial_capital = allocation.second;
+            instance.capital_mode = allocation.mode;
+            instance.initial_capital = allocation.initial_capital;
+            ++instance_counts[instance.account_ref];
             instance.risk = profiles.at(Required(node, "risk_profile_ref"));
             instance.composite = parameter.definition;
             instance.composite.run_type = account.environment == "simnow" ? "sim" : "live";
@@ -365,12 +399,19 @@ bool LoadDeploymentConfig(const std::string& path, DeploymentConfig* out, std::s
             instance.state_namespace = account.environment + "/" + account.broker_id + "/" +
                                        account.account_id + "/strategies/" + instance.instance_id;
             YAML::Node value = YAML::Clone(node);
-            value["initial_capital"] = instance.initial_capital;
+            value["capital_mode"] = instance.capital_mode;
+            if (instance.capital_mode == "fixed")
+                value["initial_capital"] = instance.initial_capital;
+            else
+                value["capital_source"] = "confirmed_broker_account_snapshot";
             value["parameter_hash"] = instance.parameter_hash;
             value["state_namespace"] = instance.state_namespace;
             value["parameters"] = DefinitionNode(parameter);
             value["risk"] = ProfileNode(instance.risk);
-            value["field_sources"]["initial_capital"] = "capital_allocations." + allocation_ref;
+            value["field_sources"]["capital_mode"] = "capital_allocations." + allocation_ref;
+            value["field_sources"]
+                 [instance.capital_mode == "fixed" ? "initial_capital" : "capital_source"] =
+                     "capital_allocations." + allocation_ref;
             value["field_sources"]["parameters"] = "parameter_sets." + instance.parameter_set;
             value["field_sources"]["risk"] = "risk_profiles." + Required(node, "risk_profile_ref");
             value["field_sources"]["identity"] =
@@ -378,6 +419,9 @@ bool LoadDeploymentConfig(const std::string& path, DeploymentConfig* out, std::s
             resolved["instances"].push_back(value);
             result.instances.push_back(std::move(instance));
         }
+        for (const auto& account : account_equity_accounts)
+            if (instance_counts[account] != 1)
+                throw std::runtime_error("account_equity requires exactly one strategy instance");
         resolved["package_version"] = result.package_version;
         resolved["package_sha256"] = result.package_hash;
         result.effective_hash = ConfigContentSha256(CanonicalJson(resolved));

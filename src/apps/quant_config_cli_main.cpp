@@ -98,15 +98,19 @@ int main(int argc, char** argv) {
             std::cout << deployment.resolved_json;
     } else if (command == "list") {
         std::cout << "account\tinstance\tstrategy_release\tparameter_set\tproduct/"
-                     "timeframe\tcapital\tstate_namespace\n";
+                     "timeframe\tcapital_mode\tcapital\tstate_namespace\n";
         for (const auto& instance : deployment.instances) {
             std::cout << instance.account_ref << '\t' << instance.instance_id << '\t'
                       << instance.strategy_release << '\t' << instance.parameter_set << '\t'
                       << instance.product_id << '/';
             for (const auto& sub : instance.composite.sub_strategies)
                 std::cout << sub.timeframe_minutes << "m,";
-            std::cout << '\t' << instance.initial_capital << '\t' << instance.state_namespace
-                      << '\n';
+            std::cout << '\t' << instance.capital_mode << '\t';
+            if (instance.capital_mode == "account_equity")
+                std::cout << "confirmed_broker_account_snapshot";
+            else
+                std::cout << instance.initial_capital;
+            std::cout << '\t' << instance.state_namespace << '\n';
         }
     } else if (command == "launch") {
         if (argc != 4) {

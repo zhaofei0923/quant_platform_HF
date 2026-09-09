@@ -130,6 +130,8 @@ TEST_F(DeploymentFixture, ResolvesDeterministicallyWithoutReadingCredentialConte
     EXPECT_EQ(first.resolved_json, second.resolved_json);
     EXPECT_EQ(first.instances.size(), 1U);
     EXPECT_EQ(first.instances[0].initial_capital, 25000);
+    EXPECT_EQ(first.instances[0].capital_mode, "fixed");
+    EXPECT_EQ(FixedStrategyCapitalAllocations(first, "a").at("instance"), 25000);
     EXPECT_EQ(first.resolved_json.find("not-for-resolved-output"), std::string::npos);
     fs::remove(directory / "secret.env");
     ASSERT_TRUE(Load(&second, &error)) << error;
@@ -232,6 +234,74 @@ TEST_F(DeploymentFixture, RejectsSchemaOutsidePackageManifest) {
     DeploymentConfig output;
     std::string error;
     EXPECT_FALSE(Load(&output, &error));
+}
+TEST_F(DeploymentFixture, ResolvesSingleAccountEquityWithoutInventingAnInitialBudget) {
+    auto allocation = root["capital_allocations"]["capital_a"];
+    allocation.remove("initial_capital");
+    allocation["mode"] = "account_equity";
+    DeploymentConfig output;
+    std::string error;
+    ASSERT_TRUE(Load(&output, &error)) << error;
+    ASSERT_EQ(output.instances.size(), 1U);
+    EXPECT_EQ(output.instances[0].capital_mode, "account_equity");
+    EXPECT_TRUE(FixedStrategyCapitalAllocations(output, "a").empty());
+    const auto resolved = YAML::Load(output.resolved_json);
+    EXPECT_FALSE(resolved["instances"][0]["initial_capital"]);
+    EXPECT_EQ(resolved["instances"][0]["capital_source"].as<std::string>(),
+              "confirmed_broker_account_snapshot");
+}
+TEST_F(DeploymentFixture, AccountEquityRejectsSpecifiedInitialCapitalAndUnknownMode) {
+    auto allocation = root["capital_allocations"]["capital_a"];
+    allocation["mode"] = "account_equity";
+    DeploymentConfig output;
+    std::string error;
+    EXPECT_FALSE(Load(&output, &error));
+    EXPECT_NE(error.find("forbids initial_capital"), std::string::npos);
+    allocation["mode"] = "broker_equity_typo";
+    EXPECT_FALSE(Load(&output, &error));
+}
+TEST_F(DeploymentFixture, AccountEquityRejectsMixedOrUnusedAllocationsForSameAccount) {
+    auto allocation = root["capital_allocations"]["capital_a"];
+    allocation.remove("initial_capital");
+    allocation["mode"] = "account_equity";
+    AddAllocation("unused_fixed", "a");
+    DeploymentConfig output;
+    std::string error;
+    EXPECT_FALSE(Load(&output, &error));
+    EXPECT_NE(error.find("cannot mix account budgets"), std::string::npos);
+    root["capital_allocations"]["unused_fixed"].remove("initial_capital");
+    root["capital_allocations"]["unused_fixed"]["mode"] = "account_equity";
+    EXPECT_FALSE(Load(&output, &error));
+}
+TEST_F(DeploymentFixture, AccountEquityRejectsTwoInstancesAndAnUnassignedAccount) {
+    auto allocation = root["capital_allocations"]["capital_a"];
+    allocation.remove("initial_capital");
+    allocation["mode"] = "account_equity";
+    AddInstance("other", "a", "capital_a");
+    DeploymentConfig output;
+    std::string error;
+    EXPECT_FALSE(Load(&output, &error));
+    EXPECT_NE(error.find("allocation reused"), std::string::npos);
+    root["instances"].remove(1);
+    AddAccount("b", "10002");
+    AddAllocation("unused_equity", "b");
+    root["capital_allocations"]["unused_equity"].remove("initial_capital");
+    root["capital_allocations"]["unused_equity"]["mode"] = "account_equity";
+    EXPECT_FALSE(Load(&output, &error));
+    EXPECT_NE(error.find("exactly one strategy instance"), std::string::npos);
+}
+TEST_F(DeploymentFixture, AccountEquityAndFixedModesRemainIsolatedAcrossPhysicalAccounts) {
+    root["capital_allocations"]["capital_a"].remove("initial_capital");
+    root["capital_allocations"]["capital_a"]["mode"] = "account_equity";
+    AddAccount("b", "10002");
+    AddAllocation("capital_b", "b");
+    root["capital_allocations"]["capital_b"]["mode"] = "fixed";
+    AddInstance("instance", "b", "capital_b");
+    DeploymentConfig output;
+    std::string error;
+    ASSERT_TRUE(Load(&output, &error)) << error;
+    EXPECT_TRUE(FixedStrategyCapitalAllocations(output, "a").empty());
+    EXPECT_EQ(FixedStrategyCapitalAllocations(output, "b").at("instance"), 25000);
 }
 }  // namespace
 }  // namespace quant_hft

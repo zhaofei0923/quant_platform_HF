@@ -1691,15 +1691,14 @@ int main(int argc, char** argv) {
         file_config.strategy_ids.clear();
         file_config.strategy_composite_config.clear();
         file_config.strategy_composite_config_map.clear();
-        file_config.strategy_initial_capital.clear();
+        file_config.strategy_initial_capital =
+            FixedStrategyCapitalAllocations(deployment, selected);
         file_config.strategy_risk_profiles.clear();
         file_config.product_ids.clear();
         for (const auto& instance : deployment.instances) {
             if (instance.account_ref != selected) continue;
             resolved_instances.emplace(instance.instance_id, instance);
             file_config.strategy_ids.push_back(instance.instance_id);
-            file_config.strategy_initial_capital.emplace(instance.instance_id,
-                                                         instance.initial_capital);
             auto profile = instance.risk;
             if (!account.risk.forbid_open_windows.empty()) {
                 if (!profile.forbid_open_windows.empty()) profile.forbid_open_windows += ',';
@@ -1716,7 +1715,10 @@ int main(int argc, char** argv) {
                                {"strategy_release", instance.strategy_release},
                                {"parameter_set", instance.parameter_set},
                                {"parameter_hash", instance.parameter_hash},
-                               {"initial_capital", std::to_string(instance.initial_capital)},
+                               {"capital_mode", instance.capital_mode},
+                               {"capital_source", instance.capital_mode == "account_equity"
+                                                      ? "confirmed_broker_account_snapshot"
+                                                      : std::to_string(instance.initial_capital)},
                                {"state_namespace", instance.state_namespace}});
         }
         if (resolved_instances.empty()) {
@@ -2164,13 +2166,15 @@ int main(int argc, char** argv) {
         resolve_instance_capital;
     StrategyEngineConfig strategy_engine_config;
     strategy_engine_config.queue_capacity = strategy_queue_capacity;
-    if (independent_strategy_books) {
-        trading_permission_controller.SetBlocked("strategy_capital_pending");
+    if (independent_strategy_books || !resolved_instances.empty()) {
         strategy_engine_config.owned_position_resolver =
             [&](const std::string& a, const std::string& i, std::vector<Position>* out,
                 std::string* e) {
                 return resolve_owned_positions && resolve_owned_positions(a, i, out, e);
             };
+    }
+    if (independent_strategy_books) {
+        trading_permission_controller.SetBlocked("strategy_capital_pending");
         strategy_engine_config.capital_snapshot_resolver =
             [&](const std::string& a, const std::string& i, TradingAccountSnapshot* out,
                 std::string* e) {
@@ -2283,7 +2287,8 @@ int main(int argc, char** argv) {
     }
     resolve_owned_positions = [&](const std::string& a, const std::string& i,
                                   std::vector<Position>* out, std::string* e) {
-        if (a != account_id || !file_config.strategy_initial_capital.count(i)) {
+        if (a != account_id ||
+            (!file_config.strategy_initial_capital.count(i) && !resolved_instances.count(i))) {
             if (e) *e = "unallocated strategy/account identity";
             return false;
         }
@@ -3784,6 +3789,34 @@ int main(int argc, char** argv) {
                                         ctp_ledger_reject_reason =
                                             "strategy_open_reservation:" + ctp_ledger_error;
                                 }
+                            }
+                        }
+                        // A sole account-equity instance retains the formal ownership and risk
+                        // gates. Its funds are frozen only in the authoritative account ledger.
+                        if (!independent_strategy_books && !resolved_instances.empty()) {
+                            std::vector<Position> owned;
+                            const auto profile =
+                                file_config.strategy_risk_profiles.find(intent.strategy_id);
+                            if (profile == file_config.strategy_risk_profiles.end() ||
+                                !resolve_owned_positions(account_id, intent.strategy_id, &owned,
+                                                         &ctp_ledger_error)) {
+                                ctp_ledger_reject_reason =
+                                    "account_equity_strategy_not_configured:" + ctp_ledger_error;
+                            } else {
+                                double equity = 0.0, margin = 0.0;
+                                {
+                                    std::lock_guard<std::mutex> lock(ctp_ledger_mutex);
+                                    equity = ctp_account_ledger.balance();
+                                    margin = ctp_account_ledger.current_margin() +
+                                             ctp_account_ledger.frozen_margin();
+                                }
+                                ctp_ledger_reject_reason = CheckIndependentStrategyOrder(
+                                    intent, owned,
+                                    order_manager->GetActiveOrdersByAccount(account_id),
+                                    profile->second, equity, margin,
+                                    CtpAccountLedger::ComputeOrderMargin(fund_inputs) +
+                                        CtpAccountLedger::ComputeOrderCommission(fund_inputs),
+                                    fund_inputs.volume_multiple, NowEpochNanos());
                             }
                         }
                         if (independent_strategy_books && intent.offset != OffsetFlag::kOpen &&

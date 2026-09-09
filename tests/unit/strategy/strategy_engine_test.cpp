@@ -1546,6 +1546,44 @@ TEST(StrategyEngineTest, IndependentInstancesReceiveOnlyOwnCapitalAndPositions) 
     EXPECT_EQ(views->quantities["A"], 2);
     EXPECT_EQ(views->quantities["B"], -3);
 }
+TEST(StrategyEngineTest, AccountEquityReceivesChangingBrokerBalanceAndRetainsOwnedPositions) {
+    auto views = std::make_shared<OwnedViews>();
+    const auto factory = UniqueFactoryName();
+    std::string error;
+    ASSERT_TRUE(StrategyRegistry::Instance().RegisterFactory(
+        factory, [views] { return std::make_unique<OwnedViewStrategy>(views); }, &error));
+    StrategyEngineConfig cfg;
+    cfg.owned_position_resolver = [](const std::string& account, const std::string& id,
+                                     std::vector<Position>* out, std::string*) {
+        Position position;
+        position.account_id = account;
+        position.strategy_id = id;
+        position.symbol = "hc2701";
+        position.short_qty = 1;
+        *out = {position};
+        return true;
+    };
+    // account_equity keeps ownership resolution but has no synthetic capital resolver.
+    ASSERT_FALSE(cfg.capital_snapshot_resolver);
+    StrategyEngine engine(cfg);
+    StrategyContext ctx;
+    ctx.account_id = "account_equity_test";
+    ctx.metadata["ownership_mode"] = "instance";
+    ASSERT_TRUE(engine.Start({"kama_candidate_hc"}, factory, ctx, &error)) << error;
+    TradingAccountSnapshot broker;
+    broker.account_id = ctx.account_id;
+    broker.balance = 201337.25;
+    ASSERT_TRUE(engine.EnqueueAccountSnapshot(broker));
+    ASSERT_TRUE(engine.WaitUntilDrained(1000));
+    EXPECT_DOUBLE_EQ(views->capital["kama_candidate_hc"], broker.balance);
+    broker.balance = 198425.75;
+    ASSERT_TRUE(engine.EnqueueAccountSnapshot(broker));
+    ASSERT_TRUE(engine.EnqueueReconcilePositions(ctx.account_id, {{"hc2701", 99}}, {}));
+    ASSERT_TRUE(engine.WaitUntilDrained(1000));
+    engine.Stop();
+    EXPECT_DOUBLE_EQ(views->capital["kama_candidate_hc"], broker.balance);
+    EXPECT_EQ(views->quantities["kama_candidate_hc"], -1);
+}
 }  // namespace
 }  // namespace quant_hft
 

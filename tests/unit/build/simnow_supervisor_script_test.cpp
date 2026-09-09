@@ -34,6 +34,17 @@ void WriteFile(const std::filesystem::path& path, const std::string& payload) {
     out << payload;
 }
 
+void WriteExecutable(const std::filesystem::path& path) {
+    WriteFile(path, "#!/usr/bin/env bash\nexit 0\n");
+    std::filesystem::permissions(
+        path,
+        std::filesystem::perms::owner_exec | std::filesystem::perms::owner_read |
+            std::filesystem::perms::owner_write | std::filesystem::perms::group_exec |
+            std::filesystem::perms::group_read | std::filesystem::perms::others_exec |
+            std::filesystem::perms::others_read,
+        std::filesystem::perm_options::replace);
+}
+
 std::string EscapeForShell(const std::string& text) {
     std::string escaped;
     escaped.reserve(text.size() + 8);
@@ -51,13 +62,33 @@ std::string EscapePathForShell(const std::filesystem::path& path) {
     return EscapeForShell(path.string());
 }
 
-std::string RunSupervisorDryRun(const std::string& suffix, const std::string& fake_now) {
+std::string StandardSessionCalendar() {
+    return "natural_date,session,trading_day,exchange,product\n"
+           "# product_scope=hc:SHFE\n"
+           "2026-05-15,night,2026-05-18,SHFE,hc\n"
+           "2026-09-07,day_am,2026-09-07,SHFE,hc\n"
+           "2026-09-07,day_pm,2026-09-07,SHFE,hc\n"
+           "2026-09-07,night,2026-09-08,SHFE,hc\n";
+}
+
+struct SupervisorDryRunResult {
+    int rc{0};
+    std::string output;
+};
+
+SupervisorDryRunResult RunSupervisorDryRun(
+    const std::string& suffix, const std::string& fake_now,
+    const std::string& calendar_payload = StandardSessionCalendar(), bool pass_calendar = true,
+    const std::string& windows =
+        "night=21:00-23:05,day_am=09:00-11:35,day_pm=13:30-15:20") {
     const auto temp_root = MakeTempDir(suffix);
     const auto env_file = temp_root / "simnow.env";
+    const auto calendar_file = temp_root / "session_calendar.csv";
     const auto output_file = temp_root / "dry_run.out";
     WriteFile(env_file, "# test env intentionally empty\n");
+    WriteFile(calendar_file, calendar_payload);
 
-    const std::string command =
+    std::string command =
         "SIMNOW_FAKE_NOW='" + EscapeForShell(fake_now) + "' " + "SIMNOW_LOCK_DIR='" +
         EscapePathForShell(temp_root / "locks") + "' " +
         "bash scripts/ops/supervise_simnow_trading.sh " + "--env-file '" +
@@ -68,12 +99,16 @@ std::string RunSupervisorDryRun(const std::string& suffix, const std::string& fa
         EscapePathForShell(temp_root / "reports") + "' " + "--export-root '" +
         EscapePathForShell(temp_root / "exports") + "' " + "--reconcile-root '" +
         EscapePathForShell(temp_root / "reconcile") + "' " +
-        "--windows 'night=20:50-02:35,day_am=08:50-11:35,day_pm=13:20-15:20' " +
-        "--no-eod --dry-run > '" + EscapePathForShell(output_file) + "' 2>&1";
+        "--windows '" + EscapeForShell(windows) + "' " +
+        "--prewarm-windows "
+        "'night=20:45-21:00,day_am=08:45-09:00,day_pm=13:25-13:30' ";
+    if (pass_calendar) {
+        command += "--session-calendar-file '" + EscapePathForShell(calendar_file) + "' ";
+    }
+    command += "--no-eod --dry-run > '" + EscapePathForShell(output_file) + "' 2>&1";
 
     const int rc = RunCommand(command);
-    EXPECT_EQ(rc, 0) << ReadFile(output_file);
-    return ReadFile(output_file);
+    return SupervisorDryRunResult{rc, ReadFile(output_file)};
 }
 
 std::string MonitorCommand(const std::filesystem::path& temp_root, const std::string& fake_now,
@@ -196,31 +231,289 @@ void WriteAllowedTraceFixture(const std::filesystem::path& root, int contract_ge
                   "\",\"client_order_id\":\"order-1\",\"status\":4,\"filled_volume\":0}\n");
 }
 
-TEST(SimnowSupervisorScriptTest, FridayNightMapsToNextAllowedTradingDay) {
-    const std::string output = RunSupervisorDryRun("friday_night", "2026-05-15 21:01:00");
+TEST(SimnowSupervisorScriptTest, FridayNightUsesExplicitCalendarTradingDay) {
+    const auto result = RunSupervisorDryRun("friday_night", "2026-05-15 21:01:00");
 
+    ASSERT_EQ(result.rc, 0) << result.output;
     EXPECT_NE(
-        output.find("[dry-run] decision=start_or_keep_alive session=night trading_day=20260518 "
-                    "range=20:50-02:35"),
+        result.output.find("[dry-run] decision=start_or_keep_alive session=night "
+                           "natural_date=20260515 trading_day=20260518 range=21:00-23:05"),
         std::string::npos)
-        << output;
+        << result.output;
 }
 
-TEST(SimnowSupervisorScriptTest, SaturdayEarlyMorningContinuesFridayNightSession) {
-    const std::string output = RunSupervisorDryRun("saturday_early", "2026-05-16 01:01:00");
+TEST(SimnowSupervisorScriptTest, NightSessionStopsBeforeSaturdayEarlyMorning) {
+    const auto result = RunSupervisorDryRun("saturday_early", "2026-05-16 01:01:00");
 
-    EXPECT_NE(
-        output.find("[dry-run] decision=start_or_keep_alive session=night trading_day=20260518 "
-                    "range=20:50-02:35"),
-        std::string::npos)
-        << output;
+    ASSERT_EQ(result.rc, 0) << result.output;
+    EXPECT_NE(result.output.find("[dry-run] decision=outside_trading_window"), std::string::npos)
+        << result.output;
 }
 
-TEST(SimnowSupervisorScriptTest, WeekendNightDoesNotStartANewSession) {
-    const std::string output = RunSupervisorDryRun("weekend_night", "2026-05-16 21:01:00");
+TEST(SimnowSupervisorScriptTest, LongNightSessionUsesPreviousNaturalDateAfterMidnight) {
+    const auto result = RunSupervisorDryRun(
+        "long_night_after_midnight", "2026-09-08 01:01:00", StandardSessionCalendar(), true,
+        "night=21:00-02:35,day_am=09:00-11:35,day_pm=13:30-15:20");
 
-    EXPECT_NE(output.find("[dry-run] decision=outside_trading_window"), std::string::npos)
+    ASSERT_EQ(result.rc, 0) << result.output;
+    EXPECT_NE(result.output.find("decision=start_or_keep_alive session=night "), std::string::npos)
+        << result.output;
+    EXPECT_NE(result.output.find("natural_date=20260907 trading_day=20260908 range=21:00-02:35"),
+              std::string::npos)
+        << result.output;
+}
+
+TEST(SimnowSupervisorScriptTest, CalendarOutOfCoverageFailsClosedForNewSession) {
+    const auto result = RunSupervisorDryRun("weekend_night", "2026-05-16 21:01:00");
+
+    EXPECT_NE(result.rc, 0) << result.output;
+    EXPECT_NE(result.output.find("decision=fail_closed"), std::string::npos) << result.output;
+    EXPECT_NE(result.output.find("reason=calendar_session_out_of_coverage"), std::string::npos)
+        << result.output;
+}
+
+TEST(SimnowSupervisorScriptTest, PrewarmStartsEngineBeforeSessionGateAllowsOpening) {
+    struct Case {
+        const char* suffix;
+        const char* fake_now;
+        const char* decision;
+        const char* range;
+        bool starts_engine;
+    };
+    const Case cases[] = {
+        {"day_prewarm", "2026-09-07 08:45:00",
+         "decision=prewarm_start_or_keep_alive session=day_am", "range=08:45-09:00", true},
+        {"day_start", "2026-09-07 09:00:00", "decision=start_or_keep_alive session=day_am",
+         "range=09:00-11:35", true},
+        {"day_stop", "2026-09-07 11:35:00", "decision=outside_trading_window", "", false},
+        {"pm_prewarm", "2026-09-07 13:25:00",
+         "decision=prewarm_start_or_keep_alive session=day_pm", "range=13:25-13:30", true},
+        {"pm_start", "2026-09-07 13:30:00", "decision=start_or_keep_alive session=day_pm",
+         "range=13:30-15:20", true},
+        {"pm_stop", "2026-09-07 15:20:00", "decision=outside_trading_window", "", false},
+        {"night_prewarm", "2026-09-07 20:45:00",
+         "decision=prewarm_start_or_keep_alive session=night", "range=20:45-21:00", true},
+        {"night_start", "2026-09-07 21:00:00",
+         "decision=start_or_keep_alive session=night", "range=21:00-23:05", true},
+        {"night_stop", "2026-09-07 23:05:00", "decision=outside_trading_window", "", false},
+    };
+
+    for (const auto& test_case : cases) {
+        const auto result = RunSupervisorDryRun(test_case.suffix, test_case.fake_now);
+        ASSERT_EQ(result.rc, 0) << test_case.suffix << "\n" << result.output;
+        EXPECT_NE(result.output.find(test_case.decision), std::string::npos)
+            << test_case.suffix << "\n"
+            << result.output;
+        if (test_case.range[0] != '\0') {
+            EXPECT_NE(result.output.find(test_case.range), std::string::npos)
+                << test_case.suffix << "\n"
+                << result.output;
+        }
+        EXPECT_EQ(result.output.find("[dry-run] start:") != std::string::npos,
+                  test_case.starts_engine)
+            << test_case.suffix << "\n"
+            << result.output;
+    }
+}
+
+TEST(SimnowSupervisorScriptTest, ActiveStartAlwaysKeepsSafeProbe) {
+    const auto result = RunSupervisorDryRun("active_safe_probe", "2026-09-07 09:00:00");
+
+    ASSERT_EQ(result.rc, 0) << result.output;
+    EXPECT_NE(result.output.find("[dry-run] start:"), std::string::npos) << result.output;
+    EXPECT_NE(result.output.find("--probe-seconds"), std::string::npos) << result.output;
+    EXPECT_EQ(result.output.find("--skip-probe"), std::string::npos) << result.output;
+}
+
+TEST(SimnowSupervisorScriptTest, PrewarmPersistsAuthorizationAndStartsCoreInCloseOnlyWindow) {
+    const auto root = MakeTempDir("local_prewarm");
+    const auto env_file = root / "simnow.env";
+    const auto calendar_file = root / "session_calendar.csv";
+    const auto build_dir = root / "build-real-server";
+    const auto start_script = root / "start_simnow_trading.sh";
+    const auto output_file = root / "prewarm.out";
+    WriteFile(env_file, "# test env intentionally empty\n");
+    WriteFile(calendar_file,
+              "natural_date,session,trading_day,exchange,product\n"
+              "# product_scope=hc:SHFE\n"
+              "2026-09-07,day_am,2026-09-07,SHFE,hc\n");
+    WriteExecutable(build_dir / "core_engine");
+    WriteExecutable(build_dir / "simnow_probe");
+    WriteExecutable(start_script);
+
+    const std::string command =
+        "SIMNOW_FAKE_NOW='2026-09-07 08:45:00' SIMNOW_RESTART_DELAY_SECONDS=1 "
+        "SIMNOW_START_SCRIPT='" +
+        EscapePathForShell(start_script) + "' SIMNOW_LOCK_DIR='" +
+        EscapePathForShell(root / "locks") +
+        "' bash scripts/ops/supervise_simnow_trading.sh --env-file '" +
+        EscapePathForShell(env_file) + "' --build-dir '" + EscapePathForShell(build_dir) +
+        "' --run-root '" + EscapePathForShell(root / "runs") + "' --market-data-dir '" +
+        EscapePathForShell(root / "market") + "' --wal-file '" +
+        EscapePathForShell(root / "wal" / "events.wal") + "' --report-root '" +
+        EscapePathForShell(root / "reports") + "' --export-root '" +
+        EscapePathForShell(root / "exports") + "' --reconcile-root '" +
+        EscapePathForShell(root / "reconcile") + "' --session-calendar-file '" +
+        EscapePathForShell(calendar_file) +
+        "' --min-free-mb 1 --no-eod --once > '" + EscapePathForShell(output_file) +
+        "' 2>&1";
+
+    ASSERT_EQ(RunCommand(command), 0) << ReadFile(output_file);
+    const auto marker = root / "runs" / "prewarm" / "20260907.day_am.20260907.ok";
+    ASSERT_TRUE(std::filesystem::exists(marker)) << ReadFile(output_file);
+    const std::string marker_payload = ReadFile(marker);
+    EXPECT_NE(marker_payload.find("product_scope=hc:SHFE"), std::string::npos) << marker_payload;
+    EXPECT_NE(marker_payload.find("local_checks=passed"), std::string::npos) << marker_payload;
+    EXPECT_NE(ReadFile(output_file).find("[step] starting session=day_am"), std::string::npos)
+        << ReadFile(output_file);
+}
+
+TEST(SimnowSupervisorScriptTest, ColdStartDiscardsStaleCorePidWithoutFalseCrashAlert) {
+    const auto root = MakeTempDir("stale_core_pid");
+    const auto env_file = root / "simnow.env";
+    const auto config_file = root / "ctp_sim_trade_hc.yaml";
+    const auto calendar_file = root / "session_calendar.csv";
+    const auto build_dir = root / "build-real-server";
+    const auto start_script = root / "start_simnow_trading.sh";
+    const auto output_file = root / "cold_start.out";
+    const auto current_pid_file = root / "runs" / "current_core_engine.pid";
+    constexpr const char* kStalePid = "2147483646";
+
+    WriteFile(env_file, "# test env intentionally empty\n");
+    WriteFile(config_file, "settlement_confirm_required: true\n");
+    WriteFile(calendar_file,
+              "natural_date,session,trading_day,exchange,product\n"
+              "# product_scope=hc:SHFE\n"
+              "2026-09-07,day_am,2026-09-07,SHFE,hc\n");
+    WriteExecutable(build_dir / "core_engine");
+    WriteExecutable(build_dir / "simnow_probe");
+    WriteExecutable(start_script);
+    WriteFile(current_pid_file, std::string(kStalePid) + "\n");
+
+    const std::string command =
+        "SIMNOW_FAKE_NOW='2026-09-07 09:00:00' SIMNOW_LOCK_DIR='" +
+        EscapePathForShell(root / "locks") + "' SIMNOW_START_SCRIPT='" +
+        EscapePathForShell(start_script) + "' SIMNOW_RESTART_DELAY_SECONDS=1 " +
+        "bash scripts/ops/supervise_simnow_trading.sh --env-file '" +
+        EscapePathForShell(env_file) + "' --config '" + EscapePathForShell(config_file) +
+        "' --build-dir '" + EscapePathForShell(build_dir) + "' --run-root '" +
+        EscapePathForShell(root / "runs") + "' --market-data-dir '" +
+        EscapePathForShell(root / "market") + "' --wal-file '" +
+        EscapePathForShell(root / "wal" / "events.wal") + "' --report-root '" +
+        EscapePathForShell(root / "reports") + "' --export-root '" +
+        EscapePathForShell(root / "exports") + "' --reconcile-root '" +
+        EscapePathForShell(root / "reconcile") + "' --session-calendar-file '" +
+        EscapePathForShell(calendar_file) + "' --min-free-mb 1 --no-eod --once > '" +
+        EscapePathForShell(output_file) + "' 2>&1";
+
+    ASSERT_EQ(RunCommand(command), 0) << ReadFile(output_file);
+    const std::string output = ReadFile(output_file);
+    EXPECT_NE(output.find("[step] starting session=day_am"), std::string::npos) << output;
+    EXPECT_EQ(output.find(std::string("[alert:critical] core_engine pid=") + kStalePid),
+              std::string::npos)
         << output;
+    EXPECT_FALSE(std::filesystem::exists(current_pid_file)) << output;
+}
+
+TEST(SimnowSupervisorScriptTest, MissingCalendarFailsClosedForNewSession) {
+    const auto result =
+        RunSupervisorDryRun("missing_calendar", "2026-09-07 09:00:00", "", false);
+
+    EXPECT_NE(result.rc, 0) << result.output;
+    EXPECT_NE(result.output.find("decision=fail_closed"), std::string::npos) << result.output;
+    EXPECT_NE(result.output.find("reason=calendar_file_missing"), std::string::npos)
+        << result.output;
+}
+
+TEST(SimnowSupervisorScriptTest, InvalidCalendarFailsClosedForNewSession) {
+    const auto result = RunSupervisorDryRun(
+        "invalid_calendar", "2026-09-07 09:00:00",
+        "natural_date,session,trading_day,exchange_id,product\n"
+        "2026-09-07,day_am,2026-09-07,SHFE,hc\n");
+
+    EXPECT_NE(result.rc, 0) << result.output;
+    EXPECT_NE(result.output.find("reason=calendar_header_invalid"), std::string::npos)
+        << result.output;
+}
+
+TEST(SimnowSupervisorScriptTest, IncompleteHcShfeCalendarGroupFailsClosed) {
+    const auto result = RunSupervisorDryRun(
+        "incomplete_hc_group", "2026-09-07 09:00:00",
+        "natural_date,session,trading_day,exchange,product\n"
+        "# product_scope=hc:SHFE,c:DCE\n"
+        "2026-09-07,day_am,2026-09-07,DCE,c\n");
+
+    EXPECT_NE(result.rc, 0) << result.output;
+    EXPECT_NE(result.output.find("reason=calendar_group_incomplete:required=hc:SHFE"),
+              std::string::npos)
+        << result.output;
+}
+
+TEST(SimnowSupervisorScriptTest, ConfiguredMultiProductCalendarRequiresEveryScopeMember) {
+    const std::string calendar =
+        "natural_date,session,trading_day,exchange,product\n"
+        "# product_scope=hc:SHFE,c:DCE\n"
+        "2026-09-07,day_am,2026-09-07,SHFE,hc\n"
+        "2026-09-07,day_am,2026-09-07,DCE,c\n";
+    const auto complete = RunSupervisorDryRun(
+        "complete_multi_product", "2026-09-07 09:00:00", calendar);
+    ASSERT_EQ(complete.rc, 0) << complete.output;
+    EXPECT_NE(complete.output.find("product_scope=hc:SHFE,c:DCE"), std::string::npos)
+        << complete.output;
+
+    const auto incomplete = RunSupervisorDryRun(
+        "incomplete_multi_product", "2026-09-07 09:00:00",
+        "natural_date,session,trading_day,exchange,product\n"
+        "# product_scope=hc:SHFE,c:DCE\n"
+        "2026-09-07,day_am,2026-09-07,SHFE,hc\n");
+    EXPECT_NE(incomplete.rc, 0) << incomplete.output;
+    EXPECT_NE(incomplete.output.find("reason=calendar_group_incomplete:required=c:DCE"),
+              std::string::npos)
+        << incomplete.output;
+}
+
+TEST(SimnowSupervisorScriptTest, NightSessionScopeExcludesConfiguredNoNightProduct) {
+    const std::string calendar =
+        "natural_date,session,trading_day,exchange,product\n"
+        "# product_scope=hc:SHFE,si:GFEX\n"
+        "# session_scope.night=hc:SHFE\n"
+        "2026-09-07,night,2026-09-08,SHFE,hc\n";
+    const auto result =
+        RunSupervisorDryRun("mixed_night_scope", "2026-09-07 21:01:00", calendar);
+
+    ASSERT_EQ(result.rc, 0) << result.output;
+    EXPECT_NE(result.output.find("decision=start_or_keep_alive session=night"), std::string::npos)
+        << result.output;
+    EXPECT_NE(result.output.find("trading_day=20260908"), std::string::npos) << result.output;
+}
+
+TEST(SimnowSupervisorScriptTest, NightSessionScopeRejectsNoNightProductRow) {
+    const std::string calendar =
+        "natural_date,session,trading_day,exchange,product\n"
+        "# product_scope=hc:SHFE,si:GFEX\n"
+        "# session_scope.night=hc:SHFE\n"
+        "2026-09-07,night,2026-09-08,SHFE,hc\n"
+        "2026-09-07,night,2026-09-08,GFEX,si\n";
+    const auto result =
+        RunSupervisorDryRun("invalid_no_night_row", "2026-09-07 21:01:00", calendar);
+
+    EXPECT_NE(result.rc, 0) << result.output;
+    EXPECT_NE(result.output.find("reason=calendar_product_scope_mismatch"), std::string::npos)
+        << result.output;
+}
+
+TEST(SimnowSupervisorScriptTest, LegacyCalendarStillRequiresEveryProductAtNight) {
+    const std::string calendar =
+        "natural_date,session,trading_day,exchange,product\n"
+        "# product_scope=hc:SHFE,si:GFEX\n"
+        "2026-09-07,night,2026-09-08,SHFE,hc\n";
+    const auto result =
+        RunSupervisorDryRun("legacy_mixed_night", "2026-09-07 21:01:00", calendar);
+
+    EXPECT_NE(result.rc, 0) << result.output;
+    EXPECT_NE(result.output.find("reason=calendar_group_incomplete:required=si:GFEX"),
+              std::string::npos)
+        << result.output;
 }
 
 TEST(SimnowSupervisorScriptTest, SignalMonitorHeartbeatIsSessionAwareWhenCoreIsStopped) {
@@ -441,6 +734,42 @@ TEST(SimnowSupervisorScriptTest, SettlementDryRunDoesNotFabricateEvidence) {
     EXPECT_FALSE(std::filesystem::exists(evidence_file));
     EXPECT_FALSE(std::filesystem::exists(diff_file));
     EXPECT_NE(ReadFile(output_file).find("--strict-order-trade-backfill"), std::string::npos);
+}
+
+TEST(SimnowSupervisorScriptTest, NewEpochSkipsEndOfDayBeforeItsFirstTradingDay) {
+    const auto root = MakeTempDir("epoch_eod_skip");
+    const auto env_file = root / "empty.env";
+    const auto calendar_file = root / "calendar.csv";
+    const auto output_file = root / "supervisor.out";
+    WriteFile(env_file, "# intentionally empty\n");
+    WriteFile(calendar_file, StandardSessionCalendar());
+    const std::string command =
+        "SIMNOW_FAKE_NOW='2026-09-07 17:00:00' "
+        "SIMNOW_EPOCH_FIRST_TRADING_DAY=20260908 SIMNOW_LOCK_DIR='" +
+        EscapePathForShell(root / "locks") +
+        "' bash scripts/ops/supervise_simnow_trading.sh --env-file '" +
+        EscapePathForShell(env_file) + "' --run-root '" +
+        EscapePathForShell(root / "runs") + "' --market-data-dir '" +
+        EscapePathForShell(root / "market") + "' --wal-file '" +
+        EscapePathForShell(root / "wal" / "events.wal") + "' --report-root '" +
+        EscapePathForShell(root / "reports") + "' --export-root '" +
+        EscapePathForShell(root / "exports") + "' --reconcile-root '" +
+        EscapePathForShell(root / "reconcile") + "' --session-calendar-file '" +
+        EscapePathForShell(calendar_file) +
+        "' --product-scope hc:SHFE --min-free-mb 1 --dry-run > '" +
+        EscapePathForShell(output_file) + "' 2>&1";
+
+    ASSERT_EQ(RunCommand(command), 0) << ReadFile(output_file);
+    EXPECT_NE(ReadFile(output_file).find("eod_due=false"), std::string::npos)
+        << ReadFile(output_file);
+}
+
+TEST(SimnowSupervisorScriptTest, PrewarmAndActiveUseSeparateRestartBudgets) {
+    const auto supervisor = ReadFile("scripts/ops/supervise_simnow_trading.sh");
+    EXPECT_NE(supervisor.find(
+                  "session_key=\"${trading_day}.${session_label}.${natural_date}.${phase}\""),
+              std::string::npos)
+        << supervisor;
 }
 
 TEST(SimnowSupervisorScriptTest, IndependentSignalMonitorUnitRestartsAlways) {

@@ -65,6 +65,7 @@ struct FixturePaths {
     std::filesystem::path root;
     std::filesystem::path env_file;
     std::filesystem::path config_file;
+    std::filesystem::path calendar_file;
     std::filesystem::path build_dir;
     std::filesystem::path run_root;
     std::filesystem::path market_dir;
@@ -80,6 +81,7 @@ FixturePaths MakeFixture(const std::string& suffix) {
     paths.root = MakeTempDir(suffix);
     paths.env_file = paths.root / "simnow.env";
     paths.config_file = paths.root / "ctp_sim_trade_candidates.yaml";
+    paths.calendar_file = paths.root / "session_calendar.csv";
     paths.build_dir = paths.root / "build-gcc";
     paths.run_root = paths.root / "runs";
     paths.market_dir = paths.root / "market";
@@ -103,7 +105,19 @@ FixturePaths MakeFixture(const std::string& suffix) {
               "SIMNOW_TRADING_WINDOWS=night=20:50-02:35,day_am=08:50-11:35,day_pm=13:20-15:20\n"
               "SIMNOW_PROBE_SECONDS=1\n"
               "SIMNOW_PROBE_TIMEOUT_SECONDS=2\n"
-              "SIMNOW_INSTRUMENT_TIMEOUT_SECONDS=1\n");
+              "SIMNOW_INSTRUMENT_TIMEOUT_SECONDS=1\n"
+              "SIMNOW_PRODUCT_SCOPE=c:DCE,hc:SHFE\n"
+              "SIMNOW_SESSION_CALENDAR_FILE='" +
+                  EscapePathForShell(paths.calendar_file) + "'\n");
+    WriteFile(paths.calendar_file,
+              "natural_date,session,trading_day,exchange,product\n"
+              "# product_scope=c:DCE,hc:SHFE\n"
+              "2026-05-18,day_am,2026-05-18,DCE,c\n"
+              "2026-05-18,day_am,2026-05-18,SHFE,hc\n"
+              "2026-05-18,day_pm,2026-05-18,DCE,c\n"
+              "2026-05-18,day_pm,2026-05-18,SHFE,hc\n"
+              "2026-05-18,night,2026-05-19,DCE,c\n"
+              "2026-05-18,night,2026-05-19,SHFE,hc\n");
     WriteFile(paths.config_file,
               "ctp:\n"
               "  product_ids: \"c,hc\"\n");
@@ -132,7 +146,9 @@ TEST(SimnowPreflightScriptTest, PrestartLocalChecksPassWithoutRealProbe) {
     const auto paths = MakeFixture("prestart");
     const auto output_file = paths.root / "prestart.out";
 
-    const std::string command = "bash scripts/ops/run_simnow_preflight_check.sh --phase prestart" +
+    // Pin schedule_now without overriding the individual schedule-check timestamps.
+    const std::string command = "SIMNOW_FAKE_NOW='2026-05-18 09:00:00' "
+                                "bash scripts/ops/run_simnow_preflight_check.sh --phase prestart" +
                                 CommonArgs(paths) +
                                 " --skip-build --skip-gates --skip-tests --skip-probe > '" +
                                 EscapePathForShell(output_file) + "' 2>&1";

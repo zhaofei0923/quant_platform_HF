@@ -1,10 +1,14 @@
 #include "quant_hft/runtime/runtime_paths.h"
 
+#include <fcntl.h>
 #include <gtest/gtest.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 
 #include "quant_hft/core/ctp_config_loader.h"
 
@@ -74,6 +78,51 @@ TEST_F(RuntimePathsTest, ConflictingOverridesAndUnsafeIdentityFailBeforeCreating
     options.legacy_simnow_wal_file.clear();
     options.instance = "../other";
     EXPECT_FALSE(ResolveRuntimePaths(config, options, &paths, &error));
+    EXPECT_FALSE(std::filesystem::exists(options.runtime_root));
+}
+
+TEST_F(RuntimePathsTest, CliResolvesFormalConnectionWithoutLegacyStrategyDefinition) {
+    const auto connection = root / "connection.yaml";
+    std::ofstream(connection) << "ctp:\n"
+                                 "  environment: simnow\n"
+                                 "  enable_real_api: true\n"
+                                 "  is_production_mode: false\n"
+                                 "  broker_id: b\n"
+                                 "  user_id: a\n"
+                                 "  investor_id: a\n"
+                                 "  account_id: a\n"
+                                 "  md_front: tcp://127.0.0.1:1\n"
+                                 "  td_front: tcp://127.0.0.1:2\n"
+                                 "  strategy_factory: composite\n"
+                                 "  password: ${QUANT_PATHS_TEST_SECRET}\n";
+    const auto binary =
+        std::filesystem::canonical("/proc/self/exe").parent_path() / "runtime_paths_cli";
+    ASSERT_TRUE(std::filesystem::is_regular_file(binary));
+    const auto output_path = root / "paths.txt";
+    const pid_t child = ::fork();
+    ASSERT_GE(child, 0);
+    if (child == 0) {
+        ::clearenv();
+        ::setenv("QUANT_HFT_RUNTIME_ROOT", options.runtime_root.c_str(), 1);
+        ::setenv("QUANT_PATHS_TEST_SECRET", "synthetic-test-secret", 1);
+        const int output = ::open(output_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        if (output < 0 || ::dup2(output, STDOUT_FILENO) < 0 || ::dup2(output, STDERR_FILENO) < 0)
+            ::_exit(126);
+        ::close(output);
+        ::execl(binary.c_str(), binary.c_str(), "--config", connection.c_str(), nullptr);
+        ::_exit(127);
+    }
+    int status = 0;
+    ASSERT_EQ(::waitpid(child, &status, 0), child);
+    std::ifstream input(output_path);
+    const std::string output((std::istreambuf_iterator<char>(input)), {});
+    ASSERT_TRUE(WIFEXITED(status)) << output;
+    ASSERT_EQ(WEXITSTATUS(status), 0) << output;
+    EXPECT_NE(output.find("recovery_root=" + options.runtime_root + "/simnow/b/a/default\n"),
+              std::string::npos);
+    EXPECT_NE(output.find("wal_file="), std::string::npos);
+    EXPECT_EQ(output.find("synthetic-test-secret"), std::string::npos);
+    EXPECT_EQ(output.find("password"), std::string::npos);
     EXPECT_FALSE(std::filesystem::exists(options.runtime_root));
 }
 }  // namespace

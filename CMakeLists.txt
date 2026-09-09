@@ -333,6 +333,7 @@ if(QUANT_HFT_BUILD_TESTS)
     target_link_libraries(account_execution_scheduler_test PRIVATE quant_hft_online_runtime quant_hft_test_bootstrap)
     add_executable(runtime_paths_test tests/unit/core/runtime_paths_test.cpp)
     target_link_libraries(runtime_paths_test PRIVATE quant_hft_online_runtime quant_hft_test_bootstrap)
+    add_dependencies(runtime_paths_test runtime_paths_cli)
 
     add_executable(runtime_identity_test tests/unit/core/runtime_identity_test.cpp)
     target_link_libraries(runtime_identity_test PRIVATE quant_hft_online_runtime quant_hft_test_bootstrap)

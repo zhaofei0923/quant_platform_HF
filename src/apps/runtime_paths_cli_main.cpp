@@ -1,9 +1,9 @@
-#include "quant_hft/core/host_adapters/host_clock.h"
-#include "quant_hft/core/host_adapters/filesystem_configuration_reader.h"
 #include <iostream>
 #include <string>
 
 #include "quant_hft/core/ctp_config_loader.h"
+#include "quant_hft/core/host_adapters/filesystem_configuration_reader.h"
+#include "quant_hft/core/host_adapters/host_clock.h"
 #include "quant_hft/runtime/runtime_paths.h"
 
 int main(int argc, char** argv) {
@@ -16,7 +16,10 @@ int main(int argc, char** argv) {
     quant_hft::CtpFileConfig config;
     quant_hft::RuntimePaths paths;
     std::string error;
-    if (!quant_hft::CtpConfigLoader::LoadFromYaml(argv[2], &config, &error) ||
+    // Path inspection does not launch strategies; formal definitions belong to deployment.
+    quant_hft::CtpConfigLoadOptions load_options;
+    load_options.defer_strategy_definitions_to_deployment = true;
+    if (!quant_hft::CtpConfigLoader::LoadFromYaml(argv[2], &config, &error, load_options) ||
         !quant_hft::ResolveRuntimePaths(config, quant_hft::RuntimePathOptionsFromEnvironment(),
                                         &paths, &error)) {
         std::cerr << "runtime_paths_cli: " << error << '\n';

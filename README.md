@@ -1,6 +1,6 @@
 # quant_platform_HF — 在线交易宿主
 
-本项目负责 SimNow/实盘连接、一个账户一个进程、执行与账户风控、策略经济账与柜台实际账、持久化恢复和只读监控。回测研究在独立 Git 项目 `quant_research`；算法、自研指标及纯计算规则由独立 Git 项目 `quant_strategies` 发布。迁移在隔离工作树进行，原运行服务未升级。
+本项目负责 SimNow/实盘连接、一个账户一个进程、执行与账户风控、策略经济账与柜台实际账、持久化恢复和只读监控。回测研究在独立 Git 项目 `quant_research`；算法、自研指标及纯计算规则由独立 Git 项目 `quant_strategies` 发布。迁移在隔离工作树进行；腾讯云单账户HC候选服务已部署，实际运行验收状态见[部署记录](docs/results/tencent_simnow_split_deployment.md)。
 
 ## 构建与依赖
 
@@ -26,7 +26,7 @@ build/quant_config_cli list /restricted/deployment.yaml
 build/quant_config_cli launch /restricted/deployment.yaml simnow_a
 ```
 
-`launch` 是实际启动命令；本次实现验证不自动调用它。每次只启动一个明确账户，凭据文件须为当前用户所有且权限0600，内容只允许CTP环境变量赋值。工具不通过shell执行凭据文件。`validate/resolve/list`不读取凭据内容。
+`launch` 是实际启动命令；SimNow会话运维使用 `quant_config_cli supervise` 或发布包的 `run_packaged_supervisor.sh`，保留会话预热、启停与日结。每次只启动一个明确账户，凭据文件须为当前用户所有且权限0600，内容只允许CTP环境变量赋值。工具不通过shell执行凭据文件。`validate/resolve/list`不读取凭据内容。
 
 同一账户可运行同品种多个独立实例。意图、委托、成交、资金及状态以实例归属；组合内部component只标识信号来源。对手方向不净额合并，不自动撤销其他实例委托。未知归属、缺少资金或核算规则时开仓被阻止。
 

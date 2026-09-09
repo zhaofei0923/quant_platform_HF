@@ -4,7 +4,7 @@
 
 迁移隔离工作树：`/home/kevin/worktrees/quant_platform_HF-split`；研究仓：`/home/kevin/quant_research`；策略仓：`/home/kevin/quant_strategies`。三者独立Git、构建、测试、配置和文档。两宿主只消费同一个已安装静态策略包。
 
-基线来自原工作树有效内容，包含原有未提交源码变更，冻结提交为a211023；原始HEAD为15909d4。文件SHA/排除项见 `/home/kevin/quant_split_evidence/20260909/baseline.json`，路径归属见 `migration/path_mapping.json`。未复制凭据、SDK、运行状态及历史数据；没有升级现有服务。
+基线来自原工作树有效内容，包含原有未提交源码变更，冻结提交为a211023；原始HEAD为15909d4。文件SHA/排除项见 `/home/kevin/quant_split_evidence/20260909/baseline.json`，路径归属见 `migration/path_mapping.json`。源码基线快照未混入凭据、SDK、运行状态及历史数据。后续经用户授权完成腾讯云候选部署，独立运行数据迁移及实际验收状态见[部署记录](../results/tencent_simnow_split_deployment.md)。
 
 全量构建还发现原目录的 `tests/unit/build` 被旧忽略规则遮蔽：六个Shell测试及两个已修改C++测试未进入首次快照。已按原文件逐字保存补充基线提交，独立记录发现时间与SHA；见同证据目录的 `baseline_addendum_commit.json`、`baseline_addendum_verification.json`。其余934项快照源码与原目录逐项复核一致，原HEAD未变化。
 
@@ -21,7 +21,7 @@
 
 在线CLI和core_engine还将部署manifest与编译时绑定的静态包校验和比较。即使版本号相同，二进制与部署引用不同包也会拒绝启动。文件SHA用于验证来源字节；最终参数hash来自补齐默认值后的规范参数，与文件换行及YAML排版无关。
 
-账户进程使用 `scripts/ops/run_account_deployment.sh` 或 `infra/systemd/quant-hft-account@.service`。仓库外的账户环境文件只填写 `QUANT_HFT_BIN_DIR`、`QUANT_HFT_DEPLOYMENT_FILE`，账户引用由systemd实例名提供；密码由部署清单的受限credential_ref读取。`--check-only`只解析和列出配置。旧Tencent脚本名仅转到这一入口，不再解析旧universe CSV或策略子配置。现有服务器服务没有改动。
+账户进程使用 `scripts/ops/run_account_deployment.sh` 或 `infra/systemd/quant-hft-account@.service`。密码由部署清单的受限credential_ref读取。SimNow会话部署使用发布包 `run_packaged_supervisor.sh` 和 `quant_config_cli supervise`，仓库外环境文件指定账户引用、部署清单、数据服务、日历和会话调度；不读取旧混合.env或旧universe策略映射。`--check-only`只校验配置和调度，不连接柜台。腾讯云部署已经启用新监督服务，旧服务保留禁用供受控回滚。
 
 每个参数集用独立ID和算法版本；参数变更发布新参数文件，不需要重新编译算法。算法静态包升级必须重新构建两宿主。参数schema或状态不兼容在启动前阻止恢复，不能丢弃已有状态后自动开仓。
 

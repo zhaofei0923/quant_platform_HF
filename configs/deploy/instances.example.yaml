@@ -2,20 +2,20 @@
 {
   "schema_version": 1,
   "package": {
-    "version": "1.0.0",
+    "version": "1.1.0",
     "manifest": {
-      "path": "/home/kevin/quant_packages/1.0.0/share/quant_strategies/1.0.0/manifest.json",
-      "sha256": "c13b174e0aed50002c85c61026613d1937ac554255d3ae6f203159fd9fef6cd4"
+      "path": "/home/kevin/quant_packages/1.1.0/share/quant_strategies/1.1.0/manifest.json",
+      "sha256": "5b5da646de1d0217cbc9388b892f547b026ca134bcbb5f32db0604d65dc9c1be"
     },
     "parameter_schema": {
-      "path": "/home/kevin/quant_packages/1.0.0/share/quant_strategies/1.0.0/schemas/atomic_parameters.yaml",
+      "path": "/home/kevin/quant_packages/1.1.0/share/quant_strategies/1.1.0/schemas/atomic_parameters.yaml",
       "sha256": "1e684f40ae67b8a6d490c6f4b8adae0539822b50a275998e6a6855b68e9545d5"
     }
   },
   "parameter_sets": {
     "hc_5m_v001": {
-      "path": "/home/kevin/quant_packages/1.0.0/share/quant_strategies/1.0.0/parameter_sets/hc_5m_v001.yaml",
-      "sha256": "60362080b3e0cc987829873a09af8556fbc1648bffd874b5c1c4ade62dacf8d5"
+      "path": "/home/kevin/quant_packages/1.1.0/share/quant_strategies/1.1.0/parameter_sets/hc_5m_v001.yaml",
+      "sha256": "bda406e75891d1a1277cebf2200e0bf354b97017f1039dff660b0a0b2781bc76"
     }
   },
   "accounts": {
@@ -72,7 +72,7 @@
     {
       "instance_id": "hc_kama_5m_a",
       "account_ref": "simnow_a",
-      "strategy_release": "kama_trend@1.0.0",
+      "strategy_release": "kama_trend@1.1.0",
       "parameter_set": "hc_5m_v001",
       "capital_allocation_ref": "hc_trial_a",
       "risk_profile_ref": "trial_limits_v001"
@@ -80,7 +80,7 @@
     {
       "instance_id": "hc_kama_5m_b",
       "account_ref": "simnow_a",
-      "strategy_release": "kama_trend@1.0.0",
+      "strategy_release": "kama_trend@1.1.0",
       "parameter_set": "hc_5m_v001",
       "capital_allocation_ref": "hc_trial_b",
       "risk_profile_ref": "trial_limits_v001"
@@ -88,7 +88,7 @@
     {
       "instance_id": "hc_kama_5m_a",
       "account_ref": "simnow_b",
-      "strategy_release": "kama_trend@1.0.0",
+      "strategy_release": "kama_trend@1.1.0",
       "parameter_set": "hc_5m_v001",
       "capital_allocation_ref": "hc_trial_other",
       "risk_profile_ref": "trial_limits_v001"

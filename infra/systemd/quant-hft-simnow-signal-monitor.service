@@ -9,6 +9,7 @@ StartLimitBurst=10
 Type=simple
 WorkingDirectory=%h/workspace/quant_platform_HF
 Environment=QUANT_HFT_ENV=simnow
+Environment=TZ=Asia/Shanghai
 Environment=QUANT_ROOT=%h/workspace/quant_platform_HF
 EnvironmentFile=-/etc/quant/platform.conf
 # Paths use the same account identity/environment as core_engine; never pin old shared state.

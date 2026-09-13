@@ -33,7 +33,8 @@ cp "$repo_root/configs/deploy/instances.example.yaml" \
 cp "$repo_root/docs/ops/three_project_migration.md" "$payload/docs/"
 cp "$repo_root/docs/independent_strategy_books.md" "$payload/docs/"
 cp "$repo_root/infra/timescale/init/"*.sql "$payload/infra/sql/"
-cp "$repo_root/configs/trading_sessions.yaml" "$payload/configs/"
+cp "$repo_root/configs/trading_sessions.yaml" "$repo_root/configs/risk_rules.yaml" \
+   "$payload/configs/"
 cp "$repo_root/configs/market/products.json" "$payload/configs/market/"
 for script in run_simnow_preflight_check.sh run_account_deployment.sh run_account_supervisor.sh \
     run_packaged_account.sh run_packaged_supervisor.sh supervise_simnow_trading.sh \

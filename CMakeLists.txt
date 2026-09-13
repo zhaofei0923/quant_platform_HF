@@ -39,7 +39,7 @@ if(QUANT_HFT_ENABLE_REDIS_EXTERNAL OR
     find_package(PkgConfig REQUIRED)
 endif()
 
-find_package(QuantStrategies 1.0.0 EXACT CONFIG REQUIRED)
+find_package(QuantStrategies 1.1.0 EXACT CONFIG REQUIRED)
 include(cmake/VerifyStrategyPackage.cmake)
 find_package(yaml-cpp CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
@@ -159,7 +159,9 @@ foreach(module IN LISTS QUANT_HFT_MODULES)
     set_target_properties(${module} PROPERTIES POSITION_INDEPENDENT_CODE ON)
 endforeach()
 target_link_libraries(quant_hft_common PUBLIC Quant::Model Quant::Indicators)
-add_library(quant_hft_deployment STATIC src/core/config/deployment_config.cpp)
+add_library(quant_hft_deployment STATIC
+    src/core/config/deployment_config.cpp
+    src/core/config/credential_file.cpp)
 target_compile_definitions(quant_hft_deployment PRIVATE
     QUANT_STRATEGIES_EXPECTED_MANIFEST_HASH="${QUANT_STRATEGIES_MANIFEST_SHA256}")
 target_link_libraries(quant_hft_deployment PUBLIC quant_hft_build_options Quant::Strategies yaml-cpp OpenSSL::Crypto)
@@ -234,7 +236,9 @@ endif()
 add_executable(quant_config_cli src/apps/quant_config_cli_main.cpp)
 target_link_libraries(quant_config_cli PRIVATE quant_hft_deployment)
 
-add_library(quant_hft_state_migration STATIC src/core/config/strategy_state_migration.cpp)
+add_library(quant_hft_state_migration STATIC
+    src/core/config/strategy_state_migration.cpp
+    src/core/config/strategy_release_migration.cpp)
 target_link_libraries(quant_hft_state_migration PUBLIC quant_hft_strategy quant_hft_deployment)
 add_executable(strategy_state_migrate_cli src/apps/strategy_state_migrate_cli_main.cpp)
 target_link_libraries(strategy_state_migrate_cli PRIVATE quant_hft_state_migration)
@@ -343,6 +347,9 @@ if(QUANT_HFT_BUILD_TESTS)
 
     add_executable(ctp_config_loader_test tests/unit/core/ctp_config_loader_test.cpp)
     target_link_libraries(ctp_config_loader_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
+
+    add_executable(ctp_projection_recovery_test tests/unit/core/ctp_projection_recovery_test.cpp)
+    target_link_libraries(ctp_projection_recovery_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     add_executable(configured_contract_probe_test
         tests/unit/core/configured_contract_probe_test.cpp)
@@ -463,7 +470,7 @@ if(QUANT_HFT_BUILD_TESTS)
     add_executable(dashboard_publish_cli_test
         tests/unit/apps/dashboard_publish_cli_test.cpp
         src/apps/dashboard_publisher.cpp)
-    target_link_libraries(dashboard_publish_cli_test PRIVATE quant_hft_contracts pthread)
+    target_link_libraries(dashboard_publish_cli_test PRIVATE quant_hft_contracts quant_hft_wal_io pthread)
     add_test(NAME dashboard_publish_cli_test COMMAND dashboard_publish_cli_test)
     add_test(NAME dashboard_deployment_test
              COMMAND bash ${CMAKE_SOURCE_DIR}/tests/unit/build/dashboard_deployment_test.sh)
@@ -533,11 +540,18 @@ if(QUANT_HFT_BUILD_TESTS)
 
     add_executable(deployment_config_test tests/unit/core/deployment_config_test.cpp)
     target_link_libraries(deployment_config_test PRIVATE quant_hft_deployment quant_hft_test_bootstrap)
+    add_executable(credential_file_test tests/unit/core/credential_file_test.cpp)
+    target_link_libraries(credential_file_test PRIVATE quant_hft_deployment quant_hft_test_bootstrap)
     add_executable(formal_connection_tools_test tests/unit/build/formal_connection_tools_test.cpp)
     target_link_libraries(formal_connection_tools_test PRIVATE quant_hft_test_bootstrap)
     add_dependencies(formal_connection_tools_test simnow_probe daily_settlement simnow_flatten_positions)
     add_executable(strategy_state_migration_test tests/unit/core/strategy_state_migration_test.cpp)
     target_link_libraries(strategy_state_migration_test PRIVATE quant_hft_state_migration quant_hft_test_bootstrap)
+    add_executable(strategy_release_migration_test tests/unit/core/strategy_release_migration_test.cpp)
+    target_link_libraries(strategy_release_migration_test PRIVATE quant_hft_state_migration quant_hft_test_bootstrap)
+    target_compile_definitions(strategy_release_migration_test PRIVATE
+        QUANT_STRATEGIES_TEST_DATA_DIR="${QuantStrategies_DATA_DIR}")
+    add_dependencies(strategy_release_migration_test strategy_state_migrate_cli)
     add_executable(runtime_semantics_defaults_test tests/unit/core/runtime_semantics_defaults_test.cpp)
     target_link_libraries(runtime_semantics_defaults_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
@@ -553,8 +567,10 @@ if(QUANT_HFT_BUILD_TESTS)
 
     include(GoogleTest)
     gtest_discover_tests(deployment_config_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    gtest_discover_tests(credential_file_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(formal_connection_tools_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(strategy_state_migration_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    gtest_discover_tests(strategy_release_migration_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(runtime_semantics_defaults_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(durable_order_event_inbox_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(atomic_trade_postgres_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
@@ -568,6 +584,7 @@ if(QUANT_HFT_BUILD_TESTS)
     gtest_discover_tests(runtime_identity_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(ctp_config_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(ctp_config_loader_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    gtest_discover_tests(ctp_projection_recovery_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(configured_contract_probe_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(instrument_meta_cache_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(ctp_gateway_adapter_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

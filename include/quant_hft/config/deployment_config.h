@@ -48,6 +48,10 @@ struct DeploymentConfig {
 };
 
 bool LoadDeploymentConfig(const std::string& path, DeploymentConfig* out, std::string* error);
+// Offline migration only. Normal startup still requires the statically linked package version.
+bool LoadDeploymentConfigForMigration(const std::string& path,
+                                      const std::string& expected_package_version,
+                                      DeploymentConfig* out, std::string* error);
 std::string ConfigContentSha256(const std::string& content);
 // Hashes materialized parameters, independent of YAML formatting and file newlines.
 std::string ConfigParameterSha256(const ParameterSet& parameters);

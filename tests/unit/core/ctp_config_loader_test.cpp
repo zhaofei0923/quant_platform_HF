@@ -8,6 +8,8 @@
 #include <fstream>
 #include <string>
 
+#include "quant_hft/core/runtime_semantics_loader.h"
+
 namespace quant_hft {
 namespace {
 
@@ -59,6 +61,70 @@ TEST(CtpConfigLoaderTest, ResolveEnvVarsLeavesUnknownVarEmpty) {
     const ScopedEnvVar env("CTP_TEST_UNKNOWN_KEY", nullptr);
     const auto resolved = ResolveEnvVars("left-${CTP_TEST_UNKNOWN_KEY}-right");
     EXPECT_EQ(resolved, "left--right");
+}
+
+TEST(CtpConfigLoaderTest, SingleAndDoubleQuotedEmptyRiskGroupsMatchRuntimeSemantics) {
+    const auto rules_path = WriteTempConfig("rules: []\n");
+    for (const char quote : {'\'', '"'}) {
+        SCOPED_TRACE(std::string("quote=") + quote);
+        const auto config_path = WriteTempConfig(
+            "ctp:\n"
+            "  environment: sim\n"
+            "  is_production_mode: false\n"
+            "  enable_real_api: false\n"
+            "  broker_id: 9999\n"
+            "  user_id: test-account\n"
+            "  investor_id: test-account\n"
+            "  market_front: tcp://127.0.0.1:40011\n"
+            "  trader_front: tcp://127.0.0.1:40001\n"
+            "  password: test-only\n"
+            "  risk_rule_groups: " +
+            std::string(1, quote) + quote + "\n  risk_rule_file_path: \"" + rules_path.string() +
+            "\"\n");
+        CtpFileConfig live;
+        RuntimeSemanticsConfig shared;
+        std::string error;
+        ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &live, &error)) << error;
+        ASSERT_TRUE(LoadRuntimeSemanticsConfig(config_path.string(), &shared, &error)) << error;
+        EXPECT_TRUE(live.risk.rules.empty());
+        EXPECT_TRUE(shared.risk_rule_groups.empty());
+        EXPECT_TRUE(ValidateRuntimeSemanticsAgainstCtpConfig(shared, live, &error)) << error;
+        std::filesystem::remove(config_path);
+    }
+    std::filesystem::remove(rules_path);
+}
+
+TEST(CtpConfigLoaderTest, SingleAndDoubleQuotedRiskGroupsMatchRuntimeSemantics) {
+    const auto rules_path = WriteTempConfig("rules: []\n");
+    for (const char quote : {'\'', '"'}) {
+        SCOPED_TRACE(std::string("quote=") + quote);
+        const auto config_path = WriteTempConfig(
+            "ctp:\n"
+            "  environment: sim\n"
+            "  is_production_mode: false\n"
+            "  enable_real_api: false\n"
+            "  broker_id: 9999\n"
+            "  user_id: test-account\n"
+            "  investor_id: test-account\n"
+            "  market_front: tcp://127.0.0.1:40011\n"
+            "  trader_front: tcp://127.0.0.1:40001\n"
+            "  password: test-only\n"
+            "  risk_rule_groups: " +
+            std::string(1, quote) + "ag_open, acc_guard" + quote + "\n  risk_rule_file_path: \"" +
+            rules_path.string() + "\"\n");
+        CtpFileConfig live;
+        RuntimeSemanticsConfig shared;
+        std::string error;
+        ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &live, &error)) << error;
+        ASSERT_TRUE(LoadRuntimeSemanticsConfig(config_path.string(), &shared, &error)) << error;
+        ASSERT_EQ(live.risk.rules.size(), 2U);
+        EXPECT_EQ(live.risk.rules[0].rule_group, "ag_open");
+        EXPECT_EQ(live.risk.rules[1].rule_group, "acc_guard");
+        EXPECT_EQ(shared.risk_rule_groups, "ag_open, acc_guard");
+        EXPECT_TRUE(ValidateRuntimeSemanticsAgainstCtpConfig(shared, live, &error)) << error;
+        std::filesystem::remove(config_path);
+    }
+    std::filesystem::remove(rules_path);
 }
 
 TEST(CtpConfigLoaderTest, LoadConfigWithEnvVarsSuccess) {

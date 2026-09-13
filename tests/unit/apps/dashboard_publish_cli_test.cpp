@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "quant_hft/apps/dashboard_publisher.h"
+#include "quant_hft/core/local_wal_regulatory_sink.h"
 #include "quant_hft/core/simple_json.h"
 #include "quant_hft/core/wal_format.h"
 
@@ -169,6 +170,190 @@ std::string ModernEvent(int seq, const std::string& id, const std::string& broke
                          "\",\"stream_first_sequence\":1,\"broker_id\":\"" + broker + "\",");
     return record.substr(0, record.size() - 1) + ",\"checksum\":\"" +
            quant_hft::WalChecksumHex(quant_hft::WalChecksum(record)) + "\"}\n";
+}
+
+quant_hft::OrderEvent EncodedCallback(const std::string& source, const std::string& id = "") {
+    quant_hft::OrderEvent event;
+    event.account_id = "SECRET_ACCOUNT_8877";
+    event.broker_id = "b-test";
+    event.strategy_id = "kama_hc";
+    event.client_order_id = "SECRET_ACCOUNT_8877_order1";
+    event.exchange_order_id = "exchange-order1";
+    event.instrument_id = "hc2610";
+    event.exchange_id = "SHFE";
+    event.trading_day = "20260907";
+    event.event_source = source;
+    event.trade_id = event.raw_trade_id = id;
+    event.side = quant_hft::Side::kBuy;
+    event.offset = quant_hft::OffsetFlag::kOpen;
+    event.status = quant_hft::OrderStatus::kFilled;
+    event.total_volume = event.filled_volume = 3;
+    event.last_trade_volume = id.empty() ? 0 : 1;
+    event.avg_fill_price = 3210;
+    event.exchange_ts_ns = event.recv_ts_ns = event.ts_ns = kNow * 1000000;
+    event.reason = "/private/path password=secret";
+    event.status_msg = "private status SECRET_ACCOUNT_8877";
+    event.trace_id = "PRIVATE_TRACE_VALUE";
+    return event;
+}
+
+void RealIngressWalDistinguishesFillsFromCumulativeOrders() {
+    Fixture f("real-ingress");
+    quant_hft::LocalWalRegulatorySink sink((f.root / "wal/events.wal").string());
+    auto order = EncodedCallback("OnRtnOrder");
+    Check(sink.CommitOrderEvent(order).durable, "real cumulative order encoded");
+    auto first = EncodedCallback("OnRtnTrade", "T-real-1");
+    Check(sink.CommitOrderEvent(first).durable, "real trade through order envelope");
+    first.event_source = "OnRspQryTrade";
+    Check(sink.CommitOrderEvent(first).durable, "recovery-query duplicate encoded");
+    auto second = EncodedCallback("OnRtnTrade", "T-real-2");
+    second.last_trade_volume = 2;
+    Check(sink.CommitOrderEvent(second).durable, "second real per-fill encoded");
+    Check(sink.CommitTradeEvent(second).durable, "legacy envelope duplicate encoded");
+    order.event_source = "OnRspQryOrder";
+    // Even an accidental stale trade id cannot make an order callback a trade.
+    order.trade_id = "stale-order-trade-id";
+    Check(sink.CommitOrderEvent(order).durable, "queried cumulative order encoded");
+    Publisher p(f.options);
+    f.Publish(p);
+    const auto archive = f.Archive("trades");
+    const auto& trades = Field(archive, "data").array_value;
+    Check(trades.size() == 2, "real callbacks deduplicate across ingress and legacy envelopes");
+    Check(Text(archive, "quality") == "historical" &&
+              Text(Field(f.Current(), "trades"), "quality") == "fresh",
+          "real encoder checksum and chain verified");
+    double volume = 0;
+    for (const auto& trade : trades) volume += Field(trade, "volume").number_value;
+    Check(volume == 3, "per-fill quantities used instead of cumulative order quantity");
+    const auto orders = Field(f.Archive("orders"), "data").array_value;
+    Check(orders.size() == 1 && Text(orders.front(), "status") == "filled",
+          "cumulative order callbacks stay a single order");
+    for (const auto& entry : fs::recursive_directory_iterator(f.out)) {
+        if (!entry.is_regular_file()) continue;
+        const auto text = Read(entry.path());
+        for (const auto* private_value : {"SECRET_ACCOUNT_8877", "/private/path",
+                                          "password=", "PRIVATE_TRACE_VALUE", "private status"}) {
+            Check(text.find(private_value) == std::string::npos,
+                  "real WAL private fields remain excluded");
+        }
+    }
+}
+
+void RealTradeCallbacksRequireIdentityAndPerFillVolume() {
+    Fixture f("real-fill-validation");
+    quant_hft::LocalWalRegulatorySink sink((f.root / "wal/events.wal").string());
+    auto missing_id = EncodedCallback("OnRtnTrade");
+    missing_id.last_trade_volume = 1;
+    Check(sink.CommitOrderEvent(missing_id).durable, "missing-id fixture encoded");
+    auto cumulative_only = EncodedCallback("OnRspQryTrade", "T-no-per-fill");
+    cumulative_only.last_trade_volume = 0;
+    Check(sink.CommitOrderEvent(cumulative_only).durable, "missing per-fill fixture encoded");
+    Publisher p(f.options);
+    f.Publish(p);
+    const auto archive = f.Archive("trades");
+    Check(Field(archive, "data").array_value.empty(),
+          "malformed trade callbacks never synthesize a fill");
+    Check(Text(archive, "quality") == "incomplete", "invalid callbacks expose missing coverage");
+}
+
+void RewindOnlyWalCursor(const fs::path& checkpoint) {
+    auto text = Read(checkpoint);
+    const std::vector<std::pair<std::string, std::string>> fields = {
+        {"offset", "\"0\""},         {"anchor", "\"\""},          {"wal_stream", "\"\""},
+        {"next_sequence", "\"0\""},  {"first_sequence", "\"0\""}, {"has_sequence", "false"},
+        {"stream_boundary", "true"}, {"discarding_line", "false"}};
+    for (const auto& [key, encoded] : fields) {
+        const auto start = text.find("\"" + key + "\":");
+        Check(start != std::string::npos, "existing cursor field: " + key);
+        const auto value_start = start + key.size() + 3;
+        const auto end = text.find_first_of(",}", value_start);
+        Check(end != std::string::npos, "scalar cursor field: " + key);
+        text.replace(value_start, end - value_start, encoded);
+    }
+    (void)Parse(text);
+    Write(checkpoint, text);
+}
+
+void RealWalBackfillPreservesEquityScopeAndTerminalOrders() {
+    Fixture f("real-wal-backfill");
+    quant_hft::LocalWalRegulatorySink sink((f.root / "wal/events.wal").string());
+    auto order = EncodedCallback("OnRtnOrder");
+    auto early = order;
+    early.status = quant_hft::OrderStatus::kAccepted;
+    early.filled_volume = 0;
+    early.ts_ns -= 1000000;
+    early.recv_ts_ns = early.exchange_ts_ns = early.ts_ns;
+    Check(sink.CommitOrderEvent(early).durable, "older submitted order encoded");
+    Check(sink.CommitOrderEvent(order).durable, "terminal order encoded");
+    Check(sink.CommitTradeEvent(EncodedCallback("OnRtnTrade", "T-existing")).durable,
+          "previously recognized fill encoded");
+    {
+        Publisher p(f.options);
+        f.Publish(p);
+    }
+    const auto retained_day = Read(f.state / "days/20260907.json");
+    const auto retained_equity = Read(f.out / "days/20260907/equity.json");
+    const auto retained_scope = Read(f.state / "scope.json");
+    const auto retained_identity = Read(f.state / "identity.json");
+    const auto retained_owner = Read(f.out / ".publisher-owner.json");
+    auto missed = EncodedCallback("OnRtnTrade", "T-backfilled");
+    Check(sink.CommitOrderEvent(missed).durable, "previously missed ingress trade encoded");
+    missed.event_source = "OnRspQryTrade";
+    Check(sink.CommitOrderEvent(missed).durable, "duplicate missed trade encoded");
+    Check(sink.CommitOrderEvent(early).durable, "later-delivered stale order encoded");
+    {
+        Publisher p(f.options);
+        f.Publish(p);
+    }
+    // Simulate the old decoder: the validated cursor consumed every byte, but only
+    // the previously recognized trade/order/equity aggregates were retained.
+    Write(f.state / "days/20260907.json", retained_day);
+    {
+        Publisher p(f.options);
+        f.Publish(p);
+        Check(Field(f.Archive("trades"), "data").array_value.size() == 1,
+              "unchanged consumed cursor cannot backfill missing executions");
+    }
+    const auto previous = Parse(Read(f.state / "checkpoint.json"));
+    RewindOnlyWalCursor(f.state / "checkpoint.json");
+    {
+        Publisher p(f.options);
+        f.Publish(p);
+        Check(Field(f.Archive("trades"), "data").array_value.size() == 2,
+              "verified replay adds missing execution without duplicating retained trade");
+        const auto orders = Field(f.Archive("orders"), "data").array_value;
+        Check(orders.size() == 1 && Text(orders.front(), "status") == "filled",
+              "replayed old order never regresses retained terminal order");
+        Check(Read(f.out / "days/20260907/equity.json") == retained_equity,
+              "backfill retains exact equity samples and archive");
+        Check(Read(f.state / "scope.json") == retained_scope &&
+                  Read(f.state / "identity.json") == retained_identity &&
+                  Read(f.out / ".publisher-owner.json") == retained_owner,
+              "backfill retains data scope and state/public ownership");
+        const auto current = Parse(Read(f.state / "checkpoint.json"));
+        for (const auto* key :
+             {"inode", "device", "skipped_records", "source_resets", "unverified_records"}) {
+            Check(Field(current, key).string_value == Field(previous, key).string_value &&
+                      Field(current, key).number_value == Field(previous, key).number_value,
+                  "cursor replay preserves source identity and diagnostics");
+        }
+        Check(Text(current, "offset") == std::to_string(fs::file_size(f.root / "wal/events.wal")),
+              "backfill finishes at source EOF");
+    }
+    const auto completed_checkpoint = Read(f.state / "checkpoint.json");
+    {
+        Publisher p(f.options);
+        f.Publish(p);
+        Check(Field(f.Archive("trades"), "data").array_value.size() == 2,
+              "restart after backfill is idempotent");
+        Check(Read(f.state / "checkpoint.json") == completed_checkpoint,
+              "subsequent cycles retain cursor rather than repeatedly scanning history");
+        auto next = EncodedCallback("OnRtnTrade", "T-incremental");
+        Check(sink.CommitOrderEvent(next).durable, "new incremental fill encoded");
+        f.Publish(p);
+        Check(Field(f.Archive("trades"), "data").array_value.size() == 3,
+              "incremental tail resumes normally after backfill");
+    }
 }
 
 void IdentityAndPublicWhitelist() {
@@ -810,6 +995,9 @@ int main() {
         {"scope_regrown", RegrownWalAndOutputScopeAreChecked},
         {"order_identity_bridge", OrderIdentityBridgeMergesRows},
         {"modern_wal_validation", ModernWalChecksumsBrokerAndSequenceGate},
+        {"real_ingress_wal", RealIngressWalDistinguishesFillsFromCumulativeOrders},
+        {"real_trade_callback_validation", RealTradeCallbacksRequireIdentityAndPerFillVolume},
+        {"real_wal_preserving_backfill", RealWalBackfillPreservesEquityScopeAndTerminalOrders},
         {"trading_day_boundary", NewTradingDayDoesNotRebucketOldEquity},
         {"restart_heartbeat", OldProcessHeartbeatCannotMakeRestartReady},
         {"fixed_rejection_categories", RejectionsUseOnlyFixedReasonCategories}};

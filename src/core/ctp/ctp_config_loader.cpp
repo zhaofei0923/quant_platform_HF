@@ -21,7 +21,8 @@ std::string Trim(std::string value) {
     const auto not_space = [](unsigned char ch) { return !std::isspace(ch); };
     value.erase(value.begin(), std::find_if(value.begin(), value.end(), not_space));
     value.erase(std::find_if(value.rbegin(), value.rend(), not_space).base(), value.end());
-    if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
+    if (value.size() >= 2 && ((value.front() == '"' && value.back() == '"') ||
+                              (value.front() == '\'' && value.back() == '\''))) {
         return value.substr(1, value.size() - 2);
     }
     return value;

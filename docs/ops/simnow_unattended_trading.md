@@ -208,40 +208,32 @@ scripts/ops/supervise_simnow_trading.sh --once
 
 ## Systemd 开机恢复
 
-安装用户级 systemd unit，但不启用：
-
-```bash
-scripts/ops/install_simnow_systemd_user.sh
-```
-
-安装并设置为用户会话启动时自动恢复：
-
-```bash
-scripts/ops/install_simnow_systemd_user.sh --enable
-```
-
-安装、启用并立即启动：
-
-```bash
-scripts/ops/install_simnow_systemd_user.sh --enable-now
-```
-
-如果希望机器重启后即使用户没有登录也自动恢复，需要启用 linger：
-
-```bash
-scripts/ops/install_simnow_systemd_user.sh --enable-linger --enable
-```
-
-停止并禁用服务：
+旧用户级直启入口 `quant-hft-simnow-trading.service` 和它的安装脚本已经退役：它没有把
+经过复核的账户引用绑定到 unit 实例，不能再安装、启用或启动交易。安装脚本只保留下面的
+清理命令，用于停止并禁用主机上已经存在的旧 unit：
 
 ```bash
 scripts/ops/install_simnow_systemd_user.sh --disable
 ```
 
-服务文件为：
+正式 SimNow 发布只使用发布包内的监督服务模板：
 
 ```text
-infra/systemd/quant-hft-simnow-trading.service
+/opt/quant_platform_HF/current/infra/quant-hft-simnow-account@.service
+```
+
+先从已审核的仓库外部署清单确认准确的 `account_ref`，再创建与之同名的受限环境文件
+`/etc/quant_platform_HF/accounts/<reviewed_account_ref>.env`，最后安装模板并启用对应实例。
+不得从主机名、旧服务、示例配置或历史账户猜测该值；本文不提供默认账户。unit 实例名和
+环境文件名必须使用同一个已审核值：
+
+```bash
+sudo install -m 0644 \
+  /opt/quant_platform_HF/current/infra/quant-hft-simnow-account@.service \
+  /etc/systemd/system/quant-hft-simnow-account@.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now \
+  'quant-hft-simnow-account@<reviewed_account_ref>.service'
 ```
 
 ## 监控总览
@@ -258,21 +250,17 @@ infra/systemd/quant-hft-simnow-trading.service
 ```bash
 scripts/ops/monitor_simnow_trading.sh --config configs/sim/ctp_sim_trade_candidates.yaml
 scripts/ops/monitor_simnow_trading.sh --config configs/sim/ctp_sim_trade_candidates.yaml --watch-seconds 30
-systemctl --user status quant-hft-simnow-trading.service
-journalctl --user -u quant-hft-simnow-trading.service -f
-journalctl --user -u quant-hft-simnow-signal-monitor.service -f
+systemctl status 'quant-hft-simnow-account@<reviewed_account_ref>.service'
+journalctl -u 'quant-hft-simnow-account@<reviewed_account_ref>.service' -f
 tail -f runtime/simnow_trading/supervisor.log
 tail -f "$(cat runtime/simnow_trading/current_core_engine_log)"
 ```
 
-安装并启动独立监控服务：
-
-```bash
-mkdir -p ~/.config/systemd/user
-cp infra/systemd/quant-hft-simnow-signal-monitor.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now quant-hft-simnow-signal-monitor.service
-```
+仓库旧 `quant-hft-simnow-signal-monitor.service` 绑定了旧 checkout 和旧交易 unit，现已
+fail-closed 退役，不能复制、启用。独立监控服务必须由部署侧显式绑定同一份已审核
+deployment identity，包括准确账户、发布目录、run root、WAL、readiness、行情目录和交易
+时段配置；不得从旧服务或默认路径推断。使用单独监控 unit 时，只能用其经复核的实际 unit
+名和 scope 查看日志。当前云上已有的部署专用 unit 不由仓库模板覆盖。
 
 监控每 5 秒原子更新以下 v3 证据，重启时通过 versioned checkpoint 恢复游标和未完成 trace：
 
@@ -452,13 +440,13 @@ SIMNOW_ALERT_COMMAND='printf "%s %s\n" "$ALERT_SEVERITY" "$ALERT_MESSAGE" >> run
 查看服务状态：
 
 ```bash
-systemctl --user status quant-hft-simnow-trading.service
+systemctl status 'quant-hft-simnow-account@<reviewed_account_ref>.service'
 ```
 
 查看 systemd 日志：
 
 ```bash
-journalctl --user -u quant-hft-simnow-trading.service -n 200 --no-pager
+journalctl -u 'quant-hft-simnow-account@<reviewed_account_ref>.service' -n 200 --no-pager
 ```
 
 查看 supervisor 日志：
@@ -505,13 +493,32 @@ find runtime/market_data/simnow -type f \( -name 'ticks.csv' -o -name 'bars_1m.c
 scripts/ops/stop_simnow_trading.sh
 ```
 
-如果当前由 supervisor 或 systemd 管理，先停止自动恢复，再停止 `core_engine`：
+如果当前由 systemd 管理，只停止已核对的准确 unit。脚本确认 unit 已不再 active 后立即
+退出，不会继续扫描或终止主机上的任何 `core_engine`：
 
 ```bash
-scripts/ops/stop_simnow_trading.sh --all
+scripts/ops/stop_simnow_trading.sh --stop-systemd \
+  --systemd-scope system \
+  --systemd-unit 'quant-hft-simnow-account@<reviewed_account_ref>.service'
 ```
 
-停止脚本默认读取 `runtime/simnow_trading/current_core_engine.pid`，先发送 `TERM`，等待 `SIMNOW_STOP_TIMEOUT_SECONDS` 秒后再发送 `KILL`。如只想发送 `TERM` 而不强杀：
+上述 unit 名和 scope 必须先从当前实际部署状态核对。若部署使用用户级自定义 unit，则应将
+scope 改为 `user` 并填写它的准确 unit 名；停止脚本不会使用环境变量、旧 unit 或示例账户
+补默认值。缺少任一参数或 unit 名包含通配符时，脚本会 fail-closed。
+
+若使用手工启动的 shell supervisor，必须先核对其 PID 和它实际持有的 run-root
+`locks/supervisor.lock`，再同时显式传入两者。脚本拒绝全机扫描 supervisor；停止 supervisor
+后只会检查同一 run-root 的 `current_core_engine.pid`：
+
+```bash
+scripts/ops/stop_simnow_trading.sh --stop-supervisor \
+  --supervisor-pid '<reviewed_supervisor_pid>' \
+  --run-root '<reviewed_absolute_run_root>'
+```
+
+手动后台仿真路径只读取所选 run-root 的 `current_core_engine.pid`，不会在主机范围发现进程；
+它先发送 `TERM`，等待 `SIMNOW_STOP_TIMEOUT_SECONDS` 秒后再发送 `KILL`。如只想发送 `TERM`
+而不强杀：
 
 ```bash
 scripts/ops/stop_simnow_trading.sh --no-kill
@@ -520,13 +527,13 @@ scripts/ops/stop_simnow_trading.sh --no-kill
 停止 systemd 管理的 supervisor：
 
 ```bash
-systemctl --user stop quant-hft-simnow-trading.service
+systemctl stop 'quant-hft-simnow-account@<reviewed_account_ref>.service'
 ```
 
 重启 supervisor：
 
 ```bash
-systemctl --user restart quant-hft-simnow-trading.service
+systemctl restart 'quant-hft-simnow-account@<reviewed_account_ref>.service'
 ```
 
 手动停止当前 `core_engine`：

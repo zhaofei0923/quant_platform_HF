@@ -532,6 +532,13 @@ if(QUANT_HFT_BUILD_TESTS)
              COMMAND bash ${CMAKE_SOURCE_DIR}/tests/unit/build/tencent_simnow_schedule_script_test.sh)
     set_tests_properties(tencent_simnow_schedule_shell_test
                          PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    add_test(NAME systemd_unit_contract_shell_test
+             COMMAND bash ${CMAKE_SOURCE_DIR}/tests/unit/build/systemd_unit_contract_test.sh)
+    set_tests_properties(systemd_unit_contract_shell_test
+                         PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+    add_executable(structured_log_test tests/unit/core/structured_log_test.cpp)
+    target_link_libraries(structured_log_test PRIVATE quant_hft_core quant_hft_test_bootstrap)
 
     if(QUANT_HFT_METRICS_ACTIVE)
         add_executable(exporter_test tests/unit/monitoring/exporter_test.cpp)
@@ -566,6 +573,7 @@ if(QUANT_HFT_BUILD_TESTS)
     endforeach()
 
     include(GoogleTest)
+    gtest_discover_tests(structured_log_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(deployment_config_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(credential_file_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     gtest_discover_tests(formal_connection_tools_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

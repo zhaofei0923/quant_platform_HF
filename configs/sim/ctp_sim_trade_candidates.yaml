@@ -98,6 +98,8 @@ ctp:
   strategy_state_persist_enabled: true
   strategy_state_backend: "file"
   strategy_state_snapshot_interval_ms: 5000
+  # Bounded state age must survive weekends and exchange holiday closures.
+  strategy_state_ttl_seconds: 1209600
   strategy_state_file_dir: "runtime/trading/state/simnow"
   account_id: "${CTP_SIM_INVESTOR_ID}"
 

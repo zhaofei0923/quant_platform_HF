@@ -42,6 +42,36 @@ class PackagedRuntimeSemanticsTest : public ::testing::Test {
         return std::string(std::istreambuf_iterator<char>(input), {});
     }
 
+    static bool SetManifestBoolean(const std::filesystem::path& manifest, const std::string& key,
+                                   bool value) {
+        auto text = Read(manifest);
+        const auto key_position = text.find("\"" + key + "\"");
+        if (key_position == std::string::npos) return false;
+        const auto colon_position = text.find(':', key_position + key.size() + 2);
+        if (colon_position == std::string::npos) return false;
+        const auto value_position = text.find_first_not_of(" \t", colon_position + 1);
+        if (value_position == std::string::npos) return false;
+        std::size_t value_length = 0;
+        if (text.compare(value_position, 4, "true") == 0) {
+            value_length = 4;
+        } else if (text.compare(value_position, 5, "false") == 0) {
+            value_length = 5;
+        } else {
+            return false;
+        }
+        text.replace(value_position, value_length, value ? "true" : "false");
+        Write(manifest, text);
+        return true;
+    }
+
+    static int RefreshChecksums(const std::filesystem::path& package) {
+        const std::string command =
+            "cd " + Quote(package) +
+            " && find . -type f ! -name SHA256SUMS -print0 | LC_ALL=C sort -z | "
+            "xargs -0 sha256sum > SHA256SUMS";
+        return std::system(command.c_str());
+    }
+
     int RunLauncher(const std::filesystem::path& launcher,
                     const std::filesystem::path& external_directory,
                     const std::filesystem::path& observed_cwd) {
@@ -132,10 +162,16 @@ TEST_F(PackagedRuntimeSemanticsTest, ReleaseLaunchersLoadRiskRulesWithExternalCo
                                         " -C " + Quote(extracted);
     ASSERT_EQ(std::system(extract_command.c_str()), 0);
     const auto package = extracted / "quant-platform-hf-v0.0.0-test";
+    const auto deploy_manifest = package / "deploy_manifest.json";
+    const auto release_verifier = package / "scripts/ops/verify_packaged_release.sh";
     const auto rules = package / "configs/risk_rules.yaml";
+    ASSERT_TRUE(std::filesystem::is_regular_file(release_verifier));
     ASSERT_TRUE(std::filesystem::is_regular_file(rules));
     EXPECT_EQ(Read(rules), Read(source / "configs/risk_rules.yaml"));
     EXPECT_NE(Read(package / "SHA256SUMS").find("./configs/risk_rules.yaml"), std::string::npos);
+    EXPECT_NE(Read(package / "SHA256SUMS")
+                  .find("./scripts/ops/verify_packaged_release.sh"),
+              std::string::npos);
 
     Write(connection, "ctp:\n  environment: simnow\n");
     std::filesystem::current_path(external);
@@ -144,6 +180,12 @@ TEST_F(PackagedRuntimeSemanticsTest, ReleaseLaunchersLoadRiskRulesWithExternalCo
     ASSERT_FALSE(LoadRuntimeSemanticsConfig(connection.string(), &semantics, &error));
     EXPECT_NE(error.find("unable to open risk rule snapshot"), std::string::npos);
     ASSERT_FALSE(std::filesystem::exists(external / "configs/risk_rules.yaml"));
+
+    // Normalize only the extracted inert fixture so both launcher success paths are testable even
+    // when the source checkout is dirty or the synthetic build intentionally has the real API off.
+    ASSERT_TRUE(SetManifestBoolean(deploy_manifest, "working_tree_dirty", false));
+    ASSERT_TRUE(SetManifestBoolean(deploy_manifest, "ctp_real_api_compiled", true));
+    ASSERT_EQ(RefreshChecksums(package), 0);
 
     for (const auto* script : {"run_packaged_account.sh", "run_packaged_supervisor.sh"}) {
         const auto observed_cwd = root_ / (std::string(script) + ".cwd");
@@ -158,8 +200,62 @@ TEST_F(PackagedRuntimeSemanticsTest, ReleaseLaunchersLoadRiskRulesWithExternalCo
         EXPECT_FALSE(std::filesystem::exists(external / "configs/risk_rules.yaml"));
     }
 
+    const auto checksum_manifest = package / "SHA256SUMS";
+    const auto saved_checksums = Read(checksum_manifest);
+    std::filesystem::remove(checksum_manifest);
+    for (const auto* script : {"run_packaged_account.sh", "run_packaged_supervisor.sh"}) {
+        EXPECT_NE(RunLauncher(package / "scripts/ops" / script, external,
+                              root_ / (std::string(script) + ".missing-checksums")),
+                  0);
+    }
+    Write(checksum_manifest, saved_checksums);
+
+    const auto saved_deploy_manifest = Read(deploy_manifest);
+    std::filesystem::remove(deploy_manifest);
+    ASSERT_EQ(RefreshChecksums(package), 0);
+    for (const auto* script : {"run_packaged_account.sh", "run_packaged_supervisor.sh"}) {
+        EXPECT_NE(RunLauncher(package / "scripts/ops" / script, external,
+                              root_ / (std::string(script) + ".missing-deploy-manifest")),
+                  0);
+    }
+    Write(deploy_manifest, saved_deploy_manifest);
+    ASSERT_EQ(RefreshChecksums(package), 0);
+
+    ASSERT_TRUE(SetManifestBoolean(deploy_manifest, "working_tree_dirty", true));
+    ASSERT_EQ(RefreshChecksums(package), 0);
+    for (const auto* script : {"run_packaged_account.sh", "run_packaged_supervisor.sh"}) {
+        EXPECT_NE(RunLauncher(package / "scripts/ops" / script, external,
+                              root_ / (std::string(script) + ".dirty-package")),
+                  0);
+    }
+
+    ASSERT_TRUE(SetManifestBoolean(deploy_manifest, "working_tree_dirty", false));
+    ASSERT_TRUE(SetManifestBoolean(deploy_manifest, "ctp_real_api_compiled", false));
+    ASSERT_EQ(RefreshChecksums(package), 0);
+    for (const auto* script : {"run_packaged_account.sh", "run_packaged_supervisor.sh"}) {
+        EXPECT_NE(RunLauncher(package / "scripts/ops" / script, external,
+                              root_ / (std::string(script) + ".stub-ctp")),
+                  0);
+    }
+
+    ASSERT_TRUE(SetManifestBoolean(deploy_manifest, "ctp_real_api_compiled", true));
+    ASSERT_EQ(RefreshChecksums(package), 0);
+
+    Write(package / "unlisted-release-file", "must be rejected\n");
+    for (const auto* script : {"run_packaged_account.sh", "run_packaged_supervisor.sh"}) {
+        EXPECT_NE(RunLauncher(package / "scripts/ops" / script, external,
+                              root_ / (std::string(script) + ".incomplete-checksums")),
+                  0);
+    }
+    std::filesystem::remove(package / "unlisted-release-file");
+
     // Omitting this public artifact must remain a clear startup error, never bypass risk rules.
     std::filesystem::remove(rules);
+    for (const auto* script : {"run_packaged_account.sh", "run_packaged_supervisor.sh"}) {
+        EXPECT_NE(RunLauncher(package / "scripts/ops" / script, external,
+                              root_ / (std::string(script) + ".tampered-package")),
+                  0);
+    }
     EXPECT_FALSE(LoadRuntimeSemanticsConfig(connection.string(), &semantics, &error));
     EXPECT_NE(error.find("unable to open risk rule snapshot"), std::string::npos);
 }

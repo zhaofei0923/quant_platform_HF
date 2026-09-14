@@ -63,6 +63,52 @@ TEST(CtpConfigLoaderTest, ResolveEnvVarsLeavesUnknownVarEmpty) {
     EXPECT_EQ(resolved, "left--right");
 }
 
+TEST(CtpConfigLoaderTest, FormalSimnowDeploymentRejectsSyntheticGateway) {
+    CtpFileConfig config;
+    config.runtime.enable_real_api = false;
+    std::string error;
+    EXPECT_FALSE(ValidateCtpConfigForDeployment("simnow", config, &error));
+    EXPECT_NE(error.find("ctp.enable_real_api=true"), std::string::npos) << error;
+
+    config.runtime.enable_real_api = true;
+    error.clear();
+    EXPECT_TRUE(ValidateCtpConfigForDeployment("simnow", config, &error)) << error;
+}
+
+TEST(CtpConfigLoaderTest, FormalLiveDeploymentAlsoRejectsSyntheticGateway) {
+    CtpFileConfig config;
+    config.runtime.enable_real_api = false;
+    std::string error;
+    EXPECT_FALSE(ValidateCtpConfigForDeployment("live", config, &error));
+    EXPECT_NE(error.find("ctp.enable_real_api=true"), std::string::npos) << error;
+}
+
+TEST(CtpConfigLoaderTest, FormalDeploymentRequiresExplicitDurableStateTtl) {
+    for (const std::string environment : {"simnow", "live"}) {
+        SCOPED_TRACE("environment=" + environment);
+        CtpFileConfig config;
+        config.runtime.enable_real_api = true;
+        config.strategy_state_persist_enabled = true;
+        std::string error;
+
+        EXPECT_FALSE(ValidateCtpConfigForDeployment(environment, config, &error));
+        EXPECT_NE(error.find("requires an explicit strategy_state_ttl_seconds"), std::string::npos)
+            << error;
+
+        config.strategy_state_ttl_explicitly_configured = true;
+        for (const int invalid_ttl : {0, 86'400, 1'209'599}) {
+            config.strategy_state_ttl_seconds = invalid_ttl;
+            error.clear();
+            EXPECT_FALSE(ValidateCtpConfigForDeployment(environment, config, &error));
+            EXPECT_NE(error.find("must be at least 1209600"), std::string::npos) << error;
+        }
+
+        config.strategy_state_ttl_seconds = 1'209'600;
+        error.clear();
+        EXPECT_TRUE(ValidateCtpConfigForDeployment(environment, config, &error)) << error;
+    }
+}
+
 TEST(CtpConfigLoaderTest, SingleAndDoubleQuotedEmptyRiskGroupsMatchRuntimeSemantics) {
     const auto rules_path = WriteTempConfig("rules: []\n");
     for (const char quote : {'\'', '"'}) {
@@ -317,6 +363,7 @@ TEST(CtpConfigLoaderTest, LoadsStrategyEngineKeysAndSplitsLists) {
     EXPECT_EQ(config.strategy_state_backend, "redis");
     EXPECT_EQ(config.strategy_state_snapshot_interval_ms, 60000);
     EXPECT_EQ(config.strategy_state_ttl_seconds, 86400);
+    EXPECT_FALSE(config.strategy_state_ttl_explicitly_configured);
     EXPECT_EQ(config.strategy_state_key_prefix, "strategy_state");
     EXPECT_EQ(config.strategy_state_file_dir, "runtime/trading/state");
     EXPECT_EQ(config.strategy_metrics_emit_interval_ms, 1000);
@@ -424,6 +471,7 @@ TEST(CtpConfigLoaderTest, LoadsStrategyStateAndMetricsConfigKeys) {
     EXPECT_EQ(config.strategy_state_backend, "file");
     EXPECT_EQ(config.strategy_state_snapshot_interval_ms, 5000);
     EXPECT_EQ(config.strategy_state_ttl_seconds, 3600);
+    EXPECT_TRUE(config.strategy_state_ttl_explicitly_configured);
     EXPECT_EQ(config.strategy_state_key_prefix, "hf_strategy_state");
     EXPECT_EQ(config.strategy_state_file_dir, "runtime/trading/state/simnow");
     EXPECT_EQ(config.strategy_metrics_emit_interval_ms, 2000);

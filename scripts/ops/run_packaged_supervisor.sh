@@ -2,6 +2,14 @@
 set -euo pipefail
 umask 077
 package_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+package_die() {
+    printf 'packaged SimNow supervisor preflight failed: %s\n' "$*" >&2
+    exit 1
+}
+release_verifier="$package_root/scripts/ops/verify_packaged_release.sh"
+[[ -s "$release_verifier" ]] || package_die "missing packaged release verifier"
+/bin/bash "$release_verifier" "$package_root" ||
+    package_die "release integrity gate rejected $package_root"
 if [[ -n "${QUANT_HFT_DEPLOYMENT_FILE:-}" && "$QUANT_HFT_DEPLOYMENT_FILE" != /* ]]; then
     export QUANT_HFT_DEPLOYMENT_FILE="$PWD/$QUANT_HFT_DEPLOYMENT_FILE"
 fi

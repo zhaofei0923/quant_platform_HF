@@ -76,6 +76,31 @@ struct SupervisorDryRunResult {
     std::string output;
 };
 
+SupervisorDryRunResult RunFormalStartDryRun(const std::string& suffix,
+                                            const std::string& config_payload) {
+    const auto root = MakeTempDir("formal_" + suffix + "_" + std::to_string(getpid()));
+    const auto config = root / "connection.yaml";
+    const auto build = root / "bin";
+    const auto output = root / "start.out";
+    WriteFile(config, config_payload);
+    for (const auto* binary : {"core_engine", "simnow_probe", "quant_config_cli"})
+        WriteExecutable(build / binary);
+    const std::string command =
+        "QUANT_HFT_SUPERVISOR_BOUND=1 QUANT_HFT_DEPLOYMENT_FILE='/formal/deployment.yaml' "
+        "QUANT_HFT_DEPLOYMENT_ACCOUNT=simnow_a CTP_SIM_BROKER_ID=fixture "
+        "CTP_SIM_USER_ID=fixture CTP_SIM_INVESTOR_ID=fixture CTP_SIM_PASSWORD=fixture "
+        "CTP_SIM_AUTH_CODE=fixture CTP_SIM_APP_ID=fixture SIMNOW_LOCK_DIR='" +
+        EscapePathForShell(root / "locks") +
+        "' bash scripts/ops/start_simnow_trading.sh "
+        "--env-file '/retired/env/must/not/be/read' --config '" +
+        EscapePathForShell(config) + "' --build-dir '" + EscapePathForShell(build) +
+        "' --run-root '" + EscapePathForShell(root / "runs") + "' --wal-file '" +
+        EscapePathForShell(root / "wal/events.wal") + "' --min-free-mb 1 --dry-run > '" +
+        EscapePathForShell(output) + "' 2>&1";
+    const int rc = RunCommand(command);
+    return SupervisorDryRunResult{rc, ReadFile(output)};
+}
+
 SupervisorDryRunResult RunSupervisorDryRun(
     const std::string& suffix, const std::string& fake_now,
     const std::string& calendar_payload = StandardSessionCalendar(), bool pass_calendar = true,
@@ -852,6 +877,116 @@ TEST(SimnowSupervisorScriptTest, PipelineMonitorMissingEventKeyDegradesAndKeepsH
     }
 }
 
+TEST(SimnowSupervisorScriptTest, PipelineMonitorSkipsInterleavedNoCandidateWithEmptyTrace) {
+    const auto root = MakeTempDir("pipeline_interleaved_empty_trace");
+    const auto output = root / "monitor.out";
+    WriteHealthyPipelineFixture(root);
+    const auto core_log = root / "runs/current/core_engine.log";
+    WriteFile(root / "runs/current_core_engine_log", core_log.string() + "\n");
+    WriteFile(core_log,
+              "ts_ns=1784511004000000000ts_ns=1784511004001000000 level=warn "
+              "app=core event=market_timeframe_bar_not_strategy_eligible "
+              "instrument_id=\"c2609info app=composite event=strategy_decision\" "
+              "event_ts_ns=\"1784510999000000000\" disposition=\"no_candidate\" "
+              "reason=\"no_raw_signal\" trace_id=\"\"\n");
+    const std::string command =
+        "find '" + EscapePathForShell(root) +
+        "' -type f -exec touch -d '2026-07-20 09:31:05' {} + && " +
+        MonitorCommand(root, "2026-07-20 09:31:05", true, true) + " > '" +
+        EscapePathForShell(output) + "' 2>&1";
+
+    ASSERT_EQ(RunCommand(command), 0) << ReadFile(output);
+    const auto health = ReadFile(root / "monitor/pipeline_health.json");
+    const auto checkpoint = ReadFile(root / "monitor/pipeline_checkpoint_v3.tsv");
+    EXPECT_NE(health.find("\"overall_status\": \"healthy\""), std::string::npos) << health;
+    EXPECT_EQ(checkpoint.find("strategy_trace\t\"\""), std::string::npos) << checkpoint;
+    EXPECT_EQ(checkpoint.find("1784511004000000000ts_ns"), std::string::npos) << checkpoint;
+}
+
+TEST(SimnowSupervisorScriptTest, PipelineMonitorMalformedTraceWarnsThenSelfRecovers) {
+    const auto root = MakeTempDir("pipeline_malformed_trace_recovers");
+    const auto first_output = root / "monitor-first.out";
+    const auto second_output = root / "monitor-second.out";
+    WriteHealthyPipelineFixture(root);
+    const auto core_log = root / "runs/current/core_engine.log";
+    WriteFile(root / "runs/current_core_engine_log", core_log.string() + "\n");
+    WriteFile(core_log,
+              "ts_ns=1784511005000000000ts_ns=1784511006000000000 level=info "
+              "app=composite event=strategy_decision event_ts_ns=\"1784510999000000000\" "
+              "disposition=\"blocked\" trace_id=\"malformed-trace\"\n");
+    const std::string first_command =
+        "find '" + EscapePathForShell(root) +
+        "' -type f -exec touch -d '2026-07-20 09:31:05' {} + && " +
+        MonitorCommand(root, "2026-07-20 09:31:05", false, true) + " > '" +
+        EscapePathForShell(first_output) + "' 2>&1";
+
+    ASSERT_EQ(RunCommand(first_command), 0) << ReadFile(first_output);
+    const auto first_health = ReadFile(root / "monitor/pipeline_health.json");
+    const auto first_checkpoint = ReadFile(root / "monitor/pipeline_checkpoint_v3.tsv");
+    EXPECT_NE(first_health.find("monitor_trace_input_invalid"), std::string::npos)
+        << first_health;
+    EXPECT_NE(first_health.find("\"invalid_trace_records\": 1"), std::string::npos)
+        << first_health;
+    EXPECT_EQ(first_checkpoint.find("strategy_trace\tmalformed-trace"), std::string::npos)
+        << first_checkpoint;
+    EXPECT_NE(ReadFile(root / "monitor/signal_execution_watch.jsonl")
+                  .find("monitor_trace_input_invalid"),
+              std::string::npos);
+
+    const std::string second_command =
+        "find '" + EscapePathForShell(root) +
+        "' -type f -exec touch -d '2026-07-20 09:47:00' {} + && " +
+        MonitorCommand(root, "2026-07-20 09:47:00") + " > '" +
+        EscapePathForShell(second_output) + "' 2>&1";
+    ASSERT_EQ(RunCommand(second_command), 0) << ReadFile(second_output);
+    const auto second_health = ReadFile(root / "monitor/pipeline_health.json");
+    EXPECT_NE(second_health.find("\"overall_status\": \"healthy\""), std::string::npos)
+        << second_health;
+    EXPECT_EQ(second_health.find("monitor_trace_input_invalid"), std::string::npos)
+        << second_health;
+    EXPECT_NE(second_health.find("\"invalid_trace_records\": 1"), std::string::npos)
+        << second_health;
+}
+
+TEST(SimnowSupervisorScriptTest, PipelineMonitorDropsPoisonedTraceCheckpointAndRecovers) {
+    const auto root = MakeTempDir("pipeline_poisoned_trace_checkpoint");
+    const auto first_output = root / "monitor-first.out";
+    const auto second_output = root / "monitor-second.out";
+    WriteHealthyPipelineFixture(root);
+    const auto checkpoint = root / "monitor/pipeline_checkpoint_v3.tsv";
+    WriteFile(checkpoint,
+              "schema\t3\n"
+              "strategy_trace\t\"\"\t\t0\t\t\t1784511004\t1\tno_candidate\t"
+              "1784511004000000000ts_ns=1784511004001000000\t"
+              "1784510999000000000\t\t0\t\n");
+    const std::string first_command =
+        "find '" + EscapePathForShell(root) +
+        "' -type f -exec touch -d '2026-07-20 09:31:05' {} + && " +
+        MonitorCommand(root, "2026-07-20 09:31:05") + " > '" +
+        EscapePathForShell(first_output) + "' 2>&1";
+
+    ASSERT_EQ(RunCommand(first_command), 0) << ReadFile(first_output);
+    const auto first_health = ReadFile(root / "monitor/pipeline_health.json");
+    EXPECT_NE(first_health.find("monitor_checkpoint_invalid"), std::string::npos)
+        << first_health;
+    EXPECT_EQ(ReadFile(checkpoint).find("strategy_trace\t\"\""), std::string::npos)
+        << ReadFile(checkpoint);
+
+    const std::string second_command =
+        "find '" + EscapePathForShell(root) +
+        "' -type f -exec touch -d '2026-07-20 09:47:00' {} + && " +
+        MonitorCommand(root, "2026-07-20 09:47:00") + " > '" +
+        EscapePathForShell(second_output) + "' 2>&1";
+    ASSERT_EQ(RunCommand(second_command), 0) << ReadFile(second_output);
+    const auto second_health = ReadFile(root / "monitor/pipeline_health.json");
+    EXPECT_NE(second_health.find("\"overall_status\": \"healthy\""), std::string::npos)
+        << second_health;
+    EXPECT_EQ(second_health.find("monitor_checkpoint_invalid"), std::string::npos)
+        << second_health;
+    EXPECT_NE(second_health.find("\"invalid_checkpoint_records\": 1"), std::string::npos)
+        << second_health;
+}
+
 TEST(SimnowSupervisorScriptTest, PipelineMonitorRejectsIncompleteFiveMinuteBar) {
     const auto root = MakeTempDir("pipeline_incomplete_5m");
     const auto output = root / "monitor.out";
@@ -942,44 +1077,79 @@ TEST(SimnowSupervisorScriptTest, PrewarmAndActiveUseSeparateRestartBudgets) {
         << supervisor;
 }
 
-TEST(SimnowSupervisorScriptTest, IndependentSignalMonitorUnitRestartsAlways) {
+TEST(SimnowSupervisorScriptTest, RetiredSignalMonitorUnitFailsClosed) {
     const std::string unit = ReadFile("infra/systemd/quant-hft-simnow-signal-monitor.service");
-    EXPECT_NE(unit.find("Restart=always"), std::string::npos) << unit;
-    EXPECT_NE(unit.find("monitor_simnow_signal_execution.sh"), std::string::npos) << unit;
-    EXPECT_NE(unit.find("Environment=TZ=Asia/Shanghai"), std::string::npos) << unit;
-    EXPECT_EQ(unit.find("runtime/trading/monitor/simnow"), std::string::npos) << unit;
+    EXPECT_NE(unit.find("RefuseManualStart=yes"), std::string::npos) << unit;
+    EXPECT_NE(unit.find("ExecStart=/bin/false"), std::string::npos) << unit;
+    EXPECT_EQ(unit.find("Restart=always"), std::string::npos) << unit;
+    EXPECT_EQ(unit.find("monitor_simnow_signal_execution.sh"), std::string::npos) << unit;
+    EXPECT_EQ(unit.find("workspace/quant_platform_HF"), std::string::npos) << unit;
     const auto monitor = ReadFile("scripts/ops/monitor_simnow_signal_execution.sh");
     EXPECT_NE(monitor.find("load_runtime_path_defaults"), std::string::npos);
     EXPECT_NE(monitor.find("pipeline_checkpoint_v3.tsv"), std::string::npos);
 }
 
 TEST(SimnowSupervisorScriptTest, FormalStartKeepsProbeAndUsesDeploymentLauncher) {
-    const auto root = MakeTempDir("formal_start_" + std::to_string(getpid()));
-    const auto config = root / "connection.yaml";
-    const auto build = root / "bin";
-    const auto output = root / "start.out";
-    WriteFile(config, "ctp:\n  settlement_confirm_required: true\n");
-    for (const auto* binary : {"core_engine", "simnow_probe", "quant_config_cli"})
-        WriteExecutable(build / binary);
-    const std::string command =
-        "QUANT_HFT_SUPERVISOR_BOUND=1 QUANT_HFT_DEPLOYMENT_FILE='/formal/deployment.yaml' "
-        "QUANT_HFT_DEPLOYMENT_ACCOUNT=simnow_a CTP_SIM_BROKER_ID=fixture "
-        "CTP_SIM_USER_ID=fixture CTP_SIM_INVESTOR_ID=fixture CTP_SIM_PASSWORD=fixture "
-        "CTP_SIM_AUTH_CODE=fixture CTP_SIM_APP_ID=fixture SIMNOW_LOCK_DIR='" +
-        EscapePathForShell(root / "locks") +
-        "' bash scripts/ops/start_simnow_trading.sh "
-        "--env-file '/retired/env/must/not/be/read' --config '" +
-        EscapePathForShell(config) + "' --build-dir '" + EscapePathForShell(build) +
-        "' --run-root '" + EscapePathForShell(root / "runs") + "' --wal-file '" +
-        EscapePathForShell(root / "wal/events.wal") + "' --min-free-mb 1 --dry-run > '" +
-        EscapePathForShell(output) + "' 2>&1";
-    ASSERT_EQ(RunCommand(command), 0) << ReadFile(output);
-    const auto text = ReadFile(output);
+    const auto result = RunFormalStartDryRun("start",
+                                             "ctp:\n"
+                                             "  enable_real_api: \"${CTP_SIM_ENABLE_REAL_API}\"\n"
+                                             "  settlement_confirm_required: true\n"
+                                             "  strategy_state_persist_enabled: true\n"
+                                             "  strategy_state_ttl_seconds: 1209600\n");
+    ASSERT_EQ(result.rc, 0) << result.output;
+    const auto& text = result.output;
     EXPECT_NE(text.find("quant_config_cli launch /formal/deployment.yaml simnow_a"),
               std::string::npos)
         << text;
     EXPECT_NE(text.find("[dry-run] probe: timeout"), std::string::npos) << text;
     EXPECT_EQ(text.find("--skip-probe"), std::string::npos);
+}
+
+TEST(SimnowSupervisorScriptTest, FormalStartRejectsStateTtlThatCannotCrossClosures) {
+    const auto result = RunFormalStartDryRun("state_ttl_short",
+                                             "ctp:\n"
+                                             "  enable_real_api: true\n"
+                                             "  settlement_confirm_required: true\n"
+                                             "  strategy_state_persist_enabled: true\n"
+                                             "  strategy_state_ttl_seconds: 86400\n");
+    ASSERT_NE(result.rc, 0);
+    EXPECT_NE(result.output.find("must be at least 1209600"), std::string::npos) << result.output;
+}
+
+TEST(SimnowSupervisorScriptTest, FormalStartRejectsMissingPersistedStateTtl) {
+    const auto result = RunFormalStartDryRun("state_ttl_missing",
+                                             "ctp:\n"
+                                             "  enable_real_api: true\n"
+                                             "  settlement_confirm_required: true\n"
+                                             "  strategy_state_persist_enabled: true\n");
+    ASSERT_NE(result.rc, 0);
+    EXPECT_NE(result.output.find("requires an explicit positive strategy_state_ttl_seconds"),
+              std::string::npos)
+        << result.output;
+}
+
+TEST(SimnowSupervisorScriptTest, FormalStartRejectsZeroPersistedStateTtl) {
+    const auto result = RunFormalStartDryRun("state_ttl_zero",
+                                             "ctp:\n"
+                                             "  enable_real_api: true\n"
+                                             "  settlement_confirm_required: true\n"
+                                             "  strategy_state_persist_enabled: true\n"
+                                             "  strategy_state_ttl_seconds: 0\n");
+    ASSERT_NE(result.rc, 0);
+    EXPECT_NE(result.output.find("requires an explicit positive strategy_state_ttl_seconds"),
+              std::string::npos)
+        << result.output;
+}
+
+TEST(SimnowSupervisorScriptTest, FormalStartRejectsSyntheticYamlDespiteTrueEnvironment) {
+    const auto result = RunFormalStartDryRun("synthetic_yaml",
+                                             "ctp:\n"
+                                             "  enable_real_api: false\n"
+                                             "  settlement_confirm_required: true\n"
+                                             "  strategy_state_persist_enabled: false\n");
+    ASSERT_NE(result.rc, 0);
+    EXPECT_NE(result.output.find("requires effective ctp.enable_real_api=true"), std::string::npos)
+        << result.output;
 }
 
 TEST(SimnowSupervisorScriptTest, FormalSupervisorKeepsReadOnlySnapshotAfterSettlementFailure) {

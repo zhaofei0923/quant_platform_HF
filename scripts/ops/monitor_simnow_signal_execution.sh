@@ -37,6 +37,9 @@ ORDER_TO_CTP_TIMEOUT_SECONDS="${SIMNOW_ORDER_TO_CTP_TIMEOUT_SECONDS:-30}"
 CTP_TO_CALLBACK_TIMEOUT_SECONDS="${SIMNOW_CTP_TO_CALLBACK_TIMEOUT_SECONDS:-120}"
 FILL_TIMEOUT_SECONDS="${SIMNOW_SIGNAL_FILL_TIMEOUT_SECONDS:-180}"
 STATUS_INTERVAL_SECONDS="${SIMNOW_SIGNAL_MONITOR_STATUS_INTERVAL_SECONDS:-60}"
+# Malformed trace input is actionable while it is fresh, but must not leave the
+# monitor degraded forever after the source line has aged out.
+TRACE_INPUT_WARN_SECONDS="${SIMNOW_SIGNAL_MONITOR_TRACE_INPUT_WARN_SECONDS:-900}"
 START_AT_END="${SIMNOW_SIGNAL_MONITOR_START_AT_END:-1}"
 HEALTH_SNAPSHOT_FILE="${SIMNOW_PIPELINE_HEALTH_FILE:-${MONITOR_ROOT}/pipeline_health.json}"
 CHECKPOINT_FILE="${SIMNOW_SIGNAL_MONITOR_CHECKPOINT_FILE:-${MONITOR_ROOT}/pipeline_checkpoint_v3.tsv}"
@@ -239,6 +242,8 @@ is_non_negative_int "${ORDER_TO_CTP_TIMEOUT_SECONDS}" || die "--order-to-ctp-tim
 is_non_negative_int "${CTP_TO_CALLBACK_TIMEOUT_SECONDS}" || die "--ctp-to-callback-timeout must be non-negative"
 is_non_negative_int "${FILL_TIMEOUT_SECONDS}" || die "--fill-timeout must be non-negative"
 is_non_negative_int "${STATUS_INTERVAL_SECONDS}" || die "--status-interval-seconds must be non-negative"
+is_non_negative_int "${TRACE_INPUT_WARN_SECONDS}" || \
+  die "SIMNOW_SIGNAL_MONITOR_TRACE_INPUT_WARN_SECONDS must be non-negative"
 [[ "${START_AT_END}" == "0" || "${START_AT_END}" == "1" ]] || die "start-at-end flag must be 0 or 1"
 [[ "${STRICT_EXIT}" == "0" || "${STRICT_EXIT}" == "1" ]] || die "strict-exit flag must be 0 or 1"
 
@@ -344,6 +349,9 @@ pipeline_strategy_trace_integrity_failures=0
 pipeline_generation_mismatch_submissions=0
 pipeline_unresolved_traces=0
 pipeline_last_change_epoch=0
+monitor_trace_invalid_records=0
+monitor_trace_last_invalid_epoch=0
+monitor_checkpoint_last_invalid_epoch=0
 stage_runtime_status="unknown"
 stage_runtime_reason="not_scanned"
 stage_market_status="unknown"
@@ -541,12 +549,23 @@ kv_field() {
   local line="$1"
   local key="$2"
   local value
-  value="$(printf '%s\n' "${line}" | LC_ALL=C sed -nE "s/.*(^| )${key}=\"([^\"]*)\".*/\2/p" | head -n 1)"
-  if [[ -n "${value}" ]]; then
+  # Preserve a quoted empty value as empty. Falling through to the unquoted
+  # parser would otherwise turn trace_id="" into the literal token `""`.
+  if printf '%s\n' "${line}" | LC_ALL=C grep -qE "(^| )${key}=\"[^\"]*\""; then
+    value="$(printf '%s\n' "${line}" | \
+      LC_ALL=C sed -nE "s/.*(^| )${key}=\"([^\"]*)\".*/\2/p" | head -n 1)"
     printf '%s\n' "${value}"
     return 0
   fi
   printf '%s\n' "${line}" | LC_ALL=C sed -nE "s/.*(^| )${key}=([^ ]+).*/\2/p" | head -n 1
+}
+
+record_invalid_trace_input() {
+  local reason="${1:-malformed_trace_fields}"
+  monitor_trace_invalid_records=$((monitor_trace_invalid_records + 1))
+  monitor_trace_last_invalid_epoch="$(now_epoch)"
+  write_event "monitor_trace_input_invalid" "" "${reason}" \
+    "\"invalid_trace_records\":${monitor_trace_invalid_records}"
 }
 
 json_string_field() {
@@ -573,6 +592,14 @@ valid_monitor_uint() {
      "${value}" == "9223372036854775807" ]]
 }
 
+monitor_epoch_is_recent() {
+  local event_epoch="${1:-0}"
+  local current_epoch="${2:-$(now_epoch)}"
+  valid_monitor_uint "${event_epoch}" || return 1
+  valid_monitor_uint "${current_epoch}" || return 1
+  (( current_epoch < event_epoch || current_epoch - event_epoch <= TRACE_INPUT_WARN_SECONDS ))
+}
+
 valid_checkpoint_fields() {
   local kind="${checkpoint_fields[0]:-}" index
   local -a numeric_indexes=()
@@ -587,6 +614,7 @@ valid_checkpoint_fields() {
       numeric_indexes=(2 4 5 6 7) ;;
     strategy_trace)
       [[ ${#checkpoint_fields[@]} -eq 14 ]] || return 1
+      [[ "${checkpoint_fields[1]}" != '""' ]] || return 1
       numeric_indexes=(2 3 4 5 6 7 9 10 11 12 13) ;;
     execution_ts)
       [[ ${#checkpoint_fields[@]} -eq 4 ]] || return 1
@@ -604,6 +632,16 @@ valid_checkpoint_fields() {
     [[ -z "${checkpoint_fields[index]}" ]] ||
       valid_monitor_uint "${checkpoint_fields[index]}" || return 1
   done
+  if [[ "${kind}" == "strategy_trace" ]]; then
+    # A stored timestamp must retain the epoch/event identity needed to age and
+    # correlate it. Reject incomplete rows so the next atomic checkpoint drops
+    # them instead of restoring a permanently unhealthy trace.
+    [[ -z "${checkpoint_fields[4]}" ||
+       ( -n "${checkpoint_fields[2]}" && -n "${checkpoint_fields[5]}" ) ]] || return 1
+    [[ -z "${checkpoint_fields[9]}" ||
+       ( -n "${checkpoint_fields[6]}" && -n "${checkpoint_fields[10]}" ) ]] || return 1
+    [[ -z "${checkpoint_fields[13]}" || -n "${checkpoint_fields[11]}" ]] || return 1
+  fi
   return 0
 }
 
@@ -664,6 +702,7 @@ load_checkpoint() {
   if [[ "$(head -n 1 -- "${CHECKPOINT_FILE}")" != $'schema\t3' ]]; then
     echo "[warn] ignoring invalid monitor checkpoint: ${CHECKPOINT_FILE}" >&2
     monitor_checkpoint_invalid_records=$((monitor_checkpoint_invalid_records + 1))
+    monitor_checkpoint_last_invalid_epoch="$(now_epoch)"
     return 0
   fi
   # IFS=TAB read collapses consecutive empty columns and corrupts saved trace timestamps.
@@ -677,6 +716,7 @@ load_checkpoint() {
     checkpoint_fields+=("${remainder}")
     if ! valid_checkpoint_fields; then
       monitor_checkpoint_invalid_records=$((monitor_checkpoint_invalid_records + 1))
+      monitor_checkpoint_last_invalid_epoch="$(now_epoch)"
       continue
     fi
     record_type="${checkpoint_fields[0]}"; key="${checkpoint_fields[1]}"
@@ -741,6 +781,14 @@ load_checkpoint() {
           generation_mismatch_submissions) pipeline_generation_mismatch_submissions="${value1:-0}" ;;
           invalid_monitor_records)
             monitor_checkpoint_invalid_records=$((monitor_checkpoint_invalid_records + ${value1:-0})) ;;
+          invalid_checkpoint_epoch)
+            if valid_monitor_uint "${value1:-}" &&
+                (( 10#${value1} > 10#${monitor_checkpoint_last_invalid_epoch} )); then
+              monitor_checkpoint_last_invalid_epoch="${value1}"
+            fi
+            ;;
+          invalid_trace_records) monitor_trace_invalid_records="${value1:-0}" ;;
+          invalid_trace_epoch) monitor_trace_last_invalid_epoch="${value1:-0}" ;;
         esac
         ;;
       stage)
@@ -797,6 +845,10 @@ save_checkpoint() {
     printf 'counter\tgeneration_mismatch_submissions\t%s\n' \
       "${pipeline_generation_mismatch_submissions}"
     printf 'counter\tinvalid_monitor_records\t%s\n' "${monitor_checkpoint_invalid_records}"
+    printf 'counter\tinvalid_checkpoint_epoch\t%s\n' \
+      "${monitor_checkpoint_last_invalid_epoch}"
+    printf 'counter\tinvalid_trace_records\t%s\n' "${monitor_trace_invalid_records}"
+    printf 'counter\tinvalid_trace_epoch\t%s\n' "${monitor_trace_last_invalid_epoch}"
     for stage in "${!previous_stage_status[@]}"; do
       printf 'stage\t%s\t%s\t%s\t%s\n' "${stage}" "${previous_stage_status[${stage}]:-unknown}" \
         "${previous_stage_reason[${stage}]:-}" "${last_stage_alert_epoch[${stage}]:-0}"
@@ -1122,21 +1174,34 @@ process_log_line() {
   case "${event}" in
     signal_candidate)
       trace_id="$(kv_field "${line}" "trace_id")"
-      if [[ -n "${trace_id}" ]]; then
+      event_ts_ns="$(kv_field "${line}" "event_ts_ns")"
+      if [[ -z "${trace_id}" || "${trace_id}" == '""' ]]; then
+        record_invalid_trace_input "signal_candidate missing trace_id"
+      elif ! valid_monitor_uint "${log_ts_ns}" || ! valid_monitor_uint "${event_ts_ns}"; then
+        record_invalid_trace_input "signal_candidate has malformed timestamps"
+      else
         candidate_count["${trace_id}"]=$(( ${candidate_count[${trace_id}]:-0} + 1 ))
         candidate_epoch["${trace_id}"]="$(ns_epoch_seconds "${log_ts_ns}")"
         candidate_ts_ns["${trace_id}"]="${log_ts_ns}"
-        candidate_event_ts_ns["${trace_id}"]="$(kv_field "${line}" "event_ts_ns")"
+        candidate_event_ts_ns["${trace_id}"]="${event_ts_ns}"
       fi
       ;;
     strategy_decision)
       trace_id="$(kv_field "${line}" "trace_id")"
       disposition="$(kv_field "${line}" "disposition")"
-      if [[ -n "${trace_id}" ]]; then
+      event_ts_ns="$(kv_field "${line}" "event_ts_ns")"
+      if [[ -z "${trace_id}" || "${trace_id}" == '""' ]]; then
+        # no_candidate decisions intentionally have no trace identity.
+        if [[ "${disposition}" != "no_candidate" ]]; then
+          record_invalid_trace_input "strategy_decision missing trace_id"
+        fi
+      elif ! valid_monitor_uint "${log_ts_ns}" || ! valid_monitor_uint "${event_ts_ns}"; then
+        record_invalid_trace_input "strategy_decision has malformed timestamps"
+      else
         decision_count["${trace_id}"]=$(( ${decision_count[${trace_id}]:-0} + 1 ))
         decision_epoch["${trace_id}"]="$(ns_epoch_seconds "${log_ts_ns}")"
         decision_ts_ns["${trace_id}"]="${log_ts_ns}"
-        decision_event_ts_ns["${trace_id}"]="$(kv_field "${line}" "event_ts_ns")"
+        decision_event_ts_ns["${trace_id}"]="${event_ts_ns}"
         decision_disposition["${trace_id}"]="${disposition}"
       fi
       ;;
@@ -1879,7 +1944,7 @@ collect_pipeline_health() {
   local execution_incidents=0 execution_rejected=0 execution_active=0 execution_filled=0
   local execution_stale_active=0
   local wal_integrity wal_duplicate_trades wal_unresolved_trades
-  local cutoff_ns event_key finalized_ns latency_ms invalid_for_strategy
+  local current_epoch cutoff_ns event_key finalized_ns latency_ms invalid_for_strategy
   local decision_stamp candidate_stamp disposition_stamp callback_stamp ctp_stamp
   local pipeline_invalid_trace_count=0
   local recent_duplicate_tick_total=0 recent_late_tick_total=0
@@ -1905,7 +1970,11 @@ collect_pipeline_health() {
   for event_key in "${!bar_strategy_invalid_by_event_ts_ns[@]}"; do
     unset "bar_strategy_invalid_by_event_ts_ns[${event_key}]"
   done
-  cutoff_ns="$(( $(now_epoch) - 900 ))000000000"
+  current_epoch="$(now_epoch)"
+  cutoff_ns="$(( current_epoch - 900 ))000000000"
+  if monitor_epoch_is_recent "${monitor_trace_last_invalid_epoch}" "${current_epoch}"; then
+    pipeline_invalid_trace_count=1
+  fi
   stage_market_status="inactive"; stage_market_reason="outside_trading_session"
   stage_bar_1m_status="inactive"; stage_bar_1m_reason="outside_trading_session"
   stage_bar_5m_status="inactive"; stage_bar_5m_reason="outside_trading_session"
@@ -2142,7 +2211,9 @@ collect_pipeline_health() {
     # Missing decision timestamps are allowed for checkpoint rows containing only a candidate.
     [[ -n "${decision_stamp}" ]] || continue
     if ! valid_monitor_uint "${decision_stamp}" || ! valid_monitor_uint "${event_key}"; then
-      pipeline_invalid_trace_count=$((pipeline_invalid_trace_count + 1))
+      if monitor_epoch_is_recent "${decision_epoch[${trace_id}]:-0}" "${current_epoch}"; then
+        pipeline_invalid_trace_count=$((pipeline_invalid_trace_count + 1))
+      fi
       continue
     fi
     finalized_ns="${bar_finalized_by_event_ts_ns[${event_key}]:-}"
@@ -2156,7 +2227,9 @@ collect_pipeline_health() {
     disposition_stamp="${disposition_ts_ns[${trace_id}]:-}"
     [[ -n "${candidate_stamp}" && -n "${disposition_stamp}" ]] || continue
     if ! valid_monitor_uint "${candidate_stamp}" || ! valid_monitor_uint "${disposition_stamp}"; then
-      pipeline_invalid_trace_count=$((pipeline_invalid_trace_count + 1))
+      if monitor_epoch_is_recent "${disposition_epoch[${trace_id}]:-0}" "${current_epoch}"; then
+        pipeline_invalid_trace_count=$((pipeline_invalid_trace_count + 1))
+      fi
     elif (( disposition_stamp >= cutoff_ns && disposition_stamp >= candidate_stamp )); then
       candidate_to_disposition_samples_ms+=("$(( (disposition_stamp - candidate_stamp) / 1000000 ))")
     fi
@@ -2166,7 +2239,10 @@ collect_pipeline_health() {
     callback_stamp="${signal_callback_ts_ns[${trace_id}]:-}"
     [[ -n "${ctp_stamp}" && -n "${callback_stamp}" ]] || continue
     if ! valid_monitor_uint "${ctp_stamp}" || ! valid_monitor_uint "${callback_stamp}"; then
-      pipeline_invalid_trace_count=$((pipeline_invalid_trace_count + 1))
+      if monitor_epoch_is_recent "${signal_callback_epoch[${trace_id}]:-0}" \
+          "${current_epoch}"; then
+        pipeline_invalid_trace_count=$((pipeline_invalid_trace_count + 1))
+      fi
     elif (( callback_stamp >= cutoff_ns && callback_stamp >= ctp_stamp )); then
       ctp_to_callback_samples_ms+=("$(( (callback_stamp - ctp_stamp) / 1000000 ))")
     fi
@@ -2174,16 +2250,22 @@ collect_pipeline_health() {
 
   for trace_id in "${!candidate_epoch[@]}"; do
     if (( ${candidate_count[${trace_id}]:-0} > 1 || ${decision_count[${trace_id}]:-0} > 1 )); then
-      pipeline_strategy_trace_integrity_failures=$((pipeline_strategy_trace_integrity_failures + 1))
-      write_incident "${trace_id}" "duplicate_candidate_or_gate_result" \
-        "candidate_count=${candidate_count[${trace_id}]:-0} decision_count=${decision_count[${trace_id}]:-0}"
+      if monitor_epoch_is_recent \
+          "${candidate_epoch[${trace_id}]:-${decision_epoch[${trace_id}]:-0}}" \
+          "${current_epoch}"; then
+        pipeline_strategy_trace_integrity_failures=$((pipeline_strategy_trace_integrity_failures + 1))
+        write_incident "${trace_id}" "duplicate_candidate_or_gate_result" \
+          "candidate_count=${candidate_count[${trace_id}]:-0} decision_count=${decision_count[${trace_id}]:-0}"
+      fi
       continue
     fi
     event_key="${candidate_event_ts_ns[${trace_id}]:-}"
     candidate_stamp="${candidate_ts_ns[${trace_id}]:-}"
     [[ -n "${candidate_stamp}" ]] || continue
     if ! valid_monitor_uint "${candidate_stamp}" || ! valid_monitor_uint "${event_key}"; then
-      pipeline_invalid_trace_count=$((pipeline_invalid_trace_count + 1))
+      if monitor_epoch_is_recent "${candidate_epoch[${trace_id}]:-0}" "${current_epoch}"; then
+        pipeline_invalid_trace_count=$((pipeline_invalid_trace_count + 1))
+      fi
       continue
     fi
     if (( candidate_stamp >= cutoff_ns )); then
@@ -2302,7 +2384,8 @@ collect_pipeline_health() {
     stage_execution_status="unhealthy"; stage_execution_reason="wal_trade_identity_failure"
   fi
 
-  if (( monitor_checkpoint_invalid_records > 0 )) && [[ "${stage_runtime_status}" != "unhealthy" ]]; then
+  if monitor_epoch_is_recent "${monitor_checkpoint_last_invalid_epoch}" "${current_epoch}" &&
+      [[ "${stage_runtime_status}" != "unhealthy" ]]; then
     stage_runtime_status="degraded"; stage_runtime_reason="monitor_checkpoint_invalid"
   fi
   if (( pipeline_invalid_trace_count > 0 )) && [[ "${stage_strategy_status}" != "unhealthy" ]]; then
@@ -2358,6 +2441,10 @@ write_pipeline_health() {
     printf '  "warning_count": %s,\n' "${pipeline_warning_count}"
     printf '  "critical_count": %s,\n' "${pipeline_critical_count}"
     printf '  "invalid_checkpoint_records": %s,\n' "${monitor_checkpoint_invalid_records}"
+    printf '  "invalid_checkpoint_last_epoch": %s,\n' \
+      "${monitor_checkpoint_last_invalid_epoch}"
+    printf '  "invalid_trace_records": %s,\n' "${monitor_trace_invalid_records}"
+    printf '  "invalid_trace_last_epoch": %s,\n' "${monitor_trace_last_invalid_epoch}"
     printf '  "last_change_epoch": %s,\n' "${pipeline_last_change_epoch}"
     printf '  "runtime_status": "%s", "runtime_reason": "%s",\n' "${stage_runtime_status}" "$(json_escape "${stage_runtime_reason}")"
     printf '  "market_data_status": "%s", "market_data_reason": "%s",\n' "${stage_market_status}" "$(json_escape "${stage_market_reason}")"

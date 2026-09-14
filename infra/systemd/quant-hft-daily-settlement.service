@@ -1,17 +1,10 @@
 [Unit]
-Description=Quant HFT Daily Settlement (user unit)
-After=network-online.target
-Wants=network-online.target
+Description=RETIRED Quant HFT checkout-bound daily settlement
+# This legacy unit executed settlement from an old checkout and had no reviewed
+# deployment/account identity. Session settlement is owned by the packaged
+# SimNow supervisor; keep this source unit fail-closed.
+RefuseManualStart=yes
 
 [Service]
 Type=oneshot
-WorkingDirectory=/
-Environment=QUANT_HFT_ENV=prod
-Environment=QUANT_ROOT=%h/workspace/quant_platform_HF
-EnvironmentFile=-/etc/quant/platform.conf
-ExecStart=/bin/bash -lc ': "${QUANT_ROOT:?QUANT_ROOT is required}"; TRADING_DAY=$(date +%F); "${QUANT_ROOT}/scripts/ops/run_daily_settlement.sh" --trading-day "${TRADING_DAY}" --execute'
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=default.target
+ExecStart=/bin/false

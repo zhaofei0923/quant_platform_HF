@@ -375,7 +375,10 @@ check_no_existing_processes() {
     exit 1
   fi
   echo "[ok] process_check"
-  run_step stop_dry_run "${STOP_SCRIPT}" --all --dry-run --run-root "${RUN_ROOT}" --config "${CONFIG_PATH}"
+  # Generic preflight has no reviewed systemd unit or shell-supervisor PID identity.
+  # A stop rehearsal here would either guess another account or intentionally fail the
+  # strict stop contract, so process absence is the complete non-mutating check.
+  info "stop_rehearsal=skipped reason=no_reviewed_supervisor_identity"
 }
 
 run_supervisor_schedule_check() {

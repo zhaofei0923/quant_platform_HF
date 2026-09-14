@@ -1674,6 +1674,11 @@ int main(int argc, char** argv) {
             return 1;
         }
         const auto& account = found->second;
+        if (!ValidateCtpConfigForDeployment(account.environment, file_config, &error)) {
+            EmitStructuredLog(&file_config.runtime, "core_engine", "critical",
+                              "deployment_connection_invalid", {{"error", error}});
+            return 1;
+        }
         char hostname[256]{};
         const bool production = file_config.runtime.environment == CtpEnvironment::kProduction;
         if (gethostname(hostname, sizeof(hostname)) != 0 || account.active_host != hostname ||

@@ -375,6 +375,38 @@ bool ApplyMarketStateDetectorField(MarketStateDetectorConfig* detector, const st
 
 }  // namespace
 
+bool ValidateCtpConfigForDeployment(const std::string& deployment_environment,
+                                    const CtpFileConfig& config, std::string* error) {
+    const bool formal = deployment_environment == "simnow" || deployment_environment == "live";
+    if (formal && !config.runtime.enable_real_api) {
+        if (error != nullptr) {
+            *error = "formal " + deployment_environment +
+                     " deployment requires ctp.enable_real_api=true; synthetic gateway is "
+                     "forbidden";
+        }
+        return false;
+    }
+    constexpr int kMinimumUnattendedStateTtlSeconds = 14 * 24 * 60 * 60;
+    if (formal && config.strategy_state_persist_enabled &&
+        !config.strategy_state_ttl_explicitly_configured) {
+        if (error != nullptr) {
+            *error =
+                "formal persisted strategy state requires an explicit "
+                "strategy_state_ttl_seconds";
+        }
+        return false;
+    }
+    if (formal && config.strategy_state_persist_enabled &&
+        config.strategy_state_ttl_seconds < kMinimumUnattendedStateTtlSeconds) {
+        if (error != nullptr) {
+            *error = "formal persisted strategy_state_ttl_seconds must be at least " +
+                     std::to_string(kMinimumUnattendedStateTtlSeconds);
+        }
+        return false;
+    }
+    return true;
+}
+
 bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* config,
                                    std::string* error, CtpConfigLoadOptions options) {
     if (config == nullptr) {
@@ -1335,6 +1367,8 @@ bool CtpConfigLoader::LoadFromYaml(const std::string& path, CtpFileConfig* confi
         return false;
     }
     loaded.strategy_state_ttl_seconds = 86'400;
+    loaded.strategy_state_ttl_explicitly_configured =
+        kv.find("strategy_state_ttl_seconds") != kv.end();
     SetOptionalInt(kv, "strategy_state_ttl_seconds", &loaded.strategy_state_ttl_seconds,
                    &load_error);
     if (!load_error.empty()) {

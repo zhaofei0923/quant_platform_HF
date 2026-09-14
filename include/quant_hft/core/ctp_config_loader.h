@@ -42,6 +42,7 @@ struct CtpFileConfig {
     std::string strategy_state_backend{"redis"};
     int strategy_state_snapshot_interval_ms{60'000};
     int strategy_state_ttl_seconds{86'400};
+    bool strategy_state_ttl_explicitly_configured{false};
     std::string strategy_state_key_prefix{"strategy_state"};
     std::string strategy_state_file_dir{"runtime/trading/state"};
     int strategy_metrics_emit_interval_ms{1'000};
@@ -65,5 +66,10 @@ class CtpConfigLoader {
     static bool LoadFromYaml(const std::string& path, CtpFileConfig* config, std::string* error,
                              CtpConfigLoadOptions options = {});
 };
+
+// Enforces invariants that can only be checked after both the deployment manifest and the
+// environment-expanded connection config have been resolved.
+bool ValidateCtpConfigForDeployment(const std::string& deployment_environment,
+                                    const CtpFileConfig& config, std::string* error);
 
 }  // namespace quant_hft

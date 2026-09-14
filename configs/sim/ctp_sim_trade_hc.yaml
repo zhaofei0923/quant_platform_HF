@@ -78,6 +78,8 @@ ctp:
   strategy_state_persist_enabled: true
   strategy_state_backend: "file"
   strategy_state_snapshot_interval_ms: 5000
+  # Bounded state age must survive weekends and exchange holiday closures.
+  strategy_state_ttl_seconds: 1209600
   # Keep this exact default so RuntimePaths namespaces state by QUANT_HFT_INSTANCE.
   strategy_state_file_dir: "runtime/trading/state"
   account_id: "${CTP_SIM_INVESTOR_ID}"

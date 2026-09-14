@@ -3,6 +3,8 @@
 #include <chrono>
 #include <cctype>
 #include <iostream>
+#include <mutex>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -75,12 +77,18 @@ inline void EmitStructuredLog(const CtpRuntimeConfig* runtime,
         out = &std::cout;
     }
 
-    (*out) << "ts_ns=" << LogNowNs() << " level=" << normalized_level << " app=" << app
+    std::ostringstream record;
+    record << "ts_ns=" << LogNowNs() << " level=" << normalized_level << " app=" << app
            << " event=" << event;
     for (const auto& [key, value] : fields) {
-        (*out) << " " << key << "=\"" << EscapeLogValue(value) << "\"";
+        record << " " << key << "=\"" << EscapeLogValue(value) << "\"";
     }
-    (*out) << '\n';
+    // Gateway callbacks, market aggregation, and strategy evaluation can log from
+    // different threads. Build the complete record first, then serialize the stream
+    // write so two valid records can never be spliced into one unparsable line.
+    static std::mutex output_mutex;
+    const std::lock_guard<std::mutex> lock(output_mutex);
+    (*out) << record.str() << '\n';
 }
 
 }  // namespace quant_hft

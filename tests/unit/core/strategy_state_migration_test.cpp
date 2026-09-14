@@ -68,7 +68,7 @@ composite:
               "params:\n  id: kama\n  er_period: 10\n  risk_per_trade_pct: 0.005\n");
         std::string error;
         ASSERT_TRUE(MigrateLegacyParameterSet(
-            (directory / "main.yaml").string(), "sim", "test_v001", "kama_trend@1.0.0",
+            (directory / "main.yaml").string(), "sim", "test_v001", "kama_trend@1.1.0",
             (directory / "schema.yaml").string(), (directory / "parameters").string(), &error))
             << error;
         ParameterSet parameters;
@@ -80,15 +80,15 @@ composite:
         // deliberately differs from the hash of the formatted parameter file.
         YAML::Node manifest;
         manifest["schema_version"] = 1;
-        manifest["version"] = "1.0.0";
+        manifest["version"] = "1.1.0";
         manifest["strategy_releases"].push_back(parameters.strategy_release);
-        manifest["files"]["share/quant_strategies/1.0.0/schemas/atomic_parameters.yaml"] =
+        manifest["files"]["share/quant_strategies/1.1.0/schemas/atomic_parameters.yaml"] =
             ConfigContentSha256(Read(directory / "schema.yaml"));
         Write(directory / "manifest.json", YAML::Dump(manifest));
         Write(directory / "connection.yaml", "runtime: {enable_real_api: false}\n");
         YAML::Node root;
         root["schema_version"] = 1;
-        root["package"]["version"] = "1.0.0";
+        root["package"]["version"] = "1.1.0";
         const auto reference = [&](const std::string& path) {
             YAML::Node node;
             node["path"] = path;
@@ -109,7 +109,7 @@ composite:
             YAML::Load("{account_ref: sim_a, initial_capital: 25000}");
         root["instances"].push_back(
             YAML::Load("{instance_id: stable_instance, account_ref: sim_a, "
-                       "strategy_release: 'kama_trend@1.0.0', parameter_set: test_v001, "
+                       "strategy_release: 'kama_trend@1.1.0', parameter_set: test_v001, "
                        "capital_allocation_ref: trial, risk_profile_ref: trial}"));
         Write(directory / "deployment.yaml", YAML::Dump(root));
         ASSERT_TRUE(

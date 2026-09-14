@@ -1,11 +1,10 @@
 [Unit]
-Description=Run quant-hft daily settlement at 03:00 (user timer)
-Requires=quant-hft-daily-settlement.service
+Description=RETIRED Quant HFT checkout-bound daily settlement timer
+# Settlement scheduling belongs to the reviewed packaged supervisor. This legacy
+# timer remains loadable only so an installed copy can be disabled cleanly.
+RefuseManualStart=yes
 
 [Timer]
 OnCalendar=*-*-* 03:00:00
 Persistent=true
 Unit=quant-hft-daily-settlement.service
-
-[Install]
-WantedBy=timers.target

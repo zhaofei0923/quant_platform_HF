@@ -33,11 +33,13 @@ cp "$repo_root/configs/deploy/instances.example.yaml" \
 cp "$repo_root/docs/ops/three_project_migration.md" "$payload/docs/"
 cp "$repo_root/docs/independent_strategy_books.md" "$payload/docs/"
 cp "$repo_root/infra/timescale/init/"*.sql "$payload/infra/sql/"
-cp "$repo_root/configs/trading_sessions.yaml" "$payload/configs/"
+cp "$repo_root/configs/trading_sessions.yaml" "$repo_root/configs/risk_rules.yaml" \
+   "$payload/configs/"
 cp "$repo_root/configs/market/products.json" "$payload/configs/market/"
 for script in run_simnow_preflight_check.sh run_account_deployment.sh run_account_supervisor.sh \
-    run_packaged_account.sh run_packaged_supervisor.sh supervise_simnow_trading.sh \
-    start_simnow_trading.sh runtime_path_defaults.sh run_daily_settlement.sh \
+    run_packaged_account.sh run_packaged_supervisor.sh verify_packaged_release.sh \
+    supervise_simnow_trading.sh \
+    start_simnow_trading.sh stop_simnow_trading.sh runtime_path_defaults.sh run_daily_settlement.sh \
     export_simnow_trading_day.sh monitor_simnow_signal_execution.sh; do
     cp "$repo_root/scripts/ops/$script" "$payload/scripts/ops/"
 done
@@ -46,6 +48,9 @@ cp "$repo_root/infra/systemd/quant-hft-simnow-account@.service" "$payload/infra/
 git_commit="$(git -C "$repo_root" rev-parse HEAD)"
 dirty=false
 [[ -z "$(git -C "$repo_root" status --porcelain --untracked-files=normal)" ]] || dirty=true
+if [[ "$dirty" == true ]]; then
+    echo "warning: package records working_tree_dirty=true; packaged launchers will reject it" >&2
+fi
 real_api=false
 if grep -q '^QUANT_HFT_ENABLE_CTP_REAL_API:BOOL=ON$' "$build_dir/CMakeCache.txt"; then
     real_api=true

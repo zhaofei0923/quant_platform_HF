@@ -905,7 +905,14 @@ struct Publisher::Impl {
             history.dirty = true;
         }
         for (const auto& key : keys) history.aliases[key] = order_key;
-        const bool fill = type == "trade_fill" || (type.empty() && kind == "trade");
+        // The durable ingress commits CTP trade callbacks through CommitOrderEvent too.
+        // Their WAL envelope is order_update; only the callback source identifies a fill.
+        // An order callback's cumulative filled_volume is never a per-trade execution.
+        const auto source = S(record, "event_source");
+        const bool callback_fill = source == "OnRtnTrade" || source == "OnRspQryTrade";
+        const bool order_callback = source == "OnRtnOrder" || source == "OnRspQryOrder";
+        const bool fill = !order_callback && (callback_fill || type == "trade_fill" ||
+                                              (type.empty() && kind == "trade"));
         if (fill) {
             const auto trade_id = S(record, "trade_id"), exchange = S(record, "exchange_id");
             if (trade_id.empty() || exchange.empty() || stamp <= 0) {
@@ -924,7 +931,7 @@ struct Publisher::Impl {
                 Str(PublicIdentifier(trade_id).empty() ? "t-" + Hash(key) : trade_id));
             const auto volume = I(record, "last_trade_volume", 0) > 0
                                     ? I(record, "last_trade_volume")
-                                    : I(record, "filled_volume");
+                                    : (callback_fill ? 0 : I(record, "filled_volume"));
             Put(row, "volume", Num(volume));
             Put(row, "price", Get(record, "avg_fill_price"));
             if (volume <= 0 || !Get(row, "price").IsNumber() ||

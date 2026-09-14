@@ -73,9 +73,17 @@ ctp:
 
 - `ctp.strategy_state_persist_enabled`：是否开启策略状态快照（默认 `false`）
 - `ctp.strategy_state_snapshot_interval_ms`：快照周期（默认 `60000`，`0` 表示关闭周期保存）
-- `ctp.strategy_state_ttl_seconds`：状态 TTL（默认 `86400`，`0` 表示不设置 TTL）
+- `ctp.strategy_state_ttl_seconds`：状态 TTL（通用默认 `86400`，`0` 表示不设置 TTL）。
+  正式 `simnow` 和 `live` 部署开启持久状态时必须显式设置至少 `1209600`（14 天），以覆盖
+  周末和交易所长假，同时保留长期停运后的人工恢复门禁；不得依赖 24 小时默认值或用 `0`
+  绕过门禁。
 - `ctp.strategy_state_key_prefix`：Redis key 前缀（默认 `strategy_state`）
 - `ctp.strategy_metrics_emit_interval_ms`：主循环输出策略指标周期（默认 `1000`，`0` 表示关闭）
+
+正式部署清单的账户环境为 `simnow` 或 `live` 时，核心启动门禁要求环境展开后的连接配置
+`ctp.enable_real_api=true`。进程环境中的同名开关不能覆盖连接 YAML 中的 `false` 或缺失值；
+正式账户不得退化到 synthetic gateway。此检查与上述持久状态 TTL 检查均在 C++ 核心执行，
+不会因绕过 shell 启动脚本而失效。
 
 示例：
 
@@ -83,7 +91,7 @@ ctp:
 ctp:
   strategy_state_persist_enabled: true
   strategy_state_snapshot_interval_ms: 5000
-  strategy_state_ttl_seconds: 3600
+  strategy_state_ttl_seconds: 1209600
   strategy_state_key_prefix: "hf_strategy_state"
   strategy_metrics_emit_interval_ms: 2000
 ```

@@ -33,6 +33,7 @@
 #include "quant_hft/core/ctp_gateway_adapter.h"
 #include "quant_hft/core/ctp_md_adapter.h"
 #include "quant_hft/core/ctp_order_mapping_store.h"
+#include "quant_hft/core/ctp_projection_recovery.h"
 #include "quant_hft/core/ctp_trader_adapter.h"
 #include "quant_hft/core/flow_controller.h"
 #include "quant_hft/core/host_adapters/filesystem_configuration_reader.h"
@@ -1673,6 +1674,11 @@ int main(int argc, char** argv) {
             return 1;
         }
         const auto& account = found->second;
+        if (!ValidateCtpConfigForDeployment(account.environment, file_config, &error)) {
+            EmitStructuredLog(&file_config.runtime, "core_engine", "critical",
+                              "deployment_connection_invalid", {{"error", error}});
+            return 1;
+        }
         char hostname[256]{};
         const bool production = file_config.runtime.environment == CtpEnvironment::kProduction;
         if (gethostname(hostname, sizeof(hostname)) != 0 || account.active_host != hostname ||
@@ -1947,6 +1953,7 @@ int main(int argc, char** argv) {
     InMemoryPortfolioLedger ledger;
     CtpPositionLedger ctp_position_ledger;
     ctp_position_ledger.UseCommittedTradeAccounting(true);
+    CtpProjectionRecovery ctp_projection_recovery;
     CtpAccountLedger ctp_account_ledger(file_config.risk.max_margin_to_equity_ratio);
     OrderStateMachine order_state_machine;
     CtpOrderMappingStore ctp_order_mapping_store;
@@ -2966,7 +2973,8 @@ int main(int argc, char** argv) {
     };
 
     auto process_order_event = [&](const OrderEvent& raw_event,
-                                   const WalReceipt& delivered_receipt = WalReceipt{}) -> bool {
+                                   const WalReceipt& delivered_receipt = WalReceipt{},
+                                   bool historical_replay = false) -> bool {
         std::lock_guard<std::mutex> processing_lock(order_event_processing_mutex);
         {
             std::lock_guard<std::mutex> ledger_lock(ctp_ledger_mutex);
@@ -3153,7 +3161,12 @@ int main(int argc, char** argv) {
             std::lock_guard<std::mutex> lock(planner_mutex);
             execution_planner.RecordOrderResult(event.status == OrderStatus::kRejected);
         }
-        {
+        // WAL history rebuilds the domain/outbox, never today's broker position
+        // buckets or reservations. The first reconciled broker query covers these
+        // trades as well as any recovery-query trades received before that baseline.
+        const bool project_broker_event = ctp_projection_recovery.ShouldProjectEvent(
+            historical_replay, trade_event ? applied.identity_key : std::string{});
+        if (project_broker_event) {
             std::string ctp_ledger_error;
             std::string ctp_account_error;
             std::lock_guard<std::mutex> lock(ctp_ledger_mutex);
@@ -3182,6 +3195,12 @@ int main(int argc, char** argv) {
                                    applied.identity_key, order_manager->BuildTrade(event),
                                    applied.broker_close_allocation, &ctp_ledger_error)) {
                 trading_permission_controller.SetBlocked("ctp_position_projection_pending");
+                EmitStructuredLog(&config, "core_engine", "critical",
+                                  "ctp_position_commit_projection_failed",
+                                  {{"sequence", std::to_string(receipt.sequence)},
+                                   {"client_order_id", event.client_order_id},
+                                   {"trade_id", event.trade_id},
+                                   {"error", ctp_ledger_error}});
                 return false;
             }
             if (trade_event)
@@ -3209,8 +3228,8 @@ int main(int argc, char** argv) {
                                {"error", trading_error},
                                {"failure_count", std::to_string(failure_count)}});
         }
-        if ((event.status == OrderStatus::kPartiallyFilled ||
-             event.status == OrderStatus::kFilled) &&
+        if (trade_event &&
+            (event.status == OrderStatus::kPartiallyFilled || event.status == OrderStatus::kFilled) &&
             event.filled_volume > 0) {
             if (!trading_ledger_store.AppendTradeEvent(event, &trading_error)) {
                 const auto failure_count = trading_write_failures.fetch_add(1) + 1;
@@ -4560,6 +4579,7 @@ int main(int argc, char** argv) {
                 return;
             }
             trading_permission_controller.ClearReason("position_snapshot_replace_failed");
+            ctp_projection_recovery.OnAuthoritativeSnapshotReconciled();
             for (const auto& snapshot : snapshots) {
                 std::string trading_error;
                 if (!trading_ledger_store.AppendPositionSnapshot(snapshot, &trading_error)) {
@@ -4923,7 +4943,8 @@ int main(int argc, char** argv) {
                 ctp_order_mapping_store.Upsert(*record.mapping);
                 return trading_domain_store->AcknowledgeReceipt(record.receipt, &error);
             }
-            if (record.event.has_value()) return process_order_event(*record.event, record.receipt);
+            if (record.event.has_value())
+                return process_order_event(*record.event, record.receipt, true);
             return trading_domain_store->AcknowledgeReceipt(record.receipt, &error);
         });
     if (!domain_replay.completed) {

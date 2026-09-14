@@ -4,7 +4,7 @@
 
 ## 构建与依赖
 
-在线宿主使用 C++17、GCC 11+、CMake 3.20+、OpenSSL、yaml-cpp。测试使用 GTest。先安装 `QuantStrategies 1.0.0` 静态包，构建会核对 `dependencies.lock.json` 和已安装文件校验和；不引用兄弟仓源码，不需要研究环境。
+在线宿主使用 C++17、GCC 11+、CMake 3.20+、OpenSSL、yaml-cpp。测试使用 GTest。先安装 `QuantStrategies 1.1.0` 静态包，构建会核对 `dependencies.lock.json` 和已安装文件校验和；不引用兄弟仓源码，不需要研究环境。
 
 ```bash
 cmake -S . -B build -DQUANT_HFT_BUILD_TESTS=ON -DCMAKE_PREFIX_PATH=/path/to/quant-strategies

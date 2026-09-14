@@ -185,4 +185,21 @@ TEST(TradingLedgerStoreClientAdapterTest, ReplayOffsetDuplicateWithHigherStoredS
     EXPECT_EQ(client->table_row_count("trading_core.replay_offsets"), 1U);
 }
 
+TEST(TradingLedgerStoreClientAdapterTest, CumulativeOrderFillIsNotACanonicalTrade) {
+    auto client = std::make_shared<FakeTimescaleSqlClient>(0);
+    TradingLedgerStoreClientAdapter adapter(client, StorageRetryPolicy{}, "trading_core");
+    auto event = BuildOrderEvent();
+    event.status = OrderStatus::kFilled;
+    std::string error;
+    EXPECT_TRUE(adapter.AppendOrderEvent(event, &error)) << error;
+    EXPECT_FALSE(adapter.AppendTradeEvent(event, &error));
+    EXPECT_EQ(client->table_row_count("trading_core.order_events"), 1U);
+    EXPECT_EQ(client->table_row_count("trading_core.trade_events"), 0U);
+    // A genuine trade callback without its identity also remains an error; fixing
+    // the host's order/trade routing must not weaken canonical trade validation.
+    event.event_source = "OnRtnTrade";
+    EXPECT_FALSE(adapter.AppendTradeEvent(event, &error));
+    EXPECT_EQ(client->table_row_count("trading_core.trade_events"), 0U);
+}
+
 }  // namespace quant_hft

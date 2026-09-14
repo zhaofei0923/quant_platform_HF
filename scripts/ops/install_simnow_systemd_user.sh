@@ -16,17 +16,20 @@ usage() {
   cat <<USAGE
 Usage: $0 [options]
 
-Install the user-level systemd unit for unattended SimNow trading.
+Retire or disable the legacy direct user-level SimNow unit.
+
+This installer no longer installs, enables, or starts trading. Formal deployments use the
+packaged quant-hft-simnow-account@.service after an operator reviews the exact account_ref.
 
 Options:
-  --unit-src <path>      Unit file to install (default: ${UNIT_SRC})
-  --unit-dir <path>      User unit directory (default: ${UNIT_DIR})
-  --enable               Enable service at user-session boot
-  --start                Start service after install
-  --enable-now           Enable and start service after install
+  --unit-src <path>      Accepted for compatibility; never installed
+  --unit-dir <path>      Accepted for compatibility; never written
+  --enable               Retired; exits without changing systemd state
+  --start                Retired; exits without changing systemd state
+  --enable-now           Retired; exits without changing systemd state
   --disable              Stop and disable the installed service
-  --enable-linger        Run loginctl enable-linger for the current user when available
-  --dry-run              Print commands without changing systemd state
+  --enable-linger        Retired; exits without changing systemd state
+  --dry-run              With --disable, print commands without changing systemd state
   -h, --help             Show this help
 USAGE
 }
@@ -66,33 +69,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-command -v systemctl >/dev/null 2>&1 || die "systemctl is required"
-[[ -f "${UNIT_SRC}" ]] || die "unit file not found: ${UNIT_SRC}"
-
 if [[ ${DISABLE} -eq 1 ]]; then
+  [[ ${ENABLE} -eq 0 && ${START} -eq 0 && ${ENABLE_LINGER} -eq 0 ]] ||
+    die "--disable cannot be combined with retired install/start options"
+  command -v systemctl >/dev/null 2>&1 || die "systemctl is required"
   run_cmd systemctl --user disable --now "${UNIT_NAME}"
   run_cmd systemctl --user daemon-reload
+  echo "[ok] disabled legacy ${UNIT_NAME}; no replacement account was inferred"
   exit 0
 fi
 
-run_cmd mkdir -p "${UNIT_DIR}"
-run_cmd install -m 0644 "${UNIT_SRC}" "${UNIT_DIR}/${UNIT_NAME}"
-run_cmd systemctl --user daemon-reload
-
-if [[ ${ENABLE_LINGER} -eq 1 ]]; then
-  if command -v loginctl >/dev/null 2>&1; then
-    run_cmd loginctl enable-linger "${USER}"
-  else
-    echo "[warn] loginctl is not available; skipping linger setup" >&2
-  fi
-fi
-
-if [[ ${ENABLE} -eq 1 ]]; then
-  run_cmd systemctl --user enable "${UNIT_NAME}"
-fi
-
-if [[ ${START} -eq 1 ]]; then
-  run_cmd systemctl --user start "${UNIT_NAME}"
-fi
-
-echo "[ok] installed ${UNIT_NAME} into ${UNIT_DIR}"
+die "legacy ${UNIT_NAME} installation is retired; use the packaged quant-hft-simnow-account@.service with an explicitly reviewed account_ref (no account is inferred)"

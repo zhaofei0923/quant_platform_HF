@@ -2,7 +2,7 @@
 
 ## 交付范围
 
-迁移隔离工作树：`/home/kevin/worktrees/quant_platform_HF-split`；研究仓：`/home/kevin/quant_research`；策略仓：`/home/kevin/quant_strategies`。三者独立Git、构建、测试、配置和文档。两宿主只消费同一个已安装静态策略包。
+当前在线项目工作树：`/home/kevin/quant_platform_HF-split`；研究仓：`/home/kevin/quant_research`；策略仓：`/home/kevin/quant_strategies`。三者独立Git、构建、测试、配置和文档。两宿主只消费同一个已安装静态策略包。
 
 基线来自原工作树有效内容，包含原有未提交源码变更，冻结提交为a211023；原始HEAD为15909d4。文件SHA/排除项见 `/home/kevin/quant_split_evidence/20260909/baseline.json`，路径归属见 `migration/path_mapping.json`。源码基线快照未混入凭据、SDK、运行状态及历史数据。后续经用户授权完成腾讯云候选部署，独立运行数据迁移及实际验收状态见[部署记录](../results/tencent_simnow_split_deployment.md)。
 
@@ -21,14 +21,41 @@
 
 在线CLI和core_engine还将部署manifest与编译时绑定的静态包校验和比较。即使版本号相同，二进制与部署引用不同包也会拒绝启动。文件SHA用于验证来源字节；最终参数hash来自补齐默认值后的规范参数，与文件换行及YAML排版无关。
 
-账户进程使用 `scripts/ops/run_account_deployment.sh` 或 `infra/systemd/quant-hft-account@.service`。密码由部署清单的受限credential_ref读取。SimNow会话部署使用发布包 `run_packaged_supervisor.sh` 和 `quant_config_cli supervise`，仓库外环境文件指定账户引用、部署清单、数据服务、日历和会话调度；不读取旧混合.env或旧universe策略映射。`--check-only`只校验配置和调度，不连接柜台。腾讯云部署已经启用新监督服务，旧服务保留禁用供受控回滚。
+发布包账户进程使用 `infra/systemd/quant-hft-account@.service`，unit 必须调用包内
+`run_packaged_account.sh`，由包装器固定二进制和动态库到同一不可变发布目录。SimNow
+会话部署使用 `infra/systemd/quant-hft-simnow-account@.service`、发布包
+`run_packaged_supervisor.sh` 和 `quant_config_cli supervise`。两类 `%i` 都必须是从已审核部署
+清单取得的准确 `account_ref`，不得从主机名、旧服务或示例配置猜测。密码由部署清单的受限
+credential_ref 读取；仓库外环境文件指定部署清单、数据服务、日历和会话调度，不读取旧混合
+.env 或旧 universe 策略映射。`--check-only` 只校验配置和调度，不连接柜台。仓库内旧
+`quant-hft-simnow-trading.service` 及其安装脚本已 fail-closed 退役，不能作为正式安装入口；
+腾讯云此前保留的禁用旧 unit 仅属于受控回滚证据，不改变这一发布规则。
+
+`run_packaged_account.sh` 与 `run_packaged_supervisor.sh` 共用同一个发布完整性门禁：启动前
+必须存在 `deploy_manifest.json` 和完整覆盖包内文件的 `SHA256SUMS`，并且 manifest 必须明确
+记录 `working_tree_dirty=false`、`ctp_real_api_compiled=true`。缺失、篡改、漏列或额外文件
+以及脏工作树/非真实 CTP 构建均拒绝启动，普通账户入口不能绕过 SimNow supervisor 的门禁。
+
+旧 `quant-hft-simnow-signal-monitor.service` 同样因绑定旧 checkout 和旧服务而 fail-closed
+退役。旧 `quant-hft-daily-settlement.service`/`.timer` 会从旧 checkout 直接执行
+`--execute`，也已 fail-closed 退役；日结只属于绑定准确账户的发布包 supervisor。独立监控必须由部署侧显式
+提供与交易进程相同的 deployment identity 和运行路径。systemd 管理的紧急停止必须给出
+当前实际 unit 名及 `user`/`system` scope，确认 unit inactive 后直接退出，不再扫描主机进程。
+手工 shell supervisor 只能通过显式 PID 与其持有锁的准确 run-root 停止，禁止全机发现。
+
+正式 `simnow` 和 `live` 账户必须由 C++ 核心确认环境展开后的连接配置
+`ctp.enable_real_api=true`，不得由 YAML `false` 或缺失值退化到 synthetic gateway。开启持久策略
+状态时，两种正式环境还必须显式设置 `strategy_state_ttl_seconds: 1209600` 或更长；这些门禁由
+核心执行，`quant_config_cli launch` 直启不能绕过。版本化状态加载失败会阻止核心启动；24 小时
+通用默认值无法跨越周末，`0` 又会取消长期停运后的人工核对门禁。部署专用连接文件应与旧版
+回滚配置隔离，不能通过原地修改共享旧文件来修复当前版本。
 
 每个参数集用独立ID和算法版本；参数变更发布新参数文件，不需要重新编译算法。算法静态包升级必须重新构建两宿主。参数schema或状态不兼容在启动前阻止恢复，不能丢弃已有状态后自动开仓。
 
 旧参数迁移示例：
 
 ```bash
-build/quant_config_cli migrate /snapshot/main.yaml sim hc_5m_v001 kama_trend@1.0.0 /installed/share/quant_strategies/1.0.0/schemas/atomic_parameters.yaml /review/new-parameters
+build/quant_config_cli migrate /snapshot/main.yaml sim hc_5m_v001 kama_trend@1.1.0 /installed/share/quant_strategies/1.1.0/schemas/atomic_parameters.yaml /review/new-parameters
 ```
 
 迁移器物化所选模式覆盖，保留组件ID、入场窗口、止盈止损及风险参数，生成来源SHA与旧ID映射。原代码从未读取的allowed_regimes参数在报告中列为忽略项，实际entry_market_regimes保持原值。正式参数拒绝params.id和模式overrides。之后只维护正式参数集；历史混合配置作为研究基线fixture保存。
@@ -73,6 +100,21 @@ build/strategy_state_migrate_cli --deployment /review/instances.yaml --account-r
 迁移器重新计算旧配置实际参数、校验来源文件、验证原策略状态、保存封装并回读核对；报告包括新旧状态和参数SHA。自动变更持仓owner被拒绝，交易WAL与数据库不会被该命令修改。
 
 回滚不得覆盖新版本已产生的成交。兼容新账本的旧构建才可直接恢复；不兼容版本需自然清仓、委托及成交对账完成后再切回。数据库和WAL事实保持原始顺序，不重写成交identity。
+
+### 固定止盈版本 1.0.0 → 1.1.0
+
+1.1.0 在首次确认持仓且取得该合约有效 ATR 后锁定止盈价；后续行情、ATR、加减仓均不移动该目标。清仓、换向或实际归属策略改变时重新建立目标。跟踪止损仍沿用原逻辑。算法变化须重新构建两宿主并更新部署的包版本、哈希及正式参数集引用。
+
+在交易进程自然停止后冻结原状态，用新发布包执行正式版本迁移；原部署、参数及状态必须保留，输出目录必须尚不存在：
+
+```bash
+build/strategy_state_migrate_cli --source-deployment /snapshot/old-deployment.yaml \
+  --deployment /review/new-deployment.yaml --source-package-sha256 OLD_MANIFEST_SHA256 \
+  --account-ref simnow_hc --instance-id kama_candidate_hc \
+  --source-state-dir /snapshot/state --output-dir /review/new-state
+```
+
+此命令只允许参数语义、身份、资金和风险限制不变的 1.0.0 → 1.1.0 升级，保留非原子策略交易事实及处理水位，并核对实际持仓归属的旧止盈目标。历史 KAMA 持仓沿用最后保存的止盈价，不声称恢复了开仓时 ATR；缺少可验证风险状态的旧 Trend 持仓拒绝迁移。报告及新策略状态原子写入隔离目录。行情流水线等其他检查点不由命令复制，部署方须逐字复制并校验哈希。原库、WAL、凭据不变。只有报告和配置验证通过后才切换状态目录及启动入口；未捕获下一时段的恢复与成交时，只能记录离线上线核验结果。
 
 ## 验收阶段
 

@@ -3,7 +3,7 @@
 This repository is the C++17 online host. The approved three-repository architecture supersedes the old monorepo map.
 
 - Trading: this repository, one account per process, CTP/execution/account risk/authoritative transactions/recovery/readonly dashboard.
-- Shared algorithms: separately released `quant_strategies`; consume only `find_package(QuantStrategies 1.0.0 EXACT CONFIG REQUIRED)` and the immutable dependency lock. Never copy algorithm/indicator/research implementations back here.
+- Shared algorithms: separately released `quant_strategies`; the exact `find_package(QuantStrategies ... EXACT CONFIG REQUIRED)` version must match `dependencies.lock.json`. Never copy algorithm/indicator/research implementations back here.
 - Research: separate `quant_research`, owns all backtests/optimization/rolling, historical data and Python data/analysis tooling. No Python strategy runner or bridge in trading.
 - Source/build in WSL. Runtime, SDK, credentials, and E-drive data stay outside Git.
 - Configuration, account/instance identity and state envelopes are defined in `docs/ops/three_project_migration.md`. Keep stable ownership, gross long/short, economic vs physical close allocation, actual fees and transaction watermarks.

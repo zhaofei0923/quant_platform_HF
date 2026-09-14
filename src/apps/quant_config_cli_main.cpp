@@ -1,12 +1,10 @@
-#include <sys/stat.h>
 #include <unistd.h>
 
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <regex>
-#include <set>
 
+#include "quant_hft/config/credential_file.h"
 #include "quant_hft/config/deployment_config.h"
 #include "quant_hft/core/host_adapters/filesystem_configuration_reader.h"
 #include "quant_hft/core/host_adapters/host_clock.h"
@@ -20,35 +18,6 @@ void Usage() {
                  "quant_config_cli supervise <deployment.yaml> <account-ref> [--dry-run]\n";
 }
 
-void LoadCredentials(const std::string& path) {
-    struct stat info {};
-    if (lstat(path.c_str(), &info) != 0 || !S_ISREG(info.st_mode) || (info.st_mode & 0077) != 0 ||
-        info.st_uid != geteuid()) {
-        throw std::runtime_error("credential_ref must be an owner-only regular file (0600)");
-    }
-    std::ifstream input(path);
-    std::string line;
-    std::set<std::string> seen;
-    static const std::regex key_pattern("CTP_[A-Z0-9_]+");
-    while (std::getline(input, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        if (line.empty() || line.front() == '#') continue;
-        const auto split = line.find('=');
-        if (split == std::string::npos)
-            throw std::runtime_error("credential file expects KEY=value, no shell syntax");
-        const auto key = line.substr(0, split);
-        auto value = line.substr(split + 1);
-        if (!std::regex_match(key, key_pattern) || !seen.insert(key).second) {
-            throw std::runtime_error("credential file contains invalid or duplicate variable");
-        }
-        if (value.size() >= 2 && (value.front() == '\'' || value.front() == '"') &&
-            value.back() == value.front()) {
-            value = value.substr(1, value.size() - 2);
-        }
-        if (setenv(key.c_str(), value.c_str(), 1) != 0)
-            throw std::runtime_error("cannot bind credential environment");
-    }
-}
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -130,7 +99,7 @@ int main(int argc, char** argv) {
             if (supervise && account.environment != "simnow") {
                 throw std::runtime_error("session supervisor requires a SimNow account");
             }
-            LoadCredentials(account.credential_ref);
+            quant_hft::LoadCredentialFile(account.credential_ref);
             setenv("QUANT_HFT_DEPLOYMENT_FILE", deployment.source_path.c_str(), 1);
             setenv("QUANT_HFT_DEPLOYMENT_ACCOUNT", account.account_ref.c_str(), 1);
             setenv("QUANT_HFT_RUNTIME_ROOT", account.runtime_root.c_str(), 1);

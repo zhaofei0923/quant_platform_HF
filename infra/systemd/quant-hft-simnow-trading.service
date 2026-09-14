@@ -1,24 +1,9 @@
 [Unit]
-Description=Quant SimNow account deployment (user unit)
-After=network-online.target
-Wants=network-online.target
-StartLimitIntervalSec=300
-StartLimitBurst=5
+Description=RETIRED Quant SimNow direct user launcher
+# The direct launcher did not bind an explicit reviewed account instance. Keep this
+# source unit fail-closed so copying it cannot bypass the packaged supervisor.
+RefuseManualStart=yes
 
 [Service]
-Type=simple
-WorkingDirectory=%h
-# Paths and selected account only; credentials remain behind deployment credential_ref.
-EnvironmentFile=%h/.config/quant_platform_HF/simnow-host.env
-Environment=TZ=Asia/Shanghai
-ExecStart=/bin/bash -c 'exec "${QUANT_ROOT}/scripts/ops/run_account_deployment.sh"'
-Restart=on-failure
-RestartSec=30
-KillSignal=SIGTERM
-TimeoutStopSec=120
-UMask=0077
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=default.target
+Type=oneshot
+ExecStart=/bin/false

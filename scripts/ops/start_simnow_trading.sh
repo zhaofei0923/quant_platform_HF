@@ -31,6 +31,7 @@ EXPECTED_INITIAL_TRADING_DAY="${SIMNOW_EXPECTED_INITIAL_TRADING_DAY:-}"
 INITIAL_BALANCE_TOLERANCE="${SIMNOW_INITIAL_BALANCE_TOLERANCE:-0.01}"
 INITIAL_MARGIN_TOLERANCE="${SIMNOW_INITIAL_MARGIN_TOLERANCE:-0.01}"
 EXPECTED_CONFIGURED_CONTRACT_COUNT="${SIMNOW_EXPECTED_CONTRACT_COUNT:-}"
+MIN_UNATTENDED_STATE_TTL_SECONDS=1209600
 BACKGROUND=1
 SKIP_PROBE=0
 PROBE_ONLY=0
@@ -355,12 +356,36 @@ is_true_text() {
 yaml_bool_value() {
   local key="$1"
   local file_path="$2"
+  local value variable_name
+  value="$(awk -F: -v key="${key}" '
+    $1 ~ "^[[:space:]]*" key "[[:space:]]*$" {
+      value = $2
+      sub(/[[:space:]]*#.*/, "", value)
+      gsub(/[[:space:]\"'"'"']/, "", value)
+      print value
+      exit
+    }
+  ' "${file_path}" 2>/dev/null)"
+  if [[ "${value}" =~ ^\$\{([A-Z][A-Z0-9_]*)\}$ ]]; then
+    variable_name="${BASH_REMATCH[1]}"
+    if [[ -v "${variable_name}" ]]; then
+      value="${!variable_name}"
+    else
+      value=""
+    fi
+  fi
+  printf '%s\n' "${value}" | tr '[:upper:]' '[:lower:]'
+}
+
+yaml_scalar_value() {
+  local key="$1"
+  local file_path="$2"
   awk -F: -v key="${key}" '
     $1 ~ "^[[:space:]]*" key "[[:space:]]*$" {
       value = $2
       sub(/[[:space:]]*#.*/, "", value)
       gsub(/[[:space:]\"'"'"']/, "", value)
-      print tolower(value)
+      print value
       exit
     }
   ' "${file_path}" 2>/dev/null
@@ -617,6 +642,24 @@ fi
 [[ -n "${CTP_SIM_APP_ID:-}" ]] || die "CTP_SIM_APP_ID is missing"
 
 CONFIG_SETTLEMENT_CONFIRM_REQUIRED="$(yaml_bool_value settlement_confirm_required "${CONFIG_PATH}")"
+CONFIG_ENABLE_REAL_API="$(yaml_bool_value enable_real_api "${CONFIG_PATH}")"
+CONFIG_STRATEGY_STATE_PERSIST_ENABLED="$(
+  yaml_bool_value strategy_state_persist_enabled "${CONFIG_PATH}"
+)"
+if [[ -n "${QUANT_HFT_DEPLOYMENT_FILE:-}" ]] &&
+   ! is_true_text "${CONFIG_ENABLE_REAL_API}"; then
+  die "formal SimNow deployment requires effective ctp.enable_real_api=true; synthetic gateway is forbidden"
+fi
+if is_true_text "${CONFIG_STRATEGY_STATE_PERSIST_ENABLED}"; then
+  CONFIG_STRATEGY_STATE_TTL_SECONDS="$(
+    yaml_scalar_value strategy_state_ttl_seconds "${CONFIG_PATH}"
+  )"
+  is_positive_int "${CONFIG_STRATEGY_STATE_TTL_SECONDS}" ||
+    die "persisted strategy state requires an explicit positive strategy_state_ttl_seconds"
+  if (( CONFIG_STRATEGY_STATE_TTL_SECONDS < MIN_UNATTENDED_STATE_TTL_SECONDS )); then
+    die "strategy_state_ttl_seconds must be at least ${MIN_UNATTENDED_STATE_TTL_SECONDS} for unattended SimNow trading"
+  fi
+fi
 if is_true_text "${CTP_SIM_ENABLE_REAL_API}"; then
   if [[ "${CONFIG_SETTLEMENT_CONFIRM_REQUIRED}" == "false" && "${ALLOW_UNCONFIRMED_SETTLEMENT}" != "1" ]]; then
     die "settlement_confirm_required=false is unsafe for real SimNow trading; set it true or export SIMNOW_ALLOW_UNCONFIRMED_SETTLEMENT=1 for diagnostics only"

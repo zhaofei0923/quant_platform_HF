@@ -8,6 +8,8 @@
 #include <fstream>
 #include <string>
 
+#include "quant_hft/core/runtime_semantics_loader.h"
+
 namespace quant_hft {
 namespace {
 
@@ -59,6 +61,116 @@ TEST(CtpConfigLoaderTest, ResolveEnvVarsLeavesUnknownVarEmpty) {
     const ScopedEnvVar env("CTP_TEST_UNKNOWN_KEY", nullptr);
     const auto resolved = ResolveEnvVars("left-${CTP_TEST_UNKNOWN_KEY}-right");
     EXPECT_EQ(resolved, "left--right");
+}
+
+TEST(CtpConfigLoaderTest, FormalSimnowDeploymentRejectsSyntheticGateway) {
+    CtpFileConfig config;
+    config.runtime.enable_real_api = false;
+    std::string error;
+    EXPECT_FALSE(ValidateCtpConfigForDeployment("simnow", config, &error));
+    EXPECT_NE(error.find("ctp.enable_real_api=true"), std::string::npos) << error;
+
+    config.runtime.enable_real_api = true;
+    error.clear();
+    EXPECT_TRUE(ValidateCtpConfigForDeployment("simnow", config, &error)) << error;
+}
+
+TEST(CtpConfigLoaderTest, FormalLiveDeploymentAlsoRejectsSyntheticGateway) {
+    CtpFileConfig config;
+    config.runtime.enable_real_api = false;
+    std::string error;
+    EXPECT_FALSE(ValidateCtpConfigForDeployment("live", config, &error));
+    EXPECT_NE(error.find("ctp.enable_real_api=true"), std::string::npos) << error;
+}
+
+TEST(CtpConfigLoaderTest, FormalDeploymentRequiresExplicitDurableStateTtl) {
+    for (const std::string environment : {"simnow", "live"}) {
+        SCOPED_TRACE("environment=" + environment);
+        CtpFileConfig config;
+        config.runtime.enable_real_api = true;
+        config.strategy_state_persist_enabled = true;
+        std::string error;
+
+        EXPECT_FALSE(ValidateCtpConfigForDeployment(environment, config, &error));
+        EXPECT_NE(error.find("requires an explicit strategy_state_ttl_seconds"), std::string::npos)
+            << error;
+
+        config.strategy_state_ttl_explicitly_configured = true;
+        for (const int invalid_ttl : {0, 86'400, 1'209'599}) {
+            config.strategy_state_ttl_seconds = invalid_ttl;
+            error.clear();
+            EXPECT_FALSE(ValidateCtpConfigForDeployment(environment, config, &error));
+            EXPECT_NE(error.find("must be at least 1209600"), std::string::npos) << error;
+        }
+
+        config.strategy_state_ttl_seconds = 1'209'600;
+        error.clear();
+        EXPECT_TRUE(ValidateCtpConfigForDeployment(environment, config, &error)) << error;
+    }
+}
+
+TEST(CtpConfigLoaderTest, SingleAndDoubleQuotedEmptyRiskGroupsMatchRuntimeSemantics) {
+    const auto rules_path = WriteTempConfig("rules: []\n");
+    for (const char quote : {'\'', '"'}) {
+        SCOPED_TRACE(std::string("quote=") + quote);
+        const auto config_path = WriteTempConfig(
+            "ctp:\n"
+            "  environment: sim\n"
+            "  is_production_mode: false\n"
+            "  enable_real_api: false\n"
+            "  broker_id: 9999\n"
+            "  user_id: test-account\n"
+            "  investor_id: test-account\n"
+            "  market_front: tcp://127.0.0.1:40011\n"
+            "  trader_front: tcp://127.0.0.1:40001\n"
+            "  password: test-only\n"
+            "  risk_rule_groups: " +
+            std::string(1, quote) + quote + "\n  risk_rule_file_path: \"" + rules_path.string() +
+            "\"\n");
+        CtpFileConfig live;
+        RuntimeSemanticsConfig shared;
+        std::string error;
+        ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &live, &error)) << error;
+        ASSERT_TRUE(LoadRuntimeSemanticsConfig(config_path.string(), &shared, &error)) << error;
+        EXPECT_TRUE(live.risk.rules.empty());
+        EXPECT_TRUE(shared.risk_rule_groups.empty());
+        EXPECT_TRUE(ValidateRuntimeSemanticsAgainstCtpConfig(shared, live, &error)) << error;
+        std::filesystem::remove(config_path);
+    }
+    std::filesystem::remove(rules_path);
+}
+
+TEST(CtpConfigLoaderTest, SingleAndDoubleQuotedRiskGroupsMatchRuntimeSemantics) {
+    const auto rules_path = WriteTempConfig("rules: []\n");
+    for (const char quote : {'\'', '"'}) {
+        SCOPED_TRACE(std::string("quote=") + quote);
+        const auto config_path = WriteTempConfig(
+            "ctp:\n"
+            "  environment: sim\n"
+            "  is_production_mode: false\n"
+            "  enable_real_api: false\n"
+            "  broker_id: 9999\n"
+            "  user_id: test-account\n"
+            "  investor_id: test-account\n"
+            "  market_front: tcp://127.0.0.1:40011\n"
+            "  trader_front: tcp://127.0.0.1:40001\n"
+            "  password: test-only\n"
+            "  risk_rule_groups: " +
+            std::string(1, quote) + "ag_open, acc_guard" + quote + "\n  risk_rule_file_path: \"" +
+            rules_path.string() + "\"\n");
+        CtpFileConfig live;
+        RuntimeSemanticsConfig shared;
+        std::string error;
+        ASSERT_TRUE(CtpConfigLoader::LoadFromYaml(config_path.string(), &live, &error)) << error;
+        ASSERT_TRUE(LoadRuntimeSemanticsConfig(config_path.string(), &shared, &error)) << error;
+        ASSERT_EQ(live.risk.rules.size(), 2U);
+        EXPECT_EQ(live.risk.rules[0].rule_group, "ag_open");
+        EXPECT_EQ(live.risk.rules[1].rule_group, "acc_guard");
+        EXPECT_EQ(shared.risk_rule_groups, "ag_open, acc_guard");
+        EXPECT_TRUE(ValidateRuntimeSemanticsAgainstCtpConfig(shared, live, &error)) << error;
+        std::filesystem::remove(config_path);
+    }
+    std::filesystem::remove(rules_path);
 }
 
 TEST(CtpConfigLoaderTest, LoadConfigWithEnvVarsSuccess) {
@@ -251,6 +363,7 @@ TEST(CtpConfigLoaderTest, LoadsStrategyEngineKeysAndSplitsLists) {
     EXPECT_EQ(config.strategy_state_backend, "redis");
     EXPECT_EQ(config.strategy_state_snapshot_interval_ms, 60000);
     EXPECT_EQ(config.strategy_state_ttl_seconds, 86400);
+    EXPECT_FALSE(config.strategy_state_ttl_explicitly_configured);
     EXPECT_EQ(config.strategy_state_key_prefix, "strategy_state");
     EXPECT_EQ(config.strategy_state_file_dir, "runtime/trading/state");
     EXPECT_EQ(config.strategy_metrics_emit_interval_ms, 1000);
@@ -358,6 +471,7 @@ TEST(CtpConfigLoaderTest, LoadsStrategyStateAndMetricsConfigKeys) {
     EXPECT_EQ(config.strategy_state_backend, "file");
     EXPECT_EQ(config.strategy_state_snapshot_interval_ms, 5000);
     EXPECT_EQ(config.strategy_state_ttl_seconds, 3600);
+    EXPECT_TRUE(config.strategy_state_ttl_explicitly_configured);
     EXPECT_EQ(config.strategy_state_key_prefix, "hf_strategy_state");
     EXPECT_EQ(config.strategy_state_file_dir, "runtime/trading/state/simnow");
     EXPECT_EQ(config.strategy_metrics_emit_interval_ms, 2000);

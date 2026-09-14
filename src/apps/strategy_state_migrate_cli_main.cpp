@@ -3,6 +3,7 @@
 #include <set>
 #include <stdexcept>
 
+#include "quant_hft/config/strategy_release_migration.h"
 #include "quant_hft/config/strategy_state_migration.h"
 #include "quant_hft/core/host_adapters/filesystem_configuration_reader.h"
 #include "quant_hft/core/host_adapters/host_clock.h"
@@ -12,6 +13,10 @@ void Usage() {
     std::cerr << "strategy_state_migrate_cli --deployment FILE --account-ref ID --instance-id ID "
                  "--legacy-instance-id SAME_ID --legacy-state-dir DIR --legacy-main FILE "
                  "--parameter-migration-report FILE --output-dir NEW_DIR "
+                 "[--key-prefix strategy_state]\n"
+                 "Or: --source-deployment OLD_FILE --deployment TARGET_FILE "
+                 "--source-package-sha256 HASH --account-ref ID --instance-id ID "
+                 "--source-state-dir FROZEN_DIR --output-dir NEW_DIR "
                  "[--key-prefix strategy_state]\n";
 }
 }  // namespace
@@ -29,6 +34,9 @@ int main(int argc, char** argv) {
                                             "--legacy-state-dir",
                                             "--legacy-main",
                                             "--parameter-migration-report",
+                                            "--source-deployment",
+                                            "--source-package-sha256",
+                                            "--source-state-dir",
                                             "--output-dir",
                                             "--key-prefix"};
         std::map<std::string, std::string> args;
@@ -45,6 +53,28 @@ int main(int argc, char** argv) {
         quant_hft::BindFilesystemConfigurationReader();
         quant_hft::DeploymentConfig deployment;
         std::string error;
+        if (args.count("--source-deployment")) {
+            for (const auto* key : {"--legacy-instance-id", "--legacy-state-dir", "--legacy-main",
+                                    "--parameter-migration-report"})
+                if (args.count(key)) throw std::runtime_error("cannot mix migration modes");
+            quant_hft::StrategyReleaseMigrationOptions options;
+            options.source_deployment = required("--source-deployment");
+            options.target_deployment = required("--deployment");
+            options.source_package_sha256 = required("--source-package-sha256");
+            options.account_ref = required("--account-ref");
+            options.instance_id = required("--instance-id");
+            options.source_state_directory = required("--source-state-dir");
+            options.output_directory = required("--output-dir");
+            if (args.count("--key-prefix")) options.key_prefix = args.at("--key-prefix");
+            if (!quant_hft::MigrateStrategyReleaseState(options, &error))
+                throw std::runtime_error(error);
+            std::cout << "release state migration written to " << options.output_directory
+                      << "; saved take-profit, original facts and watermarks preserved; "
+                         "no account activated\n";
+            return 0;
+        }
+        if (args.count("--source-state-dir") || args.count("--source-package-sha256"))
+            throw std::runtime_error("formal release migration requires --source-deployment");
         if (!quant_hft::LoadDeploymentConfig(required("--deployment"), &deployment, &error) ||
             !quant_hft::VerifyDeploymentPackage(deployment, &error))
             throw std::runtime_error(error);

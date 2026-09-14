@@ -25,7 +25,7 @@ algorithms:
 )";
     std::string parameters = R"(schema_version: 1
 parameter_set_id: hc_test_v001
-strategy_release: kama_trend@1.0.0
+strategy_release: kama_trend@1.1.0
 product_id: hc
 market_state_mode: false
 merge_rule: kPriority
@@ -58,9 +58,9 @@ components:
         Write("package/schema.yaml", schema);
         YAML::Node manifest;
         manifest["schema_version"] = 1;
-        manifest["version"] = "1.0.0";
-        manifest["strategy_releases"].push_back("kama_trend@1.0.0");
-        manifest["files"]["share/quant_strategies/1.0.0/schemas/atomic_parameters.yaml"] =
+        manifest["version"] = "1.1.0";
+        manifest["strategy_releases"].push_back("kama_trend@1.1.0");
+        manifest["files"]["share/quant_strategies/1.1.0/schemas/atomic_parameters.yaml"] =
             ConfigContentSha256(schema);
         const auto manifest_text = YAML::Dump(manifest);
         Write("package/manifest.json", manifest_text);
@@ -68,7 +68,7 @@ components:
         Write("connection.yaml", "runtime: {enable_real_api: false}\n");
         Write("secret.env", "CTP_PASSWORD=not-for-resolved-output\n");
         root["schema_version"] = 1;
-        root["package"]["version"] = "1.0.0";
+        root["package"]["version"] = "1.1.0";
         root["package"]["manifest"] = Ref("package/manifest.json", manifest_text);
         root["package"]["parameter_schema"] = Ref("package/schema.yaml", schema);
         root["parameter_sets"]["hc_test_v001"] = Ref("params.yaml", parameters);
@@ -105,7 +105,7 @@ components:
         YAML::Node node;
         node["instance_id"] = id;
         node["account_ref"] = account;
-        node["strategy_release"] = "kama_trend@1.0.0";
+        node["strategy_release"] = "kama_trend@1.1.0";
         node["parameter_set"] = "hc_test_v001";
         node["capital_allocation_ref"] = allocation;
         node["risk_profile_ref"] = "trial";

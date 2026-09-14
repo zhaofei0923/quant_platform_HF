@@ -208,7 +208,9 @@ std::unordered_map<std::string, double> FixedStrategyCapitalAllocations(
     return result;
 }
 
-bool LoadDeploymentConfig(const std::string& path, DeploymentConfig* out, std::string* error) {
+static bool LoadDeploymentConfigVersion(const std::string& path,
+                                        const std::string& expected_package_version,
+                                        DeploymentConfig* out, std::string* error) {
     try {
         if (out == nullptr) throw std::runtime_error("null deployment output");
         DeploymentConfig result;
@@ -228,8 +230,8 @@ bool LoadDeploymentConfig(const std::string& path, DeploymentConfig* out, std::s
         resolved["sources"]["deployment"]["sha256"] = ConfigContentSha256(root_text);
         Keys(root["package"], {"version", "manifest", "parameter_schema"}, "package");
         result.package_version = Required(root["package"], "version");
-        if (result.package_version != "1.0.0")
-            throw std::runtime_error("host requires QuantStrategies 1.0.0");
+        if (result.package_version != expected_package_version)
+            throw std::runtime_error("host requires QuantStrategies " + expected_package_version);
         YAML::Node manifest_source;
         const auto manifest_text =
             VerifiedRead(parent, root["package"]["manifest"], &manifest_source);
@@ -433,6 +435,20 @@ bool LoadDeploymentConfig(const std::string& path, DeploymentConfig* out, std::s
         if (error) *error = ex.what();
         return false;
     }
+}
+
+bool LoadDeploymentConfig(const std::string& path, DeploymentConfig* out, std::string* error) {
+    return LoadDeploymentConfigVersion(path, "1.1.0", out, error);
+}
+
+bool LoadDeploymentConfigForMigration(const std::string& path,
+                                      const std::string& expected_package_version,
+                                      DeploymentConfig* out, std::string* error) {
+    if (expected_package_version != "1.0.0" && expected_package_version != "1.1.0") {
+        if (error) *error = "unsupported offline migration package version";
+        return false;
+    }
+    return LoadDeploymentConfigVersion(path, expected_package_version, out, error);
 }
 
 bool MigrateLegacyParameterSet(const std::string& path, const std::string& mode,

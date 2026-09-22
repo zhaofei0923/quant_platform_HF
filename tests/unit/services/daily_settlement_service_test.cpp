@@ -13,6 +13,7 @@
 
 #include "quant_hft/core/ctp_trader_adapter.h"
 #include "quant_hft/core/flow_controller.h"
+#include "quant_hft/core/settlement_store_client_adapter.h"
 #include "quant_hft/interfaces/settlement_store.h"
 #include "quant_hft/interfaces/trading_domain_store.h"
 #include "quant_hft/services/settlement_price_provider.h"
@@ -20,6 +21,68 @@
 
 namespace quant_hft {
 namespace {
+
+class RecordingSettlementSqlClient final : public ITimescaleSqlClient {
+   public:
+    struct UpsertCall {
+        std::string table;
+        std::unordered_map<std::string, std::string> row;
+        std::vector<std::string> conflict_keys;
+        std::vector<std::string> update_keys;
+    };
+
+    bool InsertRow(const std::string& table,
+                   const std::unordered_map<std::string, std::string>& row,
+                   std::string* error) override {
+        (void)table;
+        (void)row;
+        (void)error;
+        return true;
+    }
+
+    bool UpsertRow(const std::string& table,
+                   const std::unordered_map<std::string, std::string>& row,
+                   const std::vector<std::string>& conflict_keys,
+                   const std::vector<std::string>& update_keys, std::string* error) override {
+        (void)error;
+        upserts.push_back({table, row, conflict_keys, update_keys});
+        return true;
+    }
+
+    std::vector<std::unordered_map<std::string, std::string>> QueryRows(
+        const std::string& table, const std::string& key, const std::string& value,
+        std::string* error) const override {
+        (void)error;
+        if (table != "trading_core.position_summary") {
+            return {};
+        }
+        std::vector<std::unordered_map<std::string, std::string>> matches;
+        for (const auto& row : rows) {
+            const auto it = row.find(key);
+            if (it != row.end() && it->second == value) {
+                matches.push_back(row);
+            }
+        }
+        return matches;
+    }
+
+    std::vector<std::unordered_map<std::string, std::string>> QueryAllRows(
+        const std::string& table, std::string* error) const override {
+        (void)error;
+        if (table == "trading_core.position_summary") {
+            return rows;
+        }
+        return {};
+    }
+
+    bool Ping(std::string* error) const override {
+        (void)error;
+        return true;
+    }
+
+    std::vector<std::unordered_map<std::string, std::string>> rows;
+    std::vector<UpsertCall> upserts;
+};
 
 class FakeSettlementStore : public ISettlementStore {
    public:
@@ -608,6 +671,72 @@ TEST(DailySettlementServiceTest, RolloverUpdatesPositionSummary) {
     ASSERT_EQ(store->position_summary.size(), 1U);
     EXPECT_EQ(store->position_summary[0].long_today_volume, 0);
     EXPECT_EQ(store->position_summary[0].long_yd_volume, 5);
+}
+
+TEST(SettlementStoreClientAdapterTest, RolloverPreservesExchangeAndHedgeIdentity) {
+    auto sql = std::make_shared<RecordingSettlementSqlClient>();
+    const auto make_row = [](const std::string& exchange_id, const std::string& hedge_flag,
+                             const std::string& long_today, const std::string& long_yd) {
+        std::unordered_map<std::string, std::string> row{
+            {"account_id", "acc1"},
+            {"strategy_id", "s1"},
+            {"instrument_id", "rb2405"},
+            {"exchange_id", exchange_id},
+            {"long_volume", "9"},
+            {"short_volume", "2"},
+            {"long_today_volume", long_today},
+            {"short_today_volume", "1"},
+            {"long_yd_volume", long_yd},
+            {"short_yd_volume", "1"},
+            {"avg_long_price", "3500.5"},
+            {"avg_short_price", "3501.5"},
+            {"position_profit", "12.5"},
+            {"margin", "7000"},
+        };
+        if (!hedge_flag.empty()) {
+            row["hedge_flag"] = hedge_flag;
+        }
+        return row;
+    };
+    sql->rows = {
+        make_row("SHFE", "1", "2", "7"),
+        make_row("INE", "1", "3", "8"),
+        make_row("SHFE", "3", "4", "9"),
+        make_row("DCE", "", "5", "10"),
+    };
+
+    SettlementStoreClientAdapter store(sql, {}, "trading_core", "ops");
+    std::string error;
+    ASSERT_TRUE(store.RolloverPositionSummary("acc1", &error)) << error;
+    ASSERT_EQ(sql->upserts.size(), 4U);
+
+    const std::vector<std::string> expected_conflict_keys{
+        "account_id", "strategy_id", "instrument_id", "exchange_id", "hedge_flag"};
+    const std::vector<std::string> expected_identity{"SHFE|1", "INE|1", "SHFE|3", "DCE|0"};
+    const std::vector<std::string> expected_long_yd{"9", "11", "13", "15"};
+    for (std::size_t i = 0; i < sql->upserts.size(); ++i) {
+        const auto& call = sql->upserts[i];
+        EXPECT_EQ(call.table, "trading_core.position_summary");
+        EXPECT_EQ(call.conflict_keys, expected_conflict_keys);
+        ASSERT_EQ(call.row.size(), 17U);
+        EXPECT_EQ(call.row.at("account_id"), "acc1");
+        EXPECT_EQ(call.row.at("strategy_id"), "s1");
+        EXPECT_EQ(call.row.at("instrument_id"), "rb2405");
+        EXPECT_EQ(call.row.at("exchange_id") + "|" + call.row.at("hedge_flag"),
+                  expected_identity[i]);
+        EXPECT_EQ(call.row.at("long_volume"), "9");
+        EXPECT_EQ(call.row.at("short_volume"), "2");
+        EXPECT_EQ(call.row.at("net_volume"), "7");
+        EXPECT_EQ(call.row.at("long_today_volume"), "0");
+        EXPECT_EQ(call.row.at("short_today_volume"), "0");
+        EXPECT_EQ(call.row.at("long_yd_volume"), expected_long_yd[i]);
+        EXPECT_EQ(call.row.at("short_yd_volume"), "2");
+        EXPECT_EQ(call.row.at("avg_long_price"), "3500.5");
+        EXPECT_EQ(call.row.at("avg_short_price"), "3501.5");
+        EXPECT_EQ(call.row.at("position_profit"), "12.5");
+        EXPECT_EQ(call.row.at("margin"), "7000");
+        EXPECT_FALSE(call.row.at("update_time").empty());
+    }
 }
 
 TEST(DailySettlementServiceTest, FundsInsertedCorrectlyAfterSettlement) {

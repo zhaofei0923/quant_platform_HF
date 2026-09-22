@@ -624,6 +624,7 @@ bool SettlementStoreClientAdapter::RolloverPositionSummary(const std::string& ac
             {"strategy_id", ParseStringOrDefault(row, "strategy_id")},
             {"instrument_id", ParseStringOrDefault(row, "instrument_id")},
             {"exchange_id", ParseStringOrDefault(row, "exchange_id")},
+            {"hedge_flag", ParseStringOrDefault(row, "hedge_flag", "0")},
             {"long_volume", ToString(long_volume)},
             {"short_volume", ToString(short_volume)},
             {"net_volume", ToString(long_volume - short_volume)},
@@ -637,22 +638,13 @@ bool SettlementStoreClientAdapter::RolloverPositionSummary(const std::string& ac
             {"margin", ParseStringOrDefault(row, "margin")},
             {"update_time", ToTimestamp(NowEpochNanos())},
         };
-        if (!UpsertWithRetry(TableName(trading_schema_, "position_summary"),
-                             update,
-                             {"account_id", "strategy_id", "instrument_id"},
-                             {"long_volume",
-                              "short_volume",
-                              "net_volume",
-                              "long_today_volume",
-                              "short_today_volume",
-                              "long_yd_volume",
-                              "short_yd_volume",
-                              "avg_long_price",
-                              "avg_short_price",
-                              "position_profit",
-                              "margin",
-                              "update_time"},
-                             error)) {
+        if (!UpsertWithRetry(
+                TableName(trading_schema_, "position_summary"), update,
+                {"account_id", "strategy_id", "instrument_id", "exchange_id", "hedge_flag"},
+                {"long_volume", "short_volume", "net_volume", "long_today_volume",
+                 "short_today_volume", "long_yd_volume", "short_yd_volume", "avg_long_price",
+                 "avg_short_price", "position_profit", "margin", "update_time"},
+                error)) {
             return false;
         }
     }

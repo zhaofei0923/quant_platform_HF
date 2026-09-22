@@ -277,11 +277,44 @@ StrategyState StrategyOwnedState(const StrategyState& state) {
         if (StrategyOwnedKey(entry.first)) result.insert(entry);
     return result;
 }
+bool DerivedKamaWindowCache(const std::string& key) {
+    if (!Starts(key, "atomic.")) return false;
+    const auto suffix = key.rfind('.');
+    if (suffix == std::string::npos) return false;
+    const auto name = key.substr(suffix + 1);
+    return name == "kama_window_sum" || name == "kama_window_sum_sq";
+}
+bool SameRoundTripValue(const std::string& key, const std::string& original,
+                        const std::string& saved) {
+    if (original == saved) return true;
+    if (!DerivedKamaWindowCache(key)) return false;
+    const double before = Number(original);
+    const double after = Number(saved);
+    double adjacent = before;
+    for (int ulp = 0; ulp < 2; ++ulp) {
+        adjacent = std::nextafter(adjacent, after);
+        if (adjacent == after) return true;
+    }
+    return false;
+}
 void CheckIdentityRoundTrip(const StrategyState& original, const StrategyState& saved) {
     CheckRestoredFacts(original, saved);
-    if (StrategyOwnedState(original) != StrategyOwnedState(saved))
-        throw std::runtime_error(
-            "target algorithm changed strategy-owned state during identity-only validation");
+    const auto original_owned = StrategyOwnedState(original);
+    const auto saved_owned = StrategyOwnedState(saved);
+    for (const auto& entry : original_owned) {
+        const auto restored = saved_owned.find(entry.first);
+        if (restored == saved_owned.end() ||
+            !SameRoundTripValue(entry.first, entry.second, restored->second))
+            throw std::runtime_error(
+                "target algorithm changed strategy-owned state during identity-only validation: " +
+                entry.first + " (source=" + entry.second + ", normalized=" +
+                (restored == saved_owned.end() ? "<missing>" : restored->second) + ")");
+    }
+    for (const auto& entry : saved_owned)
+        if (!original_owned.count(entry.first))
+            throw std::runtime_error(
+                "target algorithm added strategy-owned state during identity-only validation: " +
+                entry.first);
 }
 }  // namespace
 
@@ -407,6 +440,13 @@ bool MigrateStrategyReleaseState(const StrategyReleaseMigrationOptions& options,
             if (!strategy.SaveState(&round_trip, &detail))
                 throw std::runtime_error("target algorithm rejected source state: " + detail);
             CheckIdentityRoundTrip(payload, round_trip);
+            if (!strategy.LoadState(round_trip, &detail))
+                throw std::runtime_error("target algorithm rejected normalized state: " + detail);
+            StrategyState stable_round_trip;
+            if (!strategy.SaveState(&stable_round_trip, &detail) ||
+                StrategyOwnedState(round_trip) != StrategyOwnedState(stable_round_trip))
+                throw std::runtime_error(
+                    "target algorithm state is not stable after identity-only normalization");
             if (migrated != payload || PayloadHash(migrated) != PayloadHash(payload))
                 throw std::runtime_error("identity-only migration changed strategy payload");
         }

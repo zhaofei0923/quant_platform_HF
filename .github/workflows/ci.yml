@@ -20,6 +20,7 @@ jobs:
           PACKAGE_TOKEN: ${{ secrets.QUANT_STRATEGIES_READ_TOKEN }}
         run: |
           test -n "$PACKAGE_URL"
+          test -n "$PACKAGE_TOKEN"
           curl_args=(
             --fail
             --location
@@ -33,6 +34,7 @@ jobs:
           fi
           curl "${curl_args[@]}" "$PACKAGE_URL" --output /tmp/strategies.tar.gz
           expected=$(jq -r .archive_sha256 dependencies.lock.json)
+          [[ "$expected" =~ ^[0-9a-f]{64}$ ]]
           echo "$expected  /tmp/strategies.tar.gz" | sha256sum -c -
           mkdir -p /tmp/quant-strategies
           tar -xzf /tmp/strategies.tar.gz -C /tmp/quant-strategies

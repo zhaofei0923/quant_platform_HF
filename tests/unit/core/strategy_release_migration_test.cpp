@@ -5,6 +5,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -143,6 +144,60 @@ class ReleaseMigrationFixture : public ::testing::Test {
             << error;
         source_bytes = Read(SourceFile());
     }
+    void ConfigureIdentityOnlyMigration() {
+        options.source_deployment = (directory / "1.1.0/deployment.yaml").string();
+        options.target_deployment = (directory / "1.1.1/deployment.yaml").string();
+        options.source_package_sha256 =
+            ConfigContentSha256(Read(directory / "intermediate_manifest.json"));
+        std::string error;
+        ASSERT_TRUE(
+            LoadDeploymentConfigForMigration(options.source_deployment, "1.1.0", &source, &error))
+            << error;
+        ASSERT_TRUE(LoadDeploymentConfig(options.target_deployment, &target, &error)) << error;
+        ASSERT_TRUE(VerifyDeploymentPackage(target, &error)) << error;
+
+        CompositeStrategy strategy(target.instances.front().composite);
+        StrategyContext context;
+        context.account_id = "account";
+        context.strategy_id = "stable_instance";
+        context.metadata["ownership_mode"] = "instance";
+        strategy.Initialize(context);
+        ASSERT_TRUE(strategy.LoadState(original, &error)) << error;
+        StrategyState upgraded;
+        ASSERT_TRUE(strategy.SaveState(&upgraded, &error)) << error;
+        strategy.Shutdown();
+        original = std::move(upgraded);
+        original["last_committed_trade_seq"] = "827";
+        original["last_bar_end_ns"] = "1788937260000000000";
+        SaveOriginal();
+    }
+    void ConfigureFlatIdentityOnlyMigration() {
+        ConfigureIdentityOnlyMigration();
+        CompositeStrategy strategy(target.instances.front().composite);
+        StrategyContext context;
+        context.account_id = "account";
+        context.strategy_id = "stable_instance";
+        context.metadata["ownership_mode"] = "instance";
+        strategy.Initialize(context);
+        StrategyState flat;
+        std::string error;
+        ASSERT_TRUE(strategy.SaveState(&flat, &error)) << error;
+        Position position;
+        position.account_id = "account";
+        position.strategy_id = "stable_instance";
+        position.symbol = "hc2701";
+        position.exchange = "SHFE";
+        position.version = 2;
+        flat["committed_position." + PositionProjectionKey(position)] =
+            EncodePositionProjection(position);
+        ASSERT_TRUE(strategy.LoadState(flat, &error)) << error;
+        ASSERT_TRUE(strategy.SaveState(&original, &error)) << error;
+        strategy.Shutdown();
+        original["last_committed_trade_seq"] = "827";
+        original["last_bar_end_ns"] = "1788937260000000000";
+        original["application_watermark"] = "preserve-exactly";
+        SaveOriginal();
+    }
     void SetUp() override {
         BindFilesystemConfigurationReader();
         directory = fs::temp_directory_path() /
@@ -159,8 +214,16 @@ class ReleaseMigrationFixture : public ::testing::Test {
         old_manifest["files"]["share/quant_strategies/1.0.0/schemas/atomic_parameters.yaml"] =
             ConfigContentSha256(Read(schema));
         Write(directory / "old_manifest.json", YAML::Dump(old_manifest));
+        YAML::Node intermediate_manifest;
+        intermediate_manifest["schema_version"] = 1;
+        intermediate_manifest["version"] = "1.1.0";
+        intermediate_manifest["strategy_releases"].push_back("kama_trend@1.1.0");
+        intermediate_manifest["files"]
+                             ["share/quant_strategies/1.1.0/schemas/atomic_parameters.yaml"] =
+                                 ConfigContentSha256(Read(schema));
+        Write(directory / "intermediate_manifest.json", YAML::Dump(intermediate_manifest));
         Write(directory / "connection.yaml", "runtime: {enable_real_api: false}\n");
-        for (const auto* version : {"1.0.0", "1.1.0"}) {
+        for (const auto* version : {"1.0.0", "1.1.0", "1.1.1"}) {
             const std::string v = version;
             const auto parameter_file = directory / (v + "/parameters.yaml");
             Write(parameter_file,
@@ -173,8 +236,10 @@ class ReleaseMigrationFixture : public ::testing::Test {
             YAML::Node root;
             root["schema_version"] = 1;
             root["package"]["version"] = v;
-            root["package"]["manifest"] = Reference(v == "1.0.0" ? directory / "old_manifest.json"
-                                                                 : package / "manifest.json");
+            const auto manifest = v == "1.0.0"   ? directory / "old_manifest.json"
+                                  : v == "1.1.0" ? directory / "intermediate_manifest.json"
+                                                 : package / "manifest.json";
+            root["package"]["manifest"] = Reference(manifest);
             root["package"]["parameter_schema"] = Reference(schema);
             root["parameter_sets"]["test_v001"] = Reference(parameter_file);
             root["risk_profiles"]["trial"] = YAML::Load(
@@ -209,8 +274,9 @@ class ReleaseMigrationFixture : public ::testing::Test {
         ASSERT_TRUE(
             LoadDeploymentConfigForMigration(options.source_deployment, "1.0.0", &source, &error))
             << error;
-        ASSERT_TRUE(LoadDeploymentConfig(options.target_deployment, &target, &error)) << error;
-        ASSERT_TRUE(VerifyDeploymentPackage(target, &error)) << error;
+        ASSERT_TRUE(
+            LoadDeploymentConfigForMigration(options.target_deployment, "1.1.0", &target, &error))
+            << error;
         CompositeStrategy strategy(target.instances.front().composite);
         StrategyContext context;
         context.account_id = "account";
@@ -285,6 +351,118 @@ TEST_F(ReleaseMigrationFixture, PreservesHeldTargetDirectionFactsAndWatermarksWi
     EXPECT_NE(report["payload_sha256_before"].as<std::string>(),
               report["payload_sha256_after"].as<std::string>());
     EXPECT_FALSE(MigrateStrategyReleaseState(options, &error));
+    EXPECT_EQ(Read(SourceFile()), source_bytes);
+}
+TEST_F(ReleaseMigrationFixture, IdentityOnlyUpgradePreservesExactPayloadFactsAndWatermarks) {
+    ConfigureIdentityOnlyMigration();
+    const auto expected_payload = original;
+    const auto expected_source = source_bytes;
+    std::string error;
+    ASSERT_TRUE(MigrateStrategyReleaseState(options, &error)) << error;
+    EXPECT_EQ(Read(SourceFile()), expected_source);
+    FileStrategyStatePersistence persistence(options.output_directory, options.key_prefix, 0);
+    StrategyState wrapped, restored;
+    ASSERT_TRUE(persistence.LoadStrategyState("account", "stable_instance", &wrapped, &error));
+    const auto& instance = target.instances.front();
+    ASSERT_TRUE(UnwrapStrategyState(
+        wrapped,
+        {"stable_instance", "account", instance.strategy_release, instance.parameter_hash, "1"},
+        &restored, &error));
+    EXPECT_EQ(restored, expected_payload);
+    EXPECT_EQ(restored.at("last_committed_trade_seq"), "827");
+    EXPECT_EQ(restored.at("last_bar_end_ns"), "1788937260000000000");
+    const auto report = config_detail::Parse(Read(directory / "new/migration_report.json"));
+    EXPECT_EQ(report["migration"].as<std::string>(), "identity_only_1.1.0_to_1.1.1");
+    EXPECT_TRUE(report["payload_preserved"].as<bool>());
+    EXPECT_EQ(report["payload_sha256_before"].as<std::string>(),
+              report["payload_sha256_after"].as<std::string>());
+    EXPECT_EQ(report["facts_sha256_before"].as<std::string>(),
+              report["facts_sha256_after"].as<std::string>());
+    EXPECT_FALSE(report["orphan_take_profit_cleanup_allowed"].as<bool>());
+    EXPECT_FALSE(MigrateStrategyReleaseState(options, &error));
+    EXPECT_EQ(Read(SourceFile()), expected_source);
+}
+TEST_F(ReleaseMigrationFixture, IdentityOnlyUpgradePreservesFlatZeroProjectionAndAllWatermarks) {
+    ConfigureFlatIdentityOnlyMigration();
+    const auto expected_payload = original;
+    const auto expected_source = source_bytes;
+    std::string error;
+    ASSERT_TRUE(MigrateStrategyReleaseState(options, &error)) << error;
+    EXPECT_EQ(Read(SourceFile()), expected_source);
+    FileStrategyStatePersistence persistence(options.output_directory, options.key_prefix, 0);
+    StrategyState wrapped, restored;
+    ASSERT_TRUE(persistence.LoadStrategyState("account", "stable_instance", &wrapped, &error));
+    const auto& instance = target.instances.front();
+    ASSERT_TRUE(UnwrapStrategyState(
+        wrapped,
+        {"stable_instance", "account", instance.strategy_release, instance.parameter_hash, "1"},
+        &restored, &error));
+    EXPECT_EQ(restored, expected_payload);
+    EXPECT_EQ(restored.at("last_committed_trade_seq"), "827");
+    EXPECT_EQ(restored.at("last_bar_end_ns"), "1788937260000000000");
+    EXPECT_EQ(restored.at("application_watermark"), "preserve-exactly");
+    const auto projection = std::find_if(restored.begin(), restored.end(), [](const auto& entry) {
+        return entry.first.rfind("committed_position.", 0) == 0;
+    });
+    ASSERT_NE(projection, restored.end());
+    Position position;
+    ASSERT_TRUE(DecodePositionProjection(projection->second, &position));
+    EXPECT_EQ(position.long_qty, 0);
+    EXPECT_EQ(position.short_qty, 0);
+    const auto report = config_detail::Parse(Read(directory / "new/migration_report.json"));
+    EXPECT_TRUE(report["payload_preserved"].as<bool>());
+    EXPECT_EQ(report["payload_sha256_before"].as<std::string>(),
+              report["payload_sha256_after"].as<std::string>());
+}
+TEST_F(ReleaseMigrationFixture, IdentityOnlyUpgradeRejectsTargetNotLinkedIntoHost) {
+    ConfigureIdentityOnlyMigration();
+    const auto original_source = source_bytes;
+    auto deployment = config_detail::Parse(Read(options.target_deployment));
+    const auto manifest_path = directory / "1.1.1/unlinked_manifest.json";
+    Write(manifest_path, Read(QUANT_STRATEGIES_TEST_DATA_DIR "/manifest.json") + "\n");
+    deployment["package"]["manifest"] = Reference(manifest_path);
+    Write(options.target_deployment, YAML::Dump(deployment));
+    std::string error;
+    EXPECT_FALSE(MigrateStrategyReleaseState(options, &error));
+    EXPECT_NE(error.find("statically linked package"), std::string::npos);
+    EXPECT_FALSE(fs::exists(options.output_directory));
+    EXPECT_EQ(Read(SourceFile()), original_source);
+}
+TEST_F(ReleaseMigrationFixture, IdentityOnlyUpgradeRejectsEffectiveParameterDrift) {
+    ConfigureIdentityOnlyMigration();
+    const auto path = directory / "1.1.1/parameters.yaml";
+    auto parameters = config_detail::Parse(Read(path));
+    parameters["components"][0]["params"]["take_profit_atr_multiplier"] = 4;
+    Write(path, YAML::Dump(parameters));
+    auto deployment = config_detail::Parse(Read(options.target_deployment));
+    deployment["parameter_sets"]["test_v001"] = Reference(path);
+    Write(options.target_deployment, YAML::Dump(deployment));
+    std::string error;
+    EXPECT_FALSE(MigrateStrategyReleaseState(options, &error));
+    EXPECT_NE(error.find("effective parameters"), std::string::npos);
+    EXPECT_FALSE(fs::exists(options.output_directory));
+    EXPECT_EQ(Read(SourceFile()), source_bytes);
+}
+TEST_F(ReleaseMigrationFixture, IdentityOnlyUpgradeRejectsRiskDrift) {
+    ConfigureIdentityOnlyMigration();
+    auto deployment = config_detail::Parse(Read(options.target_deployment));
+    deployment["risk_profiles"]["trial"]["max_order_volume"] = 3;
+    Write(options.target_deployment, YAML::Dump(deployment));
+    std::string error;
+    EXPECT_FALSE(MigrateStrategyReleaseState(options, &error));
+    EXPECT_NE(error.find("capital or risk limits"), std::string::npos);
+    EXPECT_FALSE(fs::exists(options.output_directory));
+    EXPECT_EQ(Read(SourceFile()), source_bytes);
+}
+TEST_F(ReleaseMigrationFixture, IdentityOnlyUpgradeRejectsRuntimeBindingDrift) {
+    ConfigureIdentityOnlyMigration();
+    auto deployment = config_detail::Parse(Read(options.target_deployment));
+    deployment["accounts"]["sim_a"]["runtime_root"] = (directory / "other-runtime").string();
+    Write(options.target_deployment, YAML::Dump(deployment));
+    std::string error;
+    EXPECT_FALSE(MigrateStrategyReleaseState(options, &error));
+    EXPECT_NE(error.find("runtime bindings"), std::string::npos);
+    EXPECT_FALSE(fs::exists(options.output_directory));
     EXPECT_EQ(Read(SourceFile()), source_bytes);
 }
 TEST_F(ReleaseMigrationFixture, RejectsTargetWithoutOldDirectionAndLeavesNoOutput) {

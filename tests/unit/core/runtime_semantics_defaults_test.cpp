@@ -136,7 +136,11 @@ TEST_F(PackagedRuntimeSemanticsTest, ReleaseLaunchersLoadRiskRulesWithExternalCo
     const auto extracted = root_ / "extracted";
     const auto external = root_ / "external-account";
     const auto connection = external / "connection.yaml";
-    Write(build / "CMakeCache.txt", "QUANT_HFT_ENABLE_CTP_REAL_API:BOOL=OFF\n");
+    const auto ctp = root_ / "ctp-v6.7.11";
+    Write(ctp / "thostmduserapi_se.so", "md-library-fixture");
+    Write(ctp / "thosttraderapi_se.so", "trader-library-fixture");
+    Write(build / "CMakeCache.txt",
+          "QUANT_HFT_ENABLE_CTP_REAL_API:BOOL=ON\nCTP_V6711_DIR:PATH=" + ctp.string() + "\n");
     // Real package construction, with inert executables so no gateway or account can be started.
     for (const auto* name :
          {"core_engine", "quant_config_cli", "strategy_state_migrate_cli", "daily_settlement",
@@ -167,7 +171,13 @@ TEST_F(PackagedRuntimeSemanticsTest, ReleaseLaunchersLoadRiskRulesWithExternalCo
     const auto rules = package / "configs/risk_rules.yaml";
     ASSERT_TRUE(std::filesystem::is_regular_file(release_verifier));
     ASSERT_TRUE(std::filesystem::is_regular_file(rules));
+    EXPECT_EQ(Read(package / "lib/ctp/thostmduserapi_se.so"), "md-library-fixture");
+    EXPECT_EQ(Read(package / "lib/ctp/thosttraderapi_se.so"), "trader-library-fixture");
     EXPECT_EQ(Read(rules), Read(source / "configs/risk_rules.yaml"));
+    EXPECT_NE(Read(package / "SHA256SUMS").find("./lib/ctp/thostmduserapi_se.so"),
+              std::string::npos);
+    EXPECT_NE(Read(package / "SHA256SUMS").find("./lib/ctp/thosttraderapi_se.so"),
+              std::string::npos);
     EXPECT_NE(Read(package / "SHA256SUMS").find("./configs/risk_rules.yaml"), std::string::npos);
     EXPECT_NE(Read(package / "SHA256SUMS")
                   .find("./scripts/ops/verify_packaged_release.sh"),
@@ -182,7 +192,7 @@ TEST_F(PackagedRuntimeSemanticsTest, ReleaseLaunchersLoadRiskRulesWithExternalCo
     ASSERT_FALSE(std::filesystem::exists(external / "configs/risk_rules.yaml"));
 
     // Normalize only the extracted inert fixture so both launcher success paths are testable even
-    // when the source checkout is dirty or the synthetic build intentionally has the real API off.
+    // when the source checkout is dirty.
     ASSERT_TRUE(SetManifestBoolean(deploy_manifest, "working_tree_dirty", false));
     ASSERT_TRUE(SetManifestBoolean(deploy_manifest, "ctp_real_api_compiled", true));
     ASSERT_EQ(RefreshChecksums(package), 0);

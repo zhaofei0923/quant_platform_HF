@@ -14,7 +14,8 @@ struct StrategyReleaseMigrationOptions {
     std::string key_prefix{"strategy_state"};
 };
 
-// Offline 1.0.0 -> 1.1.0 migration of one formal strategy checkpoint. The original
+// Offline migration of one formal strategy checkpoint. Supports the state-transforming
+// 1.0.0 -> 1.1.0 migration and the identity-only 1.1.0 -> 1.1.1 migration. The original
 // directory is never modified. Other instance/pipeline files are not migrated.
 bool MigrateStrategyReleaseState(const StrategyReleaseMigrationOptions& options,
                                  std::string* error);

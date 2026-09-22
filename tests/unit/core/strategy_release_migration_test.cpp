@@ -382,6 +382,62 @@ TEST_F(ReleaseMigrationFixture, IdentityOnlyUpgradePreservesExactPayloadFactsAnd
     EXPECT_FALSE(MigrateStrategyReleaseState(options, &error));
     EXPECT_EQ(Read(SourceFile()), expected_source);
 }
+TEST_F(ReleaseMigrationFixture, IdentityOnlyAllowsBoundedKamaDerivedCacheNormalization) {
+    ConfigureIdentityOnlyMigration();
+    const std::vector<std::string> window = {
+        "3306.2791465669129", "3307.855861810131",  "3308.7555924843105", "3309.7391741901301",
+        "3310.7849374192456", "3310.8049930181742", "3310.8360452041325", "3310.797379684228",
+        "3310.9095296948522", "3311.011221188588"};
+    original["atomic.kama.kama_window.count"] = std::to_string(window.size());
+    for (std::size_t i = 0; i < window.size(); ++i)
+        original["atomic.kama.kama_window." + std::to_string(i)] = window[i];
+    // These are the exact values from a production 1.1.0 checkpoint. Rebuilding the
+    // derived caches from the window changes only the last two representable-double steps.
+    original["atomic.kama.kama_window_sum"] = "33097.773881260699";
+    original["atomic.kama.kama_window_sum_sq"] = "109546287.60134387";
+    CompositeStrategy round_trip(target.instances.front().composite);
+    StrategyContext context;
+    context.account_id = "account";
+    context.strategy_id = "stable_instance";
+    context.metadata["ownership_mode"] = "instance";
+    round_trip.Initialize(context);
+    StrategyState rebuilt;
+    std::string round_trip_error;
+    ASSERT_TRUE(round_trip.LoadState(original, &round_trip_error)) << round_trip_error;
+    ASSERT_TRUE(round_trip.SaveState(&rebuilt, &round_trip_error)) << round_trip_error;
+    round_trip.Shutdown();
+    EXPECT_EQ(rebuilt.at("atomic.kama.kama_window_sum"), "33097.773881260699");
+    EXPECT_EQ(rebuilt.at("atomic.kama.kama_window_sum_sq"), "109546287.6013439");
+    SaveOriginal();
+    const auto expected_payload = original;
+    std::string error;
+    ASSERT_TRUE(MigrateStrategyReleaseState(options, &error)) << error;
+    FileStrategyStatePersistence persistence(options.output_directory, options.key_prefix, 0);
+    StrategyState wrapped, restored;
+    ASSERT_TRUE(persistence.LoadStrategyState("account", "stable_instance", &wrapped, &error));
+    const auto& instance = target.instances.front();
+    ASSERT_TRUE(UnwrapStrategyState(
+        wrapped,
+        {"stable_instance", "account", instance.strategy_release, instance.parameter_hash, "1"},
+        &restored, &error));
+    EXPECT_EQ(restored, expected_payload);
+    const auto report = config_detail::Parse(Read(directory / "new/migration_report.json"));
+    EXPECT_TRUE(report["payload_preserved"].as<bool>());
+    EXPECT_EQ(report["payload_sha256_before"].as<std::string>(),
+              report["payload_sha256_after"].as<std::string>());
+}
+TEST_F(ReleaseMigrationFixture, IdentityOnlyRejectsMaterialKamaDerivedCacheDrift) {
+    ConfigureIdentityOnlyMigration();
+    original["atomic.kama.kama_window.count"] = "1";
+    original["atomic.kama.kama_window.0"] = "1";
+    original["atomic.kama.kama_window_sum"] = "1";
+    original["atomic.kama.kama_window_sum_sq"] = "1.0000000000000007";
+    SaveOriginal();
+    std::string error;
+    EXPECT_FALSE(MigrateStrategyReleaseState(options, &error));
+    EXPECT_NE(error.find("atomic.kama.kama_window_sum_sq"), std::string::npos) << error;
+    EXPECT_FALSE(fs::exists(options.output_directory));
+}
 TEST_F(ReleaseMigrationFixture, IdentityOnlyUpgradePreservesFlatZeroProjectionAndAllWatermarks) {
     ConfigureFlatIdentityOnlyMigration();
     const auto expected_payload = original;

@@ -54,6 +54,17 @@ fi
 real_api=false
 if grep -q '^QUANT_HFT_ENABLE_CTP_REAL_API:BOOL=ON$' "$build_dir/CMakeCache.txt"; then
     real_api=true
+    ctp_dir="$(sed -n 's/^CTP_V6711_DIR:PATH=//p' "$build_dir/CMakeCache.txt" | head -n1)"
+    [[ -n "$ctp_dir" && "$ctp_dir" = /* && -d "$ctp_dir" ]] || {
+        echo "real-api build has no valid absolute CTP_V6711_DIR" >&2; exit 1;
+    }
+    mkdir -p "$payload/lib/ctp"
+    for library in thostmduserapi_se.so thosttraderapi_se.so; do
+        [[ -f "$ctp_dir/$library" && ! -L "$ctp_dir/$library" ]] || {
+            echo "missing regular CTP runtime library: $ctp_dir/$library" >&2; exit 1;
+        }
+        cp -- "$ctp_dir/$library" "$payload/lib/ctp/"
+    done
 fi
 cat > "$payload/deploy_manifest.json" <<EOF
 {
@@ -64,7 +75,7 @@ cat > "$payload/deploy_manifest.json" <<EOF
   "ctp_real_api_compiled": $real_api,
   "simnow_acceptance": "functional_validation_required",
   "live_cutover_authorized": false,
-  "runtime_requirements": "Install the locked strategy data package and matching system/CTP shared libraries. Materialize account deployment references outside the release tree."
+  "runtime_requirements": "Install the locked strategy data package and matching system shared libraries. CTP runtime libraries are bundled and checksummed under lib/ctp. Materialize account deployment references outside the release tree."
 }
 EOF
 (

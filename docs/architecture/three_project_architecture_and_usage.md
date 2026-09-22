@@ -16,7 +16,7 @@
 实盘验收的声明。构建、单元测试、回放或 Dashboard 测试成功，均不能替代上线前的账户
 对账、恢复、预热、核算政策和下一交易时段验证。
 
-当前源码锁中可见的策略包版本为 `QuantStrategies 1.1.0`，但历史部署和验证材料可能引用
+当前源码锁中可见的策略包版本为 `QuantStrategies 1.1.1`，但历史部署和验证材料可能引用
 不同的已发布版本。实际操作时必须以目标宿主仓的锁文件、安装包 `manifest.json` 和部署清单
 为准；不要从旧部署记录或本文示例推断可用版本。
 
@@ -83,7 +83,7 @@ flowchart LR
 
 ```bash
 QS_PREFIX=/absolute/path/to/quant-strategies-install
-QS_VERSION=1.1.0  # 仅当目标宿主的锁文件也是该版本时才可使用
+QS_VERSION=1.1.1  # 仅当目标宿主的锁文件也是该版本时才可使用
 ```
 
 不要把本地源码检出目录直接当作 `QS_PREFIX`。宿主需要的是通过 `cmake --install` 或发布包

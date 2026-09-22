@@ -39,7 +39,7 @@ if(QUANT_HFT_ENABLE_REDIS_EXTERNAL OR
     find_package(PkgConfig REQUIRED)
 endif()
 
-find_package(QuantStrategies 1.1.0 EXACT CONFIG REQUIRED)
+find_package(QuantStrategies 1.1.1 EXACT CONFIG REQUIRED)
 include(cmake/VerifyStrategyPackage.cmake)
 find_package(yaml-cpp CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)

@@ -55,7 +55,7 @@ credential_ref 读取；仓库外环境文件指定部署清单、数据服务�
 旧参数迁移示例：
 
 ```bash
-build/quant_config_cli migrate /snapshot/main.yaml sim hc_5m_v001 kama_trend@1.1.0 /installed/share/quant_strategies/1.1.0/schemas/atomic_parameters.yaml /review/new-parameters
+build/quant_config_cli migrate /snapshot/main.yaml sim hc_5m_v001 kama_trend@1.1.1 /installed/share/quant_strategies/1.1.1/schemas/atomic_parameters.yaml /review/new-parameters
 ```
 
 迁移器物化所选模式覆盖，保留组件ID、入场窗口、止盈止损及风险参数，生成来源SHA与旧ID映射。原代码从未读取的allowed_regimes参数在报告中列为忽略项，实际entry_market_regimes保持原值。正式参数拒绝params.id和模式overrides。之后只维护正式参数集；历史混合配置作为研究基线fixture保存。
@@ -115,6 +115,12 @@ build/strategy_state_migrate_cli --source-deployment /snapshot/old-deployment.ya
 ```
 
 此命令只允许参数语义、身份、资金和风险限制不变的 1.0.0 → 1.1.0 升级，保留非原子策略交易事实及处理水位，并核对实际持仓归属的旧止盈目标。历史 KAMA 持仓沿用最后保存的止盈价，不声称恢复了开仓时 ATR；缺少可验证风险状态的旧 Trend 持仓拒绝迁移。报告及新策略状态原子写入隔离目录。行情流水线等其他检查点不由命令复制，部署方须逐字复制并校验哈希。原库、WAL、凭据不变。只有报告和配置验证通过后才切换状态目录及启动入口；未捕获下一时段的恢复与成交时，只能记录离线上线核验结果。
+
+### 挂单恢复修复版本 1.1.0 → 1.1.1
+
+1.1.1 修正权威成交/持仓投影被误登记为未完成开仓委托的问题。算法参数、持仓与状态格式不变，但策略发布身份必须升级。交易进程自然停止并冻结 1.1.0 状态后，使用上面的正式版本迁移命令和 1.1.1 目标部署生成新目录。
+
+此路径是 identity-only 迁移：迁移器要求账户、实例、运行绑定、资金、风险和有效参数完全一致，验证目标部署对应当前静态链接的 1.1.1 包，只替换状态封装中的策略发布身份与参数 hash。内部 payload、持仓事实和所有处理水位必须逐项及哈希完全相同；源目录不写入，输出经回读和目录同步后以不覆盖方式原子发布。迁移报告中 `migration` 为 `identity_only_1.1.0_to_1.1.1` 且 `payload_preserved` 必须为 `true`，否则不得切换运行目录。
 
 ## 验收阶段
 

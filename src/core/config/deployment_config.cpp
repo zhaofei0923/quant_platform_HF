@@ -438,13 +438,14 @@ static bool LoadDeploymentConfigVersion(const std::string& path,
 }
 
 bool LoadDeploymentConfig(const std::string& path, DeploymentConfig* out, std::string* error) {
-    return LoadDeploymentConfigVersion(path, "1.1.0", out, error);
+    return LoadDeploymentConfigVersion(path, "1.1.1", out, error);
 }
 
 bool LoadDeploymentConfigForMigration(const std::string& path,
                                       const std::string& expected_package_version,
                                       DeploymentConfig* out, std::string* error) {
-    if (expected_package_version != "1.0.0" && expected_package_version != "1.1.0") {
+    if (expected_package_version != "1.0.0" && expected_package_version != "1.1.0" &&
+        expected_package_version != "1.1.1") {
         if (error) *error = "unsupported offline migration package version";
         return false;
     }

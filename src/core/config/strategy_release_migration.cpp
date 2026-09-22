@@ -27,6 +27,17 @@ namespace quant_hft {
 namespace {
 namespace fs = std::filesystem;
 using namespace config_detail;
+enum class ReleaseMigrationKind {
+    kFixedTakeProfit,
+    kIdentityOnly,
+};
+struct ReleaseMigrationPlan {
+    std::string source_package_version;
+    std::string target_package_version;
+    std::string source_release_version;
+    std::string target_release_version;
+    ReleaseMigrationKind kind;
+};
 void SafePart(const std::string& value) {
     if (!std::regex_match(value, std::regex("[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")))
         throw std::runtime_error("unsafe or empty migration identity/key prefix");
@@ -41,6 +52,21 @@ std::string Read(const fs::path& path) {
     std::ifstream stream(path, std::ios::binary);
     if (!stream) throw std::runtime_error("cannot read migration input");
     return std::string(std::istreambuf_iterator<char>(stream), {});
+}
+std::string DeploymentPackageVersion(const std::string& path) {
+    const auto root = Parse(Read(fs::absolute(path).lexically_normal()));
+    if (!root["package"] || !root["package"].IsMap())
+        throw std::runtime_error("deployment package configuration missing");
+    return Required(root["package"], "version");
+}
+ReleaseMigrationPlan SelectPlan(const StrategyReleaseMigrationOptions& options) {
+    const auto source = DeploymentPackageVersion(options.source_deployment);
+    const auto target = DeploymentPackageVersion(options.target_deployment);
+    if (source == "1.0.0" && target == "1.1.0")
+        return {source, target, "1.0.0", "1.1.0", ReleaseMigrationKind::kFixedTakeProfit};
+    if (source == "1.1.0" && target == "1.1.1")
+        return {source, target, "1.1.0", "1.1.1", ReleaseMigrationKind::kIdentityOnly};
+    throw std::runtime_error("unsupported strategy release migration");
 }
 bool Under(const fs::path& child, const fs::path& parent) {
     auto c = child.begin();
@@ -178,7 +204,8 @@ Targets OwnedTakeProfits(const StrategyState& state, const std::string& componen
     return result;
 }
 void CheckFacts(const StrategyState& payload, const std::string& account_id,
-                const std::string& instance_id, const std::set<std::string>& components) {
+                const std::string& instance_id, const std::set<std::string>& components,
+                bool legacy_take_profit_state) {
     std::map<std::string, std::pair<std::int64_t, std::int64_t>> projected_quantities;
     for (const auto& entry : payload) {
         if (Starts(entry.first, "committed_position.")) {
@@ -206,7 +233,7 @@ void CheckFacts(const StrategyState& payload, const std::string& account_id,
             if (owner == payload.end() || !components.count(owner->second) ||
                 !payload.count("atomic." + owner->second + ".version"))
                 throw std::runtime_error("held position requires saved atomic state and owner");
-            const auto targets = TakeProfits(payload, owner->second, true);
+            const auto targets = TakeProfits(payload, owner->second, legacy_take_profit_state);
             const auto target = targets.find(instrument);
             if (target == targets.end() ||
                 target->second.second != (Number(entry.second) > 0 ? 1 : -1))
@@ -236,6 +263,26 @@ void CheckRestoredFacts(const StrategyState& original, const StrategyState& save
             throw std::runtime_error("target algorithm changed economic position context");
     }
 }
+bool StrategyOwnedKey(const std::string& key) {
+    return key == "run_type" || key == "run_mode" || key == "account_equity" ||
+           key == "total_pnl_after_cost" || key == "margin_used" || key == "available" ||
+           Starts(key, "committed_position.") || Starts(key, "risk_guard.") ||
+           Starts(key, "net_pos.") || Starts(key, "avg_open.") || Starts(key, "multiplier.") ||
+           Starts(key, "owner.") || Starts(key, "atomic.") || Starts(key, "init_stop.") ||
+           Starts(key, "trailing_stop.") || Starts(key, "take_profit.");
+}
+StrategyState StrategyOwnedState(const StrategyState& state) {
+    StrategyState result;
+    for (const auto& entry : state)
+        if (StrategyOwnedKey(entry.first)) result.insert(entry);
+    return result;
+}
+void CheckIdentityRoundTrip(const StrategyState& original, const StrategyState& saved) {
+    CheckRestoredFacts(original, saved);
+    if (StrategyOwnedState(original) != StrategyOwnedState(saved))
+        throw std::runtime_error(
+            "target algorithm changed strategy-owned state during identity-only validation");
+}
 }  // namespace
 
 bool MigrateStrategyReleaseState(const StrategyReleaseMigrationOptions& options,
@@ -245,12 +292,19 @@ bool MigrateStrategyReleaseState(const StrategyReleaseMigrationOptions& options,
         SafePart(options.key_prefix);
         if (!std::regex_match(options.source_package_sha256, std::regex("[0-9a-f]{64}")))
             throw std::runtime_error("source package SHA256 must be explicitly pinned");
+        const auto plan = SelectPlan(options);
         DeploymentConfig source, target;
         std::string detail;
-        if (!LoadDeploymentConfigForMigration(options.source_deployment, "1.0.0", &source,
-                                              &detail) ||
-            !LoadDeploymentConfigForMigration(options.target_deployment, "1.1.0", &target,
-                                              &detail) ||
+        if (!LoadDeploymentConfigForMigration(options.source_deployment,
+                                              plan.source_package_version, &source, &detail) ||
+            !LoadDeploymentConfigForMigration(options.target_deployment,
+                                              plan.target_package_version, &target, &detail))
+            throw std::runtime_error(detail);
+        // The identity-only migration is the activation path for this binary, so the target
+        // deployment must identify the exact package linked into the migration tool. The older
+        // state-transforming path remains available for frozen 1.1.0 migration evidence; its
+        // target package is still verified through all manifest/schema/member hashes above.
+        if (plan.kind == ReleaseMigrationKind::kIdentityOnly &&
             !VerifyDeploymentPackage(target, &detail))
             throw std::runtime_error(detail);
         if (source.package_hash != options.source_package_sha256)
@@ -277,8 +331,8 @@ bool MigrateStrategyReleaseState(const StrategyReleaseMigrationOptions& options,
         const auto split = before.strategy_release.find('@');
         const auto algorithm = before.strategy_release.substr(0, split);
         if ((algorithm != "kama_trend" && algorithm != "trend" && algorithm != "composite") ||
-            before.strategy_release != algorithm + "@1.0.0" ||
-            after.strategy_release != algorithm + "@1.1.0")
+            before.strategy_release != algorithm + "@" + plan.source_release_version ||
+            after.strategy_release != algorithm + "@" + plan.target_release_version)
             throw std::runtime_error("unsupported strategy release migration");
         ParameterSet old_parameters{"normalized", "normalized", before.composite};
         ParameterSet new_parameters{"normalized", "normalized", after.composite};
@@ -315,35 +369,47 @@ bool MigrateStrategyReleaseState(const StrategyReleaseMigrationOptions& options,
                 throw std::runtime_error("unsupported atomic algorithm in release migration");
             components.insert(component.id);
         }
-        CheckFacts(payload, account.account_id, options.instance_id, components);
+        const bool fixed_take_profit = plan.kind == ReleaseMigrationKind::kFixedTakeProfit;
+        CheckFacts(payload, account.account_id, options.instance_id, components, fixed_take_profit);
         CompositeStrategy strategy(after.composite);
         StrategyContext context;
         context.account_id = account.account_id;
         context.strategy_id = options.instance_id;
         context.metadata["ownership_mode"] = "instance";
         strategy.Initialize(context);
-        StrategyState upgraded;
-        if (!strategy.LoadState(payload, &detail) || !strategy.SaveState(&upgraded, &detail))
-            throw std::runtime_error("target algorithm rejected source state: " + detail);
-        CheckRestoredFacts(payload, upgraded);
-        for (const auto& component : components)
-            if (OwnedTakeProfits(payload, component) != TakeProfits(upgraded, component, false))
-                throw std::runtime_error(
-                    "target algorithm changed owned take-profit price/direction");
-        // SaveState materializes the new atomic version. Keep every original non-atomic
-        // byte, including application watermarks unknown to CompositeStrategy.
         StrategyState migrated = payload;
-        for (auto it = migrated.begin(); it != migrated.end();) {
-            if (Starts(it->first, "atomic."))
-                it = migrated.erase(it);
-            else
-                ++it;
+        if (!strategy.LoadState(payload, &detail))
+            throw std::runtime_error("target algorithm rejected source state: " + detail);
+        if (fixed_take_profit) {
+            StrategyState upgraded;
+            if (!strategy.SaveState(&upgraded, &detail))
+                throw std::runtime_error("target algorithm rejected source state: " + detail);
+            CheckRestoredFacts(payload, upgraded);
+            for (const auto& component : components)
+                if (OwnedTakeProfits(payload, component) != TakeProfits(upgraded, component, false))
+                    throw std::runtime_error(
+                        "target algorithm changed owned take-profit price/direction");
+            // SaveState materializes the new atomic version. Keep every original non-atomic
+            // byte, including application watermarks unknown to CompositeStrategy.
+            for (auto it = migrated.begin(); it != migrated.end();) {
+                if (Starts(it->first, "atomic."))
+                    it = migrated.erase(it);
+                else
+                    ++it;
+            }
+            for (const auto& entry : upgraded)
+                if (Starts(entry.first, "atomic.")) migrated[entry.first] = entry.second;
+            if (PayloadHash(payload, true) != PayloadHash(migrated, true) ||
+                !strategy.LoadState(migrated, &detail))
+                throw std::runtime_error("migrated facts or state validation failed: " + detail);
+        } else {
+            StrategyState round_trip;
+            if (!strategy.SaveState(&round_trip, &detail))
+                throw std::runtime_error("target algorithm rejected source state: " + detail);
+            CheckIdentityRoundTrip(payload, round_trip);
+            if (migrated != payload || PayloadHash(migrated) != PayloadHash(payload))
+                throw std::runtime_error("identity-only migration changed strategy payload");
         }
-        for (const auto& entry : upgraded)
-            if (Starts(entry.first, "atomic.")) migrated[entry.first] = entry.second;
-        if (PayloadHash(payload, true) != PayloadHash(migrated, true) ||
-            !strategy.LoadState(migrated, &detail))
-            throw std::runtime_error("migrated facts or state validation failed: " + detail);
         strategy.Shutdown();
         const StrategyStateIdentity new_identity{options.instance_id, account.account_id,
                                                  after.strategy_release, after.parameter_hash, "1"};
@@ -364,7 +430,8 @@ bool MigrateStrategyReleaseState(const StrategyReleaseMigrationOptions& options,
             throw std::runtime_error("persisted migrated state failed verification: " + detail);
         YAML::Node report;
         report["schema_version"] = 1;
-        report["migration"] = "fixed_take_profit_1.0.0_to_1.1.0";
+        report["migration"] =
+            fixed_take_profit ? "fixed_take_profit_1.0.0_to_1.1.0" : "identity_only_1.1.0_to_1.1.1";
         report["instance_id"] = options.instance_id;
         report["source_strategy_release"] = before.strategy_release;
         report["target_strategy_release"] = after.strategy_release;
@@ -380,9 +447,12 @@ bool MigrateStrategyReleaseState(const StrategyReleaseMigrationOptions& options,
         report["payload_sha256_after"] = PayloadHash(migrated);
         report["facts_sha256_before"] = PayloadHash(payload, true);
         report["facts_sha256_after"] = PayloadHash(migrated, true);
+        report["payload_preserved"] = migrated == payload;
         report["saved_take_profit_preserved"] = true;
-        report["preserved_target_scope"] = "nonzero positions selected by original component owner";
-        report["orphan_take_profit_cleanup_allowed"] = true;
+        report["preserved_target_scope"] =
+            fixed_take_profit ? "nonzero positions selected by original component owner"
+                              : "entire strategy payload";
+        report["orphan_take_profit_cleanup_allowed"] = fixed_take_profit;
         report["owner_renamed"] = false;
         report["trade_facts_changed"] = false;
         report["activation_status"] = "offline artifact only; no account activated";
